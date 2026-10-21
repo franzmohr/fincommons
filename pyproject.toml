@@ -1,0 +1,78 @@
+[build-system]
+# 1.27 is the first release that reads the license expression below (PEP 639).
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fincommons"
+version = "0.1.0"
+description = "Shared infrastructure for basic financial data work: data lakes from public financial data on Spark and Delta Lake."
+readme = "README.md"
+license = "EUPL-1.2"
+license-files = ["LICENSES/*"]
+requires-python = ">=3.10"
+authors = [{ name = "Franz X. Mohr" }]
+keywords = [
+    "financial data", "data lake", "medallion architecture", "spark",
+    "delta lake", "exchange rates", "market data", "firds", "lei",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+# Runtime dependencies are kept to loose lower bounds that the Databricks
+# Runtime already satisfies, so installing the wheel on a cluster does not
+# force upgrades of DBR-provided packages. Spark itself is NOT listed here:
+# the Databricks Runtime provides it, and installing pyspark from PyPI on a
+# cluster shadows that installation. Use the "local" extra off-cluster.
+dependencies = [
+    "numpy>=1.21",
+    # the ECB and EIOPA registers are published as Excel workbooks
+    "openpyxl>=3.0",
+    "pandas>=1.5",
+    "pyarrow>=8",
+    "polars>=0.20",
+    "pyyaml>=6",
+    "requests>=2.25",
+]
+
+[project.urls]
+Homepage = "https://github.com/franzmohr/fincommons"
+Source = "https://github.com/franzmohr/fincommons"
+Issues = "https://github.com/franzmohr/fincommons/issues"
+Security = "https://github.com/franzmohr/fincommons/blob/main/SECURITY.md"
+Changelog = "https://github.com/franzmohr/fincommons/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# Everything needed to run outside a Spark-provided environment.
+local = ["pyspark>=3.5", "delta-spark>=3.1"]
+# Downloading from Yahoo Finance is the only thing in the package that needs
+# yfinance; the ECB, the New York Fed and the internal sources of
+# fincommons.marketpricedata run without it. See its README.
+marketprice = ["yfinance>=0.2"]
+dev = ["pytest>=7", "pyspark>=3.5", "delta-spark>=3.1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fincommons"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/fincommons",
+    "tests",
+    "LICENSES",
+    "README.md",
+    "CHANGELOG.md",
+    "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,43 @@
+{
+    "type": "struct",
+    "fields": [
+        {
+            "name": "TechRcrdId",
+            "type": "string",
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "FinInstrmGnlAttrbts",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "Id",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "TradgVnRltdAttrbts",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "Id",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        }
+    ]
+}

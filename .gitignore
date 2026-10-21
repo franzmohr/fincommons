@@ -1,0 +1,31 @@
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# The catalogue a local Spark session writes managed tables into
+spark-warehouse/
+
+# Rendered reports, rebuilt from their .qmd with quarto render
+docs/notebooks/*.html
+docs/notebooks/_cache/
+
+# The command history R writes into its working directory
+.Rhistory
+
+# LaTeX build products of the handbook; the PDF is built, not committed
+docs/handbook/*.aux
+docs/handbook/*.bbl
+docs/handbook/*.bcf
+docs/handbook/*.blg
+docs/handbook/*.fdb_latexmk
+docs/handbook/*.fls
+docs/handbook/*.log
+docs/handbook/*.out
+docs/handbook/*.run.xml
+docs/handbook/*.synctex.gz
+docs/handbook/*.toc
+docs/handbook/*.pdf

@@ -1,0 +1,308 @@
+
+\chapter{FIRDS}\label{ch:firds}
+
+\section{Introduction}
+
+Under Article 27 of of Regulation (EU) No 600/2014 (MiFIR) trading venues shall provide ESMA with identifying reference data pertaining to financial instruments admitted to trading or traded on a trading venue.\footnote{See \url{https://eur-lex.europa.eu/eli/reg/2014/600}.} This data set is commonly referred to as FIRDS data. A list of the reported information is provided in the annexes of the associated RTS.\footnote{See \url{https://eur-lex.europa.eu/eli/reg_del/2017/585}.}
+
+
+\section{Data pipeline}
+
+The data pipeline of FIRDS data follows the considerations of section \ref{sec:intro-data}. FIRDS-specific aspects are discussed in more detail in the following.
+
+The pipeline stores its data in three formats, and which one a data set is stored in follows from how that data set comes to change rather than from which layer it belongs to. The landing zone holds the files as ESMA publishes them, compressed XML, because it is a place for deliveries and not yet for data. A data set that is only ever added to, one file at a time, and never altered afterwards is stored as plain Parquet; that is the Bronze layer, discussed in section \ref{sec:firds-bronze}. A data set that is changed where it stands, whose rows are closed, replaced and appended to one delivery at a time, is a Delta table, because that is what a transaction log is for: the historical database \emph{main} and the \emph{watermarks} table that records how far it has been built. A data set that is derived in full from another and rebuilt rather than changed loses nothing by having no log, and is therefore Parquet again unless it is asked to be Delta; that is the \emph{compact} table, and the reason one might ask is set out where it is described. Why the transaction log is Delta Lake rather than Apache Iceberg is a decision for the framework as a whole and is argued in section \ref{sec:intro-data-formats}; FIRDS is the module that depends on it most, because its historical database is updated with MERGE statements rather than rewritten.
+
+\subsection{Landing zone}
+
+FIRDS data is hosted by ESMA and publicly available as compressed XML files. Thus, the first stage of the data pipeline is to download data from ESMA's website into the landing zone. The download procedure follows the instructions in the ESMA Guide \emph{FIRDS - Instructions on access and download of full and delta reference data files}.\footnote{Available at \url{https://www.esma.europa.eu/document/firds-instructions-access-and-download-full-and-delta-reference-data-files}.}
+
+Consistent with the ESMA Guide, FULINS data is downloaded only once for a certain date that marks the beginning of the historic database. For periods after the starting date only DLTINS data is downloaded to incrementally update the database.
+
+The folders at the root of each panel of figures \ref{fig:dirstruct_firds_landing_bronze} and \ref{fig:dirstruct_firds_silver_gold} -- \emph{landing}, \emph{bronze}, \emph{silver} and \emph{metadata} -- are the four paths the \emph{firds} section of the configuration file names, and they are the only locations the module takes as given. Everything below them is created by the module itself and is named as shown. An organisation that keeps several sources apart within one data lake would point the configured paths at, say, \emph{/data/landing/esma/firds}, and the folders below them would be the same ones: where the configured paths sit is a decision of the configuration file, and nothing in the module depends on it.
+
+Panel (a) of figure \ref{fig:dirstruct_firds_landing_bronze} illustrates the folder structure of the landing zone. Data downloaded from ESMA's website is stored in the folder \emph{import}. If the import into the Bronze layer is successful, the respective ZIP file is moved into the \emph{finished} folder. If the import fails, the data is moved into the folder \emph{error}.
+
+Which files a run downloads is decided by comparing names: every file of the full sample the history starts from, every delta file published after it and the most recent cancellations file are fetched unless a file of the same name is already in \emph{import} or \emph{finished}. Resuming after the newest delta file in \emph{finished} instead would be correct as long as every file succeeds, but a delta file is often published in several parts, and a part that failed while a later file succeeded would then never be requested again, so that the history would silently lack its records. Comparing names repairs such a gap on the next run, whatever went wrong before, and a file set aside in \emph{error} counts as missing for the same reason. The comparison presupposes that \emph{finished} is kept; it is the record of what the Bronze layer has been built from. A download is written under a temporary name and only renamed once it is complete, an error answer of the server is raised rather than stored, and an archive that does not open is refused, because a truncated file under its final name would count as held and would not be fetched again. The register states an MD5 digest for every file, and a file that does not match it is refused as well.
+
+The register itself is read page by page. It publishes some three thousand files a year, and a single request for ten thousand rows returns an arbitrary part of the list once the period asked about holds more files than that, which happens within about three years, without any sign that something is missing. The pages are sorted so that they follow one another, and a list that ends up shorter than the number of files the register reports is refused. Asking the register about the whole period since the full sample on every run would also make the answer grow without bound, so the landing zone records, in a small file of its own, the last day up to which every part of the full sample and of the delta files has been imported, and the next run asks only from a week before that day on. The week of overlap is there because ESMA sometimes publishes a file after the day it is dated, and such a file is not in the answer the record was computed from. The same file also records which days the register listed a delta file for, so that the Silver layer can tell a day it holds no records for from one that was never published; how far the Silver layer has built the history, which it writes there itself, since the landing zone cannot read a watermark that lives in a Delta table and its own record is written before anything is downloaded and so lags behind; and which days turned up after the history had passed them. The day moves forward only while nothing before it is missing, which keeps a failed file within the window until it has been imported.
+
+\subsection{Bronze layer\label{sec:firds-bronze}}
+
+For further processing, the data in the landing zone must be decompressed. Afterwards, the content of the resulting XML file is parsed and stored in the Bronze layer in the Parquet file format. Since the received XML files can have different schemas, which can also change over time, data with a specific schema is stored in a dedicated directory. Within those directories, data is partitioned based on the date information that is contained in the file name of an XML file. Panel (b) of figure \ref{fig:dirstruct_firds_landing_bronze} illustrates this structure.
+
+That the Bronze layer is plain Parquet and not a Delta table follows from what it is asked to do. Each file of the landing zone is written into it once, as a partition of its own, and nothing that has been written is altered afterwards, so there is no row to update, no version to read back and nothing for a transaction log to reconcile. The directories themselves carry the information the Silver layer needs: the schema a file was published under is the directory it lies in, its reference date is the name of its partition, and an empty partition records that a file was imported and held no records. The Silver layer finds all of this by listing directories, which is as cheap as it is transparent, whereas a Delta table records its partitions in its log and has no way of stating an empty one. Plain Parquet is finally what any reader opens without a further dependency, which suits a layer that serves as the queryable archive of what was delivered.
+
+What is given up is the atomicity of a write, and it is worth stating where the pipeline makes up for it. Spark writes into a temporary directory and moves the files into the partition only once every task has succeeded, so an import that fails usually leaves nothing behind. The move itself is not a single transaction, however, least of all on object storage, and an import that fails during it can leave part of a file in the partition. The file is then set aside in \emph{error}, which the landing zone counts as missing, so it is downloaded and imported again, and its partition may come to hold some records twice. That is harmless because the Silver layer does not rely on the Bronze layer being free of duplicates: exact duplicates are dropped before a delta file is applied, and the history is initialised with one version per instrument from the full file. A file that did arrive in \emph{finished} is not imported a second time. Delta would not have spared the pipeline the problem of schema vintages discussed below either, since it too refuses an append that changes the type of a column, and the change would then have stopped the import rather than the read.
+
+Note that since FULINS data is usually only downloaded once, there should only be one partition in the folder of the corresponding schema -- in the example in figure \ref{fig:dirstruct_firds_landing_bronze}, this means only one sub-folder in folder \emph{auth\_017\_001\_02}. Where there are several, the history is started from the newest of them and the others are passed over with a warning, since a full sample states the reference data in full and an older one only adds instruments the newest one no longer carries.
+
+The current implementation of \emph{fincommons} in general preserves the original schema of the data, however, some header information is currently dropped.\footnote{Metadata management as proposed in \textcite[chapter 6]{Strengholt.2025} is currently considered/in development.}
+
+Storing each schema in a directory of its own solves only half of the problem, because a schema can also change while keeping its name. The schemas the parser reads with are derived from ESMA's XSD files and are stored with the module, and deriving them again can change a type: the money and rate fields can be read as a floating point type under one derivation and as a decimal one under another, and the cancellation element \emph{CancRcrd} as a full reference data record under one and as the reduced one the schema actually states under another. The Bronze layer is append-only and keeps the files it has already written, so a single directory comes to hold files written under two vintages of what is nominally one schema. Parquet does not reconcile them. A reader must state one type per column, and the format refuses to hand a column written as a floating point number to a reader asking for a decimal, so a naive read of the directory fails outright and the daily job stops -- not on the day the schema was changed, but on the first day thereafter on which a new file joins the old ones.
+
+A schema can also change its name, which is the complement of the case just described and is handled by the directory structure rather than despite it. ESMA published the delta file as \emph{auth.036.001.02} until 31 January 2022 and as \emph{auth.036.001.03} from 1 February 2022 onwards, so a history reaching back before that date is built from files of both. Each definition is given a directory named after it, as every other message is, and the Bronze layer therefore records which message each file was published under rather than obscuring it. What has to span the two is the Silver layer, which asks for the reference dates of both directories together and applies them as the single chronological sequence they form; the change of definition falls on a day boundary and is invisible to the history built across it. Sampling the register one delta file per quarter from 2020 to 2026 found this to be the only such change in that period, and the full file to have carried \emph{auth.017.001.02} throughout, across twenty-seven quarters. A file whose message the parser does not recognise is not guessed at: it is set aside in the \emph{error} folder and the definition it states is named in the log, so a further change announces itself rather than corrupting the history.
+
+The read that builds the historical database is therefore arranged so that the vintage of a file cannot matter. It proceeds partition by partition rather than over the whole directory, so that the files it has to reconcile are those of a single publication day. Within a partition it groups the files by the types they state for the fields the pipeline actually reads and reads each group on its own, which is the one case that genuinely requires separate reads. It asks for the paths the translation to the analytics schema reads and for nothing else, which means that a change in a field the pipeline never uses -- the great majority of the schema, which describes derivative attributes in considerable detail -- passes unnoticed and costs nothing. Finally it casts every field it read to the type the historical database carries, so that what the history is built from has one fixed schema whatever the partition held. The types chosen for that final cast are those the historical database carries, and the schema of that database is derived from them rather than stated a second time, so that the two cannot drift apart.
+
+Reading only the paths the pipeline uses protects it against changes elsewhere in the schema, but it is worth being precise about what that protection does not extend to. A path the pipeline does use may be absent from a record not because the source stopped stating it but because the source states it somewhere else, and under a declared schema the two are indistinguishable: an element the reader did not ask for and an element the file did not contain both arrive as an empty value. The publication period of a record is the case in point. \emph{TechAttrbts/PblctnPrd} is a choice in the ISO 20022 sense, and ESMA exercises it differently according to what the record reports. In the delta file of 5 January 2020, the 32,875 records reported as new or modified state the open-ended form \emph{FrDt}, whereas of the 24,107 terminations 19,630 state the closed range \emph{FrDtToDt} and the remaining 4,477 state no publication period at all, carrying nothing in \emph{TechAttrbts} beyond the competent authority and the trading venue.
+
+Reading the first branch alone leaves every termination without a validity date, and the consequence is silent. The date on which a superseded version is closed is the day before the incoming record begins, so where the incoming date is empty the closing date is empty too and the version it should have closed remains in force. Nothing fails at the time. The history goes on being built, the latest-record flag becomes ambiguous, and in a history built that way, after five delta files 132,977 instruments carried as many as eight versions in force each. The fault surfaces only when a MERGE matches several source rows against one target row and refuses to proceed -- an error naming the merge rather than the record that caused it, and five days removed from it. The pipeline therefore reads every branch of the choice and takes the reference date of the file for a termination that states no period, as it does for a cancellation for the same reason; the history built so from the same nine delta files holds 17.7 rather than 15.6 million versions, with the number of versions in force exactly equal to the number of latest records. The pipeline also refuses a record whose publication period it cannot read, so that a branch not yet accounted for stops the run where the record enters rather than days later somewhere else. The general point is taken up in section \ref{sec:intro-data-schema}.
+
+That leaves the question of which types the database should carry, which is a question about the data and not about how a file is read. Four of the fields are money or rates: the total issued nominal amount, the nominal value per unit, the fixed interest rate and the price multiplier. Double precision floating point is the natural reading of a numeric XML element and the wrong one here. A binary floating point number cannot represent a decimal fraction exactly, so a coupon reported as 3.7 per cent would be stored as 0.036999999999999998 and an amount would only ever be as exact as fifteen significant digits allow. For a supervisory record the precision is not an artefact of the arithmetic but part of what the record states, and the XSD files say so explicitly: each of these elements is an \emph{xs:decimal} with a stated number of total and fractional digits. The database therefore carries them as decimals of exactly those precisions.
+
+% Directory tree
+\begin{figure}[h]
+	\centering
+	\begin{subfigure}[t]{0.48\textwidth}
+		\centering
+		\begin{forest}
+			for tree={
+				%font=\ttfamily,
+				grow'=0,
+				child anchor=west,
+				parent anchor=south,
+				anchor=west,
+				calign=first,
+				edge path={
+					\noexpand\path [draw, \forestoption{edge}]
+					(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+				},
+				before typesetting nodes={
+					if n=1
+					{insert before={[,phantom]}}
+					{}
+				},
+				fit=band,
+				before computing xy={l=15pt},
+			}
+			[landing
+				[error
+					[...]
+				]
+				[finished
+					[FULINS\_C\_20260103\_01of01.zip]
+					[...]
+					[FULINS\_S\_20260103\_05of05.zip]
+					[DLTINS\_20260104\_01of01.zip]
+					[DLTINS\_20260105\_01of01.zip]
+					[FULCAN\_20260106\_01of02.zip]
+					[FULCAN\_20260106\_02of02.zip]
+				]
+				[import
+					[DLTINS\_20260106\_01of01.zip]
+					[...]
+				]
+			]
+		\end{forest}
+		\caption{Landing zone.}
+	\end{subfigure}
+	\begin{subfigure}[t]{0.48\textwidth}
+		\centering
+		\begin{forest}
+			for tree={
+				%font=\ttfamily,
+				grow'=0,
+				child anchor=west,
+				parent anchor=south,
+				anchor=west,
+				calign=first,
+				edge path={
+					\noexpand\path [draw, \forestoption{edge}]
+					(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+				},
+				before typesetting nodes={
+					if n=1
+					{insert before={[,phantom]}}
+					{}
+				},
+				fit=band,
+				before computing xy={l=15pt},
+			}
+			[bronze
+				[auth\_017\_001\_02
+					[{DATADT=2026-01-03}]
+				]
+				[auth\_036\_001\_02
+					[...]
+				]
+				[auth\_036\_001\_03
+					[{DATADT=2026-01-04}]
+					[{DATADT=2026-01-05}]
+				]
+				[auth\_102\_001\_01
+					[{DATADT=2026-01-06}]
+				]
+			]
+		\end{forest}
+		\caption{Bronze layer.}
+	\end{subfigure}
+	\caption{Directory structure for FIRDS data.\label{fig:dirstruct_firds_landing_bronze}}
+\end{figure}
+
+
+\subsection{Silver layer}
+
+The Silver layer consists of two data sets. First, a table named \emph{main}, which is the implementation of the historical database as described in section 4.2 of ESMA's Guide mentioned above.
+
+Due to the use of incremental updates of the \emph{main} table, Delta Tables are used for the implementation. A delta file is applied in two steps against the table. A single MERGE operation changes the versions that the file affects: the versions that the incoming records supersede are closed on the day before the incoming record takes effect and lose their latest-record flag, and a version that was terminated in the ordinary way is replaced by the incoming record. The remaining incoming records are then appended. Both changes address the version in force of an instrument, and an instrument is subject to at most one of them, because only the first record a file carries for an instrument meets the version that was in force before the file. They can therefore be applied together, which matters because each MERGE reads the target table, and a second one would traverse it again only to reach a set of rows the first one did not touch.
+
+Both steps are planned from one fixed version of the table, the one before the MERGE, which is read by its version number. This is not a matter of style. Spark computes the plan again for the append, since the MERGE does not fill the cache the plan is kept in, and a read of the table that is not pinned then sees the table as the MERGE left it. A version the MERGE has just replaced is no longer in force there, so the record that replaced it would be planned a second time as an insertion and appear twice in the history. That would happen whenever a delta file terminates an instrument in the ordinary way and changes it again in the same file.
+
+The implementation departs from the Guide in two respects, both of which follow from the rule that an instrument has one version in force at a time. First, records for the same instrument within one file are chained, each valid until the day before the next one begins, but records that begin on the same day cannot be chained without producing a version that ends before it begins. Of such records only the last in the order new, modified, cancelled, terminated is kept, and exact duplicates are dropped beforehand. For the same reason a record that begins on the same day as the version in force replaces that version rather than closing it, which is what the Guide prescribes for an ordinary termination; following the Guide literally would close the version on the day before it began and leave a version valid on no day at all. Second, what a record does is decided by the version in force rather than by the element it was reported in. The Guide does not describe a record reported as new for an instrument that already exists, since a new instrument is not supposed to exist already, but ESMA reports one when an instrument is admitted again after it was terminated -- a termination remains in force, because it carries no closing date. Inserting such a record would leave the instrument with two versions in force, and the next delta file touching it would match the MERGE against both rows at once and stop the update with an error until the table was repaired by hand. It therefore supersedes the version in force like any other record.
+
+The \emph{main} table is not partitioned. It is instead clustered by the pair of ISIN and MIC code that identifies an instrument on a trading venue, i.e. by the same columns the MERGE matches on. Partitioning the table by the MIC code of the trading venue, on the assumption that this would speed up updates and joins through better opportunities for parallelisation, does the opposite, as measurement shows, and the reasons are general enough to be worth stating in section \ref{sec:intro-data-layout} rather than only here: the partitions are far too small to carry the fixed cost of a partition, the pruning they promise never materialises because a delta file touches most trading venues at once, and, most damagingly, each append writes a separate file for every combination of writing task and trading venue, so that a single day of delta files can arrive as several thousand files of a few kilobytes each. Partitioned that way, the table grew to more than 19,000 files averaging some 16 kilobytes after only three days of updates, and the scan of the versions in force that every subsequent update performs took 27 seconds where the same data in a compacted layout took a little over one. Since that cost grows with the number of files accumulated so far, a backfill over a longer history degrades quadratically. Clustering keeps the columns of the MERGE condition together within files without cutting the table into directories, so that the file statistics can exclude a file from a scan, and the periodic OPTIMIZE that maintains the clustering is incremental: it processes the files that have arrived since it last ran rather than rewriting the whole history.
+
+Clustering alone does not stop the daily MERGE from rewriting the history. Without further provision Delta rewrites every file a MERGE touches in full, and since a delta file concerns instruments all over the table, every file is touched. Re-applying the delta files of two days to a copy of the history of 17 million versions built from the full sample of 5 September 2026 made this visible: the file of 7 September changed 172 versions and copied the other 16,963,552 rows, taking 54 seconds, and the file of 8 September changed 1,180,246 versions and took 85 seconds. The table therefore carries deletion vectors. With them the MERGE records the superseded rows in a small side file and writes only the new versions, and the same two files took 15 and 55 seconds without copying a single row. The distinction matters more than the figures suggest, because without deletion vectors the cost grows with the history, which only grows, whereas with them it follows the size of the delta file. The files written since the previous run are clustered once a week, on the delta file of each Friday, and that OPTIMIZE also rewrites the files in which deleted rows have accumulated, which is most of the table: measured on the same history it took 87 seconds and rewrote all 17 million rows. The weekly cost therefore follows the size of the history rather than the week, so what deletion vectors take off the daily path they put back once a week -- a seventh of the rewrites, which is what makes the trade worth making. The price is a higher reader version of the table, so that a reader outside Spark needs support for deletion vectors; the \emph{compact} table remains the one intended for such readers. The join of a delta file against the versions in force, which Spark cannot broadcast in the form it is written, is not where the time goes: measured, that scan took between 4 and 8 seconds regardless of the size of the file, and restricting it to the instruments of the file made no difference.
+
+Built under the clustered layout, the same three days of history occupy ten files rather than 19,415, and 145 rather than 473 megabytes on disk, with the same number of records. The reduction in size is not a saving from discarding anything but a consequence of the file count itself: every Parquet file repeats a footer, a schema and its dictionary pages, and compression works considerably better across fourteen megabytes of clustered records than across fragments of sixteen kilobytes. A table consisting of very many small files is therefore not merely slow to read, it also occupies several times the space its contents require.
+
+The layout is declared by a function of its own, \verb|declare_silver_main_layout|, which the update calls when it creates the historical database. Its statements are idempotent, so it can be called again on a database that already carries the layout. Declaring deletion vectors upgrades the reader version of the table, which Delta does not undo by itself, and a reader outside Spark then needs support for deletion vectors.
+
+Everything in the Silver layer is derived from the Bronze layer and can be reconstructed from it at any time, which is the reason the Bronze layer keeps the delta files in the first place and a property worth preserving when the pipeline is extended.
+
+Since a delta file only states what changed since the previous one, the files must be applied in chronological order and exactly once. Applying a file twice would attribute wrong validity periods to the affected versions. The pipeline therefore maintains a watermark, i.e. the reference date up to which the historical database has been built, and processes only the files that are newer than it. The watermark is held in a small Delta table named \emph{watermarks} in the metadata area of the data lake, which contains one row per table of the Silver layer and is shown in panel (b) of figure \ref{fig:dirstruct_firds_silver_gold}. Storing it as a path-addressed Delta table rather than, for instance, in a local database file means that the same code serves a workstation and a cluster, where the driver's local filesystem is not a place in which a pipeline should record state. Where an existing historical database carries no watermark, the update is refused rather than restarted from an assumed date, since a wrong assumption would silently corrupt the validity periods.
+
+The watermark is written after the records, and the MERGE and the append are separate commits, so a run can end with a delta file applied only in part. Starting that file again from the table as it then stands would close the versions it had just inserted. Each of the two commits therefore carries the reference date in the commit metadata of the Delta table. A run that finds the append of a date already committed only records the watermark. A run that finds only the MERGE committed plans the file from the version of the table before that MERGE and makes the append alone. Only the commits since the table was last written from scratch are consulted, so a history rebuilt from the Bronze layer does not inherit the marks of the one it replaced. Delta's own mechanism for idempotent writes is not used for this, because the application versions it records survive such a rebuild and would silently suppress every append of the new history.
+
+A history this module built can also say for itself how far it has been built. The commits described above name the reference date they applied, and where the watermark is missing it is recovered from them, with a warning, instead of the database having to be built again. That is the state a run leaves behind when it dies after writing the history and before writing the watermark. A database that carries no such commits is refused.
+
+A reference date is applied only once every part of its delta file has been imported, which the pipeline checks against the names in the \emph{finished} folder of the landing zone; the full sample is checked the same way before the history is initialised. The first incomplete date stops the update: the dates before it are applied, and the run fails naming the missing parts. Carrying on past it would move the watermark beyond the incomplete date, and the records of its missing parts could never be applied afterwards. For the full sample, the names that arrived are not enough on their own. It is published in parts per first letter of the CFI code, and a part that arrived states how many parts its letter has, so a missing part of a letter is noticed; but a letter of which no part at all arrived leaves no trace among the others, and the history would be initialised without that asset class, whose instruments would then reach it only as delta files happened to change them. The landing zone therefore records the names of the parts the register lists for the full sample, and the history is not initialised until every one of them is in the \emph{finished} folder. A data lake filled by hand carries no such list and is initialised from the parts that arrived, with a warning that the check could not be made.
+
+Which dates are considered at all cannot be read off the Bronze layer alone. A day whose delta file was quarantined has no partition there, and a day that was never fetched leaves no trace in the data lake whatsoever, so the candidates are collected from the Bronze partitions, from the file names in the \emph{finished} and \emph{error} folders, and from the days the landing zone recorded the register as having listed. Taking them from the Bronze layer alone would apply the day after a failed one, moving the watermark past records that could then never be applied.
+
+Three states are told apart where a date has no Bronze partition. Parts that were never imported stop the update, as above. A partition that has gone missing although every part was imported stops it as well, and says so differently. A file that carried no records at all is neither: the Bronze layer creates its partition as an empty directory to record that the date was imported and held nothing, and the update passes the date with a warning instead of stopping on it for ever.
+
+A day whose delta file ESMA publishes after the history has been built past it is the one case the ordering cannot repair. Its records are not in the history, and applying the days after it does not put them there, so the landing zone records the day and the update refuses to continue, naming it. The history can then be rebuilt from that day, or the gap accepted deliberately, after which the update carries on. Every refusal of this kind stops the daily job until someone acts, which is the intended behaviour for a database whose value lies in being complete; where a file is broken at the source and will never arrive, moving the watermark past the day by hand is what lets the history continue, at the price of that day's records.
+
+Second, since securities can be traded on multiple trading venues, FIRDS data in the \emph{main} table can contain multiple observations per ISIN. This can lead to unwanted data explosions when the table is joined with other data sets. To address this, table \emph{compact} is generated, which contains only one row per ISIN. Text fields are concatenated, if multiple entries are available in \emph{main}. The maturity date, the expiry date and the price multiplier keep their types: they hold the value the trading venues agree on and are empty where the venues disagree, since two dates cannot be joined into one date. A cancelled record is left out. The history records it as the version in force of its instrument and venue, as the Guide prescribes, but it states nothing about the instrument, and what it says is that the instrument was never admitted to that venue; counted, it would list the venue among those the instrument trades on, as it would for two ISINs in the history of September 2026. Joining the dates as text and parsing the result would, under the strict parsing Spark 4 applies by default, make the whole rebuild fail as soon as a single ISIN carries two different maturities. Unlike \emph{main}, the \emph{compact} table is not updated incrementally but rebuilt in full from \emph{main} whenever the historical database has changed. It is stored as plain Parquet by default, since it is the table meant to be handed on to analysis and Parquet is what every engine reads without a further dependency, but it can be asked to be a Delta table instead. The reason to ask is not incremental updating but the atomicity of the rebuild: overwriting a plain Parquet data set deletes it before the new one is written and therefore exposes a window in which a reader finds the table missing or only partly written, whereas the Delta write replaces it in a single transaction. That is worth having where the table may be queried while it is rebuilt. Since a Delta table consists of standard Parquet files with a transaction log beside them, and readers for that format are available outside Spark -- the \emph{fincommons} package itself depends on Polars, which reads such tables -- this choice does not compromise the original objective that the data remain accessible to non-Spark software.
+
+The folder structure of the Silver layer is illustrated in panel (a) in figure \ref{fig:dirstruct_firds_silver_gold}.
+
+
+\subsection{Gold layer}
+
+Currently, there is no data set in the Gold layer, which would be exclusively based on FIRDS data, and the \emph{firds} section of the configuration file accordingly names no Gold path at all. Reference data is an input to the analyses of other data sets rather than the subject of one of its own, so what a Gold layer here would hold is a question that has not arisen yet; the \emph{compact} table of the Silver layer is what those analyses join against.
+
+
+% Directory tree
+\begin{figure}[h]
+	\centering
+	\begin{subfigure}[t]{0.40\textwidth}
+		\centering
+		\begin{forest}
+			for tree={
+				%font=\ttfamily,
+				grow'=0,
+				child anchor=west,
+				parent anchor=south,
+				anchor=west,
+				calign=first,
+				edge path={
+					\noexpand\path [draw, \forestoption{edge}]
+					(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+				},
+				before typesetting nodes={
+					if n=1
+					{insert before={[,phantom]}}
+					{}
+				},
+				fit=band,
+				before computing xy={l=15pt},
+			}
+			[silver
+				[main
+					[\_delta\_log]
+					[part-....parquet]
+					[deletion\_vector\_....bin]
+				]
+				[compact]
+			]
+		\end{forest}
+		\caption{Silver Layer.}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}[t]{0.40\textwidth}
+		\centering
+		\begin{forest}
+			for tree={
+				%font=\ttfamily,
+				grow'=0,
+				child anchor=west,
+				parent anchor=south,
+				anchor=west,
+				calign=first,
+				edge path={
+					\noexpand\path [draw, \forestoption{edge}]
+					(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+				},
+				before typesetting nodes={
+					if n=1
+					{insert before={[,phantom]}}
+					{}
+				},
+				fit=band,
+				before computing xy={l=15pt},
+			}
+			[metadata
+				[watermarks]
+			]
+		\end{forest}
+		\caption{Metadata.}
+	\end{subfigure}
+	\caption{Directory structure for FIRDS data. The \emph{main} table is not cut into directories: it is clustered, and its files lie beside the transaction log and the deletion vectors. The Delta table \emph{watermarks} in panel (b) records the reference date up to which it has been built.\label{fig:dirstruct_firds_silver_gold}}
+\end{figure}
+
+
+
+
+
+
+\section{Software architecture}
+
+% Software
+Module \emph{firds} of the \emph{fincommons} Python package contains the functions to perform the data processing steps described above. Further documentation on its functionality and application can be found in the module's README file in the code repository.
+
+Figure \ref{fig:firds-module} illustrates the structure of the module. The modules \emph{common} and \emph{utilities} contain functions that can be used by all other FIRDS-sub-modules. Other functions are grouped within sub-modules based on the data layer and affected supervisory functions, which should ensure maintainability and separation of concerns. Module \emph{metadata} contains functions for the maintenance of a metadata table that is used during updates of the \emph{main} table. Module \emph{history} contains the algorithm of section 4.2 of ESMA's Guide itself, expressed as transformations of data frames that do not refer to how the history is stored. Keeping the algorithm separate from the storage layer serves two purposes: it can be tested directly against the worked example the Guide provides, and the storage layer remains free to choose between rewriting the table and applying the changes with a merge.
+
+The module in fact contains both. Alongside the pieces that module \emph{silver} assembles into a MERGE, it provides a function that applies a delta file by rewriting the whole history, which is the straightforward reading of the Guide and is short enough to be checked against the worked example by inspection. That function is not what the pipeline runs -- rewriting a table of millions of records to change a few thousand of them would be wasteful -- but it is what the pipeline is tested against: the tests apply the same delta files through both routes and require the resulting histories to be identical, over the worked example, over each of the record types the algorithm distinguishes, and over the combinations in which one file carries several of them. The value of this arrangement is that the storage layer can be reworked for performance without the correctness of the result resting on a reading of the changed code. The single MERGE described above, for instance, closes and replaces versions in one statement, and the equivalence with the rewriting implementation is what establishes that it does so exactly as the Guide prescribes in the cases where a version has to be closed, replaced or left alone. It is worth keeping this property in mind when the storage layer is changed further, since it is easily lost by testing the merge only against expected values recorded from an earlier run of the merge itself.
+
+% Directory tree
+\begin{figure}[h]
+	\centering
+	\begin{forest}
+		for tree={
+			%font=\ttfamily,
+			grow'=0,
+			child anchor=west,
+			parent anchor=south,
+			anchor=west,
+			calign=first,
+			edge path={
+				\noexpand\path [draw, \forestoption{edge}]
+				(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+			},
+			before typesetting nodes={
+				if n=1
+				{insert before={[,phantom]}}
+				{}
+			},
+			fit=band,
+			before computing xy={l=15pt},
+		}
+		[fincommons
+		[firds
+			[\_\_init\_\_.py]
+			[common.py]
+			[utilities.py]
+			[bronze.py]
+			[landing.py]
+			[metadata.py]
+			[history.py]
+			[silver.py]
+		]
+		[...]
+		]
+	\end{forest}
+	\caption{Structure of the \emph{firds} module.\label{fig:firds-module}}
+\end{figure}
+

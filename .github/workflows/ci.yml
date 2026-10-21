@@ -1,0 +1,80 @@
+# Every change pushed or proposed to main is tested, built and checked for
+# licensing on a neutral machine before it is merged; see the handbook's
+# section on continuous integration and delivery.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest and the newest Python the package declares.
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Spark 4 and Delta 4 run on Java 17.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The session the tests share fetches the Delta jars from Maven when it
+      # starts; keeping Ivy's cache saves fetching them on every run.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ivy2
+          key: ivy-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install
+        run: python -m pip install -e ".[local,dev,marketprice]"
+
+      # Every test is named as it runs, so that a slow one is visible as
+      # such, and the slowest are listed at the end.
+      - name: Test
+        run: python -m pytest -v --durations=25
+
+  build:
+    name: Build and check the distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+
+  licensing:
+    name: REUSE compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: fsfe/reuse-action@v6

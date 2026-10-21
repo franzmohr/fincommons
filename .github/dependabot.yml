@@ -1,0 +1,17 @@
+# Dependabot keeps the actions the CI workflow uses up to date. The Python
+# dependencies are left out on purpose: fincommons declares them with loose
+# lower bounds so that it installs on whatever a Spark runtime already ships,
+# and raising those bounds is a decision rather than a routine update. Known
+# vulnerabilities in them are reported by Dependabot alerts instead.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

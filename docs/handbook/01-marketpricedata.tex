@@ -1,0 +1,193 @@
+
+
+\chapter{Market price data}\label{ch:marketpricedata}
+
+\section{Introduction}
+
+Besides general market monitoring, market price data can be used for the re-pricing of derivatives contracts, for example, in the context of scenario analyses or (reverse) stress testing.
+
+\section{Data pipeline}
+
+Similar to entity master data described in chapter \ref{ch:entitymasterdata}, market price data can be obtained both from public and proprietary sources. Thus market price data is processed analogously. Specific aspects are discussed in more detail in the following.
+
+\subsection{Landing zone}
+
+Unlike the other data sets of this handbook, market price data does not use a landing zone. The public sources answer with CSV files that are never meant to be kept, and they are therefore fetched into a temporary directory on the local disk of the driver, parsed there and discarded, so that only the parquet data set reaches the data lake. Writing them into the data lake first would put a file of several megabytes through a Unity Catalog volume only in order to delete it again, and such a volume should not be used as scratch space. The configuration of the module accordingly names a Bronze and a Silver path and no landing zone.
+
+\subsection{Bronze layer}
+
+Each publisher gets a directory of its own in the Bronze layer, so that a price remains traceable to the source it was taken from. Figure \ref{fig:dirstruct_marketpricedata_bronze} illustrates the resulting directory tree.
+
+Two data flows are downloaded from the ECB, \verb|EST| and \verb|FM|, each unchanged into a directory of its own, and both are parsed with a schema that travels with the package rather than with an inferred one, so that a change in what the API returns shows up as a column that does not fit instead of as a table that has quietly changed shape.
+
+Every other rate is taken from the body that administers it rather than from a mirror. SOFR comes from the Federal Reserve Bank of New York, SONIA from the Bank of England and the gold and silver benchmarks from the London Bullion Market Association. None of them is read from FRED, which republishes them, because a mirror is a convenience rather than a source: it can run a day behind, it can stop being maintained without saying so, and a supervisory data set should be able to name the body that published each of its figures. Two of these publishers refuse a request that carries no user agent, and the answer they serve instead is an HTML page which a CSV reader turns into a table of no rows, so the downloads check the status of the answer before they write anything rather than reporting success over an empty Bronze layer.
+
+The closing prices of listed instruments are downloaded from Yahoo Finance, and so are the commodity futures, the volatility indices and the stock indices, each into a Bronze layer of its own. These are the sources that are queried for a date range instead of for the whole history, and their part of the Bronze layer is therefore partitioned by the date of the download and appended to rather than overwritten: the partitions already present are what tells the next run where to carry on from. As a consequence one reference date of one instrument can have been delivered by more than one download, which the Silver layer has to resolve before it merges anything. What is collected for a commodity is the front month future and not a spot price, so the series steps whenever one contract expires and the next becomes the front month; that step is a change of contract rather than a movement in the market, and it is the closest thing to a daily commodity price that can be read without a licence.
+
+The wholesale electricity prices are the one source with a shape of its own. A day-ahead price exists per bidding zone and per delivery period rather than per day and per country, and it is taken from the Fraunhofer Institute's energy-charts service, which serves it without a key where the authoritative ENTSO-E platform requires a registered token. The figures are published under CC BY 4.0, and the attribution the licence requires -- Bundesnetzagentur \textbar{} SMARD.de, via energy-charts.info -- is carried in the code rather than only in a README, so that it travels with anything built on it.
+
+Where proprietary data is used, it is provided as the comma-separated file \verb|marketpricedata_internal.csv| in folder \texttt{bronze/internal}. The file carries a header row and the three columns of the Silver table -- the reference date, the identifier of the indicator and the value -- in that order, because the module reads it with a declared schema, and a reader that is given a schema maps it onto the file by position rather than by the names in the header. The schema is declared rather than inferred because this is the one source whose shape the module does not learn from what a publisher sent: read without one, every column of a CSV file is text, and the reference date and the price would reach the Silver layer as strings.
+
+Nothing in the module writes into that folder. The file is placed there by whoever maintains the quotes, because where proprietary quotes come from and how they are produced differs from one organisation to the next, and the module therefore offers no functionality to download them. This is the same arrangement as for the proprietary sources of exchange rate data (chapter \ref{ch:exchangerate}) and entity master data (chapter \ref{ch:entitymasterdata}).
+
+
+% Directory tree
+\begin{figure}[h]
+	\centering
+	\begin{forest}
+		for tree={
+			%font=\ttfamily,
+			grow'=0,
+			child anchor=west,
+			parent anchor=south,
+			anchor=west,
+			calign=first,
+			edge path={
+				\noexpand\path [draw, \forestoption{edge}]
+				(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+			},
+			before typesetting nodes={
+				if n=1
+				{insert before={[,phantom]}}
+				{}
+			},
+			fit=band,
+			before computing xy={l=15pt},
+		}
+		[bronze
+			[ecb
+				[estr]
+				[fm]
+			]
+			[nyfed
+				[sofr]
+			]
+			[boe
+				[sonia]
+			]
+			[lbma
+				[gold]
+				[silver]
+			]
+			[electricity
+				[day\_ahead]
+			]
+			[yahoo
+				[{LASTDT=2024-02-01}]
+				[...]
+			]
+			[yahoo\_commodities
+				[{LASTDT=2024-02-01}]
+				[...]
+			]
+			[yahoo\_volatility]
+			[yahoo\_indices]
+			[internal
+				[marketpricedata\_internal.csv]
+			]
+		]
+	\end{forest}
+	\caption{Directory structure of the Bronze layer for market price data. Apart from the proprietary file, the leaves are the directories of parquet data sets and not single files.\label{fig:dirstruct_marketpricedata_bronze}}
+\end{figure}
+
+\subsection{Silver layer}
+
+The Silver layer combines the market price data sets provided in the Bronze layer in one large table that can be conveniently joined with other tables. The resulting table consists only of three columns: the reference date \verb|REFDT|, the ID of the indicator \verb|INSTRID| and the value field \verb|VALUE|. The table is stored as Delta Table in \verb|silver/marketpricedata|. Delta Table is used to allow for a more convenient updating flow via upserts. Where the configuration names a schema in a catalogue for the Silver layer instead of a directory, the table is registered in that schema and addressed by name. A row is identified by the indicator and the reference date together, so that a source which delivers a date again replaces the row it delivered before instead of adding a second one, which is what makes the pipeline safe to re-run on a day that has already been loaded.
+
+Exchange rates enter the table as well, but they are not downloaded again here. They are read from the Silver layer of the exchange rate data (chapter \ref{ch:exchangerate}), which is the one place they are maintained, so that module has to be up to date first.
+
+Because every source writes the same three columns, the identifier is the only thing that tells them apart, and the table carries no column saying which source a row came from. The identifier is therefore not a single code system but a convention per source: an ISIN where the source names one, as for the instruments taken from Yahoo Finance; the currency pair as \verb|BASE/QUOTE| for an exchange rate; and whatever the delivered file states for proprietary data. Everything else is named, because it is a rate or an index rather than an instrument and an ISIN would collide with the Yahoo source, and the prefix says which kind of figure it is:
+%
+\begin{itemize}
+	\item \verb|ON-| an overnight rate the market traded at, as in \verb|ON-ESTR|, \verb|ON-SOFR| and \verb|ON-SONA|;
+	\item \verb|KR-| a policy rate a central bank decided on, as in \verb|KR-DFR|, \verb|KR-MRO| and \verb|KR-MLF|. The two kinds are kept apart because they are not read the same way;
+	\item \verb|YLD-|, \verb|SPR-|, \verb|IBOR-| and \verb|EQ-| the yields, spreads, reference rates and equity indices of the monthly series, whose identifiers end in \verb|-M| to say that the figure is a monthly one;
+	\item \verb|CO-| a commodity, whether it comes from the London benchmarks or from the futures, as in \verb|CO-GOLD| and \verb|CO-BRENT|;
+	\item \verb|EL-| the day-ahead electricity price of one bidding zone, as in \verb|EL-DELU| and \verb|EL-AT|. The identifier names the zone and not the country, because a zone is what a price exists for: several countries are split into more than one of them.
+\end{itemize}
+%
+An identifier must not be claimed by two sources at once, which is worth keeping in mind when proprietary indicators are named. It is also worth knowing before one is renamed: the merge replaces a row but never removes one, so the rows written under an old identifier stay in the table until they are dealt with separately.
+
+The update procedure first updates the Silver layer data based on the publicly available data in the Bronze layer. Only after that, the internal data set is used. This ensures that public data can be overwritten by proprietary data. A prerequisite for this to work is that the indicator IDs are the same.
+
+Nothing in the table is filled in for days a source does not quote on. A rate quoted on business days is absent at the weekend, and a caller who needs a value for every calendar day has to carry the last quote forward themselves. This differs from the exchange rate data of chapter \ref{ch:exchangerate}, whose Silver table does hold one row per calendar day, and it is worth knowing before the two are joined.
+
+\subsection{Keeping the table up to date}
+
+The module is meant to be run every morning, and what a run has to collect is read from what the data lake already holds rather than from an argument. The same call is therefore correct on the first morning, when it collects the whole history, and on every morning after, when it collects a day.
+
+The sources are not incremental in the same way, and the difference is deliberate. The Yahoo sources and the electricity prices ask only for the days they are missing, because their histories are large enough that fetching them again every morning would be the cost of the job: a decade of quarter-hours for twenty bidding zones runs to several million delivery periods. The electricity source nevertheless asks again for the last week it already holds, since a delivery day can be republished and a run that began after the last date held would never see the correction; within that window the service is what the table says, and outside it a day already collected is never touched. The central bank rates and the London benchmarks, by contrast, are downloaded whole every run. Each publishes one small file holding the entire series, so there is nothing cheaper to ask for, and that file is also how a revision to an older value arrives -- SOFR carries a revision marker -- which a download that only asked for the days after the last one held would never see. Because the Silver stage merges rather than appends, collecting the file again replaces the rows it has seen before, and the whole download is therefore what keeps the table current rather than merely longer.
+
+The merge is incremental on the same terms. A stage that read its whole Bronze layer every morning would do the work of the entire history in order to fold in a day, so each stage reads only the deliveries that have not been merged yet. How far each source has been merged is recorded in a small file of its own beside the Silver table, and not in the table itself: a row there carries the reference date of a price and not the day it was fetched, so the table cannot be asked where the last run stopped. The mark is written after the merge has succeeded and never before, because a mark written first would claim a delivery that never arrived and the next run would skip it for good. A run that fails therefore folds the same deliveries in again, which costs a little and is the safe way round. The marks can be ignored altogether, which is how the table is rebuilt from a Bronze layer that is still intact.
+
+\subsection{Gold layer}
+
+There is no Gold layer that would be exclusively generated based on the market price data set discussed in this chapter.
+
+\section{Software architecture}
+
+
+% Software
+Module \emph{marketpricedata} of the \emph{fincommons} Python package contains the functions to perform the data processing steps described above. Documentation of its functionality and application is found in its README file in the code repository.
+
+Figure \ref{fig:marketpricedata-module} illustrates the structure of the module. The module \emph{common} contains functions that can be used by all other sub-modules: it declares the layout of the data lake, the schema of the proprietary source and the upsert through which every source writes the Silver table. The other functions are grouped within sub-modules based on the layer and source of the data, which should ensure maintainability and separation of concerns, and \emph{pipeline} runs the sources of a layer in one call. A publisher that is unreachable on a given morning should not stop the others from being brought up to date, so a source that fails there is set aside with its traceback and the run carries on; a run that reports success is accordingly not a promise that every source was updated.
+
+Two aspects of the layout do not follow from the layers alone. The download from Yahoo Finance is not part of the Bronze layer function: it is the only download that has to be told how far back to go and the only one that needs a package outside the dependencies of \emph{fincommons}, namely \emph{yfinance}, which is why it is called on its own, while the Silver stage that reads what it left behind needs neither and runs with the rest. The proprietary source, by contrast, has no Bronze stage at all, since nothing is downloaded for it, and \emph{silver\_internal} is the whole of it.
+
+The functions above take the module apart, one source at a time, so that a single publisher can be collected, inspected or collected again on its own. A scheduled run wants none of that, and \verb|update_marketpricedata| is the one call that creates the directory tree where it is missing, collects every source and folds the whole Bronze layer into the Silver table. The module can also be run directly, which is easier from a job scheduler than writing a script around it:
+
+\begin{quote}
+\verb|python -m fincommons.marketpricedata --config paths.yaml --log-level INFO|
+\end{quote}
+
+Where the history of a new data lake begins is an argument of that call, and it applies only to a source whose Bronze layer is still empty, so passing it to a lake that already holds data changes nothing. A further argument ignores the marks described above and merges every source from the beginning.
+
+% Directory tree
+\begin{figure}[h]
+	\centering
+	\begin{forest}
+		for tree={
+			%font=\ttfamily,
+			grow'=0,
+			child anchor=west,
+			parent anchor=south,
+			anchor=west,
+			calign=first,
+			edge path={
+				\noexpand\path [draw, \forestoption{edge}]
+				(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+			},
+			before typesetting nodes={
+				if n=1
+				{insert before={[,phantom]}}
+				{}
+			},
+			fit=band,
+			before computing xy={l=15pt},
+		}
+		[fincommons
+			[marketpricedata
+				[\_\_init\_\_.py]
+				[\_\_main\_\_.py]
+				[common.py]
+				[bronze\_boe.py]
+				[bronze\_ecb.py]
+				[bronze\_electricity.py]
+				[bronze\_lbma.py]
+				[bronze\_nyfed.py]
+				[bronze\_yahoo.py]
+				[silver\_boe.py]
+				[silver\_ecb.py]
+				[silver\_electricity.py]
+				[silver\_exchangerate.py]
+				[silver\_internal.py]
+				[silver\_lbma.py]
+				[silver\_nyfed.py]
+				[silver\_yahoo.py]
+				[pipeline.py]
+			]
+			[...]
+		]
+	\end{forest}
+	\caption{Structure of the \emph{marketpricedata} module.\label{fig:marketpricedata-module}}
+\end{figure}

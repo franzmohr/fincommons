@@ -1,0 +1,551 @@
+% !TeX spellcheck = en_GB
+% !TeX program = pdflatex
+% !TeX TXS-program:bibliography = txs:///biber
+\documentclass[a4paper, 11pt]{report}
+
+% Metadata
+\title{\emph{fincommons}: Shared infrastructure for financial data work\vskip 1cm \textit{Handbook}\vskip 1cm}
+\author{Franz X. Mohr (Ed.)\thanks{Contact: \href{mailto:franz.x.mohr@outlook.com}{franz.x.mohr@outlook.com}.}}%~\orcidlink{0009-0003-8890-7781}}
+\date{Version: \today}
+
+\usepackage[english]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{enumerate}
+
+\renewcommand{\familydefault}{\sfdefault}
+
+\usepackage{setspace}
+\onehalfspacing
+
+\usepackage{parskip}
+
+\usepackage{subcaption}
+\usepackage{graphicx}
+\graphicspath{{./figures/}}
+\usepackage{color, soul}
+
+\usepackage{titlesec}
+\usepackage{orcidlink}
+\usepackage{csquotes}
+
+% Additional symbols
+%\usepackage{amsmath}
+%\usepackage{amsfonts}
+
+% Code
+\usepackage{algorithm2e}
+
+% Directory trees and diagrams
+\usepackage{forest}
+\usetikzlibrary{arrows.meta, positioning}
+
+% Citation & refrences
+\usepackage{hyperref}
+\usepackage{xurl} % For line breaks of long URLs
+\hypersetup{
+	colorlinks=true,
+	allcolors=blue,
+	pdfauthor={Mohr},
+	pdftitle={fincommons}
+}
+\urlstyle{same}
+
+\usepackage[backend=biber, style=apa]{biblatex}
+\addbibresource{fincommons.bib} %Imports bibliography file
+
+
+
+\newcommand{\chapterauthors}[1]{%
+	\begin{center}
+		\textit{#1}
+	\end{center}
+}
+
+\newcommand{\authoraffiliations}[1]{%
+	\footnote{#1}
+	%\begin{center}
+	%	\small #1
+	%\end{center}
+	%\vspace{1em}
+}
+
+
+\begin{document}
+
+\maketitle
+
+\section*{Executive summary}
+
+\textbf{Financial data work rests on the same public data, whichever side of supervision it is done on.} Supervisory authorities, central banks, banks, insurers and investment firms all need exchange rates, market prices, reference data on financial instruments and a reliable picture of who a legal entity is. Each of them prepares that data for itself, at considerable cost, and arrives at results that differ in detail for no reason other than that they were prepared separately.
+
+\textbf{This handbook documents \emph{fincommons}, shared infrastructure for that work.} \emph{fincommons} is an open-source Python package, licensed under the European Union Public Licence, which builds data lakes from public financial data and provides the infrastructure on which further pipelines can be built: the layout of a data lake, the addressing of its tables through one configuration file, logging, the physical layout of tables, declared schemas and a catalogue of what each column holds.
+
+\textbf{A commons is infrastructure that a community builds and maintains together.} The name is deliberate. \emph{fincommons} is neutral between the supervising and the supervised side and between banking, insurance and investment, so that a firm's data team can adopt it as readily as an authority can, and so that the effort one institution puts into a pipeline benefits every other institution that runs it.
+
+\textbf{Trust in shared code is earned through professional practice.} An institution that installs a package written by someone else cannot audit it line by line, and should not have to. The package therefore adheres to established practices of data modelling and software development: declared schemas, transactional updates, structured logging, tests on synthetic data that any recipient can reproduce, and documentation that states what a caller may rely on.
+
+\textbf{\emph{fincommons} is open and complete on its own.} Pipelines on supervisory reporting data such as EMIR, SFTR, SECR and MiFIR can build on it and be distributed separately, for instance only among central banks and supervisory authorities; \emph{fincommons} knows nothing of them. Such pipelines are documented separately.
+
+\textbf{The first part of this handbook explains the architecture and the practices the package is built on. The second part is addressed to data engineers and domain experts} and documents the individual data sets: how their pipelines work, which decisions were taken and why, and what a user may rely on.
+
+\tableofcontents
+
+
+\part{General aspects\label{part:general}}
+
+\chapter{Introduction}
+
+\section{The challenge\label{sec:intro-challenge}}
+
+% Unprecedented data availability and associated opportunities
+\textbf{Unprecedented data availability and associated opportunities:} Since the global financial crisis of 2008 financial supervisors have gained access to an unprecedented amount of reporting data. For example, in the area of securities markets supervision, four cross-sectoral reporting regimes stand out in particular. First, under EMIR, counterparties of derivatives contracts must report detailed information on the features and conditions of those contracts as well as exchanged collateral on a daily basis. Second, under MiFIR supervisors have access to granular information on individual trades made on stock exchanges as well as reference data for financial instruments (FIRDS). Third, under SFTR counterparties must report granular information on securities financing transactions, including the parties to the contract, its conditions, and exchanged collateral. Finally, under SECR issuers of securitization products must report detailed information on their emissions and the composition of individual tranches.
+
+% Purpose of the data, progress and problem
+\textbf{Purpose of the data and associated challenges:} The main motivation of legislators to introduce the comprehensive reporting regimes mentioned above was to enable supervisors to assess the proper functioning of financial markets in the European Union and to timely detect financial imbalances that could cause severe frictions in the financial system with negative repercussions on the real economy. In this regard, supervisors are expected to use their data to the greatest extent possible in order to fulfil their legal mandates. Over the past years, much has been achieved in this area. The analysis of EMIR data has advanced significantly since the introduction of the reporting framework and research based on SFTR and SECR data is gaining traction rapidly, as experts can build on their experiences with EMIR data. However, analytical capabilities in the analysis of supervisory data sets are distributed heterogeneously across supervisory institutions. Common explanations for this difference are resource constraints, which is consistent with findings from various missions of the International Monetary Fund's Financial Sector Assessment Program \parencite{Dordevic.2021}. But although the lack of resources is certainly a major reason for slower progress in the analysis of transaction data at some supervisory agencies, the public management literature identifies a series of other barriers to innovation in the public sector \parencite{Cinar.2019}. The barrier that motivates the initiative documented here are operational obstacles to \emph{knowledge exchange among authorities on the level of actual technical implementation} -- and not just on the level of analytical results.
+
+\section{The options\label{sec:intro-motivation}}
+
+% Multiple forms of knowledge sharing
+\textbf{Multiple forms of knowledge sharing:} Knowledge sharing among supervisory agencies can occur in multiple ways. At the moment, a popular approach to communicate analytical insights among European institutions -- just like in academia -- is to have discussions at international meetings, usually hosted by a European agency, where an institution presents the findings of a recent analysis and other members can ask questions or provide comments. Accompanying \textbf{presentation slides} are made available to the audience via email or a dedicated platform, which allows participants to share and discuss the presented information internally in their respective national agencies. This mode of knowledge sharing is often inspiring and ensures that no confidential information is shared. However, it is practically restricted to a general overview of methodologies and results, with only few immediately applicable gains for other institutions. Furthermore, such meetings usually only take place on a quarterly basis, which substantially reduces the frequency of in-depth interactions among experts. Hence, from a knowledge management perspective, there appears to be a potential for further improvement of the ways, in which public agencies make their analytical work more directly re-usable for others.
+
+% Documentation
+\textbf{Basic documentation:} A first possibility for further improvement of the knowledge sharing process among public agencies in Europe -- and potentially the private sector -- would be to \emph{share the technical documentation of an analysis}. Apart from the used method, such a document would also provide a detailed list of the used data and its sources as well as a description of how it was accessed. This should substantially reduce the time of research for other authorities before they implement the same analysis for their own jurisdictions. An example for such an approach are the lists of indicators used in various reports of the ESRB\footnote{See, for example, the annexes in \textcite{ESRB.2018} or \textcite{SanchezSerrano.2025}.} or manuals for the calculation of risk indicators based on EMIR or MiFIR data that have been developed by technical task forces for the European Securities and Markets Authority (ESMA). But while sharing documentations reduces the time used for research, it does not spare an institution from implementing the analysis, which includes developing a suitable data architecture and writing computer code. For the majority of applications this seems to be the most time-consuming step of an analytical project.
+
+% Common data architecture
+\textbf{Common data architecture:} Looking more closely at the implementation process, previous experiences illustrate the \emph{substantial benefits of good and well-documented data models} that enable analysts to easily access granular data and perform complex analytical tasks without unnecessary complexity or computational overhead. For example, under the EMIR, MiFIR, SECR and SFTR reporting regimes, most of the regularly analysed information can be stored in one table. However, XML files with raw data received by supervisory authorities have rather deep tree structures. While the tree structure ensures a high degree of flexibility in the report transmission channel, it is rather complex and can lead to high computational overhead and prohibitively long query times via JOIN operations, if this tree structure is also adopted in the supervisor's internal data infrastructure. By contrast, good data models should be rather intuitive, performant, sufficiently stable, consistent and maintainable. Furthermore, \textbf{data models are perhaps the most important part of developing software, because they have a profound effect on how the software is written and how experts think about a problem} \parencite[p.~27]{Kleppmann.2017}. Thus, designing a sustainable data architecture and data models is not a trivial task, but should be deliberately planned and implemented. This requires expertise and experience and is one main reason for the existence of statistics departments. Thus, having IT experts and analysts from public agencies exchange views and document best practices regarding the organisation of large data sets could lead to substantial productivity gains and cost reductions in big data analytics, particularly with respect to the implementation of data pipelines. This would also contribute to supervisory convergence, since shared data models would also create a tendency towards more homogeneous analytical frameworks among European agencies as suggested in, for example, \textcite{Gentilini.2026}.
+
+% Common code
+\textbf{Common software architecture and computer code:} Once experts have developed and documented a common data model as well as a set of relevant indicators on which other developers and analysts can rely, one remaining way to further speed up the implementation process is to shorten the time used for the development of computer code. As in the case of data modelling, the development of performant, stable and maintainable code requires expertise and experience \parencite{Martin.2018, Ousterhout.2021}. This takes time to acquire and is expensive in terms of competitive staff compensation -- even with strong support by state-of-the-art AI-based coding assistants. Thus, improving knowledge sharing in this area can have substantial benefits for innovation in supervisory data processing. Due to those potential benefits, which are well documented for other areas of public sector innovation \parencite{Hartley.2013, Criado.2025}, code-sharing among public agencies has gained increased attention \parencite{Duijm.2024}. For example, both the ECB and ESMA host code developed by themselves or national experts for different supervisory use cases on their IT platforms. Moreover, there exist initiatives like the Cambridge SupTech Lab, which provided information on recent supervisory tech solutions and links to vendors.\footnote{See \url{https://lab.ccaf.io/}.}
+
+% Current challenges
+Despite recent code-sharing initiatives in the European community and their expected contribution to more efficient knowledge sharing among agencies, we do not observe a widespread adoption of the shared solutions by other institutions. One main reason for this might be the limited compatibility of the shared code with national IT infrastructures due to the use of different programming languages or database technologies. For example, if a national authority's entire database systems run on a proprietary platform, using data lake architecture is of no use. Other reasons might be data confidentiality concerns or questions regarding intellectual property rights. Finally, high entry costs as reflected in finding code on other institutions' platforms, familiarizing oneself with it, and natural caution to blindly trust the work of others, might also contribute to a preference for exclusive in-house code development.
+
+% Searching for a solution
+It might appear as if the above mentioned reasons for the limited adoption of shared software suggest that code-sharing among administrative agencies is practically infeasible. However, looking at the arguments more closely reveals they are not as valid as it might seem.
+%
+\begin{itemize}
+	\item First, while the use of different programming languages or database technologies certainly does not allow the direct application of another organisation's code, both the underlying data model and software architecture can provide useful guidance for one's own implementation. After all, database technologies are table-based and all object-oriented programming languages share strong similarities -- providing substantial potential for efficiency gains.
+	\item Second, concerns regarding confidentiality or intellectual property rights that might be associated with computer code, appear only to be relevant to the extent that supervisors allow it to be. Confidentiality restrictions protect citizens' privacy and ensure that supervisors cannot gain insider knowledge. As long as computer code does not contain such information, supervisors should be free to share code. With respect to intellectual property rights, an organisation can indeed insist on not sharing its code. However, public institutions -- like any other institution -- can decide to make at least part of their internally developed code artefacts available to a broader audience. Given that public institutions usually do not compete with each other and do not generate income from their code, there seems to be a strong case for sharing.
+	\item Finally, developing the trust in other developers' code and the will to use it appears to be the most serious obstacle to the widespread adoption of code-sharing practices among public organisations in the EU. Any working code-sharing arrangement must address the concerns of IT experts, if they are supposed to cooperate with each other in such a way. It seems that the most promising approach to do this, is to emphasize working based on principles of professional code development. This entails that code adheres to best practices in the software industry, including clean code and software architecture as well as version control and good documentation \parencite{Martin.2018, Ousterhout.2021}.
+\end{itemize}
+
+\section{The solution\label{sec:intro-solution}}
+
+\textbf{Software libraries as the main mode of code-sharing:} A natural departure point to ensure a minimum level of professional code development is to work within an already established and widely adopted development framework. This avoids the need to reinvent the wheel and makes internal development practices more accessible to future employees such as recent graduates or experienced IT and data science experts from other organisations. In the area of data science such a framework is provided by the infrastructures of the R and Python programming languages, notably through their package management systems and standardised documentation, which have contributed to their widespread adoption by professionals. If supervisors started to work within those frameworks as well, they could leverage on existing best practices, which can greatly contribute to the stability and maintainability of an organisation's code base and, in turn, increase the overall level of trust that developers have for this kind of developments. Thus, instead of sharing loose scripts, which are hardly compatible with existing code bases, code-sharing via professionally developed and documented libraries appears to be the best way to promote this practise within the supervisory community in the future. \textbf{Ideally, the goal should be to have one or multiple software packages, which can be installed by any supervisory authority -- or supervised entity -- and instantly used to replicate analyses of other organisations without the need for analysts to familiarise themselves too deeply with the code base.}
+
+\textbf{Importantly, those libraries do not contain confidential information. Rather, they represent an infrastructure through which confidential data can flow.} Put differently, it is about sharing the recipes instead of the data. Ultimately, this should lead to a faster dissemination of analytical skills across supervisory institutions in the EU and, by that, contribute to a more efficient and wider monitoring of risks on financial markets. Or as Steven Maijoor put it clearly at the Dutch National Bank's Data Science conference in 2022: "instead of sharing shiny PowerPoint presentations, we could share the functionality that allows us to replicate the analyses of others with our own data"'.
+
+% Proposition
+\textbf{Given the considerations above, a collaboration framework for supervisory data work was proposed}, inspired by the open-source software development movement, which stresses free access to code as well as the possibility to contribute.
+
+\textbf{Involvement of the private sector and academia:} In recent years, the idea that supervisors collaborate more with the private sector has gained some traction. With respect to the analysis of EMIR data this pertains also to the idea that supervised entities use EMIR data also ``for their own internal purposes such a reporting to the executives, risk management activities or reporting to their clients." \parencite[p.~5]{CSSF.2024}. If this were to happen, making at least some parts of the framework's codebase available to supervised firms or the public could ease the adoption of this strategy. This approach could also be applied in the area of data quality assurance, where supervised entities could apply plausibility checks to their own data. However, with respect to more advanced functionalities such as stress testing, the incentive structures of such a strategy should be investigated further to avoid the risk that supervised entities game the system.
+
+\section{A commons for public data\label{sec:intro-fincommons}}
+
+The involvement of the private sector raises a question that the framework has to answer in its structure rather than in its intentions. A large part of the data that financial analysis relies on is public: central banks publish exchange rates and interest rates, exchanges and data vendors publish prices, ESMA publishes reference data on every financial instrument admitted to trading on a European venue, and the Global Legal Entity Identifier Foundation publishes who every legal entity is and how it is related to others. Supervisors need these data sets to make sense of the reports they receive, and the firms that submit those reports need the same data sets to produce them and to run their own risk management. Each institution nevertheless downloads, cleans and models them on its own, and the results differ in detail -- in how a missing quotation is filled, how a revised series is applied, how an instrument is identified -- for no reason other than that they were prepared separately.
+
+The pipelines that work on supervisory reporting data are a different matter. They are written for data that only authorities receive, and the community of supervisors that develops them may prefer to keep them among itself. The framework therefore comes in two parts. \emph{fincommons}, which this handbook documents, holds everything that supervisors and financial firms -- banks, insurers and investment firms alike -- can share: the infrastructure of the data lake and the pipelines on public data. It is open source. The pipelines on supervisory reporting data are kept in separate packages that can be distributed to central banks and supervisory authorities only; they build on \emph{fincommons}, while \emph{fincommons} knows nothing of them and is complete on its own.
+
+Shared infrastructure of this kind matters beyond the institutions that use it, namely for the competitiveness of European financial markets. Preparing the same public data in parallel is a cost that every market participant bears, and it weighs most on those that can least spread it: smaller banks, insurers and investment firms, and new entrants, for which the fixed cost of building a professional data infrastructure is a barrier in itself. A common, freely available implementation lowers that cost, and with it a barrier to entry, and frees the expertise of data teams for the analysis that sets a firm apart rather than for the preparation that does not. Where supervisors and firms prepare the data a report is checked against in the same way, they also spend less effort reconciling differences that stem from nothing but the preparation, which reduces the cost of compliance without lowering its standard. In this respect, shared open infrastructure contributes, on a small scale, to the agenda of deeper and more integrated European capital markets set out in the report on the future of European competitiveness \parencite{Draghi.2024} and in the Commission's strategy for a Savings and Investments Union \parencite{EuropeanCommission.2025}, both of which aim to channel Europe's savings into productive investment within the Union.
+
+The same reasoning extends to operational resilience. In its recent warning on systemic cyber risks stemming from frontier artificial intelligence models, the ESRB observes that the costs of coping with such risks are fixed rather than scaled, so that institutions with fewer resources and less access to specialists fall behind and the weakest link of the chain may affect the stability of the system, and it holds that defensive efforts by single entities would be insufficient without a coordinated answer that includes open-source maintainers \parencite{ESRB.2026}. Infrastructure that institutions maintain together is one form such an answer can take. It also concentrates risk in a component that many institutions rely on, a point the same warning makes; section \ref{sec:intro-nis2} weighs the two effects.
+
+A commons is infrastructure that a community builds and maintains together, and the name is meant literally. It is neutral between the supervising and the supervised side and between the sectors of the financial system, so that a firm's data team can adopt the package as readily as an authority can, and so that the effort one institution puts into a pipeline benefits every other institution that runs it. Common data models are also the natural point of departure for the data contracts that make shared data dependable: explicit statements of the schema of a data set, the meaning and units of its fields, and the guarantees on completeness and timeliness its producer undertakes to meet. The documentation of each module already states what a caller may rely on, and the test suite pins those statements to checks that are executed rather than merely asserted.
+
+\section{Purpose and structure of this handbook\label{sec:intro-purpose}}
+
+This handbook is the reference for the \emph{fincommons} package. Part \ref{part:general} sets out the architecture the package is built on and the practices it follows, together with the reasons for them. Part \ref{part:basic-data-lake} documents the pipelines on public data, one chapter per data set, including the decisions that were taken in building them and the measurements that settled them.
+
+The handbook is a living document. Readers are encouraged to challenge it and to propose improvements, and a change to the code that alters what a chapter states is accompanied by a change to that chapter. \hl{Highlighted paragraphs indicate open questions on which the authors would be especially grateful for feedback.}
+
+
+\section{Code access and how to contribute\label{sec:intro-contribute}}
+
+The source code of \emph{fincommons} is kept in a version-controlled repository together with this handbook, its tests and the tools used to derive its schemas. The package is built with Hatchling and installed as a pure-Python wheel; it runs unchanged on a workstation and on Databricks.
+
+Contributions are welcome from supervisory authorities, central banks and financial firms alike. They are subject to a small number of rules, which follow from the purpose of the package:
+%
+\begin{itemize}
+	\item The code must not contain confidential, proprietary or counterparty-specific information, and may only contain information that is publicly available. Tests run on synthetic data or on fixtures written into the test.
+	\item Code follows professional software development practices, above all documentation: every module carries a docstring and a README, and a docstring states what a caller may rely on.
+	\item A change that alters what this handbook describes, and every new module, comes with a contribution to the handbook.
+	\item \emph{fincommons} never depends on code that is not itself open source. Packages that build on it, such as packages of pipelines on supervisory reporting data, may import from it, but not the other way round; the test suite checks this.
+\end{itemize}
+
+What the packages built on \emph{fincommons} use from it is listed in a test of its own, so that a change which would break a package built on \emph{fincommons} is noticed in \emph{fincommons} itself; such a change calls for a new major version.
+
+\emph{fincommons} is licensed under the European Union Public Licence 1.2, the licence the European Commission drew up for the software of public administrations. It is a copyleft licence: changes to the package that are distributed have to be distributed under the same terms, while code that merely uses the package through its interface is not, on the European Commission's reading of the licence, affected by it.
+
+
+\chapter{Foundational considerations}
+
+
+\section{Thinking in processes and data pipelines\label{sec:intro-processes}}
+
+% Financial data work as a collection of processes
+Financial data work is done for very different purposes. At a supervisory authority it serves the domains of its legal mandate; at a bank, an insurer or an investment firm it serves regulatory reporting, risk management and the management of the firm. The term \emph{financial supervision}, which this section uses as its example, refers itself to a broad range of distinct domains, which are typically included in the legal mandates of supervisory authorities.\footnote{Digital Transformation Solutions -- an enterprise founded by members of the Cambridge SupTech Lab -- provides a comprehensive taxonomy of supervisory applications on its website: \url{https://digitaltransformationsolutions.io/wp-content/uploads/2025/09/DTS-SupTech-Taxonomy.pdf}.} Those domains are heterogeneous with respect to both the outcomes they want to achieve and the regulatory approaches used to implement them. For example, supervision in the area of  anti-money laundering and counter-terrorist financing (AML/CFT) traditionally follows a compliance- and rule-based approach focussing on a firm's compliance of internal structures and processes with regulatory rules. By contrast, other supervisory domains such as microprudential or macroprudential supervision tend to follow more problem-based approaches by identifying specific risks and addressing them through a targeted allocation of supervisory resources for limited time periods, for example by putting a thematic focus on risks from real estate.\footnote{The distinction between rule- and problem-based supervision follows \textcite{Sparrow.2008, Sparrow.2020}.} Nevertheless, most supervisory activities follow processes which are structurally similar or even identical. For example, legal procedures are usually highly standardised and there are well established professional practices on how to interpret legal texts. Similarly, there is ample literature on how to set up and implement analytics projects.\footnote{See, for example, the \emph{Cross-industry standard process for data mining} (CRISP-DM) \parencite{Schroeer.2021}.} Hence, in general, supervisory work -- and, for the same reasons, the regulatory and risk functions of financial firms -- is of a procedural nature, which has beneficial implications for the development and implementation of SupTech and RegTech solutions.
+
+% Processes support thinking in pipelines
+Conway's law suggests that a firm's IT systems reflect its internal communication patterns \parencite{Conway.1968}. From a data management perspective, this suggests that the overall procedural nature of supervisory work is consistent with the traditional pipeline-based thinking of data engineers. Thus, when discussing technological innovation in financial data work, taking a process-based perspective on the tasks augmented by the use of pipeline terminology on the data level appears to be the most suitable and efficient approach for devising data-based solutions. This is also the approach taken in this handbook.
+
+% Reference to TOGAF and ArchiMate
+Note that it is considered best practice to incorporate discussions pertaining to data and software architecture within a broader framework of an enterprise architecture. Such frameworks can help manage complexity, ensure consistency and improve communication among stakeholders.\footnote{See, e.g., \url{https://medium.com/@adnanmasood/enterprise-architecture-in-modern-enterprises-an-integrated-review-of-togaf-zachman-feaf-and-408e95a44972} or \url{https://bizzdesign.com/blog/enterprise-architecture-framework-definition}.} There exist multiple standards and languages to model an organisation's processes and data flows. For now, this handbook does not rigorously follow any particular standard. However, it attempts to employ the TOGAF Standard\footnote{\url{https://www.opengroup.org/togaf}.} in combination with the ArchiMate modelling language.\footnote{\url{https://www.archimatetool.com/}.} These standards are widely applied by organisations worldwide, including supervisory agencies and financial firms.
+
+
+
+\section{Security and operational resilience as an architectural concern\label{sec:intro-nis2}}
+
+% NIS2 binds the institution, not the individual project
+The architecture described in this chapter is not developed in a regulatory vacuum. Directive (EU) 2022/2555, commonly referred to as NIS2, raises the level of cybersecurity required of essential and important entities across the Union and, unlike its predecessor, brings public administration entities explicitly within its scope.\footnote{Directive (EU) 2022/2555 of the European Parliament and of the Council of 14 December 2022 on measures for a high common level of cybersecurity across the Union, repealing Directive (EU) 2016/1148. The transposition deadline was 17 October 2024; the national implementing acts differ in detail and it is those, rather than the directive itself, that bind a given authority.} Supervisory agencies are therefore addressees of the regime in their own right, and not merely supervisors of entities subject to it. For the financial entities they supervise, the ICT risk management and incident reporting obligations are set out in Regulation (EU) 2022/2554 (DORA), which applies as \emph{lex specialis} in place of the corresponding provisions of NIS2;\footnote{Regulation (EU) 2022/2554 on digital operational resilience for the financial sector. Article 4 of NIS2 gives way to sector-specific acts of at least equivalent effect.} the two regimes differ in their addressees and their detail but rest on the same expectations, and nothing in what follows turns on which of them applies to a particular reader.
+
+% Why it is architectural and not an add-on
+What matters for this handbook is that the obligations are architectural in character and cannot be satisfied by a control bolted on afterwards. Article 21 of NIS2 requires, among other measures, the security of network and information systems in their acquisition, development and maintenance, including vulnerability handling; supply chain security, extending to the direct suppliers of software; business continuity, backup management and crisis management; access control policies and asset management; and policies for assessing whether these measures are effective. Article 23 then requires an incident to be reported within twenty-four hours as an early warning and within seventy-two hours in substance, which presupposes that an institution can establish quickly what happened, to which systems and to which data. Article 20 places the approval and oversight of these measures on the management body itself. Each of these obligations reaches into decisions -- how a pipeline is versioned, how a data set is reconstructed, what a system records about its own behaviour -- that are made when the architecture is designed and are expensive to revisit later.
+
+% How it lands in the choices described here
+Read in that light, several of the design choices described in this handbook carry a second justification beyond the engineering one for which they were adopted. A medallion architecture in which every layer is derived from the one before it, and the raw deliveries are retained, means that the Silver and Gold layers can be reconstructed in full from data the institution already holds; that is a recovery property as much as a modelling one, and section \ref{sec:intro-data} returns to it. Structured logging that records what each stage did, over which reference dates, and why it stopped, as described in section \ref{sec:intro-logging}, is what makes the reconstruction of an incident within the reporting deadlines feasible at all. Version control, automated testing and reproducible deployment, treated in sections \ref{sec:intro-software} and following, are the ordinary form that secure development and vulnerability handling take in practice. Addressing tables through a catalogue rather than through file paths places them under an access control model that can be stated, reviewed and audited, which a directory tree cannot. And the premise of shared code among institutions is itself a supply chain: code obtained from another institution is a dependency in the sense Article 21 intends, which is a further reason for the emphasis this handbook places on provenance, review and documentation.
+
+% Shared code and systemic cyber risk
+The supply-chain argument has recently gained weight. In its warning on systemic cyber risks stemming from frontier artificial intelligence models, the ESRB observes that such models discover vulnerabilities and craft working exploits in minutes or hours rather than in the days or weeks that human experts needed, so that the time buffers between the discovery of a vulnerability and its exploitation collapse \parencite{ESRB.2026}. Two of its findings bear directly on shared code, and they point in different directions. On the one hand, the warning names concentration -- dependencies on a limited number of providers, on open-source components and on other widely used software -- among the areas in which operational resilience weakens, and it expects incidents to propagate rapidly across institutions where shared technological ecosystems or widely used open-source components are affected. On the other hand, it holds that defensive efforts by single entities would be insufficient and that an effective response requires a coordinated answer involving software providers, open-source maintainers, financial institutions and authorities, and it notes that differences in how institutions are resourced -- arising from costs that are fixed rather than scaled and from limited access to specialists -- let the weakest link of the chain affect the stability of the system.
+
+It would be convenient to read the second finding as a verdict in favour of common code, but the warning does not compare a common code base with many individual ones, and the security literature does not settle the question either. Whether many institutions should rely on one implementation or each on its own is a long-standing trade-off. The argument against a software monoculture holds that a vulnerability in a widely used component exposes all of its users at once \parencite{Geer.2003}, and recent incidents showed how far a flaw in one small, widely shared open-source component can reach: the vulnerability in the logging library Log4j in 2021 and the backdoor planted in the compression library xz in 2024.\footnote{CVE-2021-44228 and CVE-2024-3094.} The argument for shared code holds that a vulnerability in one implementation is found, fixed and the fix distributed once, by more reviewers than any single institution could assign to its own code, whereas the same weakness in many separate implementations has to be found many times over and is fixed unevenly -- which is the asymmetry between better and less well resourced institutions that the ESRB describes. Diversity protects against simultaneous failure; a common code base shortens and evens out the response. Which effect dominates depends on the component in question.
+
+For \emph{fincommons} the balance is favourable, for reasons that lie in what the package is rather than in a general preference for shared code. It is not a service exposed to a network but a library that each institution runs in batch inside its own environment, on public data, so that a flaw in it cannot be reached from outside in the way a flaw in a widely deployed server can. Its code is small enough to be reviewed in full, its documented behaviour is pinned by tests that anyone can run, and it depends on a short list of widely used packages whose versions an institution controls. It remains a dependency in the sense of the supply chain all the same, and the practices that make it trustworthy -- review, provenance, software composition analysis of its own dependencies, reproducible builds and a channel for the coordinated disclosure of vulnerabilities -- are what an institution should expect of it before relying on it. How a vulnerability in \emph{fincommons} is reported and disclosed -- privately to the maintainers first, published as an advisory once a fix is released, and at the latest after the customary 90 days -- is set out in the security policy kept with its code, \verb|SECURITY.md|.
+
+% What the framework does and does not claim
+No claim of compliance is made here, and none could sensibly be made by a software framework: compliance attaches to an institution, its governance and its national implementing law, not to a package. The claim is narrower and more useful, namely that an architecture built along these lines leaves an institution in a position to demonstrate the measures the regime expects, whereas one that treats security and recoverability as concerns to be addressed after the pipelines work will find that the evidence it needs was never recorded.
+
+
+\section{Data architecture\label{sec:intro-data}}
+
+\subsection{Important requirements}
+
+% Why data architecture is important
+A major challenge in code-sharing among multiple organisations -- supervisory authorities and financial firms alike -- is to ensure the seamless integration of the community code into existing national data infrastructures. As indicated above, a homogeneous data architecture is a key condition that ensures that code-sharing occurs in a way that necessitates no further adaption of external code, ensuring out-of-the-box usability. Therefore, the fundamental building block of \emph{fincommons} is a deliberate data architecture.
+
+% General requirements
+But before delving into the details of the chosen data architecture, it is important to consider some key requirements that a data system in the field of financial data work should meet. In general, data systems need to be reliable, scalable and maintainable. These requirements are cross-cutting concerns that pertain to hardware, software and data models alike. But since are already covered by a vast body of literature, they are not described here in more detail.\footnote{An overview can be found, for example, in \textcite[Chapter~1]{Kleppmann.2017}.}
+
+% Combine internal and external information
+A first more specific key requirement for a data architecture in a regulatory setting pertains to the integration of public and proprietary data. In the spirit of cost efficiency and vendor neutrality, \emph{fincommons} attempts to use public data sources as much as possible. However, besides having access to public data, supervisors and firms also hold confidential or proprietary data such as data reported under European or national reporting regimes, a firm's own books, or data from commercial data providers. This data is essential for their work and, thus, the usefulness of \emph{fincommons} also hinges on its ability to integrate public and proprietary data sources. To this end, the general approach of the \emph{fincommons} data architecture is to implement data pipelines in a way that prioritises the processing of data from public sources as well as data collected under European reporting regimes. Information from other sources such as national reporting regimes or commercial data providers can be added at later stages of the data processing pipeline.
+
+%A natural candidate for a common departure point are raw data sets that are at structurally equal across jurisdictions. In the case of ESS data, xml-files received from trade repositories fulfill this requirement. Similarly, exchange rate data from the ECB and LEI-specific counterparty information from LEI are also common and publicly available data sources.
+
+
+% Handle confidentiality
+Primarily motivated by concerns pertaining to insider trading, it is a well established practice in supervision, as in financial firms, that sensitive information can be accessed only on a need-to-know basis. Thus, a data architecture in this field must be capable of automatically and flexibly handling access rights to individual data sets. Moreover, reporting regimes like MiFIR require the submission of personal information that is protected under the General Data Protection Regulation (GDPR). This kind of information must be processed so that it cannot be accessed by unauthorised personnel. However, at the same time analysts must still be able to perform meaningful analyses based on this data. To this end, the relevant reporting fields are encrypted at the earliest possible stage of the data pipeline and the encryption key is stored separately.
+
+% Many domains, sources and definitions
+Owing to the heterogeneity of the domains it serves, such a data architecture must also be able to process large amounts of data in different formats and from multiple sources. At the same time, the data system must be flexible enough to allow for the integration of different data sets for analytics purposes at a later stage of the data processing pipeline.
+
+%The structure of data files received by supervisory authorities differs across the sources of the data. An institution can access reporting data either via ESMA's TRACE API or directly from each trade repository individually. Furthermore, institutions can choose if they want to receive the raw data as xml- or csv-files. Depending on the trade repository those files might have different structures as well.
+
+% Automation
+Finally, the data architecture must allow the use of job scheduling to automate data import and processing jobs.
+
+\subsection{Medallion architecture}
+
+\subsubsection{General aspects}
+
+% Reason for using a data lake architecture
+Given the requirements described above, a \emph{data lake} architecture appears to be the most suitable approach to organise data in this context. Over the past years, data lakes have evolved as a cost-efficient solution by leveraging on recent advances in data storage technologies, which allow data engineers to focus less on data models -- as they would have in case of a data warehouse architecture -- and more on providing useful data products \parencite{Gorelik.2019}. For this reason, \emph{fincommons} is based on a data lake architecture, which employs data warehouses for special purposes, rendering it a so-called \emph{data lakehouse}.
+
+% Medallion architecture
+A popular approach to organize data in a data lake setting is the so-called \emph{Medallion architecture}. The Medallion architecture is a data design pattern used to organize data, most often in a lakehouse, using three layers -- bronze, silver and gold -- for the data platform, with the goal of incrementally and progressively improving the structure and quality of data as it flows through each layer of the data architecture. The Medallion architecture is not a rigid system. Rather, it is intended as a useful conceptual framework to think about the stages of data from inception to decision making \parencite{Strengholt.2025}. Although there are other data design patterns such as the one presented in \textcite{Gorelik.2019}, the Medallion architecture is intuitive, highly popular among practitioners and present in the media, and clearly linked to different user groups, such as analysts, data engineers, data scientists, data stewards and developers. Moreover, it is compatible with different organisational settings, where data processing might be entirely centralized in one department on the one hand, or where data engineering is allowed to occur in a more decentralized manner in the spirit of a data mesh or team APIs \parencite{Evans.2003,Skelton.2025}. Therefore, \emph{fincommons} adopts the Medallion architecture as its main data design pattern as well. It also follows the popular practice of adding a fourth layer -- the landing zone -- for practical reasons \parencite{Strengholt.2025}. The Medallion architecture employed within \emph{fincommons} follows the depiction in \textcite{Strengholt.2025}. While the main aspects of the design pattern are described in the following, readers are referred to the book for more detailed information. Figure \ref{fig:medallion-architecture} provides a visual overview.
+
+\begin{figure}[h]
+	\centering
+	\begin{tikzpicture}[
+		layer/.style={draw, rounded corners, align=center, minimum width=2.8cm, minimum height=2.2cm, font=\small},
+		flow/.style={-{Stealth}, thick}]
+		\node[layer, dashed] (land) {Landing zone\\[2pt]\footnotesize raw deliveries};
+		\node[layer, right=0.7cm of land] (bronze) {Bronze\\[2pt]\footnotesize original structure,\\\footnotesize kept as archive};
+		\node[layer, right=0.7cm of bronze] (silver) {Silver\\[2pt]\footnotesize cleaned, enriched,\\\footnotesize granular};
+		\node[layer, right=0.7cm of silver] (gold) {Gold\\[2pt]\footnotesize aggregated for\\\footnotesize decisions};
+		\draw[flow] (land) -- (bronze);
+		\draw[flow] (bronze) -- (silver);
+		\draw[flow] (silver) -- (gold);
+	\end{tikzpicture}
+	\caption{The Medallion architecture with its three layers -- Bronze, Silver and Gold -- and the landing zone in front of them, after \textcite{Strengholt.2025}.}
+	\label{fig:medallion-architecture}
+\end{figure}
+
+\subsubsection{Landing zone}
+
+% Landing zone
+A landing zone\footnote{Alternative names are ``tin layer," ``pre-Bronze," ``pre-refinement," ``staging area," or  ``landing area".} is used as a preliminary area, where raw data is ingested before it lands in the Medallion architecture. This is useful when dealing with external services, where it is necessary to have a secure area to temporarily store data before processing it further. In the area of financial supervision this includes, among others, data submitted by supervised entities or data received via ESMA's TRACE API. While the Bronze layer mainly serves as the area for data collection, using a landing zone can be useful in larger or more complex environments. Thus, where and how to use it depends on an organization's requirements \parencite{Strengholt.2025}. For example, where data comes from multiple sources, in batches and in a less optimal file format -- like in the case of EMIR and similar reporting data sets -- a landing zone is a good approach to organize data ingestions. By contrast, exchange rate data from European Central Banks is rather small and can be directly imported into the Bronze layer.
+
+
+\subsubsection{Bronze layer}
+
+% Bronze layer
+The Bronze layer acts as the zone for raw data collected from various sources. Data in this layer is stored in its original structure without any transformation, serving as a historical record and a single source of truth. It ensures data is reliably captured and stored, making it available for further processing, but also as a queryable archive for raw data \parencite{Strengholt.2025}. For larger data sets such as EMIR and SFTR this implies that data is not stored as XML files in the Bronze layer, but rather converted into a performant file format like Parquet or Delta Lake without changes to the original schema, although minor changes with respect to the header files might be warranted in combination with a metadata store.
+
+The transition from the landing zone to the Bronze layer usually includes steps like decompressing zipped files, comparing checksums, generating metadata, and file conversion into a more performant file format. Furthermore, this step can include the classification or encryption to protect sensitive information, which is the case for personal information reported under MiFIR.
+
+With respect to the organisation of files within the Bronze layer, \emph{fincommons} follows an established practice to organize files by the source of the data and its content \parencite{Gorelik.2019}. More detailed information on how this is implemented for an individual data set can be found in the following chapters.
+
+\subsubsection{Silver layer}
+
+% Silver layer
+The Silver layer ``refines and standardizes raw data for complex analytics through quality checks, standardization, deduplication, and other transformations. It acts as a transitional stage for processed, granular data with improved quality and consistency." \parencite[p.~5]{Strengholt.2025} Designing the Silver layer ``is often a hot topic, as there are many possibilities. It is significantly influenced by the number of data sources collected, the extend to which these sources share the same key elements or objects that can be matched, related, and combined across different source systems, and the need to harmonize the overlapping key elements for an integrated perspective." \parencite[p.~66]{Strengholt.2025}
+
+Within \emph{fincommons} the design of the Silver layer is mainly determined by the requirements of the main consumers of the data in this layer. This group comprises experts, who are sufficiently qualified to independently work with the data. This entails mainly sufficient domain knowledge, but might also include the necessary technical expertise to efficiently work with large datasets, where this is advisable. And since the focus of this group is assumed to be on answering business and supervisory questions -- regularly under considerable time pressure -- rather than implementing data pipelines, data in the Silver layer should be prepared accordingly. However, it is important to highlight that this does not include major transformations or aggregations, but rather denormalization, enrichment and enforcement of naming and format conventions. In short, the overarching goal of the Silver layer within \emph{fincommons} is to provide technically skilled domain experts with highly granular data in an intuitive structure, which serves as the departure point for data science and analytics projects.
+
+Similar to the Bronze layer, data in the Silver layer is organised within a traditional data lake architecture. How a table of either layer is laid out on disk -- whether it is cut into partitions, and how large its files are -- is a separate question from the logical design of the layer, and one with a considerable effect on the cost of running a pipeline. It is discussed in section \ref{sec:intro-data-layout}.
+
+\subsubsection{Gold layer}
+
+% Gold layer
+Finally, the ``Gold layer optimizes refined data for specific business insights and decisions. It aggregates, summarizes, and enriches data for high-level reporting and analytics, emphasizing performance and scalability to provide fast access to key metrics and insights."\parencite[p.~5]{Strengholt.2025} Whereas data in the Bronze or Silver layer might be used on a relatively irregular basis, data in the Gold layer is supposed to be used regularly via highly standardised channels by domain experts without advanced data processing knowledge. From a data processing perspective, this entails a strong focus on performance, efficiency and accessibility, which is a core strength of traditional data warehousing. Therefore, larger data sets in the Gold layer are usually normalised and follow a star schema, which should ensure compatibility with popular data visualisation tools.
+
+Within \emph{fincommons}, tables in the Gold layer are created based on business requirements, which in the field of financial data work can be grouped into two general domains: data quality assurance and risk analysis.\footnote{For a more detailed taxonomy of supervisory domains see, for example, \url{https://digitaltransformationsolutions.io/wp-content/uploads/2025/09/DTS-SupTech-Taxonomy.pdf}.} For the purpose of data quality assurance, Gold layers generally include various tables containing information on the quality of reports. The purpose of those tables is to assist supervisors in identifying entities where supervisory action might be warranted to improve overall data quality -- or to assist a firm in finding the problems in its own reports before it submits them. This is achieved by running various data quality checks on the data in the Silver layer. The results of those checks are stored in a table \emph{issues}. This table can be combined with information from the Silver layer and the entity master data described in chapter \ref{ch:entitymasterdata} to produce tables that can be used for data quality monitoring. This can entail specific tables for entity-level and overall data quality developments. Moreover, tables are structured in a way that allows for use in dashboards without computationally overwhelming the user interface. Thus, they contain aggregated information.\footnote{For example, table \emph{general} may only include the top N entities with the most data quality issues and all other entities are summarised in the category ``Other". The same can be done with the identified issues. This ensures that the cardinality of a column remains limited and, hence, improves performance.} Finally, the data quality section of a Gold layer can contain data that could be sent back to reporting entities in order to help them to understand the identified problem, identify its source and correct it.
+
+With respect to risk analysis, tables are tailored based on business requirements. In the field of financial data work, this usually includes views for individual entities and general market developments. Analogously to data quality assurance, the overarching goal of those views is to assist their users in detecting potential issues that might warrant further attention. On the one hand, this can include backward-looking monitoring of compliance-relevant information. On the other hand, this might include the results of forward-looking stress tests. However, since the creation of Gold layer tables strongly depends on individual use cases, more detailed treatments of the topic are postponed to the respective data-specific chapter below.\footnote{\textcite[Chapter 7]{Strengholt.2025} covers the design of the Gold layer. Inspiration for how to approach the design of a dashboard can be found in \textcite{Wexler.2017}, but it does not cover data-related issues.}
+
+\subsubsection{Work Layer}
+
+Data lake architectures sometimes also mention a ``work" or ``analytics" layer, which describes the place where data scientists or data engineers can temporarily store data to develop new solutions or perform one-off analysis. ``This zone can be organized by user, by project, by subject, or in a variety of other ways." \parencite{Gorelik.2019}
+
+Since this layer is used for development and data experimentation, it is not further considered in this handbook.
+
+\subsection{Potential interactions with existing data infrastructures}
+
+% Overview
+Figure \ref{fig:framework-overview} summarises the design pattern of the framework and its potential interaction with already existing data infrastructures. The right side of the figure represents a highly stylised data process that is already implemented within an organisation. It starts by importing data from various sources and processing it within a certain data infrastructure. The data is subsequently used for internal data products like dashboards and reports, which serve its analytics. Note that the grouping ``existing infrastructure" also indicates that every group element -- i.e., data pipelines, dashboards and (automated) reports -- is developed and hosted exclusively within an individual organisation. In general, \emph{fincommons}, which is shown in the bottom left of the diagram, follows the same logic of ingesting, processing and analysing data. Moreover, the grouping \emph{fincommons} also indicates that data models and code are developed jointly within the framework. There are only two relevant differences compared to the grouping ``existing infrastructure": First, from a software design and data model perspective, \emph{fincommons} is specifically designed with the goal of facilitating code-sharing. Second, there currently is no ``Dashboard" component within that grouping, since this would entail making many further strategic decisions regarding specific dashboarding technologies. While nothing prevents willing organisations to add this functionality to the \emph{fincommons} codebase in the future, for now the framework's focus is on data preparation pipelines and (semi-)automatised reports.
+
+The interaction of the \emph{fincommons} with existing data infrastructures can be handled very flexibly. In a scenario, where only the analytical functionality of the framework should be used, local data engineers would have to load relevant data into the Silver or Gold layer as specified in the documentation of an analytics use case. After that, functions of the accompanying Python or R package can be executed to perform further data processing into the Gold layer and generate standardized reports. Similarly, if an organisation wishes to gradually increase the usage of the framework for its data processing jobs, this can be done by loading data into the respective folders as specified in the documentation and executing the Python package's data processing functions.
+
+
+\begin{figure}[h]
+	\centering
+	\begin{tikzpicture}[
+		x=1cm, y=1cm, font=\small,
+		group/.style={draw, dashed, gray},
+		grouplabel/.style={anchor=north west, inner sep=4pt},
+		box/.style={draw, align=center, inner sep=2pt},
+		flow/.style={-{Stealth}, densely dotted},
+		serves/.style={-{Triangle[open, length=7pt, width=7pt]}, densely dotted},
+		link/.style={thick}]
+		% Groups
+		\draw[group] (0, 5.4) rectangle (8.6, 7.2);
+		\node[grouplabel] at (0, 7.2) {Data sources};
+		\draw[group] (9.4, 2.6) rectangle (15.2, 7.2);
+		\node[grouplabel] at (9.4, 7.2) {Existing infrastructure};
+		\draw[group] (0, 0) rectangle (8.6, 5.0);
+		\node[grouplabel] at (0, 5.0) {\emph{fincommons}};
+		% Data sources
+		\node[box, minimum width=2.2cm, minimum height=0.9cm] (public) at (1.4, 6.2) {Public data};
+		\node[box, minimum width=2.2cm, minimum height=0.9cm] (commercial) at (4.3, 6.2) {Commercial\\data};
+		\node[box, minimum width=2.2cm, minimum height=0.9cm] (regulatory) at (7.2, 6.2) {Regulatory\\data};
+		% Existing infrastructure
+		\node[box, minimum width=5.2cm, minimum height=2.0cm] (infra) at (12.3, 5.6) {Data infrastructure};
+		\node[box, minimum width=2.3cm, minimum height=0.9cm] (dashboards) at (11.0, 3.4) {Dashboards};
+		\node[box, minimum width=2.3cm, minimum height=0.9cm] (reports-ext) at (13.6, 3.4) {Reports};
+		% fincommons
+		\node[box, minimum width=1.6cm, minimum height=3.8cm] (landing) at (1.4, 2.3) {Landing\\zone};
+		\node[box, minimum width=1.6cm, minimum height=3.8cm] (bronze) at (3.5, 2.3) {Bronze\\layer};
+		\node[box, minimum width=1.6cm, minimum height=3.8cm] (silver) at (5.6, 2.3) {Silver\\layer};
+		\node[box, minimum width=1.6cm, minimum height=1.4cm] (gold) at (7.6, 3.5) {Gold\\layer};
+		\node[box, minimum width=1.6cm, minimum height=1.0cm] (reports-fc) at (7.6, 1.0) {Reports};
+		% Analytics
+		\node[box, rounded corners=6pt, fill=gray!15, minimum width=5.8cm, minimum height=1.0cm] (analytics) at (12.3, 1.0) {Analytics};
+		% Data flows
+		\draw[flow] ([xshift=0.72cm]public.south) -- ([xshift=0.72cm]landing.north);
+		\draw[flow] (8.6, 6.2) -- (infra.west |- 0, 6.2);
+		\draw[link] (landing) -- (bronze);
+		\draw[link] (bronze) -- (silver);
+		\draw[link] (silver.east |- gold.west) -- (gold.west);
+		\draw[link] (silver.north) |- (infra.west |- 0, 5.3);
+		\draw[link] (gold.north) |- (infra.west |- 0, 4.85);
+		\draw[flow] (gold.east) -- (dashboards.west |- gold.east);
+		\draw[flow] (gold.south) -- (reports-fc.north);
+		\draw[flow] (silver.east |- reports-fc.west) -- (reports-fc.west);
+		\draw[flow] (infra.south -| dashboards.north) -- (dashboards.north);
+		\draw[flow] (infra.south -| reports-ext.north) -- (reports-ext.north);
+		% What serves the analytics
+		\draw[serves] (dashboards.south) -- (dashboards.south |- analytics.north);
+		\draw[serves] (reports-ext.south) -- (reports-ext.south |- analytics.north);
+		\draw[serves] (reports-fc.east) -- (analytics.west);
+	\end{tikzpicture}
+	\caption{Design pattern of the framework and its potential interaction with existing analytics infrastructures. \emph{fincommons} implements the part labelled \emph{fincommons} for public data; packages of pipelines on supervisory reporting data implement it for those data.}
+	\label{fig:framework-overview}
+\end{figure}
+
+
+\section{Technological considerations}
+
+
+\subsection{Programming languages}
+
+% Languages
+In principle, library-based code-sharing can be done in any programming language. However, as data processing and cleaning constitute the main part of analytical data work, it is prudent to focus on those languages, which are predominantly used for those purposes. Currently, Python and R are powerful open-source programming languages, which enjoy great popularity among practitioners. The \emph{fincommons} codebase reflects this in two ways: First, given Python's enormous popularity in the fields of data engineering, machine learning and artificial intelligence as well as its increasing adoption by European and national supervisory authorities and by financial firms, functions for the transition of data between different layers are implemented in Python. Second, given R's strengths for statistical modelling and data visualisation, R-scripts and R-markdown reports can be used for the fast development and sharing of ad-hoc analyses.
+
+\subsection{Spark and open table formats\label{sec:intro-data-formats}}
+
+Apache Spark serves as the backbone of data pipelines which handle large data sets.\footnote{See \url{https://spark.apache.org/}.} It is versatile, highly popular in the international data community, and works both on laptops as well as clusters. This makes it attractive for use within \emph{fincommons}, where out-of-the-box usability implies that its users should be able to run code quickly, irrespective of their current hardware stack.
+
+Spark alone, however, does not settle how the data of the Medallion architecture is stored. Parquet is an efficient columnar file format, but a directory of Parquet files is not a table. It has no notion of a transaction, so a reader that arrives while a data set is being rewritten sees whichever files happen to exist at that moment, and it has no notion of a row that is updated, so a correction can only be expressed by rewriting the partition it falls into. Both limitations are binding in regulatory data work. The tables that a nightly pipeline rebuilds are the same tables a monitoring dashboard reads, and reporting data is revised as a matter of course: resubmissions, cancellations and late deliveries are the normal case rather than the exception.
+
+This gap is closed by open table formats, which maintain a transaction log beside the Parquet files and thereby turn a directory into a table with atomic commits, snapshot isolation and row-level updates. The two established open-source candidates are Delta Lake, hosted by the Linux Foundation, and Apache Iceberg.\footnote{See \url{https://delta.io/} and \url{https://iceberg.apache.org/}.} Both store their data as Parquet, both are supported by Spark, and both meet the requirements stated above, so the choice between them does not follow from those requirements alone.
+
+The current implementation of \emph{fincommons} uses Delta Lake, for three reasons that concern the situation of the institutions using it rather than the merits of the two formats.
+
+First, a table has to be addressable by path as well as through a catalogue. The framework is meant to run unchanged on an analyst's workstation and on a cluster, and a path is the one address that means the same thing in both places: a directory of the local file system in the first case, a location in a volume or in object storage in the second. Where a catalogue exists, a layer of Delta tables can instead be addressed by catalogue name, the address Unity Catalog governs; which of the two a layer uses is decided by the configuration file alone. Delta treats a path-addressed table as the ordinary case and a catalogued one as an option. Iceberg is designed around a catalogue that mediates between the name of a table and its current metadata, which is an advantage for an organisation running several query engines against one metastore, but an additional component to operate for an institution that wants to run a pipeline on a laptop first and decide about a data platform afterwards.
+
+Second, the reference deployment of the framework is a Databricks environment, where Delta is part of the runtime and needs no configuration at all, while off-cluster it is one additional package. Choosing the format that the target platform treats as native removes a class of configuration problems from the code that the recipients of the framework have to run.
+
+Third, the format has to be readable without Spark. An analyst who wants to inspect a table in an ad-hoc script should not have to start a Spark session in order to do so, and part of the analytical work of the framework is done in R rather than in Python. Implementations of the Delta protocol outside the JVM are available for that purpose: the \verb|deltalake| package reads such tables directly, as does Polars through it, on which the Python package already depends.
+
+None of this is an argument that an institution which has already standardised on Iceberg should change course, and the decision is a shallower one than it appears. The format is named in two shared modules, \emph{addressing} and \emph{storage}, which open and write the tables of the Silver layer for every module. Only the FIRDS module refers to it more widely, because its historical database is updated with MERGE statements instead of being rewritten. Porting the framework to another table format is therefore a bounded exercise. The two formats have moreover been converging, in that the metadata of a table written in one of them can increasingly be exposed in the dialect of the other, so that the storage decision constrains the choice of query engine considerably less than it did when the formats first appeared.
+
+
+\subsection{Physical layout of a table\label{sec:intro-data-layout}}
+
+Choosing an open table format settles how a table is addressed and updated, but not how its rows are distributed over the files that hold them. That question is easy to answer badly, because the intuition that suggests the wrong answer is a reasonable one, and because the cost of the wrong answer does not appear in a small test run. Since the pipelines of the package are meant to be run by institutions on data of very different sizes, the following considerations are worth stating once in general terms.
+
+The first concerns \emph{partitioning}, i.e. cutting a table into one directory per value of a chosen column. Partitioning is attractive because it appears to offer parallelism and pruning at no cost, and a categorical column such as a country, a trading venue or a counterparty type suggests itself. Neither benefit is automatic. Pruning only materialises where the queries and updates that actually run restrict the partition column to a few of its values; where a daily update touches most of them at once, as a delta file of a reporting regime typically does, every partition is read regardless and the partitioning has bought nothing. Parallelism, in turn, comes from the number of files and the size of the data, not from the number of directories. What partitioning does cost is a fixed overhead per partition and, more importantly, a multiplication of the number of files written: an append writes at least one file per combination of writing task and partition value, so a table with a few hundred partition values written by a few hundred tasks receives tens of thousands of files from a single update. A workable rule of thumb is not to partition a table below roughly a terabyte, and to check the average size of a partition before choosing a column: partitions well below a gigabyte are a sign that the column is too fine.
+
+The second concerns \emph{file size}, which is the quantity that actually governs the cost of reading a table. Every file must be opened, its footer parsed and its statistics evaluated, and this cost is paid per file rather than per row. A table of a given size therefore becomes progressively more expensive to read as the same data is spread over more files, and a pipeline that appends to a table daily accumulates files at a constant rate while the cost of each update grows with the number accumulated so far. A backfill over several years of history then degrades quadratically, which is the characteristic signature of the problem: the pipeline is not uniformly slow but becomes slower the longer it runs. The remedies are to let the table format size the files of a write, which Delta does when the \verb|optimizeWrite| property is set, and to run the format's compaction routine periodically.
+
+Most tables of the framework are not Delta tables but plain Parquet, partitioned by a reference date and appended to one date at a time, and for them neither remedy is available, since both live in the transaction log. The problem is nevertheless the same. The frame that reaches the write has typically been through joins and window functions, each of which spreads its rows over the tasks of a shuffle, so that a single reference date of a reporting regime's contract table can arrive as up to two hundred files of a fraction of a megabyte each, all of which every query over a period has to open. The framework therefore applies Spark's \verb|rebalance| hint to every partitioned Parquet write, through the function \verb|rebalanced| of the module \emph{layout}. The hint adds one shuffle by the partition columns, after which adaptive query execution merges the small partitions of that shuffle and splits the large ones to an advisory size, so that a small date is written as one file and a large one as a few of a sensible size. The two obvious alternatives are worse: \verb|coalesce| saves the shuffle but runs every step before it, window functions included, in as few tasks as it leaves, and a fixed \verb|repartition| is wrong for every date that is unusually large or small. A table that holds small files nonetheless, whatever left them behind, is rewritten by \verb|compact_partitions| of the same module. It rewrites each partition into a folder beside it, compares the number of rows, and only then swaps the two folders. Without a transaction log that swap consists of two renames rather than one commit, so the function is meant to run while nothing writes the table and nothing important reads it, and a run that dies between the renames is completed by the next one.
+
+The third concerns what replaces partitioning where data skipping is genuinely wanted. Modern table formats offer \emph{clustering}, which orders the rows within files by one or more columns and records the range each file covers, so that the statistics of a file can exclude it from a scan. This achieves what partitioning was supposed to achieve, without cutting the table into directories and therefore without the file multiplication, and it permits several columns where partitioning realistically permits one. The natural clustering key is the set of columns that the updates of the table match on. Where a table is maintained with MERGE statements, as the FIRDS historical database is, keeping the clustering key and the merge condition in step is worth enforcing in the code itself, since the two can otherwise drift apart silently as a pipeline is maintained.
+
+A fourth point concerns the quantity that the first two refer to as the number of writing tasks, since it is the one of the four that is set rather than inherited. A write produces at least one file per task that participates in it, and the number of tasks after a shuffle is fixed by the configuration setting \verb|spark.sql.shuffle.partitions|, whose default of 200 is chosen for a cluster. On a workstation this cuts every shuffle into far more tasks than there are cores to run them on, and the scheduling of a task costs the same whether it carries a million records or none. It is also the factor that the file multiplication of a partitioned table is proportional to: two hundred tasks writing into a few hundred partition directories is precisely how a single update comes to leave tens of thousands of files behind. Adaptive query execution, which is enabled by default in current versions of Spark, coalesces partitions after a shuffle and thereby removes part of the problem, but it does not reduce the number of tasks a shuffle is planned with, so the setting is still worth choosing deliberately. It should be derived from the cores the session actually has rather than fixed to a number, so that the same code behaves reasonably on a laptop and on a cluster; twice the available parallelism is a serviceable starting point. Unlike the memory of the driver, this setting can be changed after the session has started, which is what makes deriving it possible at all.
+
+A general observation applies to all four points. The cost of a poor physical layout is invisible in the small test runs by which a pipeline is usually developed, and becomes dominant only at the volumes at which it is eventually operated. Where a pipeline is unexpectedly slow, the number of files a table consists of, their average size and the number of tasks its writes are cut into are therefore among the first quantities to inspect, and they are cheap to obtain. The FIRDS chapter reports a case in which this diagnosis applied, together with the measurements that settled it.
+
+
+\subsection{Reading semi-structured data under a declared schema\label{sec:intro-data-schema}}
+
+Regulatory data arrives as XML far more often than as anything else, and a pipeline that reads it has a choice between letting the reader infer a schema from the file and declaring one in advance. Declaring one is the better practice and the framework does so throughout: an inferred schema varies with the contents of the particular file, so a field absent from one day's delivery silently changes the shape of the table built from it, and inference costs a full pass over the data before any of it is read. A declared schema fixes the shape once, and naming only the paths a pipeline actually uses makes it indifferent to the greater part of a specification it never touches.
+
+The property that makes a declared schema safe is also the one that makes it quiet, and it is worth stating plainly: a reader given a schema discards what the schema does not name, and reports an element it was not asked for in exactly the same way as an element the file did not contain, namely as an empty value. Nothing distinguishes the two downstream. Where the unnamed element is one the pipeline has no use for, that is precisely the desired behaviour. Where it is one the pipeline depends on, the pipeline is not reading the data it believes it is reading, and it will not be told.
+
+The situation in which this arises is not exotic. ISO 20022, which most European reporting formats are expressed in, makes heavy use of the \emph{choice}: a period may be stated as a start date, or as an end date, or as a range holding both, and a reporting party may exercise the choice differently for different kinds of record within one file. A pipeline that names one branch and not the others reads a well-formed file and obtains nothing from a third of it. The remedy is not to abandon the declared schema but to name every branch a choice admits and to reconcile them where the value is used, which costs one expression per field and removes the failure mode entirely. Section \ref{sec:firds-bronze} describes a case of this kind.
+
+What turns such an omission from a defect into an expensive one is the second property: an empty value does not stop anything. It flows into whatever is computed from it, and the arithmetic of dates in particular propagates it without complaint -- the day before an unknown day is unknown. A record carrying it is written, a table accepts it, and an invariant the pipeline depends upon is quietly broken. The eventual failure occurs at the first operation that cannot tolerate the broken invariant, which may be several runs later and in a component with no connection to the one at fault, and the error it raises describes the symptom. Diagnosing it costs far more than the original omission suggests.
+
+The conclusion generalises beyond XML and beyond any particular format. Where a value is not merely carried but relied upon -- because a key, a validity period or an ordering is derived from it -- its absence should be refused at the point where the record enters the pipeline, with a message naming the records concerned. A check of this kind is cheap, it runs where the cause still is, and it converts a class of silent corruption into a run that stops and says why. It is the same argument that applies to a data set received from a third party, and it is made in that context in section \ref{sec:intro-logging}: a pipeline whose failures are loud is worth more than one whose failures are rare.
+
+
+\subsection{Naming conventions\label{sec:intro-data-naming}}
+
+A name given to a file, a directory or a column rarely stays where it was given. The directory a table is written into becomes the name the table is registered under, the name of a column of the Silver layer is the name an analyst types into a query, and a file shipped with the package is addressed by a string in the code that loads it. Because a name travels in this way, what it may contain is not decided by the place it is first written down but by the most restrictive place it can eventually arrive at, and that place is the catalogue rather than the file system.
+
+File systems accept almost anything, and a hyphen in a file name is unobjectionable there. SQL identifiers are considerably stricter. In Databricks Unity Catalog, as in most SQL dialects, an identifier containing a hyphen has to be enclosed in backticks wherever it appears, because the hyphen would otherwise be read as an operator; in some positions such a name is not permitted at all. The convention the platform's own objects follow is \emph{snake\_case}, that is, words separated by underscores. A name written with underscores therefore passes unchanged from a file, through a directory, into a table, a view or a column, whereas a name written with hyphens has to be quoted or rewritten at the first boundary it crosses, and every consumer of it has to remember to do so.
+
+The \emph{fincommons} framework accordingly uses underscores rather than hyphens throughout, including in the files it ships in its own data directory, such as the reconstructed schemas that the Bronze layer readers are given. This is a convention rather than a technical necessity, and for a file that is only ever opened by name it makes no difference whatsoever. Its value lies in removing the question: a contributor who never has to decide whether a particular name will cross into a catalogue cannot decide it wrongly.
+
+The cost of the opposite choice is modest but it is paid late. A hyphenated name is harmless until the day it is used as an identifier, at which point it is corrected not in one place but in every place that refers to it -- the code that loads the file, the tests that assert on it, and the documentation that reproduces the command it was generated with. Renaming is mechanical and safe as long as the references are literal strings, which is a further reason to address a shipped file by a plain constant rather than to assemble its name at run time from parts.
+
+
+\subsection{Quarto for replicable analyses}
+
+While dashboards are suitable choices for visualising highly standardised information, adapting them to new requirements can take time and might involve changes to the data pipeline. By contrast, analytics notebooks can be adapted quickly and allow for more complex and differentiated visualisations and analyses. Currently, a popular notebook format are Jupyter\footnote{See \url{https://jupyter.org/}.} or Quarto\footnote{See \url{https://quarto.org/}.} notebooks. Jupyter notebooks are very popular in the Python community. However, there seems to be no way to hide the code of an analysis, which is desirable in case results should be communicated to the management quickly. By contract, Quarto documents allow to hide code. They also can be used to create different output formats such as static PDF or interactive HTML reports and they can handle different programming languages. Hence, within the \emph{fincommons} code base, Quarto notebooks are currently the preferred solution for sharing analytical work.
+
+
+\section{Software architecture\label{sec:intro-software}}
+
+% Libraries & documentation
+
+
+
+% Professional code development
+Overall, the software architecture of \emph{fincommons} is modular and closely aligned with the underlying data architecture and associated analytical use cases. In this regard, the accompanying code should follow established best practices in code development such as ``separation of concerns" and ``don't-repeat-yourself", regardless of the chosen programming language. This should make the resulting systems operable, simple and evolvable \parencite[Chapter~1]{Kleppmann.2017}.
+
+
+\subsection{Code security}
+
+A major concern in software development is code security. Since \emph{fincommons} packages in Python and R heavily rely on a number of other third-party software libraries, it is prudent to check whether external code meets an institution's internal IT security requirements. There exists a range of proprietary and open-source software composition analysis (SCA) solutions, which can be integrated with internal code repository tools and perform those checks automatically.\footnote{See, for example, \url{https://en.wikipedia.org/wiki/Software_composition_analysis} for further references.}. Against the background of a multitude of available SCA solutions, their ability to work directly on the source code and the technology-agnostic approach of \emph{fincommons}, this topic is currently considered to go beyond the scope of this handbook. However, future versions could elaborate more on solution-independent aspects, which are beyond the knowledge of the current author.
+
+Note that since all of the packages used in the accompanying code are widely used across the globe, there seems to be no strong indication that would warrant serious security concerns. Nevertheless, such an assessment has not been performed by the current author of the accompanying packages.
+
+%\begin{figure}[h]
+%	\centering
+%	\includegraphics[height=8cm]{archimate-data-processing-general}
+%	\caption{Default pattern of the transition between the landing zone and Bronze layer using the ArchiMate modelling language.}
+%	\label{fig:archimate-data-processing-general}
+%\end{figure}
+
+
+\section{Logging\label{sec:intro-logging}}
+
+A data pipeline runs unattended. It is started by a scheduler at night, it processes deliveries that an institution has no control over, and by the time anyone looks at the tables it produced, the process that produced them no longer exists. Whatever the run recorded about itself while it was running is therefore the only account of it that remains, and the question an analyst eventually has to answer about a figure in a report -- which delivery it came from, whether every file that should have been processed was processed, and whether anything was quietly set aside -- can only be answered from that account.
+
+The point deserves emphasis because the obvious alternative is so convenient. A pipeline under development is run interactively, its progress is printed to the console, and the printed lines are read by the person who started it. Nothing about that arrangement announces its own failure when the same code is later scheduled: the lines are still produced, they are still collected by the platform, and they are still, in a narrow sense, available. What is lost is everything that makes them usable at a distance. A printed line carries no time stamp, so the order of two events can be inferred but their spacing cannot; it carries no severity, so a note that a table was rebuilt is indistinguishable from a report that a file could not be read; and it carries no indication of which pipeline, which layer or which reference date it concerns, so a log covering a night of several pipelines cannot be separated back into them. The remedy is not to print more, but to record instead of printing.
+
+\subsection{Levels}
+
+The framework uses the levels of the Python standard library, and fixes what each of them asserts about a run, so that a reader can decide what to do from the level alone without reading the message.
+
+\textsc{Info} is the record of what the run did: which stage started and finished, how long it took, which reference dates were applied, how many findings were written. This is the level a scheduled job runs at, and the material from which the history of a table can be reconstructed afterwards.
+
+\textsc{Warning} states that the run remained valid but did less than a reader might assume. An update that found no new delta file to apply, a source whose data ends earlier than the others and thereby holds back the combined table, a file whose schema the import does not recognise: in each case the pipeline finished successfully, and in each case the tables afterwards look exactly as they would look had there been nothing to do. The distinction exists only in the log, which is precisely why it has to be there.
+
+\textsc{Error} is reserved for a unit of work that failed while the run carried on by design. The import of reference data files is the case that motivates the level: files arrive in bulk from a third party, and a single malformed file must not abandon the files behind it in the folder, so the offending file is moved aside and the loop proceeds. The decision to continue is deliberate, but it is only defensible if what was set aside is recorded, with the underlying exception and its traceback, and if the number of such files is reported at the end of the run. An import that quarantines every file it was given otherwise finishes successfully and looks, from the state of the data lake, exactly like an import that had nothing to do.
+
+\textsc{Debug} carries the detail needed to reproduce a run rather than to monitor it, and is switched off by default.
+
+\textsc{Critical} is not used at all, and its absence is the substantive point of the scheme. A problem that invalidates the result of a run must interrupt that run, not describe it. The framework accordingly raises an exception wherever a pipeline can no longer do its work correctly -- when the historical database carries no watermark, so that there is no way to tell which deliveries have already been applied, or when a table cannot be read at all, which must never be mistaken for a table that is empty. Logging is never the mechanism by which a pipeline decides that it may continue. Where a stage does fail, the failure is recorded with its traceback and the exception is re-raised unchanged, so that the scheduler sees the run as failed and the log explains why.
+
+\subsection{Context}
+
+Anything by which a record may later have to be filtered or grouped is recorded beside the message rather than inside it. Each record of a pipeline therefore carries the module it came from, the layer it was working on, and, where they apply, the source, the table, the reference date, the file and the number of rows. A line of the log reads as a constant sentence followed by the circumstances of that particular occurrence:
+
+\begin{quote}
+\small
+\verb|2026-09-08 03:14:22 INFO  fincommons.firds.silver  Applied delta file|\\
+\verb|    module=firds layer=silver table=MAIN datadt=2026-09-04 rows=18432|
+\end{quote}
+
+The arrangement costs nothing at the point of writing and buys two things. Because the sentence does not vary with the run, every occurrence of the same event can be collected by matching one constant string, which is not possible when the reference date has been formatted into the middle of it. And because the circumstances are held as separate fields rather than as prose, the same records can later be emitted as structured data for a log platform without a single line of the pipelines being touched.
+
+\subsection{Operating the log}
+
+Two conventions keep the arrangement workable in the environments the framework is meant to run in.
+
+The first is that the library configures nothing. Modules obtain a logger and write to it; no module attaches a destination, sets a level or configures anything on import. That decision belongs to whoever runs the code, because a package that configures logging on import overrides the arrangements of the notebook or the scheduled job that imported it, and does so invisibly. A single function is provided for the purpose and is called by the entry points. On a managed platform such as Databricks, where the driver already collects the standard error of the process, it is enough to raise the level of the framework's own logger and let the platform do the collecting.
+
+The second is that logging does not displace the ordinary output of a program. The demonstration scripts that accompany the analytical modules print result tables for a person watching the console; those tables are the output of the program and remain on standard output, while the log goes to standard error. The distinction is easy to apply in practice: a statement that would still be useful in a log file three weeks after the run belongs in the log, and a statement that only makes sense to someone watching the terminal at that moment does not.
+
+Finally, because the level of a record is a claim about the run rather than a matter of presentation, the framework tests it. The behaviours that exist only in the log -- an update that found nothing to apply, a delivery that was quarantined -- are asserted in the test suite like any other behaviour, which is what keeps them from being quietly lost the next time the surrounding code is rewritten.
+
+\section{Continuous integration and delivery}
+
+Development practices only take effect if they are applied to every change, rather than to those a contributor remembers to check. This is the purpose of continuous integration: every change proposed to the shared codebase is built, and its tests are executed, automatically and on a neutral machine before the change is merged, so that the state of the shared code is known at all times instead of being assumed.
+
+For a code-sharing framework the argument for this practice is stronger than the general one. Section \ref{sec:intro-motivation} argued that code-sharing among institutions rests on trust, and that a lack of trust creates strong incentives for continued local development. An institution that installs a package contributed by another institution cannot realistically audit it, and it should not have to. What it can do is see whether the package is covered by tests and whether those tests are executed on every change. Continuous integration is thus the mechanism that turns a claim about the quality of shared code into something a recipient can verify without reading the code itself. The Python package accompanying this handbook currently carries several hundred automated tests across its modules, which are the natural content of such a pipeline.
+
+A constraint of the regulatory context is that no confidential data -- neither reporting data nor a firm's own books -- may enter such a pipeline. Tests therefore have to run against data that could be published: fixtures written into the test itself, or synthetic data generated by the package. The \emph{fincommons} codebase follows this rule. The tests of the exchange rate module never contact the websites of the ECB or the BIS, but exercise the module against an archive of their own. Besides making automated testing possible at all, this has the useful side effect that any recipient of the code can reproduce the entire test suite, which would not be the case for tests that depend on data an institution is not permitted to share.
+
+The delivery half of the practice is the automated production of a versioned, installable artefact from a given state of the source code, so that the artefact which was tested and the artefact which is installed in an analytical environment are demonstrably the same one. Note that the term is deliberately continuous \emph{delivery} and not continuous \emph{deployment}. Promoting a new version automatically into an environment that processes confidential data is rarely acceptable, and the release into production should remain a decision that a person takes and records. What automation can remove is the manual work of building, testing and packaging that precedes that decision, not the decision itself.
+
+\section{Infrastructure as code}
+
+A data pipeline does not run in a vacuum. It requires storage with a particular directory or volume layout, a compute environment with a particular runtime version, the libraries it depends on, and permissions that allow it to read and write what it should and nothing else. Traditionally this environment is created by hand, through the web console of a cloud provider or through a ticket to an infrastructure team, and it exists thereafter only as settings that no one can inspect as a whole. Infrastructure as code is the practice of describing that environment in declarative files, which are kept in a version control system next to the source code, and of leaving it to a tool to reconcile the actual environment with the description.\footnote{A widely used tool of this kind is Terraform, see \url{https://www.terraform.io/}. Most platform vendors additionally provide equivalents specific to their own products.}
+
+For \emph{fincommons} this is more than a general recommendation, because the promise of the package is that an analysis performed by one institution can be reproduced by another. That promise covers the code and the data model, but the result of a computation also depends on the environment in which it ran, i.e. on the runtime version, the versions of the libraries and the layout of the data lake. Where the environment is described in files, that description can be shared alongside the code, and a receiving institution can recreate an equivalent environment instead of reconstructing it from a prose account of which buttons to press.
+
+The design of the accompanying Python package reflects the resulting division of responsibilities. Each module provides a function that creates the directory tree of its part of the data lake, which is convenient on a workstation, but those functions are explicitly documented as being meant for a local data lake: in a cloud deployment, the volumes and the directories within them are provisioned outside the pipeline. The reason is that a pipeline which creates its own storage cannot be reasoned about. It becomes impossible to tell from the infrastructure description alone what will exist, and a mistake in a configured path quietly creates a new location instead of failing. Keeping provisioning outside the pipeline is what allows an infrastructure description to remain authoritative.
+
+Which tool is used to express that description depends on the platform an institution runs on and is deliberately left open here. What matters for the framework is the property rather than the product: that the environment is described in files which are versioned, reviewed and applied by a tool, instead of being assembled by hand and remembered.
+
+
+\part{Data pipelines on public data\label{part:basic-data-lake}}
+
+This part documents the pipelines that build the data lake from public sources, one chapter per data set. Each chapter describes the stages of its pipeline -- landing zone, Bronze, Silver and, where there is one, Gold -- the decisions taken in building it, and the guarantees a user may rely on.
+
+\include{01-exchangerate}
+
+\include{01-entitymasterdata}
+
+\include{01-firds}
+
+\include{01-marketpricedata}
+
+
+\printbibliography
+
+\end{document}

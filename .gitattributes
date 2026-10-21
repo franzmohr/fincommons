@@ -1,0 +1,7 @@
+# Line endings are normalised to LF in the repository and in the working copy,
+# whatever platform a file was written on. Without this a file edited on
+# Windows and the same file edited on Linux differ in every line, which buries
+# the change that was actually made and makes a merge conflict of a whole file.
+# Python reads either ending on either platform, and every editor in use here
+# reads LF, so LF is the one that costs nothing.
+* text=auto eol=lf

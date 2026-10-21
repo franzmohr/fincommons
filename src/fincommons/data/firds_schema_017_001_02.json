@@ -1,0 +1,1941 @@
+{
+    "type": "struct",
+    "fields": [
+        {
+            "name": "FinInstrmGnlAttrbts",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "Id",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "FullNm",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "ShrtNm",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "ClssfctnTp",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "NtnlCcy",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "CmmdtyDerivInd",
+                        "type": "boolean",
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "Issr",
+            "type": "string",
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "TradgVnRltdAttrbts",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "Id",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "IssrReq",
+                        "type": "boolean",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "AdmssnApprvlDtByIssr",
+                        "type": "timestamp",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "ReqForAdmssnDt",
+                        "type": "timestamp",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "FrstTradDt",
+                        "type": "timestamp",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "TermntnDt",
+                        "type": "timestamp",
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "DebtInstrmAttrbts",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "TtlIssdNmnlAmt",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "_Ccy",
+                                    "type": "string",
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "_VALUE",
+                                    "type": "decimal(23,5)",
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "MtrtyDt",
+                        "type": "date",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "NmnlValPerUnit",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "_Ccy",
+                                    "type": "string",
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "_VALUE",
+                                    "type": "decimal(23,5)",
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "IntrstRate",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "Fxd",
+                                    "type": "decimal(21,10)",
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "Fltg",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "RefRate",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "ISIN",
+                                                            "type": "string",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Indx",
+                                                            "type": "string",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Nm",
+                                                            "type": "string",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "Term",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "Unit",
+                                                            "type": "string",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Val",
+                                                            "type": "long",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "BsisPtSprd",
+                                                "type": "long",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "DebtSnrty",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "DerivInstrmAttrbts",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "XpryDt",
+                        "type": "date",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "PricMltplr",
+                        "type": "decimal(35,17)",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "UndrlygInstrm",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "Sngl",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "ISIN",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "LEI",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "Indx",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "ISIN",
+                                                            "type": "string",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Nm",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "RefRate",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "Indx",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "Nm",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Term",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "Unit",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "Val",
+                                                                                    "type": "long",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "Bskt",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "ISIN",
+                                                "type": {
+                                                    "type": "array",
+                                                    "elementType": "string",
+                                                    "containsNull": true
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "LEI",
+                                                "type": {
+                                                    "type": "array",
+                                                    "elementType": "string",
+                                                    "containsNull": true
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "OptnTp",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "StrkPric",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "Pric",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "MntryVal",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "Amt",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "_Ccy",
+                                                                        "type": "string",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "_VALUE",
+                                                                        "type": "decimal(31,13)",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Sgn",
+                                                            "type": "boolean",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "Pctg",
+                                                "type": "decimal(21,10)",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "Yld",
+                                                "type": "decimal(21,10)",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "BsisPts",
+                                                "type": "decimal(35,17)",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "NoPric",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "Pdg",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "Ccy",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "OptnExrcStyle",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "DlvryTp",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "AsstClssSpcfcAttrbts",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "Cmmdty",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "Pdct",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "Agrcltrl",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "GrnOilSeed",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Soft",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Ptt",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "OlvOil",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Dairy",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Frstry",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Sfd",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "LiveStock",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Grn",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Nrgy",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Elctrcty",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "NtrlGas",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Oil",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Coal",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "IntrNrgy",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "RnwblNrgy",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "LghtEnd",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Dstllts",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Envttl",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Emssns",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Wthr",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "CrbnRltd",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Frtlzr",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Ammn",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "DmmnmPhspht",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Ptsh",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Slphr",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Urea",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "UreaAndAmmnmNtrt",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Frght",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Dry",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Wet",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "CntnrShip",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "IndstrlPdct",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Cnstrctn",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Manfctg",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Metl",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "NonPrcs",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Prcs",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "AddtlSubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "OthrC10",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Dlvrbl",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "NonDlvrbl",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Ppr",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "CntnrBrd",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Nwsprnt",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Pulp",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "RcvrdPpr",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Plprpln",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Plstc",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "BasePdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "SubPdct",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Infltn",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "BasePdct",
+                                                                        "type": "string",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "MultiCmmdtyExtc",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "BasePdct",
+                                                                        "type": "string",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "OffclEcnmcSttstcs",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "BasePdct",
+                                                                        "type": "string",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Othr",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "BasePdct",
+                                                                        "type": "string",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "TxTp",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "FnlPricTp",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "Intrst",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "IntrstRate",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "RefRate",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Indx",
+                                                                        "type": "string",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Nm",
+                                                                        "type": "string",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Term",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Unit",
+                                                                        "type": "string",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Val",
+                                                                        "type": "long",
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "FrstLegIntrstRate",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "Fxd",
+                                                            "type": "decimal(21,10)",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "OthrNtnlCcy",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "OthrLegIntrstRate",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "Fxd",
+                                                            "type": "decimal(21,10)",
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        },
+                                                        {
+                                                            "name": "Fltg",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "RefRate",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "Indx",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "Nm",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    },
+                                                                    {
+                                                                        "name": "Term",
+                                                                        "type": {
+                                                                            "type": "struct",
+                                                                            "fields": [
+                                                                                {
+                                                                                    "name": "Unit",
+                                                                                    "type": "string",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                },
+                                                                                {
+                                                                                    "name": "Val",
+                                                                                    "type": "long",
+                                                                                    "nullable": true,
+                                                                                    "metadata": {}
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "FX",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "FxTp",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "OthrNtnlCcy",
+                                                "type": "string",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "TechAttrbts",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "IncnsstncyInd",
+                        "type": "boolean",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "LastUpd",
+                        "type": "timestamp",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "RlvntCmptntAuthrty",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "PblctnPrd",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "Dt",
+                                    "type": "date",
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "FrDt",
+                                    "type": "date",
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "ToDt",
+                                    "type": "date",
+                                    "nullable": true,
+                                    "metadata": {}
+                                },
+                                {
+                                    "name": "FrDtToDt",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "FrDt",
+                                                "type": "date",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            },
+                                            {
+                                                "name": "ToDt",
+                                                "type": "date",
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "RlvntTradgVn",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        }
+    ]
+}

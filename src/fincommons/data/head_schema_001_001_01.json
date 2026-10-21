@@ -1,0 +1,403 @@
+{
+    "type": "struct",
+    "fields": [
+        {
+            "name": "Fr",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "OrgId",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "Id",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "OrgId",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "Othr",
+                                                            "type": {
+                                                                "type": "array",
+                                                                "elementType": {
+                                                                    "type": "struct",
+                                                                    "fields": [
+                                                                        {
+                                                                            "name": "Id",
+                                                                            "type": "string",
+                                                                            "nullable": true,
+                                                                            "metadata": {}
+                                                                        },
+                                                                        {
+                                                                            "name": "SchmeNm",
+                                                                            "type": {
+                                                                                "type": "struct",
+                                                                                "fields": [
+                                                                                    {
+                                                                                        "name": "Cd",
+                                                                                        "type": "string",
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    },
+                                                                                    {
+                                                                                        "name": "Prtry",
+                                                                                        "type": "string",
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    }
+                                                                                ]
+                                                                            },
+                                                                            "nullable": true,
+                                                                            "metadata": {}
+                                                                        },
+                                                                        {
+                                                                            "name": "Issr",
+                                                                            "type": "string",
+                                                                            "nullable": true,
+                                                                            "metadata": {}
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                "containsNull": true
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "To",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "OrgId",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "Id",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "OrgId",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "Othr",
+                                                            "type": {
+                                                                "type": "array",
+                                                                "elementType": {
+                                                                    "type": "struct",
+                                                                    "fields": [
+                                                                        {
+                                                                            "name": "Id",
+                                                                            "type": "string",
+                                                                            "nullable": true,
+                                                                            "metadata": {}
+                                                                        },
+                                                                        {
+                                                                            "name": "SchmeNm",
+                                                                            "type": {
+                                                                                "type": "struct",
+                                                                                "fields": [
+                                                                                    {
+                                                                                        "name": "Cd",
+                                                                                        "type": "string",
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    },
+                                                                                    {
+                                                                                        "name": "Prtry",
+                                                                                        "type": "string",
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    }
+                                                                                ]
+                                                                            },
+                                                                            "nullable": true,
+                                                                            "metadata": {}
+                                                                        },
+                                                                        {
+                                                                            "name": "Issr",
+                                                                            "type": "string",
+                                                                            "nullable": true,
+                                                                            "metadata": {}
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                "containsNull": true
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "BizMsgIdr",
+            "type": "string",
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "MsgDefIdr",
+            "type": "string",
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "CreDt",
+            "type": "timestamp",
+            "nullable": true,
+            "metadata": {}
+        },
+        {
+            "name": "Rltd",
+            "type": {
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "Fr",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "OrgId",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "Id",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "OrgId",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Othr",
+                                                                        "type": {
+                                                                            "type": "array",
+                                                                            "elementType": {
+                                                                                "type": "struct",
+                                                                                "fields": [
+                                                                                    {
+                                                                                        "name": "Id",
+                                                                                        "type": "string",
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    },
+                                                                                    {
+                                                                                        "name": "SchmeNm",
+                                                                                        "type": {
+                                                                                            "type": "struct",
+                                                                                            "fields": [
+                                                                                                {
+                                                                                                    "name": "Cd",
+                                                                                                    "type": "string",
+                                                                                                    "nullable": true,
+                                                                                                    "metadata": {}
+                                                                                                },
+                                                                                                {
+                                                                                                    "name": "Prtry",
+                                                                                                    "type": "string",
+                                                                                                    "nullable": true,
+                                                                                                    "metadata": {}
+                                                                                                }
+                                                                                            ]
+                                                                                        },
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    },
+                                                                                    {
+                                                                                        "name": "Issr",
+                                                                                        "type": "string",
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    }
+                                                                                ]
+                                                                            },
+                                                                            "containsNull": true
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "To",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "OrgId",
+                                    "type": {
+                                        "type": "struct",
+                                        "fields": [
+                                            {
+                                                "name": "Id",
+                                                "type": {
+                                                    "type": "struct",
+                                                    "fields": [
+                                                        {
+                                                            "name": "OrgId",
+                                                            "type": {
+                                                                "type": "struct",
+                                                                "fields": [
+                                                                    {
+                                                                        "name": "Othr",
+                                                                        "type": {
+                                                                            "type": "array",
+                                                                            "elementType": {
+                                                                                "type": "struct",
+                                                                                "fields": [
+                                                                                    {
+                                                                                        "name": "Id",
+                                                                                        "type": "string",
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    },
+                                                                                    {
+                                                                                        "name": "SchmeNm",
+                                                                                        "type": {
+                                                                                            "type": "struct",
+                                                                                            "fields": [
+                                                                                                {
+                                                                                                    "name": "Cd",
+                                                                                                    "type": "string",
+                                                                                                    "nullable": true,
+                                                                                                    "metadata": {}
+                                                                                                },
+                                                                                                {
+                                                                                                    "name": "Prtry",
+                                                                                                    "type": "string",
+                                                                                                    "nullable": true,
+                                                                                                    "metadata": {}
+                                                                                                }
+                                                                                            ]
+                                                                                        },
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    },
+                                                                                    {
+                                                                                        "name": "Issr",
+                                                                                        "type": "string",
+                                                                                        "nullable": true,
+                                                                                        "metadata": {}
+                                                                                    }
+                                                                                ]
+                                                                            },
+                                                                            "containsNull": true
+                                                                        },
+                                                                        "nullable": true,
+                                                                        "metadata": {}
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "nullable": true,
+                                                            "metadata": {}
+                                                        }
+                                                    ]
+                                                },
+                                                "nullable": true,
+                                                "metadata": {}
+                                            }
+                                        ]
+                                    },
+                                    "nullable": true,
+                                    "metadata": {}
+                                }
+                            ]
+                        },
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "BizMsgIdr",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "MsgDefIdr",
+                        "type": "string",
+                        "nullable": true,
+                        "metadata": {}
+                    },
+                    {
+                        "name": "CreDt",
+                        "type": "timestamp",
+                        "nullable": true,
+                        "metadata": {}
+                    }
+                ]
+            },
+            "nullable": true,
+            "metadata": {}
+        }
+    ]
+}
