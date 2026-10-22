@@ -25,6 +25,7 @@ import logging
 import os
 
 import pyspark.sql.functions as func
+import requests
 from pyspark.sql import Window
 
 from . import common
@@ -233,16 +234,20 @@ def warn_of_malformed_leis(data, source):
     source: str
         Name of the register, for the log.
     """
-    malformed = data.filter(
+    # The count and the examples are taken in one pass over the register,
+    # which for the GLEIF golden copy is some millions of rows.
+    found = data.filter(
         func.col("LEI").isNotNull() & ~func.col("LEI").rlike(LEI_PATTERN)
-    ).select("LEI").distinct()
-    examples = sorted(row["LEI"] for row in malformed.limit(6).collect())
-    if not examples:
+    ).agg(
+        func.countDistinct("LEI").alias("count"),
+        func.sort_array(func.collect_set("LEI")).alias("leis"),
+    ).first()
+    if not found["count"]:
         return
     logger.warning(
         "LEIs of the register are malformed and will not match GLEIF",
         extra=context(module="entitymasterdata", layer="silver", source=source,
-                      count=malformed.count(), leis="|".join(examples[:5])),
+                      count=found["count"], leis="|".join(found["leis"][:5])),
     )
 
 
@@ -754,10 +759,21 @@ def _update_silver_entitymasterdata(spark, config_path, file_format, outcome):
     result = with_lei.unionByName(without_lei).drop("source_rank")
 
     # Number the entities. The window spans the whole table, which sorts it on
-    # one partition, but the number is meant to be a running one and a caller
-    # that joins on it expects it to be dense.
+    # one partition, but the number is meant to be a running one and dense.
+    #
+    # The number belongs to one build of the table: it is assigned afresh on
+    # every rebuild, so an LEI added by a new release of a register moves the
+    # number of every entity after it. It is for ordering and joining within
+    # one build, and a reference meant to outlast a rebuild is kept by LEI.
+    # Within a build it is repeatable: the rows without an LEI, which all tie
+    # on it, are ordered by every other column, so the same input numbers them
+    # the same way on every run.
     result = result.withColumn(
-        "ID", func.row_number().over(Window.orderBy(func.col("LEI").asc_nulls_last()))
+        "ID", func.row_number().over(Window.orderBy(
+            func.col("LEI").asc_nulls_last(),
+            *[func.col(column).asc_nulls_last()
+              for column in COLUMNS if column not in ("ID", "LEI")],
+        ))
     )
 
     common.write_silver(
@@ -831,7 +847,19 @@ def _update_entitymasterdata(spark, config_path, url_gleif_level_1,
         download_gleif_level_1(config_path, url_gleif_level_1)
     if url_gleif_level_2 is not None:
         download_gleif_level_2(config_path, url_gleif_level_2)
-    download_esma_ccp(config_path)
+    # The list of CCPs is the one download that runs without being asked for,
+    # so an environment without access to it -- a cluster without internet
+    # access, or the host being down -- must not stop the update. The Bronze
+    # layer keeps the list it imported last, and the failure is recorded.
+    try:
+        download_esma_ccp(config_path)
+    except requests.RequestException:
+        logger.error(
+            "The list of CCPs could not be downloaded, the one in the Bronze "
+            "layer is used",
+            exc_info=True,
+            extra=context(module="entitymasterdata", layer="landing", source="ESMA_CCP"),
+        )
 
     # Update the Bronze layer
     update_from_landing_to_bronze(config_path)
