@@ -39,6 +39,16 @@ logger = logging.getLogger(__name__)
 #: download may take.
 TIMEOUT = (30, 300)
 
+#: The list of CCPs, at a fixed commit of the repository it is kept in. A
+#: commit rather than the branch is named, so that what the pipeline imports
+#: is the version that was reviewed: a change to the list reaches the data
+#: lake only when this address is moved to a newer commit, in a change of its
+#: own.
+ESMA_CCP_URL = (
+    "https://raw.githubusercontent.com/franzmohr/ccp-list/"
+    "8dc0cf66bceaccac6b0c07252987f9e5b875538f/data/ccp-list.csv"
+)
+
 #: The suffix a file carries while it is being downloaded. The name the file is
 #: finally stored under is only given to it once it is complete.
 PARTIAL_SUFFIX = ".part"
@@ -162,7 +172,7 @@ def gleif_file_name(url):
         URL of the csv link on the GLEIF website.
     """
     name = url.split("?")[0].split("#")[0].rstrip("/").split("/")[-1]
-    if not name.endswith(".zip"):
+    if not name.lower().endswith(".zip"):
         raise ValueError(
             f"The GLEIF link {url!r} does not end in the name of a zip file. "
             "Use the link of the csv file, which GLEIF serves as a zip archive."
@@ -193,7 +203,7 @@ def download_esma_ccp(config_path):
         ),
     )
     download_file(
-        'https://github.com/franzmohr/ccp-list/raw/refs/heads/main/data/ccp-list.csv',
+        ESMA_CCP_URL,
         os.path.join(common.path_landing_esma_ccp(config_path), "ccp_list.csv"),
     )
 
@@ -201,6 +211,7 @@ def download_esma_ccp(config_path):
 #: What this module offers. Downloading the two registers that are served from
 #: an address into the landing zone.
 __all__ = [
+    "ESMA_CCP_URL",
     "PARTIAL_SUFFIX",
     "TIMEOUT",
     "download_esma_ccp",

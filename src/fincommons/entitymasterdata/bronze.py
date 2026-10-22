@@ -129,7 +129,99 @@ def write_parquet(frame, path):
         field.with_type(pyarrow.string()) if pyarrow.types.is_null(field.type) else field
         for field in table.schema
     ]))
-    pyarrow.parquet.write_table(table, path)
+    # The file is written under a name the Silver layer does not read and
+    # renamed once it is complete, so that an import that dies half-way leaves
+    # no truncated file for it to take as the most recent register.
+    partial = path + ".partial"
+    try:
+        pyarrow.parquet.write_table(table, partial)
+        os.replace(partial, path)
+    finally:
+        if os.path.exists(partial):
+            os.remove(partial)
+
+
+#: How the csv registers are read: every value as text, and only an empty
+#: field as missing. pandas otherwise reads 'NA', 'NULL', 'N/A', 'None' and
+#: the like as missing, and 'NA' is the country code of Namibia.
+CSV_AS_TEXT = {"dtype": str, "keep_default_na": False, "na_values": [""]}
+
+
+def import_registers(path_landing, path_bronze, extensions, read, reference_date,
+                     bronze_name, source):
+    """Import the files of one folder of the landing zone into the Bronze layer.
+
+    Every register goes through the same steps: its files are listed oldest
+    first, each is read, given its reference date, written to the Bronze layer
+    as parquet and only then removed from the landing zone. The registers
+    differ in how a file is read and how its reference date is found, which
+    the caller passes in.
+
+    Two files that would be stored under the same Bronze name are refused
+    before anything is imported, because the second would silently replace the
+    first: a monthly and a quarterly list of investment funds that end on the
+    same day, for instance.
+
+    Parameters
+    ----------
+    path_landing: str
+        Folder of the landing zone the files are read from.
+    path_bronze: str
+        Folder of the Bronze layer they are written to.
+    extensions: tuple of str
+        The file extensions to import, see :func:`landing_files`.
+    read: callable
+        Takes the path of a file and returns it as a pandas data frame.
+    reference_date: callable
+        Takes the name of a file and returns its reference date, ``YYYY-MM-DD``.
+    bronze_name: callable
+        Takes the name of a file and its reference date and returns the name of
+        the Bronze file, without the extension.
+    source: str
+        Name of the register, for the log.
+
+    Returns
+    -------
+    int
+        Number of files imported.
+    """
+    files = [(name, reference_date(name)) for name in landing_files(path_landing, extensions)]
+
+    targets = {}
+    for name, refdate in files:
+        targets.setdefault(bronze_name(name, refdate), []).append(name)
+    clashes = sorted(names for names in targets.values() if len(names) > 1)
+    if clashes:
+        raise ValueError(
+            f"Files of the landing zone in {path_landing!r} would replace one "
+            f"another in the Bronze layer: {clashes}. Remove all but one of each."
+        )
+
+    for name, refdate in files:
+        path_i = os.path.join(path_landing, name)
+        raw = read(path_i)
+        raw['REFDATE'] = refdate
+
+        write_parquet(raw, os.path.join(path_bronze, bronze_name(name, refdate) + ".parquet"))
+        os.remove(path_i)
+
+        logger.info(
+            "Imported register into the Bronze layer",
+            extra=context(module="entitymasterdata", layer="bronze", source=source,
+                          file=name, refdt=refdate, rows=len(raw)),
+        )
+
+    return len(files)
+
+
+def dated_by_name(file_name, refdate):
+    """The Bronze name of a register named after its reference date."""
+    return file_name[0:8]
+
+
+def dated_by_period(file_name, refdate):
+    """The Bronze name of a register dated at the end of the period it covers."""
+    return refdate
 
 
 
@@ -157,35 +249,21 @@ def update_bronze_gleif_level_1(config_path):
         Number of GLEIF Level 1 files imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    path_landing = common.path_landing_gleif_level_1(config_path)
-    path_bronze = common.path_bronze_gleif_level_1(config_path)
-
-    imported = 0
-    for file_name in landing_files(path_landing, (".zip",)):
-        path_i = os.path.join(path_landing, file_name)
-        refdate = reference_date_from_file_name(file_name)
-
-        raw = pandas.read_csv(
-            path_i,
+    def read(path):
+        return pandas.read_csv(
+            path,
             compression = "zip",
             usecols = ["LEI", "Entity.LegalName", "Entity.LegalAddress.Country"],
-        )
-        raw = raw.rename(
+            **CSV_AS_TEXT,
+        ).rename(
             columns = {"Entity.LegalName": "NAME", "Entity.LegalAddress.Country": "CTRY"}
         )
-        raw['REFDATE'] = refdate
 
-        write_parquet(raw, os.path.join(path_bronze, file_name[0:8] + ".parquet"))
-        os.remove(path_i)
-
-        imported += 1
-        logger.info(
-            "Imported register into the Bronze layer",
-            extra=context(module="entitymasterdata", layer="bronze", source="GLEIF_L1",
-                          file=file_name, refdt=refdate, rows=len(raw)),
-        )
-
-    return imported
+    return import_registers(
+        common.path_landing_gleif_level_1(config_path),
+        common.path_bronze_gleif_level_1(config_path),
+        (".zip",), read, reference_date_from_file_name, dated_by_name, "GLEIF_L1",
+    )
 
 
 def update_bronze_gleif_level_2(config_path):
@@ -206,34 +284,21 @@ def update_bronze_gleif_level_2(config_path):
         Number of GLEIF Level 2 files imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    path_landing = common.path_landing_gleif_level_2(config_path)
-    path_bronze = common.path_bronze_gleif_level_2(config_path)
-
-    imported = 0
-    for file_name in landing_files(path_landing, (".zip",)):
-        path_i = os.path.join(path_landing, file_name)
-        refdate = reference_date_from_file_name(file_name)
-
-        raw = pandas.read_csv(
-            path_i,
+    def read(path):
+        return pandas.read_csv(
+            path,
             compression = "zip",
             usecols = ["Relationship.StartNode.NodeID", "Relationship.StartNode.NodeIDType",
                        "Relationship.EndNode.NodeID", "Relationship.EndNode.NodeIDType",
                        "Relationship.RelationshipType", "Relationship.RelationshipStatus"],
-        )
-        raw['REFDATE'] = refdate
-
-        write_parquet(raw, os.path.join(path_bronze, file_name[0:8] + ".parquet"))
-        os.remove(path_i)
-
-        imported += 1
-        logger.info(
-            "Imported register into the Bronze layer",
-            extra=context(module="entitymasterdata", layer="bronze", source="GLEIF_L2",
-                          file=file_name, refdt=refdate, rows=len(raw)),
+            **CSV_AS_TEXT,
         )
 
-    return imported
+    return import_registers(
+        common.path_landing_gleif_level_2(config_path),
+        common.path_bronze_gleif_level_2(config_path),
+        (".zip",), read, reference_date_from_file_name, dated_by_name, "GLEIF_L2",
+    )
 
 
 
@@ -262,28 +327,12 @@ def update_bronze_ecb_investment_fund(config_path):
         Number of lists of investment funds imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    path_landing = common.path_landing_ecb_investment_fund(config_path)
-    path_bronze = common.path_bronze_ecb_investment_fund(config_path)
-
-    imported = 0
-    for file_name in landing_files(path_landing, EXCEL_EXTENSIONS):
-        path_i = os.path.join(path_landing, file_name)
-
-        raw = pandas.read_excel(path_i, sheet_name=0)
-        refdate = end_of_investment_fund_period(file_name)
-        raw['REFDATE'] = refdate
-
-        write_parquet(raw, os.path.join(path_bronze, refdate + ".parquet"))
-        os.remove(path_i)
-
-        imported += 1
-        logger.info(
-            "Imported register into the Bronze layer",
-            extra=context(module="entitymasterdata", layer="bronze", source="ECB_IF",
-                          file=file_name, refdt=refdate, rows=len(raw)),
-        )
-
-    return imported
+    return import_registers(
+        common.path_landing_ecb_investment_fund(config_path),
+        common.path_bronze_ecb_investment_fund(config_path),
+        EXCEL_EXTENSIONS, lambda path: pandas.read_excel(path, sheet_name=0),
+        end_of_investment_fund_period, dated_by_period, "ECB_IF",
+    )
 
 
 def update_bronze_ecb_mfi(config_path):
@@ -303,21 +352,12 @@ def update_bronze_ecb_mfi(config_path):
         Number of lists of MFIs imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    path_landing = common.path_landing_ecb_mfi(config_path)
-    path_bronze = common.path_bronze_ecb_mfi(config_path)
-
-    imported = 0
-    for file_name in landing_files(path_landing, EXCEL_EXTENSIONS):
-        path_i = os.path.join(path_landing, file_name)
-
-        refdate = reference_date_from_file_name(file_name)
-
+    def read(path):
         # The postal columns are read as text from the workbook itself: a
-        # postcode is not a number, and taking it for one dropped the leading
-        # zero of '00187' and turned '1012 AB' into a missing value.
-        raw = pandas.read_excel(path_i, sheet_name=0,
+        # postcode is not a number, and taking it for one would drop the
+        # leading zero of '00187' and turn '1012 AB' into a missing value.
+        raw = pandas.read_excel(path, sheet_name=0,
                                 dtype={'BOX': "string", 'POSTAL': "string"})
-        raw['REFDATE'] = refdate
         # Columns whose values look numeric in some rows and not in others
         # reach pyarrow as a mixed type it refuses. They are settled here, the
         # identifiers and the two postal columns as text. The
@@ -326,18 +366,13 @@ def update_bronze_ecb_mfi(config_path):
         # the Silver layer as though it were an LEI.
         raw['LEI'] = raw['LEI'].astype("string")
         raw['HEAD_LEI'] = raw['HEAD_LEI'].astype("string")
+        return raw
 
-        write_parquet(raw, os.path.join(path_bronze, file_name[0:8] + ".parquet"))
-        os.remove(path_i)
-
-        imported += 1
-        logger.info(
-            "Imported register into the Bronze layer",
-            extra=context(module="entitymasterdata", layer="bronze", source="ECB_MFI",
-                          file=file_name, refdt=refdate, rows=len(raw)),
-        )
-
-    return imported
+    return import_registers(
+        common.path_landing_ecb_mfi(config_path),
+        common.path_bronze_ecb_mfi(config_path),
+        EXCEL_EXTENSIONS, read, reference_date_from_file_name, dated_by_name, "ECB_MFI",
+    )
 
 
 
@@ -363,17 +398,8 @@ def update_bronze_eiopa_insurance_undertaking(config_path):
         Number of lists of insurance undertakings imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    path_landing = common.path_landing_eiopa_insurance_undertaking(config_path)
-    path_bronze = common.path_bronze_eiopa_insurance_undertaking(config_path)
-
-    imported = 0
-    for file_name in landing_files(path_landing, EXCEL_EXTENSIONS):
-        path_i = os.path.join(path_landing, file_name)
-
-        refdate = reference_date_from_file_name(file_name)
-
-        raw = pandas.read_excel(path_i, sheet_name=0)
-        raw['REFDATE'] = refdate
+    def read(path):
+        raw = pandas.read_excel(path, sheet_name=0)
         # As with the MFI register, the columns that reach pyarrow as a mixed
         # type are settled first. EIOPA spells its dates day first.
         for column in ['Identification code', 'LEI', 'Street Name', 'Street Number', 'Post Code']:
@@ -381,18 +407,13 @@ def update_bronze_eiopa_insurance_undertaking(config_path):
         for column in ['Registration start date', 'Registration end date',
                        'Operation Start Date', 'Operation End Date']:
             raw[column] = pandas.to_datetime(raw[column], format='%d/%m/%Y').dt.strftime("%Y-%m-%d")
+        return raw
 
-        write_parquet(raw, os.path.join(path_bronze, file_name[0:8] + ".parquet"))
-        os.remove(path_i)
-
-        imported += 1
-        logger.info(
-            "Imported register into the Bronze layer",
-            extra=context(module="entitymasterdata", layer="bronze", source="EIOPA_IC",
-                          file=file_name, refdt=refdate, rows=len(raw)),
-        )
-
-    return imported
+    return import_registers(
+        common.path_landing_eiopa_insurance_undertaking(config_path),
+        common.path_bronze_eiopa_insurance_undertaking(config_path),
+        EXCEL_EXTENSIONS, read, reference_date_from_file_name, dated_by_name, "EIOPA_IC",
+    )
 
 
 
@@ -413,17 +434,8 @@ def update_bronze_eiopa_iorp(config_path):
         Number of lists of institutions for occupational retirement provision imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    path_landing = common.path_landing_eiopa_iorp(config_path)
-    path_bronze = common.path_bronze_eiopa_iorp(config_path)
-
-    imported = 0
-    for file_name in landing_files(path_landing, EXCEL_EXTENSIONS):
-        path_i = os.path.join(path_landing, file_name)
-
-        refdate = reference_date_from_file_name(file_name)
-
-        raw = pandas.read_excel(path_i, sheet_name=0)
-        raw['REFDATE'] = refdate
+    def read(path):
+        raw = pandas.read_excel(path, sheet_name=0)
         # As with the MFI register, the columns that reach pyarrow as a mixed
         # type are settled first. EIOPA spells its dates day first.
         for column in ['Name of NCA', 'Official name of the entity', 'Home Country', 'EU Country where the entity operates',
@@ -433,18 +445,13 @@ def update_bronze_eiopa_iorp(config_path):
             raw[column] = raw[column].astype("string")
         for column in ['Registration Start Date', 'Registration End Date']:
             raw[column] = pandas.to_datetime(raw[column], format='%d/%m/%Y').dt.strftime("%Y-%m-%d")
+        return raw
 
-        write_parquet(raw, os.path.join(path_bronze, file_name[0:8] + ".parquet"))
-        os.remove(path_i)
-
-        imported += 1
-        logger.info(
-            "Imported register into the Bronze layer",
-            extra=context(module="entitymasterdata", layer="bronze", source="EIOPA_IORP",
-                          file=file_name, refdt=refdate, rows=len(raw)),
-        )
-
-    return imported
+    return import_registers(
+        common.path_landing_eiopa_iorp(config_path),
+        common.path_bronze_eiopa_iorp(config_path),
+        EXCEL_EXTENSIONS, read, reference_date_from_file_name, dated_by_name, "EIOPA_IORP",
+    )
 
 
 
@@ -488,7 +495,7 @@ def update_bronze_esma_ccp(config_path):
         )
         return 0
 
-    raw = pandas.read_csv(path_i, usecols=["LEI", "SECTOR", "SUBSECTOR"])
+    raw = pandas.read_csv(path_i, usecols=["LEI", "SECTOR", "SUBSECTOR"], **CSV_AS_TEXT)
 
     write_parquet(
         raw, os.path.join(common.path_bronze_esma_ccp(config_path), "ccp_list.parquet")
@@ -570,8 +577,12 @@ def _update_from_landing_to_bronze(config_path, outcome):
 #: What this module offers. Importing the registers of the landing zone into
 #: the Bronze layer, one file per reference date.
 __all__ = [
+    "CSV_AS_TEXT",
     "EXCEL_EXTENSIONS",
+    "dated_by_name",
+    "dated_by_period",
     "end_of_investment_fund_period",
+    "import_registers",
     "landing_files",
     "reference_date_from_file_name",
     "update_bronze_ecb_investment_fund",

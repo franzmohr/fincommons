@@ -410,6 +410,44 @@ def test_the_gleif_file_name_survives_a_query_string():
     assert name == "20260724-0000-rr-golden-copy.csv.zip"
 
 
+def test_a_link_to_an_archive_spelled_in_upper_case_is_accepted():
+    name = em.gleif_file_name("https://example.org/a/20260724-0000-LEI2.CSV.ZIP")
+    assert name == "20260724-0000-LEI2.CSV.ZIP"
+
+
+def test_the_list_of_ccps_is_read_from_a_fixed_commit():
+    """A branch would import whatever was last pushed to it; a commit is the
+    version that was reviewed."""
+    commit = em.ESMA_CCP_URL.split("/")[-3]
+    assert len(commit) == 40 and all(c in "0123456789abcdef" for c in commit)
+
+
+def test_the_update_carries_on_when_the_list_of_ccps_cannot_be_downloaded(
+    monkeypatch, data_lake, caplog
+):
+    """The list is downloaded without being asked for, so a cluster without
+    internet access must still import the registers and build the tables."""
+    from fincommons.entitymasterdata import silver
+
+    def unreachable(config_path):
+        raise requests.ConnectionError("no route to host")
+
+    stages = []
+    monkeypatch.setattr(silver, "download_esma_ccp", unreachable)
+    monkeypatch.setattr(silver, "update_from_landing_to_bronze",
+                        lambda config_path: stages.append("bronze"))
+    monkeypatch.setattr(silver, "update_silver_entitymasterdata_public",
+                        lambda **kwargs: stages.append("public"))
+    monkeypatch.setattr(silver, "update_silver_entitymasterdata",
+                        lambda **kwargs: stages.append("main"))
+
+    with caplog.at_level(logging.ERROR, logger="fincommons"):
+        silver._update_entitymasterdata(None, data_lake, None, None, None)
+
+    assert stages == ["bronze", "public", "main"]
+    assert any("could not be downloaded" in r.getMessage() for r in caplog.records)
+
+
 def test_a_link_that_is_not_a_zip_file_is_refused():
     """Passing the page rather than the file is the mistake worth catching, and
     catching it here beats an unreadable archive in the landing zone."""
@@ -537,6 +575,52 @@ def test_a_file_that_cannot_be_read_stays_in_the_landing_zone(data_lake):
         em.update_bronze_gleif_level_1(data_lake)
 
     assert os.path.isfile(path)
+
+
+def test_a_value_pandas_would_take_for_missing_is_kept_as_written(data_lake):
+    """'NA' is the country code of Namibia, and a legal name may well read
+    'NULL'. Only an empty field is the absence of a value."""
+    write_gleif_level_1(data_lake, ["LEI1", "LEI2"], ["Namib Bank", "NULL"], ["NA", "AT"])
+
+    em.update_bronze_gleif_level_1(data_lake)
+
+    written = pandas.read_parquet(
+        os.path.join(em.path_bronze_gleif_level_1(data_lake), "20260724.parquet")
+    )
+    assert list(written["CTRY"]) == ["NA", "AT"]
+    assert list(written["NAME"]) == ["Namib Bank", "NULL"]
+
+
+def test_an_import_that_dies_while_writing_leaves_no_bronze_file(monkeypatch, data_lake):
+    """A truncated file under the name of a reference date would be taken by
+    the Silver layer as the most recent register."""
+    landing = write_gleif_level_1(data_lake, ["LEI1"], ["Entity one"], ["AT"])
+
+    def die(table, path):
+        with open(path, "wb") as f:
+            f.write(b"PAR1 truncated")
+        raise OSError("disk full")
+
+    monkeypatch.setattr("fincommons.entitymasterdata.bronze.pyarrow.parquet.write_table", die)
+
+    with pytest.raises(OSError, match="disk full"):
+        em.update_bronze_gleif_level_1(data_lake)
+
+    assert os.listdir(em.path_bronze_gleif_level_1(data_lake)) == []
+    assert os.path.isfile(landing)
+
+
+def test_two_lists_of_funds_ending_on_the_same_day_are_refused(data_lake):
+    """A monthly and a quarterly list that end on the same day would be stored
+    under the same name, the second replacing the first without a word."""
+    monthly = write_ecb_investment_fund(data_lake, ["LEI1"], file_name="IF_2026_03.xlsx")
+    quarterly = write_ecb_investment_fund(data_lake, ["LEI2"], file_name="IF_2026_Q1.xlsx")
+
+    with pytest.raises(ValueError, match="replace one another"):
+        em.update_bronze_ecb_investment_fund(data_lake)
+
+    assert os.listdir(em.path_bronze_ecb_investment_fund(data_lake)) == []
+    assert os.path.isfile(monthly) and os.path.isfile(quarterly)
 
 
 def test_files_of_another_kind_are_left_alone(data_lake):
@@ -1203,6 +1287,21 @@ def test_the_entities_are_numbered_from_one(spark, built):
     frame = main(spark, built)
 
     assert sorted(frame.ID) == [1, 2]
+
+
+@pytest.mark.parametrize("names", [["Beta", "Alpha"], ["Alpha", "Beta"]])
+def test_entities_without_an_lei_are_numbered_the_same_way_whatever_the_file_order(
+    spark, built, names
+):
+    """Rows without an LEI all tie on it, so the number has to be settled by
+    what they say rather than by the order Spark happens to read them in."""
+    write_internal(built, pandas.DataFrame({"LEI": [None, None], "NAME": names}))
+
+    em.update_silver_entitymasterdata(spark, built)
+    frame = main(spark, built)
+
+    without_lei = frame[frame.LEI.isna()].sort_values("ID")
+    assert list(without_lei.NAME) == ["Alpha", "Beta"]
 
 
 def test_the_columns_are_the_ones_the_module_promises(spark, built):
