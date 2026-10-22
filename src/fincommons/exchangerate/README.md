@@ -95,7 +95,7 @@ Function `update_silver_exchangerate` updates the exchange rate data set. It tak
 * `use_bis`: A boolean indicating if exchange rate data from the website of the Bank for International Settlements should be used. The default specification of this argument is `False` since the data is not updated daily.
 * `rebase`: An ISO-3 currency code indicating into which FX rate the exchange rate data set should be converted, for organisations where the euro is not the domestic currency. The SFTR, EMIR and MiFIR stages and `convert2ccy` read the rates quoted against the currency they convert into, so any target other than the euro needs the table rebased to it. SFTR, EMIR and `convert2ccy` refuse to run against a table that is not; MiFIR warns and leaves the volumes it cannot convert empty. A `rebase` to a currency the ECB reference rates do not quote, or to `EUR` itself, is refused before anything is written, and the existing table is left as it was.
 
-During the update process, the function logs the latest date in each data set for which observations are available. The final data set will only contain observations until the smallest of them, which is logged beside them as the cutoff.
+During the update process, the function logs the latest date in each data set for which observations are available. Every source counts up to its own last date: where a source has fallen behind, the others describe the days it does not reach, as they do on any day it is silent, and the log shows which source is behind.
 
 * `file_format`: The format the table is stored in, `'parquet'` or `'delta'`. Where it is left out, the configuration file decides: a Silver layer addressed by path is written as parquet, because it is the format every engine reads without a further dependency, and a table that exists already keeps the format it is stored in.
 
@@ -122,9 +122,9 @@ Where more than one source quotes the same currency pair on the same day, the pr
 
 ### Days without a quote
 
-The sources quote on business days, but an amount agreed on a Saturday still has to be converted, so the Silver layer holds one row per calendar day. Every day carries the last rate quoted on or before it, whichever source that quote came from.
+The sources quote on business days, but an amount agreed on a Saturday still has to be converted, so the Silver layer holds one row per calendar day. Every day carries the last rate quoted on or before it, whichever source that quote came from, for at most `MAX_FILL_DAYS`, seven days, after that quote. A week covers weekends and the TARGET closing days; a pair that goes unquoted for longer has no rate on the days beyond, rather than one that may be years old. The ECB, for instance, quoted no Icelandic krona from December 2008 to February 2018.
 
-The fill stops at the last quote of a pair rather than running on to the cutoff date: the last quoted day is present once and is not carried forward beyond itself. A currency that stops being quoted therefore ends with its last observation, and an amount dated after that gets no rate. Days before the first quote of a pair are not filled either.
+The fill stops at the last quote of a pair: the last quoted day is present once and is not carried forward beyond itself. A currency that stops being quoted therefore ends with its last observation, and an amount dated after that gets no rate. Days before the first quote of a pair are not filled either.
 
 The column `IMPUTED` says which rows are filled: it is `True` on a day whose rate was carried from the last quote before it, and `False` on a day a source quoted. Wherever the ECB is the source, those are the weekends and the TARGET closing days, on which it does not publish; any other day without a quote is marked as well, whatever the reason for it. A rebased cross rate is imputed where either of the two euro rates it is computed from is.
 
@@ -214,9 +214,9 @@ does with a file rather than what those two happen to be publishing.
 | Group | Covers |
 | --- | --- |
 | the data lake | creating the directory tree, including below a directory that does not exist yet, and repeating the call |
-| the download | that an archive is fetched and unpacked without the data lake ever seeing it, that the CSV reaches parquet unchanged, and that the connection is closed when the archive is broken |
-| the Silver layer | unpivoting the ECB table, dropping quotes a currency does not have, the precedence of the sources, filling the days between two quotes, the cutoff date, rebasing, the storage format and that the table replaces itself |
-| `convert2ccy` | the conversion itself, the target currency passing through at a rate of 1, an unavailable currency yielding nothing, dates given as text, dates or timestamps and with a time of day, an unreadable date, a date column of any name, pandas and polars frames coming back as their own kind in their own order, a missing session, and the columns passed in coming back unchanged |
+| the download | that an archive is fetched and unpacked without the data lake ever seeing it, that the CSV reaches parquet unchanged, that the BIS file keeps only the columns the Silver layer reads, that a write that dies leaves the last good file, and that the connection is closed when the archive is broken |
+| the Silver layer | unpivoting the ECB table, dropping quotes a currency does not have, the precedence of the sources, filling the days between two quotes for a week at most, each source counting up to its own last day, a stable choice between two rows of one source, rebasing, the storage format and that the table replaces itself |
+| `convert2ccy` | the conversion itself, the target currency passing through at a rate of 1, an unavailable currency yielding nothing, dates given as text, dates or timestamps and with a time of day, an unreadable date, a date column of any name, pandas and polars frames coming back as their own kind in their own order, a missing session, a frame converted into the target before being refused, and the columns passed in coming back unchanged |
 
 Some of these are worth naming, because they are pinned to rules that are easy
 to undo by accident rather than to behaviour that would obviously break:
@@ -228,9 +228,9 @@ to undo by accident rather than to behaviour that would obviously break:
   time series of the currency pair rather than of the individual source. Filling
   each source on its own leaves a hole wherever the next quote of a pair comes
   from a different source, and an amount dated in that hole converts to nothing.
-* `test_the_table_stops_at_the_last_day_every_source_covers` and
-  `test_the_days_between_two_quotes_carry_the_earlier_rate` hold the two halves
-  of the rule described under *Days without a quote*.
+* `test_the_days_between_two_quotes_carry_the_earlier_rate` and
+  `test_a_rate_is_carried_for_a_week_at_most` hold the two halves of the rule
+  described under *Days without a quote*.
 * `test_the_columns_passed_in_come_back_unchanged_with_two_added` holds
   `convert2ccy` leaving the columns of its argument alone, which callers rely
   on when they go on using the table they converted a column of.

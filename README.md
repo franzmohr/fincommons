@@ -227,9 +227,9 @@ ex.convert2ccy(data, "paths.yaml", date="REFDT", amount="NMNLVAL",
 Where more than one source quotes the same pair on the same day, the
 proprietary data takes precedence over the ECB and the ECB over the BIS. The
 sources quote on business days only, so every calendar day carries the last
-rate quoted on or before it; the fill stops at a pair's last quote rather than
-running on to the cutoff date, so a currency that stops being quoted ends with
-its last observation. Organisations outside the euro area pass `rebase` with
+rate quoted on or before it, for a week at most, and the fill stops at a pair's
+last quote, so a currency that stops being quoted ends with its last
+observation. Each source counts up to its own last day. Organisations outside the euro area pass `rebase` with
 their own currency code, which recalculates the whole table against it.
 
 The details, including the layout a proprietary source has to have, are
