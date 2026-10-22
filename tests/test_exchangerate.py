@@ -170,6 +170,47 @@ def test_a_download_is_stored_as_parquet_unchanged(monkeypatch, data_lake):
     assert written["USD"].iloc[0] == pytest.approx(1.10)
 
 
+def test_a_write_that_dies_leaves_the_last_good_file(monkeypatch, data_lake):
+    """The Bronze file is replaced only once the new one is complete."""
+    serve = lambda text: monkeypatch.setattr(  # noqa: E731
+        "fincommons.exchangerate.bronze.requests.get",
+        lambda url, **kwargs: FakeResponse(zipped_csv("eurofxref-hist.csv", text)),
+    )
+    serve("Date,USD\n2020-01-01,1.10\n")
+    ex.update_bronze_ecb_exchangerate(data_lake)
+
+    def die(table, path):
+        with open(path, "wb") as f:
+            f.write(b"PAR1 truncated")
+        raise OSError("disk full")
+
+    serve("Date,USD\n2020-01-02,1.20\n")
+    monkeypatch.setattr("fincommons.exchangerate.bronze.pyarrow.parquet.write_table", die)
+    with pytest.raises(OSError, match="disk full"):
+        ex.update_bronze_ecb_exchangerate(data_lake)
+
+    folder = ex.path_bronze_ecb_exchangerate(data_lake)
+    assert sorted(os.listdir(folder)) == ["ecb_exchangerate.parquet"]
+    assert pandas.read_parquet(os.path.join(folder, "ecb_exchangerate.parquet"))["USD"].iloc[0] \
+        == pytest.approx(1.10)
+
+
+def test_only_the_columns_the_silver_layer_reads_are_kept_from_the_bis(monkeypatch, data_lake):
+    header = ",".join(ex.BIS_COLUMNS + ["TITLE:Title"])
+    row = "D: Daily,A: Average,ARS: Argentine peso,2020-01-02,60.0,Argentine peso per dollar"
+    monkeypatch.setattr(
+        "fincommons.exchangerate.bronze.requests.get",
+        lambda url, **kwargs: FakeResponse(zipped_csv("bis.csv", header + "\n" + row + "\n")),
+    )
+
+    ex.update_bronze_bis_exchangerate(data_lake)
+
+    written = pandas.read_parquet(
+        os.path.join(ex.path_bronze_bis_exchangerate(data_lake), "bis_exchangerate.parquet")
+    )
+    assert list(written.columns) == ex.BIS_COLUMNS
+
+
 def test_the_response_is_closed_even_when_the_archive_is_broken(monkeypatch, data_lake):
     monkeypatch.setattr(
         "fincommons.exchangerate.bronze.requests.get",
@@ -275,16 +316,43 @@ def test_the_gap_between_two_sources_is_closed(spark, data_lake):
     assert rate(frame, "2020-01-04", "EUR", "USD").VALUE == pytest.approx(9.99)
 
 
-def test_the_table_stops_at_the_last_day_every_source_covers(spark, data_lake):
-    # A source that lags behind would otherwise leave the last days of the
-    # table resting on a subset of the sources.
+def test_each_source_counts_up_to_its_own_last_day(spark, data_lake):
+    """A source that lags behind must not take the newest rates of the others
+    out of the table. Where it is silent, the others describe the day."""
     write_ecb(data_lake, ["2020-01-01", "2020-01-02", "2020-01-03"], USD=[1.10, 1.11, 1.12])
     write_internal(data_lake, [("2020-01-01", "EUR", "USD", 9.99)])
 
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
 
-    assert max(frame.REFDATE) == "2020-01-01"
+    assert rate(frame, "2020-01-01", "EUR", "USD").SOURCE == "internal"
+    assert rate(frame, "2020-01-03", "EUR", "USD").VALUE == pytest.approx(1.12)
+
+
+def test_a_rate_is_carried_for_a_week_at_most(spark, data_lake):
+    """The ECB suspended the Icelandic krona from December 2008 to February
+    2018. A rate carried across such a gap would convert an amount at a rate
+    that is years old."""
+    write_ecb(data_lake, ["2020-01-01", "2020-01-20"], ISK=[130.0, 140.0])
+
+    ex.update_silver_exchangerate(spark, data_lake)
+    frame = silver(spark, data_lake)
+
+    carried = sorted(frame[frame.VALUE == 130.0].REFDATE)
+    assert carried[0] == "2020-01-01"
+    assert carried[-1] == "2020-01-08"
+    assert len(carried) == 1 + ex.MAX_FILL_DAYS
+    assert frame[frame.REFDATE == "2020-01-12"].empty
+
+
+def test_an_internal_file_without_rows_leaves_the_public_sources(spark, data_lake):
+    write_ecb(data_lake, ["2020-01-01"], USD=[1.10])
+    write_internal(data_lake, [])
+
+    ex.update_silver_exchangerate(spark, data_lake)
+    frame = silver(spark, data_lake)
+
+    assert rate(frame, "2020-01-01", "EUR", "USD").SOURCE == "ECB"
 
 
 def test_the_silver_layer_is_parquet_unless_delta_is_asked_for(spark, data_lake):
@@ -510,6 +578,15 @@ def test_an_amount_is_divided_by_the_rate_of_its_currency(spark, converted):
 
     assert column(result, "value_EUR") == [pytest.approx(100.0)]
     assert column(result, "value_FXRATE") == [pytest.approx(1.10)]
+
+
+def test_a_frame_converted_into_the_target_before_is_refused(spark, converted):
+    """Converting it again would join in a second rate column of the same name."""
+    data = frame(spark, [(1, "2020-01-01", "USD", 110.0)])
+    once = amounts(converted, data, date="date", amount="value", currency="currency")
+
+    with pytest.raises(ValueError, match="value_FXRATE"):
+        amounts(converted, once, date="date", amount="value", currency="currency")
 
 
 def test_an_amount_already_in_the_target_currency_is_left_alone(spark, converted):
@@ -802,6 +879,22 @@ def test_a_bis_rate_is_turned_into_a_euro_rate_through_the_dollar(spark, data_la
     quote = rate(frame, "2020-01-02", "EUR", "ARS")
     assert quote.VALUE == pytest.approx(66.0)
     assert quote.SOURCE == "BIS"
+
+
+@pytest.mark.parametrize("values", [(60.0, 61.0), (61.0, 60.0)], ids=["ascending", "descending"])
+def test_two_bis_rows_for_one_day_and_pair_answer_the_same_way_either_way(
+    spark, data_lake, values
+):
+    """The BIS carries a series per reference area, and areas share a
+    currency. Which row wins must not depend on the order they are read in."""
+    write_ecb(data_lake, ["2020-01-02"], USD=[1.10])
+    write_bis(data_lake, [(DAILY, AVERAGE, "ARS: Argentine peso", "2020-01-02", v)
+                          for v in values])
+
+    ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
+    frame = silver(spark, data_lake)
+
+    assert rate(frame, "2020-01-02", "EUR", "ARS").VALUE == pytest.approx(60.0 * 1.10)
 
 
 def test_the_ecb_takes_precedence_over_the_bis(spark, data_lake):

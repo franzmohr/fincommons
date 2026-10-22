@@ -3,8 +3,8 @@
 The sources overlap, and none of them covers every day. The Silver layer
 settles both questions: where a pair is quoted by more than one source the
 proprietary data takes precedence over the ECB and the ECB over the BIS, and
-the days between two quotes carry the last rate that stood, and are marked as
-such in IMPUTED. The result is one row per calendar day, base and quote
+the days between two quotes carry the last rate that stood, for up to a week,
+and are marked as such in IMPUTED. The result is one row per calendar day, base and quote
 currency, which is what :func:`convert2ccy` converts an amount with.
 """
 
@@ -20,6 +20,14 @@ from .bronze import *
 from .common import *
 
 logger = logging.getLogger(__name__)
+
+#: How many days after its quote a rate is carried at most. A week covers a
+#: weekend, the TARGET closing days around Easter and Christmas, and a source
+#: that is a few days late. A pair that is not quoted for longer -- the ECB
+#: suspended the Icelandic krona from December 2008 to February 2018 -- is left
+#: without a rate for the days beyond, rather than converted at a rate that
+#: may be years old.
+MAX_FILL_DAYS = 7
 
 
 def connect_to_exchangerate(spark, config_path):
@@ -79,8 +87,9 @@ def convert2ccy(data, config_path, date, amount, currency, target, spark = None)
     RuntimeError
         If a pandas or polars frame is given and there is no Spark session.
     ValueError
-        If the table holds no rate quoted against ``target`` and some amount
-        is in another currency. The table is rebased as a whole to one
+        If ``data`` already has a column the conversion adds, because it has
+        been converted into ``target`` before. And if the table holds no rate
+        quoted against ``target`` and some amount is in another currency. The table is rebased as a whole to one
         currency, so converting into any other finds no rate at all; joined
         on the left, that would give every such amount null without saying
         why. A single currency the table does not cover still gives null for
@@ -146,6 +155,18 @@ def _convert2ccy_spark(data, config_path, date, amount, currency, target):
     new_amount_column_name = amount + "_" + target
     day_column = "_" + amount + "_FXDAY"
 
+    # The columns the conversion adds must not be in the frame already, as they
+    # are where it has been converted into the same target before: the join
+    # would bring in a second column of the same name and fail on it.
+    taken = [c for c in (fxrate_column_name, new_amount_column_name, day_column)
+             if c in data.columns]
+    if taken:
+        raise ValueError(
+            f"The frame already has the column(s) {taken} that converting "
+            f"{amount!r} into {target!r} adds. Drop them, or convert from a "
+            f"frame that has not been converted into {target!r} before."
+        )
+
     fxdata = connect_to_exchangerate(spark, config_path) \
         .filter(func.col("BASE") == target) \
         .select(func.col("REFDATE").cast("date").alias(day_column),
@@ -180,13 +201,12 @@ def _convert2ccy_spark(data, config_path, date, amount, currency, target):
 def check_internal_rates(internal, source):
     """Refuse an internal file whose rows the combination would misread.
 
-    The combination compares reference dates as text -- to find the date every
-    source reaches, to cut the sources back to it, and to decide which source
-    wins a day -- so a date the internal file writes differently from the ECB,
-    ``2024-6-3`` or ``2024-06-03 00:00:00`` for ``2024-06-03``, is not the
-    same day to it. Depending on the date, such a row was dropped without a
-    word, or kept beside the ECB's quote of the same day as a second rate for
-    it, and it could move the cutoff of the whole table. The other checks are
+    The combination compares reference dates as text -- to decide which source
+    wins a day and to order the quotes of a pair -- so a date the internal file
+    writes differently from the ECB, ``2024-6-3`` or ``2024-06-03 00:00:00``
+    for ``2024-06-03``, is not the same day to it. Such a row would be kept
+    beside the ECB's quote of the same day as a second rate for it, or be
+    misplaced among the quotes of its pair. The other checks are
     of the same kind: a base other than the euro, which the rest of the
     pipeline is not built for and which a rebase drops; one day and pair
     quoted twice, of which the combination would keep either; and a rate that
@@ -275,8 +295,7 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
         .withColumn("TYPE", func.lit("ref")) \
         .withColumn("SOURCE", func.lit("ECB")) \
         .withColumnRenamed("Date", "REFDATE") \
-        .select("REFDATE", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE") \
-        .sort(func.col("REFDATE"))
+        .select("REFDATE", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE")
 
     ecb_max_date = ecb.select(func.max("REFDATE")).first()[0]
 
@@ -313,10 +332,7 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
             .select("REFDATE", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE")
         
         bis_max_date = bis.select(func.max("REFDATE")).first()[0]
-    else:
-        bis_max_date = ecb.select(func.max("REFDATE")).first()[0]
 
-    
     internal_file = os.path.join(path_bronze_internal_exchangerate(config_path), "exchangerate.csv")
     use_internal = os.path.exists(internal_file)
 
@@ -328,36 +344,32 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
             .select("REFDATE", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE")
         check_internal_rates(internal, internal_file)
         internal_max_date = internal.select(func.max("REFDATE")).first()[0]
-    else:
-        internal_max_date = ecb_max_date
+        if internal_max_date is None:
+            logger.warning(
+                "The internal exchange rates hold no rows, only the public "
+                "sources are combined",
+                extra=context(module="exchangerate", layer="silver", file=internal_file),
+            )
 
-    cutoff_date = min([ecb_max_date, bis_max_date, internal_max_date])
-
-    # The cutoff and the date every source reaches are reported together in one
-    # record, because the cutoff is only interpretable next to the dates it was
-    # taken from: which source is holding the table back is the question a
-    # reader of the log asks.
+    # Every source counts up to its own last day. Where they overlap the rank
+    # below decides, and a day only some of them quote is described by those
+    # that do, which is what happens on any day a source is silent. Cutting
+    # every source back to the day the last of them reaches would only throw
+    # the newest rates of the others away. The last day of each source is
+    # logged, so that a source that has fallen behind is visible.
     logger.info(
-        "Combining the sources up to the date they all reach",
+        "Combining the sources, each up to its own last day",
         extra=context(
             module="exchangerate",
             layer="silver",
             ecb=ecb_max_date,
             bis=bis_max_date if use_bis else None,
             internal=internal_max_date if use_internal else None,
-            cutoff=cutoff_date,
         ),
     )
-    
-    # Filter datasets to this cutoff date
-    ecb = ecb.filter(func.col("REFDATE") <= func.lit(cutoff_date))
-    if use_internal:
-        internal = internal.filter(func.col("REFDATE") <= func.lit(cutoff_date))
 
     # Convert BIS' USD-FX-rates into EUR-FX-rates
     if use_bis:
-        bis = bis.filter(func.col("REFDATE") <= func.lit(cutoff_date))
-        
         eur_usd = ecb \
             .filter((func.col("BASE") == "EUR") & (func.col("QUOTE") == "USD")) \
             .select("REFDATE", "VALUE") \
@@ -373,7 +385,12 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
     # Internal over ECB over BIS. The precedence is carried by an explicit rank
     # rather than by SOURCE, because the SOURCE values of the internal data set
     # are whatever the internal CSV happens to contain.
-    window_spec = Window.partitionBy("REFDATE", "BASE", "QUOTE").orderBy(func.col("source_rank"))
+    # Within one rank the order runs on through the value and the labels, so
+    # that two rows of one source for the same day and pair -- the BIS carries
+    # a series per reference area, and areas share currencies -- are settled
+    # the same way on every run rather than by the order Spark reads them in.
+    window_spec = Window.partitionBy("REFDATE", "BASE", "QUOTE").orderBy(
+        func.col("source_rank"), func.col("VALUE"), func.col("SOURCE"), func.col("TYPE"))
 
     if use_internal:
         result = internal.withColumn("source_rank", func.lit(1)) \
@@ -399,12 +416,16 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
     # quote itself, so its position in the run is all it takes. That is a
     # weekend or a TARGET closing day wherever the ECB is the source -- the ECB
     # does not publish on those -- and any other day without a quote as well,
-    # whatever the reason for it.
+    # whatever the reason for it. A run lasts at most MAX_FILL_DAYS after its
+    # quote, so a pair that goes unquoted for longer has no rate on the days
+    # beyond.
     window_spec = Window.partitionBy("BASE", "QUOTE").orderBy("REFDATE")
     result = result \
         .withColumn("next_date", func.lead("REFDATE").over(window_spec)) \
         .withColumn("next_date", func.date_sub(func.col("next_date"), 1)) \
         .withColumn("next_date", func.when(func.col("next_date").isNull(), func.col("REFDATE")).otherwise(func.col("next_date"))) \
+        .withColumn("next_date", func.least(
+            func.col("next_date"), func.date_add(func.col("REFDATE"), MAX_FILL_DAYS))) \
         .withColumn("dates", func.sequence(func.col("REFDATE"), func.col("next_date"))) \
         .select(func.posexplode(func.col("dates")).alias("POS", "REFDATE"),
                 "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE") \
