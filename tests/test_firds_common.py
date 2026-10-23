@@ -126,7 +126,7 @@ DOCUMENTED = [
     "update_from_landing_to_bronze", "update_from_bronze_to_silver_main",
     "update_from_silver_main_to_silver_compact", "declare_silver_main_layout",
     "read_metadata", "get_metadata_maxdate", "update_metadata_maxdate",
-    "write_compact", "file_format_on_disk", "COMPACT_FORMATS", "history",
+    "write_silver", "file_format_on_disk", "SILVER_FORMATS", "history",
 ]
 
 

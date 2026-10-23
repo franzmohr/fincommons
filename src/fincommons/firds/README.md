@@ -234,11 +234,10 @@ Without deletion vectors the cost follows the size of the history, which only
 grows; with them it follows the size of the delta file. The weekly `OPTIMIZE`
 rewrites the files whose deleted rows have accumulated. Enabling them raises
 the reader version of the table to 3, so a reader outside Spark needs
-deletion-vector support; `compact` is the table meant for such readers. The
-helper the Quarto notebooks read Delta tables with,
-`docs/notebooks/r-delta-lake-functions.R`, has none: it hands arrow the parquet
-files a table holds, and stops with an error naming the table rather than
-returning the rows a deletion vector has deleted.
+deletion-vector support; `compact` is the table meant for such readers. A
+reader that hands arrow the parquet files a Delta table holds has none: it
+either stops with an error or returns the rows a deletion vector has deleted,
+so `main` is not the table to point one at.
 
 `declare_silver_main_layout` sets the property, which upgrades the protocol of
 the table; Delta does not undo that by itself.
@@ -317,6 +316,23 @@ Bronze layer creates the partition as an empty directory to say that the date
 was imported and had nothing in it, and the update passes the date with a
 warning rather than stopping on it for ever.
 
+A record that does not say which instrument it is about stops the update
+before anything is written. An instrument is the pair `(ISIN, TRADGVN)` and
+every comparison the history makes on it is an equality, which no null meets,
+so such a record is never found to supersede anything and is inserted again by
+every file that carries it: the instrument comes to have one version in force
+per delivery and `LATESTRECORD` is set on all of them. `check_instrument_key`
+refuses it, for the same reason `check_publication_period` refuses a record
+without a publication period -- nothing fails while the fault is being made.
+
+A record that begins before the version in force for its instrument stops the
+update as well. Paragraph 27.b.ii closes that version on the day before the
+incoming record begins, which says what to do on the assumption that the
+incoming record begins later; where it begins earlier the arithmetic still
+goes through and closes the superseded version before its own `VLDFROM`, so
+that it is valid on no day and a point-in-time query answers for every later
+day with the older record. `history.check_supersession` refuses it.
+
 A day whose delta file ESMA publishes after the history has been built past it
 stops the update as well. Its records are not in the history, and applying the
 days after it would not put them there, so the run raises naming the day. The
@@ -337,7 +353,11 @@ records the parts the register lists for the full file, under `full_sample` in
 its record, and the history is not initialised until every one of them is in
 the `finished` folder. A data lake filled by hand carries no such list; its
 history is initialised from the parts that arrived, with a warning that the
-check could not be made.
+check could not be made. The landing zone records the parts of the full file
+it downloads, which is the oldest it holds, so that every delta file after it
+is fetched; a newer full file put into the lake by hand is the one the history
+starts from instead, and the recorded list then says nothing about it. The
+warning names both days, so that the two cases are told apart from the log.
 
 Every one of these refusals stops the daily job until someone acts. Where a
 file is broken at the source and will never arrive, moving the watermark past
@@ -347,6 +367,12 @@ carry on, at the price of that day's records.
 ### Concentrated data `compact`
 
 Since individual instruments can be traded on multiple trading venues, FIRDS data contains multiple entries per ISIN. This can lead to unwanted data explosions when the data is joined with other data sets. To address this, table `compact` is generated. It contains only one observation per ISIN. Text fields, where multiple entries are available in `main`, are concatenated with `+`. The maturity date, the expiry date and the price multiplier keep their types: they hold the value the trading venues agree on and are empty where they disagree. Joining them as text and parsing the result would make the whole rebuild fail under Spark 4, which raises on a string it cannot parse.
+
+The values of a text field are sorted before they are joined, so the string an ISIN gets is decided by the set of values and not by the order a hash set happens to iterate in. `collect_set` defines no order, and the table is rebuilt in full on every run: without sorting, a venue added to an ISIN can land anywhere in the string rather than beside the others, and two lakes holding the same rows need not spell the column the same way.
+
+A venue that states nothing is not a venue that disagrees: a null is left out, so one venue's value stands for an ISIN the others say nothing about. Where no venue states a value at all the field is empty rather than the empty string, which is what concatenating an empty list answers; the typed columns are empty in that situation too, and a reader should not have to tell `NULL` and `''` apart to ask the same question of two columns of one table.
+
+A cancelled record is left out. The history carries it as the version in force of its instrument and venue, as section 4.2 of the Guide prescribes, but it states nothing about the instrument and what it does say is that the instrument was never admitted to that venue; counted, it would list that venue among the ones the instrument trades on. An ISIN whose every venue was cancelled therefore leaves the table altogether, which is the same statement one row further out.
 
 Note that the current selection of variables is limited, but can be extended in the future.
 
@@ -364,7 +390,9 @@ Delta is worth asking for where the table may be queried while it is rebuilt: a 
 firds.update_from_silver_main_to_silver_compact(spark, config_path, file_format = "parquet")
 ```
 
-`connect_to_firds` reads the table in whichever of the two formats it is stored in, so the choice does not have to be repeated when the table is queried. Switching from parquet to Delta on a table that already exists is the one direction that needs a hand: Delta will not adopt parquet files it has no transaction log for, so delete the directory before the first Delta rebuild. The other direction needs nothing.
+`connect_to_firds` reads the table in whichever of the two formats it is stored in, so the choice does not have to be repeated when the table is queried. A table that already stands keeps the format it is stored in, and asking for the other one raises rather than converting it: overwriting a Delta table as parquet deletes its transaction log along with the superseded files, which is not something to do as a side effect of naming a format, and Delta will not adopt parquet files it has no log for in the other direction. Delete the directory to change the format of a table that exists. The storage format is handled by `fincommons.storage`, which the other modules with a Silver table rebuilt in full share.
+
+The cancellations file is not a table of the Silver layer and is not reached through `connect_to_firds`. It stays in the Bronze layer as its own data set, under the path `firds.path_bronze_auth_102_001_01(config_path)`, and is read as the partitioned parquet it is.
                                                                                    
 
 ## Accessing the data

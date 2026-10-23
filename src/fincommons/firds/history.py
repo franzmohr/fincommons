@@ -233,6 +233,70 @@ def plan_changes(history: DataFrame, incoming: DataFrame) -> DataFrame:
     return planned.withColumn(_OPERATION, operation)
 
 
+def check_supersession(planned: DataFrame, source: str) -> DataFrame:
+    """Refuse a record that begins before the version it would supersede.
+
+    Paragraph 27.b.ii closes the version in force on the day before the
+    incoming record begins, which says what to do on the assumption that the
+    incoming record begins later. Where it begins earlier the arithmetic still
+    goes through and produces nonsense: the superseded version is closed on a
+    day before its own ``VLDFROM`` and so is valid on no day at all, while the
+    record that closed it becomes the version in force with a start date
+    behind the one it replaced. A point-in-time query then answers for every
+    day after the fault with the older record.
+
+    Nothing fails at that point, which is what makes it worth refusing here,
+    and it is the same reasoning as in
+    :func:`fincommons.firds.silver.check_publication_period`: a history that
+    goes on building around a fault costs more to repair than a run that
+    stops on it.
+
+    Only the first record a file carries for an instrument meets the version
+    that was in force before the file; :func:`plan_changes` classifies every
+    later one as ``INSERT``, and those are chained among themselves by
+    :func:`prepare_incoming`. The check is therefore made on that record
+    alone.
+
+    Parameters
+    ----------
+    planned:
+        The output of :func:`plan_changes`.
+    source:
+        What was being applied, for the message.
+
+    Returns
+    -------
+    pyspark.sql.DataFrame
+        ``planned`` unchanged, so the check can stand in a chain.
+
+    Raises
+    ------
+    ValueError
+        If any record begins before the version in force for its instrument.
+    """
+    backdated = planned.where(
+        (F.col(_SEQUENCE) == F.lit(1))
+        & F.col(_OPEN_VALID_FROM).isNotNull()
+        & (F.col(_OPEN_VALID_FROM) > F.col(VALID_FROM))
+    )
+    count = backdated.count()
+    if not count:
+        return planned
+
+    columns = [
+        name for name in (*KEY_COLUMNS, ACTION_TYPE, VALID_FROM, _OPEN_VALID_FROM)
+        if name in backdated.columns
+    ]
+    examples = [tuple(row) for row in backdated.select(*columns).limit(3).collect()]
+    raise ValueError(
+        f"{count} records of {source} begin before the version in force for "
+        f"their instrument. Closing that version on the day before the "
+        f"incoming record begins would leave it valid on no day, and the "
+        f"history would answer for every later day with the older record. "
+        f"Examples, as ({', '.join(columns)}): {examples}."
+    )
+
+
 def records_to_close(planned: DataFrame) -> DataFrame:
     """Return the versions that the file supersedes, with their closing date.
 
@@ -312,6 +376,7 @@ def apply_changes(history: DataFrame, incoming: DataFrame) -> DataFrame:
     """
     columns = history.columns
     planned = plan_changes(history, incoming).cache()
+    check_supersession(planned, "the file")
 
     closing = records_to_close(planned).withColumnRenamed(VALID_TO, "_new_vldto")
     replacing = records_to_replace(planned, columns)
@@ -380,6 +445,7 @@ __all__ = [
     "VALID_FROM",
     "VALID_TO",
     "apply_changes",
+    "check_supersession",
     "initialise_history",
     "latest_records",
     "plan_changes",

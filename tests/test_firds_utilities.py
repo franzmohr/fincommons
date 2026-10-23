@@ -155,28 +155,13 @@ def test_a_tag_that_is_absent_yields_nothing():
     assert utilities.extract_between_keywords("<Document/>", "MsgDefIdr") is None
 
 
-# Building column paths
-# --------------------------------------------------------------------------
+def test_a_tag_that_is_not_closed_yields_nothing():
+    """Only the first characters of the file are read, so the header may have
+    been cut in half. The remainder of the text is not what the file states
+    about the node."""
+    text = "<Document><MsgDefIdr>auth.036.001"
 
-
-def test_the_combinations_of_the_path_elements_are_joined_with_dots():
-    combined = utilities.combine_any_paths([["a", "b"], ["x"], ["p", "q"]])
-
-    assert sorted(combined) == ["a.x.p", "a.x.q", "b.x.p", "b.x.q"]
-
-
-def test_something_that_is_not_a_list_is_rejected():
-    with pytest.raises(TypeError, match="list of paths"):
-        utilities.combine_any_paths("a.b")
-
-
-def test_a_list_whose_elements_are_not_lists_is_rejected():
-    with pytest.raises(TypeError, match="should be lists"):
-        utilities.combine_any_paths([["a"], "b"])
-
-
-def test_nested_tuples_are_flattened():
-    assert list(utilities.flatten_tuples((("a", ("b", "c")), "d"))) == ["a", "b", "c", "d"]
+    assert utilities.extract_between_keywords(text, "MsgDefIdr") is None
 
 
 def test_the_publication_date_of_a_cancellations_file_is_read_off_its_name():

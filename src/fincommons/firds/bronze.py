@@ -4,7 +4,6 @@ import ntpath
 import os
 import pyspark.sql.functions as func
 import shutil
-import zipfile
 
 from ..layout import rebalanced
 from ..log import context, pipeline_run
@@ -233,7 +232,11 @@ def _update_from_landing_to_bronze(spark, config_path, outcome):
     quarantined = 0
 
     for name in files_in_folder:
-        is_zip = ".zip" in name.lower()
+        # The extension is tested at the end of the name, as it is where the
+        # candidates are collected: a name that merely carries ".zip"
+        # somewhere is not an archive, and feeding it to the unpacker would
+        # quarantine a file that reads perfectly well.
+        is_zip = name.lower().endswith(".zip")
         zip_path = os.path.join(dir_import, name) if is_zip else None
         file = None if is_zip else os.path.join(dir_import, name)
 
