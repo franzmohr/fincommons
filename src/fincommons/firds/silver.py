@@ -716,17 +716,35 @@ def initialise_firds_database(spark, config_path):
                 "initialised until every part has been imported into the "
                 "Bronze layer."
             )
-    else:
+    elif listed is None:
         logger.warning(
             "The landing zone holds no list of the full file's parts, so a "
             "letter of the CFI code of which no part arrived cannot be noticed",
             extra=context(module="firds", layer="silver", table="MAIN", datadt=maxdate),
+        )
+    else:
+        # The landing zone records the parts of the full file the history
+        # starts from, which is the one it downloads: the oldest it holds, so
+        # that every delta file after it is fetched. A newer full file put
+        # into the lake by hand is the one the history starts from instead,
+        # and the recorded list says nothing about it. Naming both dates is
+        # what tells the two apart from the log, since the check is skipped
+        # either way.
+        logger.warning(
+            "The landing zone's list of the full file's parts is for another "
+            "day, so a letter of the CFI code of which no part arrived cannot "
+            "be noticed",
+            extra=context(
+                module="firds", layer="silver", table="MAIN",
+                datadt=maxdate, listed=listed.get("date"),
+            ),
         )
 
     df = read_bronze_partition(
         spark, common.path_bronze_auth_017_001_02(config_path), maxdate
     )
     df = translate_xml_to_analytics_schema_017_001_02(df)
+    df = check_instrument_key(df, f"the full file of {maxdate}")
     df = check_publication_period(df, f"the full file of {maxdate}")
     df = history.initialise_history(df)
 
@@ -1135,6 +1153,72 @@ def check_publication_period(records, source):
     )
 
 
+def check_instrument_key(records, source):
+    """Refuse records that do not say which instrument they are about.
+
+    An instrument is identified by the pair ``(ISIN, TRADGVN)``, and every
+    comparison the history makes on it is an equality: the join of
+    :func:`fincommons.firds.history.plan_changes` against the versions in
+    force, and the condition the merge of
+    :func:`upsert_from_bronze_daily` matches on. Neither matches a null,
+    because nothing does.
+
+    A record missing either half of the key is therefore never found to
+    supersede anything, and is inserted again by every file that carries it.
+    The instrument comes to have one version in force per delivery,
+    ``LATESTRECORD`` is set on all of them, and the compact table counts the
+    instrument once per version. As with
+    :func:`check_publication_period`, nothing fails while this happens, which
+    is why it is refused here rather than left to be noticed.
+
+    ``<CancRcrd>`` is the one record type read from a column that is empty for
+    most rows of a partition, so :func:`read_cancellations` drops the rows
+    whose ISIN is null to find the cancellations at all; a cancellation
+    stating no trading venue still reaches this check.
+
+    Parameters
+    ----------
+    records: pyspark.sql.DataFrame
+        Records in the analytics schema, carrying the key columns.
+    source: str
+        What was being read, for the message.
+
+    Returns
+    -------
+    pyspark.sql.DataFrame
+        ``records`` unchanged, so the check can stand in a chain of reads.
+
+    Raises
+    ------
+    ValueError
+        If any record leaves either half of the key empty.
+    """
+    missing = records.filter(
+        functools.reduce(
+            lambda left, right: left | right,
+            [func.col(name).isNull() for name in history.KEY_COLUMNS],
+        )
+    )
+    count = missing.count()
+    if not count:
+        return records
+
+    columns = [
+        c for c in (*history.KEY_COLUMNS, "ACTNTP", "TECH_PBLCTNPRD_FRDT")
+        if c in records.columns
+    ]
+    examples = [tuple(row) for row in missing.select(*columns).limit(3).collect()]
+    raise ValueError(
+        f"{count} records of {source} state no "
+        f"{' or '.join(history.KEY_COLUMNS)}. The history identifies an "
+        f"instrument by that pair and matches on it with an equality, which "
+        f"no null meets, so these records would be inserted again by every "
+        f"file that carries them and their instrument would come to have one "
+        f"version in force per delivery. Examples, as "
+        f"({', '.join(columns)}): {examples}."
+    )
+
+
 def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     """Apply the delta file of one reference date to the historical database.
 
@@ -1177,9 +1261,9 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     # Rebinding the name would leave them in the cache for the rest of the
     # session, and a backfill applies one file after another.
     daily = bronze.filter(func.col("DATADT") == datadt).cache()
-    incoming = check_publication_period(
-        read_daily_changes(daily), f"the delta file of {datadt}"
-    )
+    incoming = read_daily_changes(daily)
+    incoming = check_instrument_key(incoming, f"the delta file of {datadt}")
+    incoming = check_publication_period(incoming, f"the delta file of {datadt}")
 
     ref = common.ref_silver_main(config_path)
     committed = committed_steps(spark, ref, datadt)
@@ -1209,6 +1293,7 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     columns = main.columns
 
     planned = history.plan_changes(main, incoming).cache()
+    history.check_supersession(planned, f"the delta file of {datadt}")
     table = common.delta_table(spark, ref)
     # The condition is built from the key the history identifies an
     # instrument by, so that it cannot drift away from it.
@@ -1292,15 +1377,18 @@ def update_from_silver_main_to_silver_compact(spark, config_path,
         Format the compact table is written in, ``'parquet'`` or ``'delta'``.
         Delta is worth asking for where a reader may be querying the table
         while it is rebuilt, since the rebuild then replaces it in one
-        transaction; see :func:`fincommons.firds.write_compact`. It says
+        transaction; see :func:`fincommons.storage.write_silver`. It says
         nothing about the main table, which is always Delta.
 
-        Only a compact table addressed by path has a choice: one addressed by
-        catalogue name is a Delta table and the argument may only confirm it.
-        Left out, the format is :data:`fincommons.firds.DEFAULT_COMPACT_FORMAT`
-        for a table addressed by path and Delta for one addressed by name.
+        Only a compact table addressed by path and not yet written has a
+        choice: one addressed by catalogue name is a Delta table, and one that
+        already stands keeps the format it is stored in, so the argument may
+        only confirm either. Left out, the format is
+        :data:`fincommons.storage.DEFAULT_SILVER_FORMAT` for a table addressed
+        by path and Delta for one addressed by name; see
+        :func:`fincommons.storage.silver_format`.
     """
-    common.compact_format(common.ref_silver_compact(config_path), file_format)
+    common.silver_format(common.ref_silver_compact(config_path), file_format)
     with pipeline_run(
         logger,
         "update_from_silver_main_to_silver_compact",
@@ -1317,28 +1405,64 @@ def _only_value(name):
     """The value of ``name`` if all rows of the group agree on it, else null.
 
     Several values cannot be joined into one date or number, and choosing one
-    of them would state something the venues do not agree on.
+    of them would state something the venues do not agree on. A venue that
+    states nothing is not a venue that disagrees: ``collect_set`` leaves a
+    null out, so one venue's value stands for an ISIN the others say nothing
+    about, and a group in which nobody states a value is empty.
     """
     values = func.collect_set(name)
     return func.when(func.size(values) == 1, values[0])
+
+
+def _joined_values(name):
+    """The values of ``name`` in the group, in order, joined with ``+``.
+
+    The values are sorted before they are joined, so that the string an ISIN
+    gets is decided by the set of values and not by the order a hash set
+    happens to iterate in. ``collect_set`` defines no order, and the compact
+    table is rebuilt in full on every run: without sorting, a venue added to
+    an ISIN can land anywhere in the string rather than beside the others,
+    and two lakes holding the same rows need not spell the column the same
+    way.
+
+    A group in which no row states a value is empty rather than the empty
+    string, which is what ``concat_ws`` answers for an empty array. The
+    typed columns of :func:`_only_value` are empty in that situation, and a
+    reader should not have to tell ``NULL`` and ``''`` apart to ask the same
+    question of two columns of one table.
+    """
+    values = func.collect_set(name)
+    return func.when(
+        func.size(values) > 0, func.array_join(func.array_sort(values), "+")
+    )
 
 
 def _update_from_silver_main_to_silver_compact(spark, config_path, file_format):
     """Do the work of :func:`update_from_silver_main_to_silver_compact`.
 
     The text columns join the different values the trading venues report for
-    an ISIN with ``+``. The dates and the price multiplier keep their type --
-    for the multiplier the ``decimal`` of :data:`DECIMAL_COLUMNS` -- and hold
-    the value the venues agree on, and are empty where they do not.
+    an ISIN with ``+``, in order; see :func:`_joined_values`. The dates and
+    the price multiplier keep their type -- for the multiplier the ``decimal``
+    of :data:`DECIMAL_COLUMNS` -- and hold the value the venues agree on, and
+    are empty where they do not.
+
+    A cancelled record is left out. The history carries it as the version in
+    force of its instrument and venue, as section 4.2 of the instructions
+    prescribes, but it states nothing about the instrument and what it does
+    say is that the instrument was never admitted to that venue. Counted, it
+    would list that venue among the ones the instrument trades on. An ISIN
+    whose every venue was cancelled therefore leaves the compact table
+    altogether, which is the same statement one row further out.
     """
     compact = common.read_delta(spark, common.ref_silver_main(config_path)) \
         .filter(func.col("LATESTRECORD")) \
+        .filter(~func.col(history.ACTION_TYPE).eqNullSafe(CANCELLATION)) \
         .groupBy("ISIN") \
         .agg(
-            func.concat_ws("+", func.collect_set("CFI")).alias("CFI"),
-            func.concat_ws("+", func.collect_set("ISSUER")).alias("ISSUER"),
-            func.concat_ws("+", func.collect_set("TRADGVN")).alias("TRADGVN"),
-            func.concat_ws("+", func.collect_set("SHORTNAME")).alias("SHORTNAME"),
+            _joined_values("CFI").alias("CFI"),
+            _joined_values("ISSUER").alias("ISSUER"),
+            _joined_values("TRADGVN").alias("TRADGVN"),
+            _joined_values("SHORTNAME").alias("SHORTNAME"),
             _only_value("MTRTYDT").alias("MTRTYDT"),
             _only_value("XPRYDT").alias("XPRYDT"),
             _only_value("PRICMLTPLR").alias("PRICMLTPLR"),
@@ -1347,7 +1471,7 @@ def _update_from_silver_main_to_silver_compact(spark, config_path, file_format):
         .withColumn("XPRYDT", func.to_date(func.col("XPRYDT"))) \
         .withColumn("PRICMLTPLR", func.col("PRICMLTPLR").cast(DECIMAL_COLUMNS["PRICMLTPLR"]))
 
-    common.write_compact(
+    common.write_silver(
         compact, common.ref_silver_compact(config_path), file_format = file_format
     )
 
@@ -1477,6 +1601,7 @@ __all__ = [
     "REWRITING_OPERATIONS",
     "SOURCE_FIELDS",
     "USER_METADATA_CONF",
+    "check_instrument_key",
     "check_publication_period",
     "commit_tag",
     "committed_steps",
