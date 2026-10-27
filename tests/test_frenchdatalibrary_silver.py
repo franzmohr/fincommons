@@ -109,6 +109,23 @@ def test_the_table_holds_what_the_reader_gives_for_every_file(spark, data_lake):
     assert outcome["rows"] == len(frame)
 
 
+def test_a_file_that_comes_back_in_many_chunks_is_written_whole(
+        spark, data_lake, monkeypatch):
+    """A file's values travel back in chunks, because a daily file of a
+    hundred portfolios returned as one frame is more than a gigabyte and
+    exhausted the direct memory of the first collection into a real lake.
+    Chunks of seven rows split every file of the fixtures many times over."""
+    from fincommons.frenchdatalibrary import silver
+    monkeypatch.setattr(silver, "CHUNK_ROWS", 7)
+    for name in NAMES:
+        collect(data_lake, name)
+
+    outcome = fdl.update_silver_frenchdatalibrary(spark, data_lake)
+
+    assert outcome["written"] == len(NAMES) and outcome["failed"] == 0
+    same_rows(table(spark, data_lake), pandas.concat([expected(n) for n in NAMES]))
+
+
 def test_the_table_has_the_declared_columns_and_no_null(spark, data_lake):
     collect(data_lake, "6_Portfolios_2x3")
     fdl.update_silver_frenchdatalibrary(spark, data_lake)
@@ -355,7 +372,8 @@ def test_the_command_fails_where_a_file_was_set_aside(monkeypatch):
             pass
 
     outcome = {"failed": 1, "failed_sources": ["bronze/x"]}
-    monkeypatch.setattr(cli, "build_session", lambda master: Session())
+    monkeypatch.setattr(cli, "build_session",
+                        lambda master, driver_memory=None: Session())
     monkeypatch.setattr(cli, "configure", lambda level: None)
     monkeypatch.setattr(cli, "update_frenchdatalibrary",
                         lambda spark, config, full, datasets: outcome)
@@ -423,3 +441,17 @@ def test_the_published_factors_are_rebuilt_from_the_library_itself(spark, data_l
     # Every month since July 1926, 1,203 of them in the 202609 edition.
     assert comparison.index[0] == pandas.Timestamp("1926-07-31")
     assert_the_factors_are_reproduced(comparison, len(comparison))
+
+
+def test_a_batch_is_bounded_by_its_lines_as_well_as_its_files():
+    """Fifty daily files of a hundred portfolios in one batch ran the session
+    out of heap, so a batch closes before the next file takes it over its
+    budget of lines, and a file larger than the budget is a batch alone."""
+    from fincommons.frenchdatalibrary import silver
+    pending = {"a": {"lines": 40}, "b": {"lines": 40}, "c": {"lines": 150},
+               "d": {"lines": 10}, "e": {}, "f": {"lines": 10}}
+
+    assert list(silver.batches(pending, size=50, lines=100)) == [
+        ["a", "b"], ["c"], ["d", "e", "f"]]
+    assert list(silver.batches(pending, size=2, lines=1000)) == [
+        ["a", "b"], ["c", "d"], ["e", "f"]]

@@ -58,11 +58,28 @@ def parse_arguments():
         default="local[*]",
         help="Spark master (default: local[*])",
     )
+    parser.add_argument(
+        "--driver-memory",
+        default=DRIVER_MEMORY,
+        help=(
+            "memory of the Spark driver, which in local mode runs the "
+            f"executors as well (default: {DRIVER_MEMORY}). Ignored where a "
+            "session is already running, as on a cluster"
+        ),
+    )
     add_log_level_argument(parser)
     return parser.parse_args()
 
 
-def build_session(master):
+#: The memory the session is opened with. Spark's own default is a gigabyte,
+#: and a gigabyte does not hold a batch of the library's daily files while it
+#: is parsed: the first collection into a real lake ran out of heap with it.
+#: In local mode the driver runs the executors too, so this is the memory the
+#: whole run has.
+DRIVER_MEMORY = "4g"
+
+
+def build_session(master, driver_memory=DRIVER_MEMORY):
     """Open a Spark session with the Delta extensions.
 
     The Silver table may be Delta, so off-cluster the session carries the
@@ -76,6 +93,7 @@ def build_session(master):
     builder = (
         SparkSession.builder.master(master)
         .appName("fincommons-frenchdatalibrary")
+        .config("spark.driver.memory", driver_memory)
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config(
             "spark.sql.catalog.spark_catalog",
@@ -100,7 +118,7 @@ def main():
     # code.
     configure(args.log_level)
 
-    spark = build_session(args.master)
+    spark = build_session(args.master, args.driver_memory)
     try:
         outcome = update_frenchdatalibrary(spark, args.config, full=args.full,
                                            datasets=args.datasets)

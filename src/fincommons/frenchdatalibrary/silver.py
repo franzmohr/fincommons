@@ -18,14 +18,20 @@ was built from is recorded in a mark beside the table, written after the
 partition is in place, so that a run that dies leaves the mark behind and the
 next run builds the file again.
 
-The parsing runs on the executors, one file per task, through
-:meth:`pyspark.sql.GroupedData.applyInPandas`, since the library is about a
-hundred million values and the driver is not the place to hold them. A file
+The parsing runs on the executors, since the library is about a hundred
+million values and the driver is not the place to hold them. Each file reaches
+them as one row holding its lines, and its values come back in chunks of
+:data:`CHUNK_ROWS` through :meth:`pyspark.sql.DataFrame.mapInPandas`. It used
+to come back whole, as the one frame :meth:`~pyspark.sql.GroupedData.applyInPandas`
+returns per group, and a daily file of a hundred portfolios is a frame of more
+than a gigabyte: the first collection into a real lake failed on it, out of the
+gigabyte of direct memory a session has by default. A file
 that cannot be parsed does not fail the others: its error is carried back to
 the driver as a row of its own, logged with the traceback of the executor at
 ``ERROR`` and counted, and the file's partition is left as it was.
 """
 
+import functools
 import logging
 import traceback
 
@@ -47,6 +53,21 @@ logger = logging.getLogger(__name__)
 #: values, the whole library about a hundred million.
 BATCH_SIZE = 50
 
+#: How many lines of Bronze text one batch may hold at most. A batch gathers
+#: the lines of each of its files into a single row before parsing it, so its
+#: size in memory follows its lines rather than its number of files: fifty
+#: monthly files are a few hundred thousand short lines, while one daily file
+#: of a hundred portfolios is a hundred thousand lines of a kilobyte each. A
+#: batch of fifty files that took several of those together ran the session
+#: out of heap on the first collection into a real lake. A file larger than
+#: the budget is a batch of its own.
+BATCH_LINES = 400_000
+
+#: How many parsed values travel back from the executors in one frame. Each
+#: frame becomes one Arrow batch, which has to fit into the direct memory of
+#: the session; a quarter of a million rows is a few tens of megabytes.
+CHUNK_ROWS = 250_000
+
 #: The columns the parsing hands back: those of the table, and the error of a
 #: file that could not be parsed, which travels in a row of its own.
 _PARSED_SCHEMA = StructType(
@@ -54,30 +75,50 @@ _PARSED_SCHEMA = StructType(
     + [StructField("_ERROR", StringType(), True)]
 )
 
+_COLUMNS = ["REFDT", "DATASET", "TABLE", "FREQUENCY", "SERIES", "VALUE",
+            "TITLE", "_ERROR"]
 
-def _parse_file(lines):
-    """Parse the lines of one file, as the executors are handed them.
+
+def _parse_file(dataset, lines, chunk_rows=CHUNK_ROWS):
+    """The values of one file, in chunks of at most ``chunk_rows`` rows.
 
     It never raises. A file that fails comes back as a single row that
     carries the traceback in ``_ERROR`` and nothing else, because an exception
     raised here would fail the whole Spark job, and with it every other file
     of the batch.
+
+    Parameters
+    ----------
+    dataset: str
+        The name of the file.
+    lines: list of str
+        Its lines, in the order of the file.
     """
-    lines = lines.sort_values("LINENO")
-    dataset = lines["DATASET"].iloc[0]
     try:
-        values = parse_lines(dataset, lines["LINE"].tolist())
+        values = parse_lines(dataset, list(lines))
     except Exception:
-        return pandas.DataFrame({
+        yield pandas.DataFrame({
             "REFDT": [None], "DATASET": [dataset], "TABLE": [None],
             "FREQUENCY": [None], "SERIES": [None], "VALUE": [None],
             "TITLE": [None], "_ERROR": [traceback.format_exc()],
         })
+        return
     values["DATASET"] = dataset
     values["REFDT"] = values["REFDT"].dt.date
     values["_ERROR"] = None
-    return values[["REFDT", "DATASET", "TABLE", "FREQUENCY", "SERIES", "VALUE",
-                   "TITLE", "_ERROR"]]
+    values = values[_COLUMNS]
+    for start in range(0, len(values), chunk_rows):
+        yield values.iloc[start:start + chunk_rows]
+
+
+def _parse_files(frames, chunk_rows=CHUNK_ROWS):
+    """Parse the files of a partition, as :meth:`mapInPandas` hands them over.
+
+    Each row holds one file: its name and its lines, already in order.
+    """
+    for frame in frames:
+        for dataset, lines in zip(frame["DATASET"], frame["LINES"]):
+            yield from _parse_file(dataset, lines, chunk_rows)
 
 
 def pending_datasets(config_path, full=False, datasets=None):
@@ -95,6 +136,36 @@ def pending_datasets(config_path, full=False, datasets=None):
         for dataset, collection in collections.items()
         if full or read_watermark(config_path, dataset) != collection["sha256"]
     }
+
+
+def batches(pending, size=None, lines=None):
+    """The pending files in batches of at most ``size`` files and ``lines`` lines.
+
+    The files are taken in order of their name, and a batch is closed as soon
+    as the next file would take it over either bound, so a file larger than
+    ``lines`` makes a batch of its own. The line count is the one recorded with
+    the collection; a record without one counts as nothing.
+
+    Parameters
+    ----------
+    pending: dict
+        The collection of each pending file, by name, as
+        :func:`pending_datasets` returns them.
+    size, lines: int, optional
+        The bounds, :data:`BATCH_SIZE` and :data:`BATCH_LINES` by default.
+    """
+    size = BATCH_SIZE if size is None else size
+    lines = BATCH_LINES if lines is None else lines
+    batch, held = [], 0
+    for name in sorted(pending):
+        count = int(pending[name].get("lines") or 0)
+        if batch and (len(batch) >= size or held + count > lines):
+            yield batch
+            batch, held = [], 0
+        batch.append(name)
+        held += count
+    if batch:
+        yield batch
 
 
 def update_silver_frenchdatalibrary(spark, config_path, full=False,
@@ -144,9 +215,7 @@ def update_silver_frenchdatalibrary(spark, config_path, full=False,
             )
             return outcome
 
-        names = sorted(pending)
-        for start in range(0, len(names), BATCH_SIZE):
-            batch = names[start:start + BATCH_SIZE]
+        for batch in batches(pending):
             _update_batch(spark, config_path, batch, pending, file_format, outcome)
 
         if outcome["failed"]:
@@ -167,8 +236,20 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
         .filter(func.col("DATASET").isin(batch)) \
         .select("DATASET", "LINENO", "LINE")
 
-    parsed = bronze.groupBy("DATASET") \
-        .applyInPandas(_parse_file, schema=_PARSED_SCHEMA) \
+    # One row per file, its lines in the order of the file, and one file per
+    # partition as far as hashing allows, so that a task holds the text of a
+    # file or two rather than of the whole batch.
+    files = bronze.groupBy("DATASET").agg(
+        func.transform(
+            func.sort_array(func.collect_list(func.struct("LINENO", "LINE"))),
+            lambda line: line["LINE"],
+        ).alias("LINES")
+    ).repartition(len(batch), "DATASET")
+
+    # The chunk size is bound here, on the driver, because the executors
+    # import this module afresh and would not see it changed.
+    parse = functools.partial(_parse_files, chunk_rows=CHUNK_ROWS)
+    parsed = files.mapInPandas(parse, schema=_PARSED_SCHEMA) \
         .persist(StorageLevel.MEMORY_AND_DISK)
     try:
         summary = {
@@ -323,7 +404,10 @@ def series(data, dataset, table, frequency, columns=None):
 
 
 __all__ = [
+    "BATCH_LINES",
     "BATCH_SIZE",
+    "CHUNK_ROWS",
+    "batches",
     "pending_datasets",
     "series",
     "update_silver_frenchdatalibrary",
