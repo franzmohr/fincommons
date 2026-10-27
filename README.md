@@ -16,6 +16,7 @@ approaches for handling basic data pipelines.
 | `marketpricedata` | prices and rates from public publishers (ECB, Federal Reserve Bank of New York, Bank of England, Yahoo Finance and others) in one table, and the risk-free zero curves its overnight and swap rates imply |
 | `firds` | ESMA's FIRDS reference data: download, import and the historical database ESMA's instructions describe |
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
+| `frenchdatalibrary` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
 | `addressing`, `storage`, `log`, `layout`, `schemas`, `columns` | the infrastructure the modules share: locations from `paths.yaml`, how a Silver table rebuilt in full is read and written as parquet or Delta, logging, the file layout of tables, declared schemas, and the catalogue of what a column holds |
 
 fincommons is open source and complete on its own. Pipelines on supervisory
@@ -107,7 +108,8 @@ message rather than inside it, so that the sentence stays constant across runs:
 `print` keeps a job next to this. Result tables that a script writes for
 someone watching the console are the output of the program and stay on
 standard output; the log goes to standard error. `python -m
-fincommons.marketpricedata` takes `--log-level`.
+fincommons.marketpricedata` and `python -m fincommons.frenchdatalibrary` take
+`--log-level`.
 
 ## Looking up what a column or a series is
 
@@ -128,7 +130,7 @@ print(mp.describe_instrument("EUR/VND"))               # one series of the price
 ```
 
 `describe_column` reads `data/column_catalogue.csv`: one row per data set and
-column (64 of them across four modules), with the tables that write it, the
+column (75 of them across five modules), with the tables that write it, the
 report field it is read from or "derived", a kind and a description. A test
 reads the column names out of the modules' code and fails if the two drift
 apart, so a column added to a module needs a catalogue row. The descriptions
@@ -236,6 +238,41 @@ The details, including the layout a proprietary source has to have, are
 documented in
 [`src/fincommons/exchangerate/README.md`](src/fincommons/exchangerate/README.md).
 
+### `fincommons.frenchdatalibrary`
+
+The [Kenneth R. French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html):
+the factors of the Fama-French models, the returns of the portfolios they are
+built from and the NYSE breakpoints of the sorts, for the US since 1926 and
+for international regions since 1990. The library publishes some three
+hundred zipped CSV files written for a person to read, and rebuilds all of
+them every month; the module reads every one of them into one long table.
+
+| Column | Meaning |
+|--------|---------|
+| `REFDT` | the date of the period: the day, the last day of the month, or 31 December |
+| `DATASET` | the file, e.g. `F-F_Research_Data_Factors` |
+| `TABLE` | the kind of table in the file, e.g. `FACTORS`, `RET_VW`, `NFIRMS`, `BREAKPOINTS` |
+| `FREQUENCY` | `D`, `W`, `M` or `A` |
+| `SERIES` | the column as the file names it, e.g. `HML`, `SMALL LoBM` |
+| `VALUE` | the value as published, returns in percent |
+| `TITLE` | the title of the table as published |
+
+```python
+from fincommons import frenchdatalibrary as fdl
+
+fdl.update_frenchdatalibrary(spark, "paths.yaml")     # the files that changed, to Silver
+df = fdl.connect_to_frenchdatalibrary(spark, "paths.yaml")
+fdl.series(df, "F-F_Research_Data_Factors", "FACTORS", "M")   # as published, wide
+```
+
+A file is downloaded only where the server says it has changed, and the table
+is rebuilt file by file, each file replacing its own partition. The data is
+downloaded when the pipeline runs and is not shipped with the package; it is
+copyright Eugene F. Fama and Kenneth R. French, and research that uses it
+cites the library. The details, the vocabulary of tables and a vignette that
+rebuilds HML and SMB from the six portfolios are documented in
+[`src/fincommons/frenchdatalibrary/README.md`](src/fincommons/frenchdatalibrary/README.md).
+
 ### `fincommons.firds` and `fincommons.marketpricedata`
 
 See [`src/fincommons/firds/README.md`](src/fincommons/firds/README.md) and
@@ -257,7 +294,8 @@ variables have to be set by hand.
 
 Nothing in the suite reaches the network. Where a module downloads something
 -- the FIRDS files from ESMA's register, the reference rates from the ECB and
-the BIS, the GLEIF golden copies -- the test supplies the response, so that
+the BIS, the GLEIF golden copies, the French Data Library -- the test supplies
+the response, so that
 what is asserted is what the module does with an answer rather than what the
 publisher happens to be serving that day.
 
