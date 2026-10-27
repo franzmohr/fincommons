@@ -16,7 +16,10 @@ that market data from the public sources in three stages:
     reducing every source to a reference date, an instrument and a value in one
     combined table, which :func:`connect_to_marketpricedata` opens,
 ``pipeline``
-    running the sources of a layer in one call.
+    running the sources of a layer in one call,
+``curves``
+    the risk-free zero curves and discount factors the overnight rates and
+    swap quotes of the table imply, for a reference date.
 
 Every source writes the same three columns, so the instrument identifier is
 what tells them apart: an ISIN where the source names one, a currency pair such
@@ -46,3 +49,6 @@ from .silver_yahoo import *
 from .dse_events import *
 from .pipeline import *
 from .describe import *
+# By name rather than starred: its names, forward_rate among them, are only
+# unambiguous as curves.forward_rate.
+from . import curves

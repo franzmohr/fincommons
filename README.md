@@ -13,7 +13,7 @@ approaches for handling basic data pipelines.
 | Module | Holds |
 | --- | --- |
 | `exchangerate` | the reference rates of the ECB and the BIS, combined into one table per calendar day and currency pair, and conversion of amounts |
-| `marketpricedata` | prices and rates from public publishers (ECB, Federal Reserve Bank of New York, Bank of England, Yahoo Finance and others) in one table |
+| `marketpricedata` | prices and rates from public publishers (ECB, Federal Reserve Bank of New York, Bank of England, Yahoo Finance and others) in one table, and the risk-free zero curves its overnight and swap rates imply |
 | `firds` | ESMA's FIRDS reference data: download, import and the historical database ESMA's instructions describe |
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
 | `addressing`, `storage`, `log`, `layout`, `schemas`, `columns` | the infrastructure the modules share: locations from `paths.yaml`, how a Silver table rebuilt in full is read and written as parquet or Delta, logging, the file layout of tables, declared schemas, and the catalogue of what a column holds |

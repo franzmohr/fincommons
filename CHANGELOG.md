@@ -4,6 +4,14 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
+## Unreleased
+
+- `marketpricedata.curves`: risk-free zero curves and discount factors per
+  currency from the overnight rates and OIS quotes of the Silver table, with
+  log-linear interpolation in the discount factors, parallel shifts and
+  forward rates. Moved from the forward-looking analysis of EMIR in
+  finsupverse, which now imports it from here.
+
 ## 0.1.0
 
 The first release.
