@@ -2,7 +2,9 @@
 
 Several modules keep tables in the Silver layer that every run rebuilds from
 the layer below in full, such as the combined exchange rate table and the
-entity master data set. Such a table may be stored as parquet or as Delta, and
+entity master data set; the table of the French Data Library is rebuilt a
+partition at a time instead, see :func:`replace_silver_partitions`. Such a
+table may be stored as parquet or as Delta, and
 it may be addressed by path or by catalogue name, which is what
 :mod:`fincommons.addressing` decides from the configuration file. This module
 is the one place that turns those two facts into a read and a write, so that
@@ -394,6 +396,96 @@ def write_silver(df, ref, file_format: str | None = None, partition_by=()):
     return given
 
 
+@contextlib.contextmanager
+def _dynamic_partition_overwrite(spark):
+    """Have an overwrite replace only the partitions the frame carries.
+
+    The counterpart of :func:`_static_partition_overwrite`, for the parquet
+    source, which reads the mode from the session alone.
+    """
+    key = "spark.sql.sources.partitionOverwriteMode"
+    previous = spark.conf.get(key)
+    spark.conf.set(key, "dynamic")
+    try:
+        yield
+    finally:
+        spark.conf.set(key, previous)
+
+
+def _sql_literal(value) -> str:
+    """A value as a SQL string literal, its quotes and backslashes escaped."""
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def replace_silver_partitions(df, ref, column: str, values,
+                              file_format: str | None = None):
+    """Replace some partitions of a Silver table and leave the others.
+
+    A table that is rebuilt piece by piece rather than in full -- one file of
+    a library at a time, say -- is partitioned by the column that names the
+    piece, and each write replaces the partitions of the pieces it carries.
+    ``df`` must hold rows of those partitions only, and of every one of them:
+    a partition named in ``values`` that ``df`` has no row for is emptied as
+    Delta and left as it was as parquet, so a caller that has nothing to
+    write for a piece leaves it out of ``values``.
+
+    The guarantee depends on the format, as for :func:`write_silver`:
+
+    * Delta, at a path or in a catalogue, replaces the partitions in one
+      transaction with ``replaceWhere``. A reader sees the table before the
+      write or after it, and the previous versions remain readable.
+    * Parquet rewrites the partitions in place with a dynamic partition
+      overwrite. A reader of one of them during the write may find it missing
+      or half-written; the other partitions are not touched.
+
+    A table that does not exist yet is created, partitioned by ``column``.
+
+    Parameters
+    ----------
+    df: pyspark.sql.DataFrame
+        The rows of the partitions to be replaced.
+    ref: fincommons.addressing.TableRef or str
+        Where the table lives. A string is a path.
+    column: str
+        The partition column.
+    values: list
+        The values of ``column`` whose partitions are replaced.
+    file_format: str, optional
+        One of :data:`SILVER_FORMATS`; see :func:`silver_format`.
+
+    Returns
+    -------
+    fincommons.addressing.TableRef or str
+        The table that was written to, in the form it was given.
+    """
+    given = ref
+    ref = _as_ref(ref)
+    file_format = silver_format(ref, file_format)
+    spark = df.sparkSession
+    values = list(values)
+    if not values:
+        return given
+
+    writer = df.write.format(file_format).mode("overwrite").partitionBy(column)
+    if file_format == "delta":
+        exists = delta_table_exists(spark, ref)
+        if exists:
+            _ensure_optimize_write(spark, ref)
+            predicate = f"`{column}` IN (" + ", ".join(
+                _sql_literal(v) for v in values) + ")"
+            writer = writer.option("replaceWhere", predicate)
+        if ref.is_named:
+            writer.saveAsTable(ref.name)
+        else:
+            writer.save(ref.path)
+        if not exists:
+            _ensure_optimize_write(spark, ref)
+    else:
+        with _dynamic_partition_overwrite(spark):
+            writer.save(ref.path)
+    return given
+
+
 __all__ = [
     "DEFAULT_SILVER_FORMAT",
     "OPTIMIZE_WRITE",
@@ -402,6 +494,7 @@ __all__ = [
     "check_local_path",
     "file_format_on_disk",
     "read_silver",
+    "replace_silver_partitions",
     "silver_format",
     "silver_table_exists",
     "write_silver",

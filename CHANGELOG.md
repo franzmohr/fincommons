@@ -11,6 +11,14 @@ release may change the public API, which `tests/test_public_api.py` lists.
   log-linear interpolation in the discount factors, parallel shifts and
   forward rates. Moved from the forward-looking analysis of EMIR in
   finsupverse, which now imports it from here.
+- `frenchdatalibrary`: the Kenneth R. French Data Library -- the Fama-French
+  factors, the portfolios they are built from and the breakpoints of the
+  sorts -- with every file of the library in one long table. A file is
+  downloaded only where the server says it has changed, its text is kept
+  line by line in the Bronze layer, and the Silver table is rebuilt file by
+  file. `python -m fincommons.frenchdatalibrary` runs it as a scheduled job.
+- `storage.replace_silver_partitions`: replaces some partitions of a Silver
+  table, as parquet or as Delta, and leaves the others as they are.
 
 ## 0.1.0
 

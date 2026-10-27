@@ -3,7 +3,8 @@
 fincommons is the shared infrastructure that supervisors and financial
 firms -- banks, insurers and investment firms alike -- can use together. It
 holds the pipelines that work entirely with public data (exchange rates,
-market prices, FIRDS reference data, entity master data) and the data lake
+market prices, FIRDS reference data, entity master data, the Fama-French
+factors of the French Data Library) and the data lake
 infrastructure they are built on: addressing through ``paths.yaml``,
 logging, the file layout of tables and the declared schemas.
 

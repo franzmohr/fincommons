@@ -1,0 +1,197 @@
+\chapter{The Kenneth R. French Data Library}\label{ch:frenchdatalibrary}
+
+\section{Introduction}
+
+Much of empirical asset pricing rests on one public collection of files. The Kenneth R.\ French Data Library \parencite{French.2026} publishes the factors of the three- and five-factor models of \textcite{Fama.1993} and \textcite{Fama.2015}, the momentum and reversal factors, the returns of the portfolios those factors are built from -- sorted on size, book-to-market, operating profitability, investment, prior returns, industries and further characteristics -- and the NYSE breakpoints of the sorts. The US files reach back to 1926 and are built from CRSP and Compustat; the international files, for the developed and emerging regions, reach back to 1990 and are built from Bloomberg. A supervisor that assesses the market risk of a portfolio, a central bank that studies the pricing of risk, and a firm that attributes the performance of its funds all start from the same files.
+
+Every institution that uses them downloads them, opens a zipped CSV file that is written for a person rather than for a program, and writes a reader for the file it happens to need. The library offers some three hundred such files, about 150\,MB zipped and close to a hundred million values, and Kenneth French rebuilds all of them once a month as CRSP is updated, so a reader written for one file has to be kept working for that file every month. Module \emph{frenchdatalibrary} of the \emph{fincommons} package reads every file of the library into one table, in one shape, and keeps it up to date.
+
+The files are downloaded from the library when the pipeline runs and are never shipped with the package, which holds only the code that collects them and a few synthetic files in its tests. They are copyright Eugene F.\ Fama and Kenneth R.\ French, and the library's page states no licence: research that uses them cites the library and the papers the factors come from, and any other use is a question for the authors rather than one the package could settle.
+
+\section{Data pipeline}
+
+\subsection{Why the library is a module of its own}
+
+At first sight the factors are market data and belong in the market price table of chapter \ref{ch:marketpricedata}. Two properties of the library speak against it. The first is volume: the market price table holds about a million rows, the library close to a hundred million values. The second, and the decisive one, is how the library changes. The market price table is kept by an upsert of the days a run collected, because its sources add days and rarely revise them. French rebuilds the whole history of every file each month from the current vintage of CRSP, so a value far back in the history can change with it, and a month of the library is not a few new rows but a new edition of the whole history. The write that fits is to replace a file in full, not to merge a day into it, and that is how the module is built.
+
+\subsection{Landing zone}
+
+There is no landing zone. As for the market price data, the archives are fetched into a temporary directory on the local disk of the driver and only the parquet data set reaches the data lake, because a Unity Catalog volume should not be used as scratch space for files that are deleted moments later.
+
+\subsection{Bronze layer}
+
+The Bronze layer keeps the text of every file exactly as it was published, one row per line, partitioned by the name of the file. Nothing is dropped. The preamble of a file says which vintage of CRSP it was built from, how its portfolios are formed and which value stands for a missing one, and the notes between its tables say what the tables are; that is what a reader of the Silver table goes back to when a value surprises them, and the Silver table can always be rebuilt from it. A new collection of a file replaces its partition, and the partition is written under a name that readers pass over and put in place once complete, so a run that dies leaves the previous collection rather than half of the new one.
+
+Which files exist is read from the library's page on every run rather than from a list kept in the package, because the library adds and renames files without notice. A page that links no file at all is refused: it is not a library that has been emptied but an error page or a page that has moved, and a run that took it at its word would report success having collected nothing. The names taken from the page become directory names and values in a SQL predicate, and the page comes from the network, so a name that is more than a plain name is left out with a warning.
+
+A file is downloaded only where it has changed. The server states when a file was last modified and gives it an entity tag, both are kept with the collection, and a run asks for them first with a \verb|HEAD| request that costs a few hundred bytes where the file costs up to sixteen megabytes. Where the server does not answer, the file is downloaded and its text compared with the one kept by its SHA-256 hash, so an unchanged file is never written again and never sends the Silver layer to read it again. On most days a run downloads nothing; in the days after the monthly update it downloads the whole library.
+
+\subsection{Silver layer}
+
+The Silver layer holds one table with a row per file, table, series and period. Its seven columns are the date of the period \verb|REFDT| -- the day for daily and weekly rows, the last day of the month for monthly rows and the 31st of December for annual ones --, the file \verb|DATASET|, a code for the kind of table within the file \verb|TABLE|, the frequency \verb|FREQUENCY| (\verb|D|, \verb|W|, \verb|M| or \verb|A|), the series \verb|SERIES| as the file's header names it, the value \verb|VALUE| as published, and the title of the table \verb|TITLE| as published, kept so that every code can be checked against what the library says. No column is ever null: the library writes a missing value as $-99.99$ or $-999$, and such a value is left out rather than written as a null. Returns and factors stay in percent, as published, because a table that silently divided some of its values by a hundred would be read wrongly by everyone who knows the library.
+
+The table is partitioned by the file and rebuilt file by file. Each file whose Bronze collection the table was not built from is read again and replaces its own partition, and the other partitions are left as they are. As Delta the replacement is one transaction; as Parquet a reader of a partition that is being rewritten may find it missing for a moment, as for the other modules. Which collection each partition was built from is recorded in a small mark per file beside the table, written after the partition is in place, so a run that dies leaves the mark behind and the next run builds the file again. In the month's first run every file is rebuilt, since every file has changed; what the arrangement buys is that a run in which a few downloads failed, or a run repeated after one that failed half-way, does only the work that is left.
+
+The files are read on the executors, one file per task, so that the hundred million values of the library never pass through the driver. A file that cannot be read does not fail the others: its error is carried back to the driver, logged with the traceback of the executor and counted, and its partition keeps the values it held. The command line exits with a non-zero code where any file was set aside, so a scheduler sees a run that did less than it was asked to.
+
+\subsection{Reading a file}
+
+A file of the library is read for its shape rather than from a description of each file. A line that begins with a comma is the header of a table, the lines of text directly above it are its title, and the rows below it are keyed by a year, a month or a day. The preamble, the notes and the copyright line are passed over. The breakpoint files are the exception: they have no header, or one that names only the counts of firms, and their columns are named by the module -- the counts, followed by the twenty NYSE percentiles \verb|P05| to \verb|P100|.
+
+The reader was run over all 297 files of the 202609 edition before it was released, and it reads 86{,}029{,}613 values from them. The run turned up the irregularities that a description of the layout does not show and that the reader now handles: a title written over two lines, a carriage return alone at the start of a header row -- so a line ends at a line feed and nowhere else --, a blank line between a header and its first row, and a misspelt title. A row with more values than its header has columns, or a value that is not a number, fails the file rather than putting values under the wrong series.
+
+The titles are prose and vary from one file to the next: \emph{Average Firm Size} here, \emph{Average Market Cap} there, \emph{Value Weight Returns -- Annual from January to December} beside \emph{Average Value Weighted Returns -- Annual}. The 57 distinct titles of the 202609 edition are mapped onto the codes of table \ref{tab:frenchdatalibrary-codes}. The frequency is not part of a code, since it has a column of its own, and neither is the treatment of dividends, which the library publishes as files of their own.
+
+\begin{table}[h!]
+	\centering
+	\small
+	\begin{tabular}{p{4.6cm}p{10cm}}
+		\hline
+		\verb|TABLE| & What it holds \\
+		\hline
+		\verb|FACTORS| & the factor returns of a factor file, in percent \\
+		\verb|BREAKPOINTS| & the breakpoints of a sort: counts of firms and percentiles \\
+		\verb|RET_VW|, \verb|RET_EW| & value- and equal-weighted returns of the portfolios, in percent \\
+		\verb|NFIRMS| & the number of firms in each portfolio \\
+		\verb|AVG_SIZE| & the average market capitalisation of the firms, in millions of dollars \\
+		\verb|BEME_SUM|, \verb|EP_SUM|, \verb|CFP_SUM| & the sum of book equity, earnings or cash flow over the sum of market equity \\
+		\verb|BEME_VW|, \verb|BEME_JUN_VW| & value-weighted average of BE/ME, with ME at the end of December of the prior year or at the end of June of the year of formation \\
+		\verb|OP_VW|, \verb|INV_VW| & value-weighted average of operating profitability, of investment \\
+		\verb|EP_VW|, \verb|CFP_VW|, \verb|DP_VW| & value-weighted average of earnings, cash flow and dividends to price \\
+		\verb|AC_VW|, \verb|NI_VW| & value-weighted average of accruals, of net share issues \\
+		\verb|BETA_VW|, \verb|VAR_VW| & value-weighted average of prior beta, of the variance of past returns \\
+		\verb|PRIOR_VW|, \verb|PRIOR_EW| & value- and equal-weighted average of the prior return the portfolios are formed on \\
+		\hline
+	\end{tabular}
+	\caption{The codes the tables of the library are filed under.\label{tab:frenchdatalibrary-codes}}
+\end{table}
+
+Two cases fall outside the vocabulary, and in neither is a table lost. A title that no rule matches is filed under a code made from the title itself, and a warning names it, so that a table the library adds appears under a name that says what it is until a rule is written for it, rather than going missing or appearing under a code that says something it is not. Two tables of one file that land on the same code are numbered rather than merged, again with a warning. This happens once in the 202609 edition, where the weekly file of the six portfolios on size and book-to-market gives its first two tables the same title, \emph{Average Value Weighted Returns -- Weekly}. The daily file of the same portfolios holds value- and then equal-weighted returns, but the weekly file does not say which the second table is, and the module does not guess.
+
+\subsection{Gold layer}
+
+There is no Gold layer. The table is meant to be read as it stands, and the function \verb|series| turns one table of one file back into the shape it was published in, a column per series indexed by date, which is where most analyses begin.
+
+\section{Reproducing a Fama-French factor}
+
+The following example shows the module at work and, at the same time, checks it. It brings the three-factor file and the file of the six portfolios on size and book-to-market into the lake, reads the monthly value-weighted returns of the portfolios, and rebuilds two of the published factors from them by their definitions \parencite{Fama.1993}: HML, value minus growth, as the average return of the two portfolios with a high book-to-market ratio minus the average return of the two with a low one,
+$$HML = \frac{1}{2}\left(\textit{Small High} + \textit{Big High}\right) - \frac{1}{2}\left(\textit{Small Low} + \textit{Big Low}\right),$$
+and SMB, small minus big, as the average return of the three small portfolios minus the average return of the three big ones,
+$$SMB = \frac{1}{3}\left(\textit{Small Low} + \textit{Small Neutral} + \textit{Small High}\right) - \frac{1}{3}\left(\textit{Big Low} + \textit{Big Neutral} + \textit{Big High}\right).$$
+
+\begin{verbatim}
+from fincommons.frenchdatalibrary.__main__ import build_session
+from fincommons import frenchdatalibrary as fdl
+
+spark = build_session("local[*]")
+config_path = "paths.yaml"
+
+fdl.update_frenchdatalibrary(
+    spark, config_path,
+    datasets=["F-F_Research_Data_Factors", "6_Portfolios_2x3"])
+df = fdl.connect_to_frenchdatalibrary(spark, config_path)
+
+p = fdl.series(df, "6_Portfolios_2x3", "RET_VW", "M")
+factors = fdl.series(df, "F-F_Research_Data_Factors", "FACTORS", "M")
+
+hml = (p["SMALL HiBM"] + p["BIG HiBM"]) / 2 \
+    - (p["SMALL LoBM"] + p["BIG LoBM"]) / 2
+smb = (p["SMALL LoBM"] + p["ME1 BM2"] + p["SMALL HiBM"]) / 3 \
+    - (p["BIG LoBM"] + p["ME2 BM2"] + p["BIG HiBM"]) / 3
+
+print((factors["HML"] - hml).abs().max(), factors["HML"].corr(hml))
+print((factors["SMB"] - smb).abs().max(), factors["SMB"].corr(smb))
+\end{verbatim}
+
+On the 202609 edition of the library, over all 1{,}203 months from July 1926 to September 2026, both rebuilt series match the published factors to within 0.005 percentage points, and the correlation between the rebuilt and the published series is 1.0 for both. A difference of 0.005 is exactly the rounding of the published factors, which have two decimals where the portfolio returns have four: the rebuilt factor is the published one before it was rounded.
+
+It is worth being precise about what this shows. It shows that the published files are consistent with one another -- that the factor file is the six-portfolio file combined as the definitions say -- and that the module reads both of them correctly: the right table of each file, every series under the right name, every month on the right date. A reader that took the equal-weighted table for the value-weighted one, shifted the dates by a month or confused two portfolios would miss by far more than the rounding. It does not show that the factors can be reconstructed from their sources. The portfolios are formed by Kenneth French from CRSP and Compustat, with NYSE breakpoints, book equity from the annual accounts and a rebalancing every June, and \emph{fincommons} has neither database; whether the portfolios are right is a question the library answers, not this check. The same comparison is part of the test suite, against synthetic files built so that the published factors are the rounded rebuilt ones, and against the library itself where a test run is allowed to reach the network.
+
+\section{Software architecture}
+
+Module \emph{frenchdatalibrary} is organised along the layers of the pipeline. The part \emph{common} declares the layout of the data lake and the schemas of the two layers and opens the table; \emph{bronze} reads the library's page and collects the files that have changed; \emph{parse} reads the tables of one file into long records, in plain Python and without Spark, so that it can be run over a downloaded file on its own and so that the Silver layer runs the very same code on its executors; \emph{silver} runs it over the Bronze layer and replaces the partitions of the files that changed, and offers \verb|series|; and \emph{pipeline} runs the whole in one call, \verb|update_frenchdatalibrary|. The partition-wise write is not specific to the library and lives with the other writes of Silver tables, in the package's storage module.
+
+A scheduled run calls the module from the command line,
+\begin{quote}
+\verb|python -m fincommons.frenchdatalibrary --config paths.yaml --log-level INFO|
+\end{quote}
+which takes no argument saying what to collect, since what has changed is read from the server and from what the lake already holds.
+
+% Directory tree
+\begin{figure}[h!]
+	\centering
+	\begin{subfigure}[t]{.48\textwidth}
+		\centering
+		\begin{forest}
+			for tree={
+				%font=\ttfamily,
+				grow'=0,
+				child anchor=west,
+				parent anchor=south,
+				anchor=west,
+				calign=first,
+				edge path={
+					\noexpand\path [draw, \forestoption{edge}]
+					(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+				},
+				before typesetting nodes={
+					if n=1
+					{insert before={[,phantom]}}
+					{}
+				},
+				fit=band,
+				before computing xy={l=15pt},
+			}
+			[bronze
+				[files
+					[{DATASET=F-F\_Research\_Data\_Factors}]
+					[{DATASET=6\_Portfolios\_2x3}]
+					[...]
+				]
+				[collections
+					[F-F\_Research\_Data\_Factors.json]
+					[...]
+				]
+			]
+		\end{forest}
+		\caption{Bronze layer.}
+	\end{subfigure} %
+	~
+	\begin{subfigure}[t]{.48\textwidth}
+		\centering
+		\begin{forest}
+			for tree={
+				%font=\ttfamily,
+				grow'=0,
+				child anchor=west,
+				parent anchor=south,
+				anchor=west,
+				calign=first,
+				edge path={
+					\noexpand\path [draw, \forestoption{edge}]
+					(!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+				},
+				before typesetting nodes={
+					if n=1
+					{insert before={[,phantom]}}
+					{}
+				},
+				fit=band,
+				before computing xy={l=15pt},
+			}
+			[silver
+				[frenchdatalibrary
+					[{DATASET=...}]
+				]
+				[\_watermarks
+					[F-F\_Research\_Data\_Factors.json]
+					[...]
+				]
+			]
+		\end{forest}
+		\caption{Silver layer.}
+	\end{subfigure}
+	\caption{Directory structures for the French Data Library. \emph{files} and \emph{frenchdatalibrary} are the directories of tables partitioned by the name of the file, not single files.\label{fig:dirstruct_frenchdatalibrary}}
+\end{figure}
+
+Further documentation of the module, including the full vocabulary of tables with the titles they are mapped from, can be found in its README file.
