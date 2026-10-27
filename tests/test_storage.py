@@ -268,3 +268,67 @@ def test_a_path_given_as_text_is_written_and_returned_as_text(spark, tmp_path):
 
     assert storage.write_silver(frame(spark, [1]), path) == path
     assert values(storage.read_silver(spark, path)) == [1]
+
+
+# Replacing some partitions
+# --------------------------------------------------------------------------
+
+
+def parts(spark, rows):
+    return spark.createDataFrame(rows, "PART string, VALUE int")
+
+
+def rows_of(df):
+    return sorted((row.PART, row.VALUE) for row in df.collect())
+
+
+@pytest.mark.parametrize("file_format", ["parquet", "delta"])
+def test_the_partitions_written_are_replaced_and_the_others_kept(
+        spark, tmp_path, file_format):
+    ref = TableRef(path=str(tmp_path / "table"))
+    storage.replace_silver_partitions(
+        parts(spark, [("a", 1), ("b", 2), ("c", 3)]), ref, "PART",
+        ["a", "b", "c"], file_format=file_format)
+
+    storage.replace_silver_partitions(
+        parts(spark, [("b", 20), ("b", 21)]), ref, "PART", ["b"])
+
+    assert rows_of(storage.read_silver(spark, ref)) == [
+        ("a", 1), ("b", 20), ("b", 21), ("c", 3)]
+    assert storage.file_format_on_disk(ref.path) == file_format
+
+
+def test_a_session_set_to_a_static_overwrite_does_not_empty_the_table(spark, tmp_path):
+    ref = TableRef(path=str(tmp_path / "table"))
+    key = "spark.sql.sources.partitionOverwriteMode"
+    previous = spark.conf.get(key)
+    spark.conf.set(key, "static")
+    try:
+        storage.replace_silver_partitions(parts(spark, [("a", 1)]), ref, "PART", ["a"])
+        storage.replace_silver_partitions(parts(spark, [("b", 2)]), ref, "PART", ["b"])
+        assert spark.conf.get(key) == "static"
+    finally:
+        spark.conf.set(key, previous)
+
+    assert rows_of(storage.read_silver(spark, ref)) == [("a", 1), ("b", 2)]
+
+
+def test_a_partition_of_a_table_in_the_catalogue_is_replaced_in_one_transaction(
+        spark, schema):
+    from delta.tables import DeltaTable
+
+    ref = TableRef(name=f"{schema}.table")
+    storage.replace_silver_partitions(
+        parts(spark, [("a", 1), ("it's", 2)]), ref, "PART", ["a", "it's"])
+
+    storage.replace_silver_partitions(
+        parts(spark, [("it's", 3)]), ref, "PART", ["it's"])
+
+    assert rows_of(storage.read_silver(spark, ref)) == [("a", 1), ("it's", 3)]
+    # The second write is one transaction on the table that was there, not a
+    # new table in its place, so what was granted on it survives.
+    latest = DeltaTable.forName(spark, ref.name).history(1).first()
+    assert latest.operation == "WRITE"
+    assert "PART" in latest.operationParameters["predicate"]
+    detail = spark.sql(f"DESCRIBE DETAIL {ref.name}").first()
+    assert detail["properties"][storage.OPTIMIZE_WRITE] == "true"
