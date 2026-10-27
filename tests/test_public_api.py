@@ -40,7 +40,12 @@ PUBLIC_API = {
         "ContextFormatter", "DEFAULT_DATE_FORMAT", "DEFAULT_FORMAT", "LOGGER_NAME",
         "add_log_level_argument", "configure", "context", "pipeline_run",
     ],
-    "fincommons.marketpricedata": ["connect_to_marketpricedata"],
+    "fincommons.marketpricedata": ["connect_to_marketpricedata", "curves"],
+    "fincommons.marketpricedata.curves": [
+        "OVERNIGHT_INSTRUMENT", "add_discount_factor", "build_curves",
+        "build_segments", "discount_of", "parallel_shift", "read_pillars",
+        "segment_frame", "tenor_in_years",
+    ],
     "fincommons.schemas": ["load_pyspark_schema", "load_replacement_table"],
     "fincommons.storage": ["check_local_path"],
 }

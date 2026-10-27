@@ -505,6 +505,25 @@ It knows every kind of identifier the public sources write -- ISINs of listed in
 
 The ISIN mapping table carries a `name` column for this: the full name FIRDS records for the European shares, VNDirect's English company name for the Vietnamese ones, and the index or fund name for the hand-chosen benchmarks.
 
+### Zero curves and discount factors
+
+`curves` turns the rates in the table into a risk-free zero curve per currency for one reference date, and evaluates it on the maturities of any Spark frame:
+
+```python
+from fincommons.marketpricedata import curves
+
+segments = curves.build_curves(spark, prices, "2025-06-30", ["EUR", "USD"])
+discounted = curves.add_discount_factor(payments, segments, "CCY", "YEARS", "DF")
+```
+
+The short end is the overnight rate of each currency (`ON-ESTR`, `ON-SOFR`, `ON-SONA`), and the longer maturities are overnight indexed swap quotes under `OIS-<index>-<tenor>`, for instance `OIS-ESTR-1Y`. Every pillar takes the latest quote at or before the reference date, and the log says when that is older than the date. A quote shorter than a year is read as a simple money market rate on actual/360, a longer one as annually compounded. Between the pillars the curve is log-linear in the discount factors, so the forward rate is constant on each segment, and beyond the last pillar the last forward rate carries on.
+
+**No tenor pillar is delivered into the table yet, so a curve built today is flat at the overnight rate.** The `KR-` policy rates are not read: a rate a central bank decided on is not a quote for a maturity. The swap quotes are picked up under the identifiers above as soon as a source delivers them, without a change to the module.
+
+A payment in a currency without a curve keeps its row and gets no discount factor, so a caller can report it as not covered rather than lose it. `parallel_shift` makes one copy of the curves per assumed shift of the continuously compounded zero rate, which `add_discount_factor` then evaluates in the same join with `keys=["SHOCK"]`, and `forward_rate` gives the simple forward rate of an accrual period from its two discount factors. The curves carry no credit or funding spread.
+
+The module came from the forward-looking analysis of EMIR in finsupverse, which still discounts on it.
+
 ## The layout of the data lake
 
 The helpers in `common.py` are the only place these paths are spelled out, and the rest of the module reaches the data lake through them rather than through a path written into the code.
