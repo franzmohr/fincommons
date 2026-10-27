@@ -180,6 +180,17 @@ def test_a_link_that_is_not_a_plain_name_or_leaves_the_server_is_left_out(caplog
     assert len(caplog.records) == 2
 
 
+def test_a_name_with_parentheses_is_a_plain_name(caplog):
+    """Twelve files of the library name investment ``INV(TA)``; refusing the
+    parentheses set all twelve aside on the first collection into a lake."""
+    name = "Europe_32_Portfolios_ME_INV(TA)_OP_2x4x4"
+    with caplog.at_level(logging.WARNING, logger="fincommons"):
+        files = fdl.parse_index(f'<a href="ftp/{name}_CSV.zip">x</a>', PAGE)
+
+    assert files == {name: BASE + f"ftp/{name}_CSV.zip"}
+    assert not caplog.records
+
+
 # Collecting a file
 # --------------------------------------------------------------------------
 

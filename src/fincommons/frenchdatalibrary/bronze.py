@@ -54,8 +54,10 @@ _LINK = re.compile(r'href\s*=\s*"([^"]*?([^/"]+)_CSV\.zip)"', re.IGNORECASE)
 #: a directory in the Bronze layer and a value in a SQL predicate of the
 #: Silver write, and the page is read from the network, so a name that could
 #: be more than a name -- a ``..``, a slash, a quote -- is refused rather than
-#: used.
-_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*$")
+#: used. Parentheses are part of a plain name here: twelve files of the library
+#: name an investment variable ``INV(TA)``, investment scaled by total assets,
+#: and refusing them set aside a dozen files of the library on every run.
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.()\-]*$")
 
 
 def parse_index(html, base_url=LIBRARY_URL):
