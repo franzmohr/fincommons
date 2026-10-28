@@ -9,6 +9,7 @@ reference date of the price and not by the day it was fetched.
 """
 
 import logging
+import math
 import os
 
 import pyspark.sql.functions as func
@@ -18,6 +19,14 @@ from ..log import context
 from .common import *
 
 logger = logging.getLogger(__name__)
+
+#: How far, as a factor, an exchange rate may stand from both the days around
+#: it before it is taken for a misprint rather than a price. Yahoo delivered
+#: 261.04 dong per euro on 8 November 2019, between 25,310 and 25,183: the rate
+#: a hundredth of what it was, for one day. A managed currency that is let go
+#: moves by a fraction in a day and stays where it moved to, so a rate that
+#: leaves by half and comes back the next day is not one of those.
+YAHOO_FX_ISOLATED_FACTOR = 1.5
 
 
 def deliveries_to_merge(spark, parquet_path, config_path, source, full=False):
@@ -143,8 +152,76 @@ def update_silver_yahoo(spark, config_path, full=False):
     write_watermark(config_path, "YAHOO", watermark)
 
 
+def isolated_prints(frame, factor=YAHOO_FX_ISOLATED_FACTOR):
+    """The rows whose value stands apart from both the days around it.
+
+    A row is one where its value differs by more than ``factor`` from the
+    observation before it and from the one after it, while those two agree
+    with each other within ``factor``: the price left and came back. A step the
+    price stays at is not one, because the day after it agrees with it, and
+    neither is the first or the last day of an instrument, which have only one
+    neighbour to be judged against.
+
+    Parameters
+    ----------
+    frame: pyspark.sql.DataFrame
+        Rows of ``REFDT``, ``INSTRID`` and ``VALUE``, each pair once.
+    factor: float
+        The ratio beyond which two values are taken to disagree.
+
+    Returns the rows of ``frame`` that are isolated prints, with the values
+    before and after them as ``BEFORE`` and ``AFTER``.
+    """
+    days = Window.partitionBy("INSTRID").orderBy("REFDT")
+    limit = math.log(factor)
+
+    def apart(a, b):
+        return func.abs(func.log(func.col(a) / func.col(b))) > limit
+
+    return frame \
+        .filter(func.col("VALUE") > 0) \
+        .withColumn("BEFORE", func.lag("VALUE").over(days)) \
+        .withColumn("AFTER", func.lead("VALUE").over(days)) \
+        .filter(func.col("BEFORE").isNotNull() & func.col("AFTER").isNotNull()) \
+        .filter(apart("VALUE", "BEFORE") & apart("VALUE", "AFTER")
+                & ~apart("BEFORE", "AFTER"))
+
+
+def _drop_isolated_prints(spark, config_path, frame, source):
+    """Keep the isolated prints of a delivery out of the Silver table.
+
+    They are left out of what is merged, and taken out of the table where an
+    earlier merge already wrote them: a print on the last day of a delivery has
+    no day after it to be judged by, and is merged, but Yahoo is asked for the
+    last fortnight again on every download, so the next delivery brings it back
+    with its neighbour, and that is when it is found.
+    """
+    found = isolated_prints(frame).collect()
+    if not found:
+        return frame
+
+    for row in found:
+        logger.warning(
+            "An isolated print is left out of the Silver table",
+            extra=context(module="marketpricedata", layer="silver",
+                          source=source, instrid=row["INSTRID"],
+                          refdt=str(row["REFDT"]), value=row["VALUE"],
+                          before=row["BEFORE"], after=row["AFTER"]))
+
+    keys = spark.createDataFrame([(row["REFDT"], row["INSTRID"]) for row in found],
+                                 "REFDT date, INSTRID string")
+    ref = ref_silver_marketpricedata(config_path)
+    if delta_table_exists(spark, ref):
+        delta_table(spark, ref).alias("s") \
+            .merge(keys.alias("k"), "s.INSTRID = k.INSTRID AND s.REFDT = k.REFDT") \
+            .whenMatchedDelete() \
+            .execute()
+
+    return frame.join(keys, ["REFDT", "INSTRID"], "left_anti")
+
+
 def _update_silver_named_yahoo(spark, config_path, parquet_path, source,
-                               full=False):
+                               full=False, guard=False):
     """Bring one Bronze layer of already-named Yahoo prices into the table.
 
     The commodities, the volatility indices and the stock indices named by
@@ -173,6 +250,9 @@ def _update_silver_named_yahoo(spark, config_path, parquet_path, source,
         .withColumn("DELIVERY", func.row_number().over(downloads)) \
         .filter(func.col("DELIVERY") == 1) \
         .select("REFDT", "INSTRID", "VALUE")
+
+    if guard:
+        bronze = _drop_isolated_prints(spark, config_path, bronze, source)
 
     standard_upsert(spark, config_path, bronze)
     write_watermark(config_path, source, watermark)
@@ -244,6 +324,13 @@ def update_silver_yahoo_indices(spark, config_path, full=False):
 def update_silver_yahoo_fx(spark, config_path, full=False):
     """Import the Yahoo Finance exchange rates into the Silver layer.
 
+    A rate that leaves the days around it by more than
+    :data:`YAHOO_FX_ISOLATED_FACTOR` and comes back is left out, and removed
+    from the table if it was merged before, see :func:`isolated_prints`. Every
+    price in a currency is converted with these rates, so one misprinted day
+    is a misprinted day for each of them. ``full=True`` judges the whole
+    history again.
+
     Parameters
     ----------
     spark: pyspark.sql.session.SparkSession
@@ -259,4 +346,4 @@ def update_silver_yahoo_fx(spark, config_path, full=False):
     """
     _update_silver_named_yahoo(spark, config_path,
                                path_bronze_yahoo_fx(config_path),
-                               "YAHOO-FX", full)
+                               "YAHOO-FX", full, guard=True)

@@ -864,6 +864,51 @@ def test_the_most_recent_delivery_of_a_commodity_day_is_kept(spark, data_lake):
     assert value_of(frame, "CO-BRENT", "2024-01-31") == pytest.approx(82.4)
 
 
+def test_an_exchange_rate_that_leaves_for_a_day_and_comes_back_is_left_out(
+        spark, data_lake):
+    """Yahoo's dong of 8 November 2019, a hundredth of the days around it, and
+    a taka that is let go and stays where it fell: the first is a misprint,
+    the second a price."""
+    folder = mp.path_bronze_yahoo_fx(data_lake)
+    write_yahoo_commodity_bronze(folder, "2019-11-20", [
+        ("2019-11-07", "EUR/VND", 25310.0), ("2019-11-08", "EUR/VND", 261.04),
+        ("2019-11-12", "EUR/VND", 25183.0), ("2019-11-13", "EUR/VND", 25161.0),
+        ("2019-11-07", "EUR/BDT", 94.0), ("2019-11-08", "EUR/BDT", 150.0),
+        ("2019-11-12", "EUR/BDT", 151.0),
+    ])
+
+    mp.update_silver_yahoo_fx(spark, data_lake)
+
+    frame = silver(spark, data_lake)
+    vnd = frame[frame.INSTRID == "EUR/VND"]
+    assert sorted(vnd.REFDT) == ["2019-11-07", "2019-11-12", "2019-11-13"]
+    assert value_of(frame, "EUR/BDT", "2019-11-08") == pytest.approx(150.0)
+
+
+def test_a_misprint_merged_on_the_last_day_is_removed_when_its_next_day_comes(
+        spark, data_lake):
+    """On the last day of a download there is no day after it to judge by, so
+    the print is merged; the next download asks for that day again, with the
+    day after it, and the print is taken back out of the table."""
+    folder = mp.path_bronze_yahoo_fx(data_lake)
+    write_yahoo_commodity_bronze(folder, "2019-11-08", [
+        ("2019-11-06", "EUR/VND", 25390.0), ("2019-11-07", "EUR/VND", 25310.0),
+        ("2019-11-08", "EUR/VND", 261.04),
+    ])
+    mp.update_silver_yahoo_fx(spark, data_lake)
+    assert value_of(silver(spark, data_lake), "EUR/VND", "2019-11-08") == \
+        pytest.approx(261.04)
+
+    write_yahoo_commodity_bronze(folder, "2019-11-13", [
+        ("2019-11-07", "EUR/VND", 25310.0), ("2019-11-08", "EUR/VND", 261.04),
+        ("2019-11-12", "EUR/VND", 25183.0),
+    ])
+    mp.update_silver_yahoo_fx(spark, data_lake)
+
+    frame = silver(spark, data_lake)
+    assert sorted(frame.REFDT) == ["2019-11-06", "2019-11-07", "2019-11-12"]
+
+
 def test_the_commodities_carry_on_from_their_own_partitions(data_lake):
     """The commodities are downloaded into a Bronze layer of their own, so where
     their next run starts must not be read off the instruments' partitions."""

@@ -316,6 +316,8 @@ pip install 'fincommons[marketprice]'
 
 The exchange rates the ECB does not fix come from Yahoo Finance as well, from a third mapping table, `data/fx_yahoo.csv`. It holds two rows today: the Bangladeshi taka, which the Dhaka prices below are quoted in, and the Vietnamese dong, which the Ho Chi Minh City listings above are; without them neither could be priced in euro at all. The rates are named `EUR/BDT` and `EUR/VND` and quoted as units per euro, which is how the ECB names and quotes its own, so a reader converts with either the same way; its Bronze layer, `yahoo_fx`, keeps it traceable to who published it. It is a market quote at Yahoo's close rather than a fixing, and both currencies are managed, so the series move in the steps their central banks allow rather than day by day.
 
+**A rate that leaves for one day and comes back is left out.** Yahoo delivered 261.04 dong per euro on the 8th of November 2019, between 25,310 and 25,183, and every Vietnamese price converted that day came out a hundred times too large. The Silver stage of the exchange rates therefore drops a rate that stands more than `YAHOO_FX_ISOLATED_FACTOR` (1.5) away from both the day before and the day after while those two agree, and takes it out of the table where an earlier merge wrote it: a print on the last day of a download has no day after it yet, and is judged when the next download asks for that fortnight again. A step a currency stays at is kept, because the day after agrees with it. Each dropped rate is named in a warning; `update_silver_yahoo_fx(spark, config_path, full=True)` judges the whole history again.
+
 ```python
 mp.update_bronze_yahoo_fx(spark, config_path)
 ```
