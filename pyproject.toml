@@ -65,7 +65,7 @@ local = ["pyspark>=3.5", "delta-spark>=3.1"]
 # yfinance; the ECB, the New York Fed and the internal sources of
 # fincommons.marketpricedata run without it. See its README.
 marketprice = ["yfinance>=0.2"]
-dev = ["pytest>=7", "pyspark>=3.5", "delta-spark>=3.1"]
+dev = ["pytest>=7", "pytest-cov>=4", "pyspark>=3.5", "delta-spark>=3.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fincommons"]

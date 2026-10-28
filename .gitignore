@@ -32,3 +32,7 @@ docs/handbook/*.pdf
 
 # Editor settings, which belong to the person rather than to the project
 .vscode/
+
+# Coverage reports
+.coverage
+coverage.xml

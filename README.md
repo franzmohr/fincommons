@@ -1,5 +1,12 @@
 # fincommons
 
+[![CI](https://github.com/franzmohr/fincommons/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/franzmohr/fincommons/actions/workflows/ci.yml)
+[![Handbook](https://github.com/franzmohr/fincommons/actions/workflows/handbook.yml/badge.svg?branch=main)](https://github.com/franzmohr/fincommons/actions/workflows/handbook.yml)
+[![codecov](https://codecov.io/gh/franzmohr/fincommons/branch/main/graph/badge.svg)](https://codecov.io/gh/franzmohr/fincommons)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.10-blue)](pyproject.toml)
+[![License: EUPL-1.2](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSES/EUPL-1.2.txt)
+[![REUSE compliant](https://img.shields.io/badge/REUSE-compliant-green)](https://reuse.software/)
+
 Shared infrastructure for basic financial data work.
 
 fincommons builds data lakes from public financial data, in the layers of a
