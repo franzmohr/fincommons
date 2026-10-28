@@ -40,15 +40,22 @@ spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
 ## 1 Raw data collection in the landing zone
 
-Two of the sources can be fetched over the network. The other three are published behind a form rather than at a stable address and are placed in the landing zone by hand, under the names given below: the Bronze import reads the reference date off the name of the file, so the name is what dates the register.
+Every source can be fetched over the network, and `update_entitymasterdata` does so on every run. A register whose download fails is logged as an error and the update carries on with the register the Bronze layer already holds. A register can still be placed in the landing zone by hand, under the names given below: the Bronze import reads the reference date off the name of the file, so the name is what dates the register.
 
-The registers published as workbooks have to be saved as `.xlsx`. The legacy `.xls` format is not read -- doing so needs a package `fincommons` does not depend on -- and neither is anything else. A file the import leaves alone is named in a warning rather than passed over in silence, because in a folder filled by hand the likeliest reason for a file of the wrong kind is the register having been saved in the wrong format.
+The registers stored by hand as workbooks have to be saved as `.xlsx`. The legacy `.xls` format is not read -- doing so needs a package `fincommons` does not depend on -- and neither is anything else. A file the import leaves alone is named in a warning rather than passed over in silence, because in a folder filled by hand the likeliest reason for a file of the wrong kind is the register having been saved in the wrong format.
 
 ### 1.1 GLEIF data
 
 #### 1.1.1 Level 1 data
 
-GLEIF Level 1 data links an LEI to the name and the country of the entity it identifies. Function `download_gleif_level_1` downloads it into the landing zone. GLEIF does not publish a stable link for the most recent data set, so the URL has to be given. The links are on [the golden copy download page](https://www.gleif.org/en/lei-data/gleif-golden-copy/download-the-golden-copy#/), under *Latest files*: take the link of the most recent **csv** file in the *LEI-CDF* column and pass it as `url`.
+GLEIF Level 1 data links an LEI to the name and the country of the entity it identifies. GLEIF publishes the golden copy three times a day, and the link of a file changes with every publication. Its [Golden Copy API](https://goldencopy.gleif.org/api/v2/golden-copies/publishes/latest) names the files of the latest one, and `download_latest_gleif` downloads Level 1 and Level 2 from there -- each only where the Bronze layer holds no golden copy of that day, since Level 1 is about half a gigabyte zipped and a second publication of the same day differs by hours. `update_entitymasterdata` does this on every run.
+
+
+```python
+em.download_latest_gleif(config_path)
+```
+
+An earlier golden copy, or one the API cannot be reached for, is downloaded from its link instead. The links are on [the golden copy download page](https://www.gleif.org/en/lei-data/gleif-golden-copy/download-the-golden-copy#/): take the link of the **csv** file in the *LEI-CDF* column and pass it as `url`.
 
 
 ```python
@@ -63,7 +70,7 @@ This matters most for GLEIF, because the address of the golden copy changes with
 
 #### 1.1.2 Level 2 data
 
-The second GLEIF data set covers the ownership relationships between legal entities, from which the module takes the ultimate parent of an entity and, for a fund, the company that manages it. Take the link of the most recent **csv** file in the *RR-CDF* column of the same page.
+The second GLEIF data set covers the ownership relationships between legal entities, from which the module takes the ultimate parent of an entity and, for a fund, the company that manages it. `download_latest_gleif` downloads it with Level 1; by hand, take the link of the **csv** file in the *RR-CDF* column of the same page.
 
 
 ```python
@@ -72,36 +79,67 @@ em.download_gleif_level_2(config_path, "https://leidata-preview.gleif.org/storag
 
 ### 1.2 ECB data
 
+The ECB's page of the [lists of financial institutions](https://www.ecb.europa.eu/stats/financial_corporations/list_of_financial_institutions/html/index.en.html) links each list under a name that changes with the list, so the downloads read the current link off the page rather than keeping an address. The lists of investment funds, FVCs and PSRIs come as zip archives of workbooks, one per period, and are replaced as new lists are published. The download takes the latest archive and puts into the landing zone each workbook whose period the Bronze layer does not hold yet, under the name the ECB gives it. A run after the first therefore unpacks only the lists published since.
+
 #### 1.2.1 Investment funds
 
-The ECB publishes a list of investment funds under [https://www.ecb.europa.eu/stats/financial_corporations/list_of_financial_institutions/html/index.en.html#if](https://www.ecb.europa.eu/stats/financial_corporations/list_of_financial_institutions/html/index.en.html#if)
+```python
+em.download_ecb_investment_fund(config_path)
+```
 
-* Click the download link that starts with "IFs Overview..." and save the zip file.
-* Unzip it and save the XLSX files in `{landing zone of entitymasterdata}/ecb/investment_fund`.
-
-The list is published per month or per quarter and the name of the workbook states which, as `IF_<year>_<month>.xlsx` or `IF_<year>_Q<quarter>.xlsx`. The reference date of the Bronze file is the last day of that period.
+The latest archive of a single year ("IFs Overview 2026") is taken; the page also links archives of several years, which hold no newer list. The list is published per month or per quarter and the name of the workbook states which, as `IF_<year>_<month>.xlsx` or `IF_<year>_Q<quarter>.xlsx`. The reference date of the Bronze file is the last day of that period. By hand: unzip the archive and save the workbooks in `{landing zone of entitymasterdata}/ecb/investment_fund`.
 
 #### 1.2.2 Monetary financial institutions
 
-The ECB publishes a daily list of MFIs under [https://www.ecb.europa.eu/stats/financial_corporations/list_of_financial_institutions/html/daily_list-MID.en.html](https://www.ecb.europa.eu/stats/financial_corporations/list_of_financial_institutions/html/daily_list-MID.en.html). Download the "uncompressed" and "Full Dataset", open it with a spreadsheet program and save the unaltered file as an XLSX again.
+```python
+em.download_ecb_mfi(config_path)
+```
 
-Then save that file in `{landing zone of entitymasterdata}/ecb/mfi` with the date of the file as the file name, in the format `YYYYMMDD.xlsx`.
+The ECB publishes a [daily list of MFIs](https://www.ecb.europa.eu/stats/financial_corporations/list_of_financial_institutions/html/daily_list-MID.en.html), the "Full Dataset" of the day as `mfi_csv_<YYMMDD>.csv`. The download stores it in `{landing zone of entitymasterdata}/ecb/mfi` as `<YYYYMMDD>.csv`, unaltered, and does not fetch a day the Bronze layer holds. The file is text separated by tabs and encoded in UTF-16, which is why it used to be opened in a spreadsheet and saved as a workbook; the import reads it as it is, and still reads a workbook `YYYYMMDD.xlsx` stored by hand.
 
-The postal columns `POSTAL` and `BOX` are imported as text, as the register writes them. A postcode is not a number: read as one, `00187` loses its leading zero and `1012 AB` becomes a missing value.
+Every column is imported as text, as the register writes it. A postcode is not a number: read as one, `00187` loses its leading zero and `1012 AB` becomes a missing value.
+
+#### 1.2.3 Financial vehicle corporations
+
+```python
+em.download_ecb_fvc(config_path)
+```
+
+The quarterly lists of financial vehicle corporations engaged in securitisation, `FVC_<year>_Q<quarter>.xlsx`, from the latest archive of a single year, stored in `{landing zone of entitymasterdata}/ecb/fvc`. Each is imported under the last day of its quarter.
+
+#### 1.2.4 Payment statistics relevant institutions
+
+```python
+em.download_ecb_psri(config_path)
+```
+
+The lists of payment statistics relevant institutions -- payment service providers and payment system operators -- yearly until 2021, `PSRIs_<year>.xlsx`, and half-yearly since, `PSRIs_<year>_H<half>.xlsx`, all in one archive and stored in `{landing zone of entitymasterdata}/ecb/psri`. The first run puts every list since 2014 into the landing zone. Each is imported under the last day of its period, and with the columns as that list names them: the lists until 2021 spell `Country of residence` and have a column `PSP Geo Scope`, the later ones spell `Country of Residence`.
+
+The FVCs and the PSRIs are imported into the Bronze layer but not yet part of the entity master data set: where they rank among the other registers in the field `SECTOR` is still to be decided.
 
 ### 1.3 EIOPA data
 
+EIOPA's registers are SharePoint pages whose export is not a link to a file but a postback of the page's form. The download reads the page for its form -- the view state and the other hidden fields -- and sends it back as the "**CSV**" link would, then stores the answer in the landing zone as `<YYYYMMDD>.csv` under the day of the download. A second download on the same day replaces the first. EIOPA's gateway now and then answers an export with `403 Forbidden` that it serves a moment later, so an export turned away is asked for again from a fresh page, three times at most, thirty seconds apart.
+
+The CSV export is taken rather than the Excel one because the workbook stores an LEI made of digits alone as a number, and a twenty-digit number does not survive that: in the register of insurance undertakings of 28 October 2026, 276 LEIs came out of the workbook as `31570010000000098304`, `31570010000000000000` and the like -- several undertakings under one LEI -- and 337 in the register of IORPs. The CSV export writes every value as the register holds it. It is imported as text, every column; its dates, written day first with a time and now and then as ISO 8601 in the same column, are read into `YYYY-MM-DD`.
+
+By hand: click "**CSV**" on the page and store the file under the current date, `YYYYMMDD.csv`. A workbook `YYYYMMDD.xlsx` from the "Excel" link is still read, with the LEIs it has lost.
+
 #### 1.3.1 Insurance undertakings
 
-A list of insurance undertakings can be downloaded from the EIOPA website: [https://register.eiopa.europa.eu/registers/register-of-insurance-undertakings](https://register.eiopa.europa.eu/registers/register-of-insurance-undertakings).
+```python
+em.download_eiopa_insurance_undertaking(config_path)
+```
 
-Scroll down to the line "Export Insurance Undertaking Data to CSV | Excel", click on "**Excel**" and store the file in `{landing zone of entitymasterdata}/eiopa/insurance_undertaking` with the current date as the file name, in the format `YYYYMMDD.xlsx`.
+From the [register of insurance undertakings](https://register.eiopa.europa.eu/registers/register-of-insurance-undertakings), into `{landing zone of entitymasterdata}/eiopa/insurance_undertaking`.
 
 #### 1.3.2 Institutions for Occupational Retirement Provision
 
-A list of institutions for occupational retirement provision can be downloaded from the EIOPA website: [https://register.eiopa.europa.eu/registers/register-of-institutions-for-occupational-retirement-provision](https://register.eiopa.europa.eu/registers/register-of-institutions-for-occupational-retirement-provision).
+```python
+em.download_eiopa_iorp(config_path)
+```
 
-Scroll down to the line "Export IORPs Data to CSV | Excel", click on "**Excel**" and store the file in `{landing zone of entitymasterdata}/eiopa/iorp` with the current date as the file name, in the format `YYYYMMDD.xlsx`.
+From the [register of institutions for occupational retirement provision](https://register.eiopa.europa.eu/registers/register-of-institutions-for-occupational-retirement-provision), into `{landing zone of entitymasterdata}/eiopa/iorp`.
 
 ### 1.4 ESMA data
 
@@ -169,7 +207,7 @@ An entity can stand in more than one of them -- a central counterparty is licens
 
 `SUBSECTOR` is part of the contest, and stays the statement of the register that won it. It is the refinement that register offers, so filling it in from the fund register once another register has taken the sector would pair a sector from one taxonomy with a refinement from another. A fund loses nothing by that, because the investment policy the fund register would have contributed as `SUBSECTOR` is what `IF_POLICY` carries.
 
-The `MFI` sector is the fallback for a category the module does not recognise. The register is downloaded and converted through a spreadsheet program by hand, so a category the ECB relabels, or a conversion that alters the spelling, would otherwise leave the sector empty -- and an empty sector is what an entity no register covers carries, which is the one thing an institution that is on the register is not. The categories that fell through are named in a warning, so the run says where the description is coarser than the register would allow.
+The `MFI` sector is the fallback for a category the module does not recognise. A category the ECB relabels, or a list converted by hand in a way that alters the spelling, would otherwise leave the sector empty -- and an empty sector is what an entity no register covers carries, which is the one thing an institution that is on the register is not. The categories that fell through are named in a warning, so the run says where the description is coarser than the register would allow.
 
 GLEIF Level 2 supplies `ULTPAR_LEI` from the `IS_ULTIMATELY_CONSOLIDATED_BY` relationship and `AMC` from `IS_FUND-MANAGED_BY`. Only a relationship the golden copy still marks `ACTIVE` is read. The file is a record of what has been reported rather than of what holds today: a relationship that has ended stays in it, marked `INACTIVE`, so an entity whose parent changed stands in two records of the same type and only one of them says who consolidates it now. An entity whose only record is an inactive one is left without a parent, which is what it has.
 
@@ -241,9 +279,9 @@ The columns are taken from the header, so they may come in any order and the ide
 
 ## 4 All-in-one function
 
-The following function runs the whole pipeline: the downloads that can be automated, the import of everything the landing zone holds, and the two steps of the Silver layer. The GLEIF links are optional; where they are not given, whatever Level 1 and Level 2 data is already in the landing zone is used.
+The following function runs the whole pipeline: the downloads that can be automated, the import of everything the landing zone holds, and the two steps of the Silver layer. The GLEIF links are optional; where they are not given, the latest golden copy is downloaded unless the Bronze layer holds one of its day. A link that is given is downloaded, and its failure stops the update, since it was asked for.
 
-**Note that the landing zone should be filled as described in section 1 before running it.**
+**Every register is downloaded on each run, as described in section 1: the GLEIF golden copies from the links given, or else the latest publication the Bronze layer lacks.**
 
 ```python
 em.update_entitymasterdata(
@@ -288,8 +326,8 @@ The module is covered by the tests in `tests/test_entitymasterdata.py`, which ru
 | Group | Covers |
 | --- | --- |
 | the data lake | creating the directory tree, including below a directory that does not exist yet, repeating the call, refusing an unknown table name, reporting a table that has never been built, and the package not re-exporting the modules its submodules import |
-| the downloads | that a GLEIF file keeps the name it was published under, that a link carrying a query string or a fragment still yields that name, that a link which is not a file is refused, that every request carries a timeout, that the connection is closed when the download fails, and that an error answer, an answer that is not an archive and an interrupted download all leave the landing zone as it was |
-| the Bronze layer | the reference date read off the name, the file leaving the landing zone only once it has been written -- the list of CCPs included -- a file that cannot be read staying where it is, files of another kind being left alone and named in a warning, the monthly and the quarterly list of investment funds, a missing LEI staying missing, MFI postcodes kept as text, and the import carrying on where the list of CCPs was never downloaded |
+| the downloads | that a GLEIF file keeps the name it was published under, that a link carrying a query string or a fragment still yields that name, that a link which is not a file is refused, that every request carries a timeout, that the connection is closed when the download fails, and that an error answer, an answer that is not an archive and an interrupted download all leave the landing zone as it was; that the ECB's lists are found on its pages, only the lists the Bronze layer lacks are unpacked and an answer that is not the list of MFIs is refused; and that EIOPA's form is read off the page and sent for the CSV export, asked for again when it is turned away, and refused where the answer is not the register |
+| the Bronze layer | the reference date read off the name, the file leaving the landing zone only once it has been written -- the list of CCPs included -- a file that cannot be read staying where it is, files of another kind being left alone and named in a warning, the monthly and the quarterly list of investment funds, a missing LEI staying missing, MFI postcodes kept as text, and the import carrying on where the list of CCPs was never downloaded; the MFI list and EIOPA's registers read from their CSV as text, both spellings of EIOPA's dates, a workbook with mixed cells, and the lists of FVCs and PSRIs dated at the end of their period |
 | the public table | the name and country from GLEIF, the sector each register contributes, which register wins where two describe the same entity, the fund characteristics surviving a register that outranks the fund register, a register that carries an LEI twice answering the same way whichever order the file holds the rows in, telling the two Level 2 relationships apart, reading only the relationships that are still active, the fallback sector for an unrecognised MFI category, using the most recent register, and reporting a register the Bronze layer never received |
 | how an LEI is written | a trailing space, lower case and a non-breaking space in a register, a parent written differently in the Level 2 data, and an LEI still malformed being named with its register |
 | the entity master data set | the public data passing through, the catch-all entities and the form of their LEIs, the numbering, the promised columns, what a proprietary list displaces -- written differently included --, entities without an LEI, leading zeros, a list describing an LEI twice, carrying a column the table does not have or no LEI column being refused, and the storage format of both tables |

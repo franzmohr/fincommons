@@ -23,6 +23,7 @@ deletes the table before it writes the new one.
 
 import logging
 import os
+import zipfile
 
 import pyspark.sql.functions as func
 import requests
@@ -797,9 +798,13 @@ def update_entitymasterdata(spark, config_path, url_gleif_level_1 = None,
     everything the landing zone holds into the Bronze layer, and the two steps
     of the Silver layer.
 
-    The ECB and EIOPA registers are not downloaded and the GLEIF golden copies
-    only where their addresses are passed in, so the landing zone should be
-    filled as the module README describes before this is called.
+    Every register is downloaded on every run: the GLEIF golden copies from
+    the links passed in, or else the latest publication the Bronze layer
+    lacks, and the list of CCPs and the registers of the ECB and EIOPA. A
+    register whose download fails is logged and the one the Bronze layer
+    holds is used, except for a GLEIF link that was passed in, whose failure
+    is raised; a register can be placed into the landing zone by hand as the
+    module README describes.
 
     Parameters
     ----------
@@ -808,11 +813,11 @@ def update_entitymasterdata(spark, config_path, url_gleif_level_1 = None,
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     url_gleif_level_1: str, optional
-        URL of the GLEIF Level 1 csv file. Where it is not given, the Level 1
-        data already in the landing zone is used.
+        URL of the GLEIF Level 1 csv file. Where it is not given, the latest
+        golden copy is downloaded unless the Bronze layer holds one of its day;
+        see :func:`download_latest_gleif`.
     url_gleif_level_2: str, optional
-        URL of the GLEIF Level 2 csv file. Where it is not given, the Level 2
-        data already in the landing zone is used.
+        URL of the GLEIF Level 2 csv file, as for Level 1.
     file_format: str, optional
         Format both Silver tables are written in, ``'parquet'`` or
         ``'delta'``. Where it is left out the configuration file decides, for
@@ -842,24 +847,45 @@ def update_entitymasterdata(spark, config_path, url_gleif_level_1 = None,
 def _update_entitymasterdata(spark, config_path, url_gleif_level_1,
                              url_gleif_level_2, file_format):
     """Do the work of :func:`update_entitymasterdata`."""
-    # Update the landing zone
+    # Update the landing zone. A GLEIF link that is given is downloaded, and
+    # its failure stops the update, since it was asked for; a data set without
+    # one is taken from the latest publication, as the other registers are.
     if url_gleif_level_1 is not None:
         download_gleif_level_1(config_path, url_gleif_level_1)
     if url_gleif_level_2 is not None:
         download_gleif_level_2(config_path, url_gleif_level_2)
-    # The list of CCPs is the one download that runs without being asked for,
-    # so an environment without access to it -- a cluster without internet
-    # access, or the host being down -- must not stop the update. The Bronze
-    # layer keeps the list it imported last, and the failure is recorded.
-    try:
-        download_esma_ccp(config_path)
-    except requests.RequestException:
-        logger.error(
-            "The list of CCPs could not be downloaded, the one in the Bronze "
-            "layer is used",
-            exc_info=True,
-            extra=context(module="entitymasterdata", layer="landing", source="ESMA_CCP"),
-        )
+    latest = tuple(data_set for data_set, url in
+                   (("lei2", url_gleif_level_1), ("rr", url_gleif_level_2))
+                   if url is None)
+    # The list of CCPs and the registers of the ECB and EIOPA are the downloads
+    # that run without being asked for, so an environment without access to
+    # them -- a cluster without internet access, a host that is down, a page
+    # that has changed -- must not stop the update. The Bronze layer keeps the
+    # register it imported last, and the failure is recorded.
+    unasked = (
+        (lambda config_path: download_latest_gleif(config_path, latest),
+         "GLEIF", "The latest GLEIF golden copy"),
+        (download_esma_ccp, "ESMA_CCP", "The list of CCPs"),
+        (download_ecb_mfi, "ECB_MFI", "The ECB's list of MFIs"),
+        (download_ecb_investment_fund, "ECB_IF",
+         "The ECB's lists of investment funds"),
+        (download_ecb_fvc, "ECB_FVC", "The ECB's lists of FVCs"),
+        (download_ecb_psri, "ECB_PSRI", "The ECB's lists of PSRIs"),
+        (download_eiopa_insurance_undertaking, "EIOPA_IC",
+         "EIOPA's register of insurance undertakings"),
+        (download_eiopa_iorp, "EIOPA_IORP", "EIOPA's register of IORPs"),
+    )
+    for download, source, register in unasked:
+        try:
+            download(config_path)
+        except (requests.RequestException, ValueError, zipfile.BadZipFile):
+            logger.error(
+                f"{register} could not be downloaded, the one in the Bronze "
+                "layer is used",
+                exc_info=True,
+                extra=context(module="entitymasterdata", layer="landing",
+                              source=source),
+            )
 
     # Update the Bronze layer
     update_from_landing_to_bronze(config_path)

@@ -16,6 +16,7 @@ points at.
 
 import logging
 import os
+import re
 
 import pandas
 import pyarrow
@@ -35,6 +36,11 @@ logger = logging.getLogger(__name__)
 #: workbook to be saved as ``.xlsx`` in every case, and a file of another kind
 #: is named in a warning, see :func:`landing_files`.
 EXCEL_EXTENSIONS = (".xlsx",)
+
+#: The registers the downloads of
+#: :mod:`fincommons.entitymasterdata.landing` store as text -- the ECB's list
+#: of MFIs and EIOPA's registers -- are read as they are published.
+CSV_EXTENSIONS = (".csv",)
 
 
 def landing_files(folder, extensions):
@@ -112,6 +118,52 @@ def end_of_investment_fund_period(file_name):
             "'IF_<year>_<month>.xlsx' or 'IF_<year>_Q<quarter>.xlsx'."
         )
     return pandas.PeriodIndex([period], freq=frequency).to_timestamp(frequency).astype(str)[0]
+
+
+def end_of_period(file_name, prefix):
+    """Return the last day of the period an ECB list of FVCs or PSRIs covers.
+
+    The ECB names the workbook after the period: a quarter for the FVCs,
+    ``FVC_2026_Q3.xlsx``, and a year or a half-year for the PSRIs,
+    ``PSRIs_2021.xlsx`` until 2021 and ``PSRIs_2026_H1.xlsx`` since. The
+    reference date is the last day of it, as for the investment funds.
+
+    Parameters
+    ----------
+    file_name: str
+        Name of the workbook in the landing zone.
+    prefix: str
+        What the name begins with, ``"FVC"`` or ``"PSRIs"``.
+    """
+    match = re.fullmatch(re.escape(prefix) + r"_(\d{4})(?:_(Q[1-4]|H[12]))?\.xlsx",
+                         file_name)
+    if match is None:
+        raise ValueError(
+            f"The name {file_name!r} does not spell out the period the list covers. "
+            f"The module expects the name the ECB publishes the workbook under, "
+            f"'{prefix}_<year>.xlsx', '{prefix}_<year>_Q<quarter>.xlsx' or "
+            f"'{prefix}_<year>_H<half>.xlsx'."
+        )
+    year, period = match.groups()
+    month = {None: 12, "H1": 6, "H2": 12}.get(period)
+    if month is None:
+        month = 3 * int(period[1])
+    return (pandas.Timestamp(int(year), month, 1) + pandas.offsets.MonthEnd(0)) \
+        .strftime("%Y-%m-%d")
+
+
+def read_as_text(path):
+    """The first sheet of a workbook, every column as text.
+
+    The ECB's lists mix numbers and text in a column -- a postcode is a number
+    in one row and ``1012 AB`` in the next -- which pyarrow refuses, and an
+    identifier read as a number loses what makes it one.
+    """
+    raw = pandas.read_excel(path, sheet_name=0, dtype=object)
+    for column in raw.columns:
+        raw[column] = raw[column].map(
+            lambda v: v if v is None or v != v else str(v)).astype("string")
+    return raw
 
 
 def write_parquet(frame, path):
@@ -335,6 +387,57 @@ def update_bronze_ecb_investment_fund(config_path):
     )
 
 
+def update_bronze_ecb_fvc(config_path):
+    """Update the ECB's list of financial vehicle corporations in the Bronze layer.
+
+    Imports the quarterly lists of FVCs from the landing zone into the Bronze
+    layer, each under the last day of its quarter; see :func:`end_of_period`.
+
+    Parameters
+    ----------
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be a yaml-file.
+
+    Returns
+    -------
+    int
+        Number of lists of FVCs imported.
+    """
+    return import_registers(
+        common.path_landing_ecb_fvc(config_path),
+        common.path_bronze_ecb_fvc(config_path),
+        EXCEL_EXTENSIONS, read_as_text,
+        lambda name: end_of_period(name, "FVC"), dated_by_period, "ECB_FVC",
+    )
+
+
+def update_bronze_ecb_psri(config_path):
+    """Update the ECB's list of payment statistics relevant institutions in the Bronze layer.
+
+    Imports the yearly and half-yearly lists of PSRIs from the landing zone
+    into the Bronze layer, each under the last day of its period; see
+    :func:`end_of_period`. The columns are kept as each list names them: the
+    lists until 2021 spell ``Country of residence`` and carry a ``PSP Geo
+    Scope``, the later ones spell ``Country of Residence`` and do not.
+
+    Parameters
+    ----------
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be a yaml-file.
+
+    Returns
+    -------
+    int
+        Number of lists of PSRIs imported.
+    """
+    return import_registers(
+        common.path_landing_ecb_psri(config_path),
+        common.path_bronze_ecb_psri(config_path),
+        EXCEL_EXTENSIONS, read_as_text,
+        lambda name: end_of_period(name, "PSRIs"), dated_by_period, "ECB_PSRI",
+    )
+
+
 def update_bronze_ecb_mfi(config_path):
     """Update the ECB's list of MFIs in the Bronze layer.
 
@@ -353,6 +456,12 @@ def update_bronze_ecb_mfi(config_path):
         :func:`update_from_landing_to_bronze` states the total.
     """
     def read(path):
+        if path.lower().endswith(".csv"):
+            # The list as the ECB publishes it, which is what the download
+            # stores: text separated by tabs and encoded in UTF-16. Every
+            # column of it is text.
+            return pandas.read_csv(path, sep="\t", encoding="utf-16", dtype="string",
+                                   keep_default_na=False, na_values=[""])
         # The postal columns are read as text from the workbook itself: a
         # postcode is not a number, and taking it for one would drop the
         # leading zero of '00187' and turn '1012 AB' into a missing value.
@@ -371,7 +480,8 @@ def update_bronze_ecb_mfi(config_path):
     return import_registers(
         common.path_landing_ecb_mfi(config_path),
         common.path_bronze_ecb_mfi(config_path),
-        EXCEL_EXTENSIONS, read, reference_date_from_file_name, dated_by_name, "ECB_MFI",
+        EXCEL_EXTENSIONS + CSV_EXTENSIONS, read, reference_date_from_file_name,
+        dated_by_name, "ECB_MFI",
     )
 
 
@@ -381,11 +491,80 @@ def update_bronze_ecb_mfi(config_path):
 # --------------------------------------------------------------------------
 
 
+#: The columns of EIOPA's registers that hold dates, by register.
+EIOPA_DATES = {
+    "EIOPA_IC": ["Registration start date", "Registration end date",
+                 "Operation Start Date", "Operation End Date"],
+    "EIOPA_IORP": ["Registration Start Date", "Registration End Date"],
+}
+
+
+def eiopa_dates(values):
+    """EIOPA's dates as ``YYYY-MM-DD``, whichever way the register spells them.
+
+    The CSV export writes most dates day first with a time,
+    ``14/11/2013 00:00:00``, and some as ISO 8601, ``1990-12-10T00:00:00Z``,
+    within the same column; a workbook holds dates, or text day first. Only
+    the day is kept. A value that is none of these is refused rather than
+    taken for a missing date.
+    """
+    text = values.astype("string").str.strip().replace("", pandas.NA)
+    day = text.str.slice(0, 10)
+    day_first = pandas.to_datetime(day, format="%d/%m/%Y", errors="coerce")
+    iso = pandas.to_datetime(day, format="%Y-%m-%d", errors="coerce")
+    dates = day_first.fillna(iso)
+    unread = text[text.notna() & dates.isna()]
+    if len(unread):
+        raise ValueError(
+            f"Dates of an EIOPA register that are not dates: "
+            f"{sorted(set(unread))[:5]}"
+        )
+    return dates.dt.strftime("%Y-%m-%d").astype("string")
+
+
+def read_eiopa_register(path, source):
+    """One of EIOPA's registers as a frame of text, its dates as ``YYYY-MM-DD``.
+
+    The register is read as the download stores it, the CSV export -- text in
+    UTF-8, quoted and separated by semicolons -- or as a workbook stored by
+    hand. Every column is text either way: the identifiers, the LEIs and the
+    postcodes are not numbers, and a workbook mixes numbers, dates and text
+    in a column -- a commercial name that is a date, a street number that is
+    one -- which pyarrow refuses to write. The CSV export ends every line with
+    a separator, which reads as an empty column without a name; it is
+    dropped.
+
+    Parameters
+    ----------
+    path: str
+        The file in the landing zone.
+    source: str
+        ``"EIOPA_IC"`` or ``"EIOPA_IORP"``, which says the columns that hold
+        dates, see :data:`EIOPA_DATES`.
+    """
+    if path.lower().endswith(".csv"):
+        raw = pandas.read_csv(path, sep=";", encoding="utf-8", dtype="string",
+                              keep_default_na=False, na_values=[""])
+        unnamed = [c for c in raw.columns
+                   if c.startswith("Unnamed:") and raw[c].isna().all()]
+        raw = raw.drop(columns=unnamed)
+    else:
+        raw = pandas.read_excel(path, sheet_name=0, dtype=object)
+    for column in EIOPA_DATES[source]:
+        raw[column] = eiopa_dates(raw[column])
+    for column in raw.columns:
+        if raw[column].dtype != "string":
+            raw[column] = raw[column].map(
+                lambda v: v if v is None or v != v else str(v)).astype("string")
+    return raw
+
+
 def update_bronze_eiopa_insurance_undertaking(config_path):
     """Update EIOPA's list of insurance undertakings in the Bronze layer.
 
     Imports the lists of insurance undertakings published on EIOPA's website
-    from the landing zone into the Bronze layer.
+    from the landing zone into the Bronze layer, as the download stores them
+    or as workbooks stored by hand; see :func:`read_eiopa_register`.
 
     Parameters
     ----------
@@ -398,30 +577,22 @@ def update_bronze_eiopa_insurance_undertaking(config_path):
         Number of lists of insurance undertakings imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    def read(path):
-        raw = pandas.read_excel(path, sheet_name=0)
-        # As with the MFI register, the columns that reach pyarrow as a mixed
-        # type are settled first. EIOPA spells its dates day first.
-        for column in ['Identification code', 'LEI', 'Street Name', 'Street Number', 'Post Code']:
-            raw[column] = raw[column].astype("string")
-        for column in ['Registration start date', 'Registration end date',
-                       'Operation Start Date', 'Operation End Date']:
-            raw[column] = pandas.to_datetime(raw[column], format='%d/%m/%Y').dt.strftime("%Y-%m-%d")
-        return raw
-
     return import_registers(
         common.path_landing_eiopa_insurance_undertaking(config_path),
         common.path_bronze_eiopa_insurance_undertaking(config_path),
-        EXCEL_EXTENSIONS, read, reference_date_from_file_name, dated_by_name, "EIOPA_IC",
+        EXCEL_EXTENSIONS + CSV_EXTENSIONS,
+        lambda path: read_eiopa_register(path, "EIOPA_IC"),
+        reference_date_from_file_name, dated_by_name, "EIOPA_IC",
     )
-
 
 
 def update_bronze_eiopa_iorp(config_path):
     """Update EIOPA's list of institutions for occupational retirement provision in the Bronze layer.
 
-    Imports the lists of institutions for occupational retirement provision published on EIOPA's website
-    from the landing zone into the Bronze layer.
+    Imports the lists of institutions for occupational retirement provision
+    published on EIOPA's website from the landing zone into the Bronze layer,
+    as the download stores them or as workbooks stored by hand; see
+    :func:`read_eiopa_register`.
 
     Parameters
     ----------
@@ -434,26 +605,13 @@ def update_bronze_eiopa_iorp(config_path):
         Number of lists of institutions for occupational retirement provision imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    def read(path):
-        raw = pandas.read_excel(path, sheet_name=0)
-        # As with the MFI register, the columns that reach pyarrow as a mixed
-        # type are settled first. EIOPA spells its dates day first.
-        for column in ['Name of NCA', 'Official name of the entity', 'Home Country', 'EU Country where the entity operates',
-                       'Type of IORP', 'Street name', 'Street number', 'Post Code', 'City', 'Legal name of the managing entity',
-                       'Address of the managing entity', 'Cross border status', 'Cross border activity', 'LEI',
-                       'Identification Code', 'Website address']:
-            raw[column] = raw[column].astype("string")
-        for column in ['Registration Start Date', 'Registration End Date']:
-            raw[column] = pandas.to_datetime(raw[column], format='%d/%m/%Y').dt.strftime("%Y-%m-%d")
-        return raw
-
     return import_registers(
         common.path_landing_eiopa_iorp(config_path),
         common.path_bronze_eiopa_iorp(config_path),
-        EXCEL_EXTENSIONS, read, reference_date_from_file_name, dated_by_name, "EIOPA_IORP",
+        EXCEL_EXTENSIONS + CSV_EXTENSIONS,
+        lambda path: read_eiopa_register(path, "EIOPA_IORP"),
+        reference_date_from_file_name, dated_by_name, "EIOPA_IORP",
     )
-
-
 
 
 # ESMA
@@ -523,9 +681,8 @@ def update_from_landing_to_bronze(config_path):
     """Entity master data: import the registers into the Bronze layer.
 
     Imports everything the landing zone currently holds, source by source. The
-    downloads are not part of this: GLEIF needs a link that has to be looked up
-    by hand, and the ECB and EIOPA registers are placed in the landing zone by
-    hand as well.
+    downloads are not part of this; see
+    :mod:`fincommons.entitymasterdata.landing`.
 
     Parameters
     ----------
@@ -563,6 +720,8 @@ def _update_from_landing_to_bronze(config_path, outcome):
     # ECB data
     imported += update_bronze_ecb_investment_fund(config_path)
     imported += update_bronze_ecb_mfi(config_path)
+    imported += update_bronze_ecb_fvc(config_path)
+    imported += update_bronze_ecb_psri(config_path)
 
     # EIOPA data
     imported += update_bronze_eiopa_insurance_undertaking(config_path)
@@ -579,14 +738,22 @@ def _update_from_landing_to_bronze(config_path, outcome):
 __all__ = [
     "CSV_AS_TEXT",
     "EXCEL_EXTENSIONS",
+    "CSV_EXTENSIONS",
+    "EIOPA_DATES",
     "dated_by_name",
     "dated_by_period",
+    "eiopa_dates",
     "end_of_investment_fund_period",
+    "end_of_period",
     "import_registers",
     "landing_files",
+    "read_as_text",
+    "read_eiopa_register",
     "reference_date_from_file_name",
+    "update_bronze_ecb_fvc",
     "update_bronze_ecb_investment_fund",
     "update_bronze_ecb_mfi",
+    "update_bronze_ecb_psri",
     "update_bronze_eiopa_insurance_undertaking",
     "update_bronze_eiopa_iorp",
     "update_bronze_esma_ccp",

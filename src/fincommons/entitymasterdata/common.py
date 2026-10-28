@@ -39,6 +39,12 @@ def path_landing_ecb_investment_fund(config_path):
 def path_landing_ecb_mfi(config_path):
     return os.path.join(path_landing_ecb(config_path), "mfi")
 
+def path_landing_ecb_fvc(config_path):
+    return os.path.join(path_landing_ecb(config_path), "fvc")
+
+def path_landing_ecb_psri(config_path):
+    return os.path.join(path_landing_ecb(config_path), "psri")
+
 
 
 def path_landing_eiopa(config_path):
@@ -89,6 +95,12 @@ def path_bronze_ecb_investment_fund(config_path):
 
 def path_bronze_ecb_mfi(config_path):
     return os.path.join(path_bronze_ecb(config_path), "mfi")
+
+def path_bronze_ecb_fvc(config_path):
+    return os.path.join(path_bronze_ecb(config_path), "fvc")
+
+def path_bronze_ecb_psri(config_path):
+    return os.path.join(path_bronze_ecb(config_path), "psri")
 
 
 
@@ -286,6 +298,8 @@ def create_directory_tree(config_path):
                    path_landing_ecb(config_path),
                    path_landing_ecb_investment_fund(config_path),
                    path_landing_ecb_mfi(config_path),
+                   path_landing_ecb_fvc(config_path),
+                   path_landing_ecb_psri(config_path),
                    path_landing_eiopa(config_path),
                    path_landing_eiopa_insurance_undertaking(config_path),
                    path_landing_eiopa_iorp(config_path),
@@ -298,6 +312,8 @@ def create_directory_tree(config_path):
                    path_bronze_ecb(config_path),
                    path_bronze_ecb_investment_fund(config_path),
                    path_bronze_ecb_mfi(config_path),
+                   path_bronze_ecb_fvc(config_path),
+                   path_bronze_ecb_psri(config_path),
                    path_bronze_eiopa(config_path),
                    path_bronze_eiopa_insurance_undertaking(config_path),
                    path_bronze_eiopa_iorp(config_path),
@@ -358,6 +374,8 @@ __all__ = [
     "path_bronze_ecb",
     "path_bronze_ecb_investment_fund",
     "path_bronze_ecb_mfi",
+    "path_bronze_ecb_fvc",
+    "path_bronze_ecb_psri",
     "path_bronze_eiopa",
     "path_bronze_eiopa_insurance_undertaking",
     "path_bronze_eiopa_iorp",
@@ -371,6 +389,8 @@ __all__ = [
     "path_landing_ecb",
     "path_landing_ecb_investment_fund",
     "path_landing_ecb_mfi",
+    "path_landing_ecb_fvc",
+    "path_landing_ecb_psri",
     "path_landing_eiopa",
     "path_landing_eiopa_insurance_undertaking",
     "path_landing_eiopa_iorp",

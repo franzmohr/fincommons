@@ -433,7 +433,15 @@ def test_the_update_carries_on_when_the_list_of_ccps_cannot_be_downloaded(
         raise requests.ConnectionError("no route to host")
 
     stages = []
+    monkeypatch.setattr(silver, "download_latest_gleif",
+                        lambda config_path, data_sets: unreachable(config_path))
     monkeypatch.setattr(silver, "download_esma_ccp", unreachable)
+    monkeypatch.setattr(silver, "download_eiopa_insurance_undertaking", unreachable)
+    monkeypatch.setattr(silver, "download_eiopa_iorp", unreachable)
+    monkeypatch.setattr(silver, "download_ecb_mfi", unreachable)
+    monkeypatch.setattr(silver, "download_ecb_investment_fund", unreachable)
+    monkeypatch.setattr(silver, "download_ecb_fvc", unreachable)
+    monkeypatch.setattr(silver, "download_ecb_psri", unreachable)
     monkeypatch.setattr(silver, "update_from_landing_to_bronze",
                         lambda config_path: stages.append("bronze"))
     monkeypatch.setattr(silver, "update_silver_entitymasterdata_public",
@@ -445,7 +453,9 @@ def test_the_update_carries_on_when_the_list_of_ccps_cannot_be_downloaded(
         silver._update_entitymasterdata(None, data_lake, None, None, None)
 
     assert stages == ["bronze", "public", "main"]
-    assert any("could not be downloaded" in r.getMessage() for r in caplog.records)
+    failed = [r.getMessage() for r in caplog.records
+              if "could not be downloaded" in r.getMessage()]
+    assert len(failed) == 8
 
 
 def test_a_link_that_is_not_a_zip_file_is_refused():
@@ -538,6 +548,466 @@ def test_an_error_answer_does_not_replace_the_list_of_ccps(monkeypatch, data_lak
     path = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
     assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["ccp_list.csv"]
     assert "LEI1,CCP,EUCCP" in io.open(path, encoding="utf-8").read()
+
+
+# GLEIF's latest golden copy
+# --------------------------------------------------------------------------
+
+GLEIF_FILES = "https://goldencopy.gleif.org/storage/golden-copy-files/2026/10/28/"
+LATEST = {"data": {
+    "publish_date": "2026-10-28 08:00:00",
+    "lei2": {"full_file": {"csv": {"url": GLEIF_FILES
+             + "1294040/20261028-0800-gleif-goldencopy-lei2-golden-copy.csv.zip"}}},
+    "rr": {"full_file": {"csv": {"url": GLEIF_FILES
+           + "1294085/20261028-0800-gleif-goldencopy-rr-golden-copy.csv.zip"}}},
+}}
+
+
+class FakeJson(FakeResponse):
+    def __init__(self, document):
+        super().__init__(b"")
+        self.document = document
+
+    def json(self):
+        return self.document
+
+
+def serve_gleif(monkeypatch, latest=LATEST):
+    """GLEIF: the Golden Copy API, and an archive for every file."""
+    calls = []
+
+    def get(url, **options):
+        calls.append(url)
+        if url == em.GLEIF_LATEST_URL:
+            return FakeJson(latest)
+        return FakeResponse(ARCHIVE)
+
+    monkeypatch.setattr("fincommons.entitymasterdata.landing.requests.get", get)
+    return calls
+
+
+def test_the_latest_golden_copy_is_found_through_the_api(monkeypatch, data_lake):
+    calls = serve_gleif(monkeypatch)
+
+    stored = em.download_latest_gleif(data_lake)
+
+    assert stored == ["20261028-0800-gleif-goldencopy-lei2-golden-copy.csv.zip",
+                      "20261028-0800-gleif-goldencopy-rr-golden-copy.csv.zip"]
+    assert calls[0] == em.GLEIF_LATEST_URL
+    assert os.listdir(em.path_landing_gleif_level_1(data_lake)) == [stored[0]]
+    assert os.listdir(em.path_landing_gleif_level_2(data_lake)) == [stored[1]]
+
+
+def test_a_golden_copy_of_a_day_the_bronze_layer_holds_is_not_downloaded(
+        monkeypatch, data_lake):
+    """Level 1 is half a gigabyte, and GLEIF publishes three times a day."""
+    calls = serve_gleif(monkeypatch)
+    bronze = em.path_bronze_gleif_level_1(data_lake)
+    os.makedirs(bronze, exist_ok=True)
+    open(os.path.join(bronze, "20261028.parquet"), "wb").close()
+
+    stored = em.download_latest_gleif(data_lake)
+
+    assert stored == ["20261028-0800-gleif-goldencopy-rr-golden-copy.csv.zip"]
+    assert calls == [em.GLEIF_LATEST_URL, LATEST["data"]["rr"]["full_file"]["csv"]["url"]]
+
+
+def test_only_the_data_sets_asked_for_are_downloaded(monkeypatch, data_lake):
+    calls = serve_gleif(monkeypatch)
+
+    assert em.download_latest_gleif(data_lake, ("rr",)) == [
+        "20261028-0800-gleif-goldencopy-rr-golden-copy.csv.zip"]
+    assert em.download_latest_gleif(data_lake, ()) == []
+    assert calls.count(em.GLEIF_LATEST_URL) == 1
+
+
+def test_an_api_that_names_no_file_is_refused(monkeypatch, data_lake):
+    serve_gleif(monkeypatch, {"data": {"lei2": {}}})
+
+    with pytest.raises(ValueError, match="names no csv file"):
+        em.download_latest_gleif(data_lake)
+
+    assert os.listdir(em.path_landing_gleif_level_1(data_lake)) == []
+
+
+def test_a_gleif_link_given_to_the_update_is_used_rather_than_the_latest(
+        monkeypatch, data_lake):
+    from fincommons.entitymasterdata import silver
+    asked = []
+    monkeypatch.setattr(silver, "download_gleif_level_1",
+                        lambda config_path, url: asked.append(("L1", url)))
+    monkeypatch.setattr(silver, "download_latest_gleif",
+                        lambda config_path, data_sets: asked.append(("latest", data_sets)))
+    for name in ("download_esma_ccp", "download_ecb_mfi", "download_ecb_investment_fund",
+                 "download_ecb_fvc", "download_ecb_psri",
+                 "download_eiopa_insurance_undertaking", "download_eiopa_iorp"):
+        monkeypatch.setattr(silver, name, lambda config_path: None)
+    for name in ("update_from_landing_to_bronze",):
+        monkeypatch.setattr(silver, name, lambda config_path: None)
+    monkeypatch.setattr(silver, "update_silver_entitymasterdata_public", lambda **kw: None)
+    monkeypatch.setattr(silver, "update_silver_entitymasterdata", lambda **kw: None)
+
+    silver._update_entitymasterdata(None, data_lake, "https://x/20261027-l1.csv.zip",
+                                    None, None)
+
+    assert asked == [("L1", "https://x/20261027-l1.csv.zip"), ("latest", ("rr",))]
+
+
+# EIOPA's registers
+# --------------------------------------------------------------------------
+
+#: A register page of EIOPA as far as the export reads it: the form, its
+#: hidden fields, and the "CSV" and "Excel" links that post it back.
+EIOPA_PAGE = """
+<form method="post" action="./register-of-iorps?TermStoreId=a&amp;TermId=b" id="aspnetForm">
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="state&amp;more" />
+<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="valid" />
+<input type="text" name="search" value="not sent" />
+Export IORPs Data to
+<a href="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;ctl00$ctl34$g_1$lkbtnExport&quot;, &quot;&quot;, true))">CSV</a> |
+<a href="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;ctl00$ctl34$g_1$lkbtnExcelExport&quot;, &quot;&quot;, true))">Excel</a>
+</form>
+"""
+
+#: A register as EIOPA's CSV export writes it: quoted, separated by
+#: semicolons, every line ending in a separator.
+REGISTER = ('"Official name of the entity";"LEI";"Registration Start Date";'
+            '"Registration End Date";\r\n'
+            '"Österreichische Pensionskasse";"31570010000000066734";'
+            '"14/11/2013 00:00:00";"";\r\n'
+            '"Fund B";"";"1990-12-10T00:00:00Z";"20/12/2023 00:00:00";\r\n'
+            ).encode("utf-8")
+
+
+class FakePage(FakeResponse):
+    """An answer read whole: a page as ``text``, a workbook as ``content``."""
+
+    def __init__(self, payload, status=200):
+        if isinstance(payload, str):
+            payload = payload.encode()
+        super().__init__(payload, status)
+        self.text = payload.decode("utf-8", "replace")
+        self.content = payload
+        self.cookies = {"ApplicationGatewayAffinity": "backend-1"}
+
+
+def serve_register(monkeypatch, page=EIOPA_PAGE, answer=None):
+    """EIOPA's register: the page for a GET, the workbook for the form."""
+    calls = []
+
+    def get(url, **options):
+        calls.append(("GET", url, options))
+        return FakePage(page)
+
+    def post(url, **options):
+        calls.append(("POST", url, options))
+        return answer or FakePage(REGISTER)
+
+    monkeypatch.setattr("fincommons.entitymasterdata.landing.requests.get", get)
+    monkeypatch.setattr("fincommons.entitymasterdata.landing.requests.post", post)
+    # An export turned away is waited for; the tests do not wait.
+    monkeypatch.setattr("fincommons.entitymasterdata.landing.time.sleep",
+                        lambda seconds: None)
+    return calls
+
+
+def test_the_export_form_is_read_off_the_page():
+    url = "https://register.eiopa.europa.eu/registers/register-of-iorps"
+
+    action, fields = em.export_form(EIOPA_PAGE, url)
+
+    assert action == url + "?TermStoreId=a&TermId=b"
+    assert fields == {
+        "__VIEWSTATE": "state&more",
+        "__EVENTVALIDATION": "valid",
+        "__EVENTTARGET": "ctl00$ctl34$g_1$lkbtnExport",
+        "__EVENTARGUMENT": "",
+    }
+
+
+def test_a_page_without_the_export_is_refused():
+    with pytest.raises(ValueError, match="no form with the export"):
+        em.export_form("<html>Service unavailable</html>", em.EIOPA_IORP_URL)
+
+
+@pytest.mark.parametrize("download, folder", [
+    ("download_eiopa_iorp", "path_landing_eiopa_iorp"),
+    ("download_eiopa_insurance_undertaking",
+     "path_landing_eiopa_insurance_undertaking"),
+])
+def test_a_register_of_eiopa_is_downloaded_under_the_day(
+        monkeypatch, data_lake, download, folder):
+    import datetime
+    calls = serve_register(monkeypatch)
+
+    getattr(em, download)(data_lake, today=datetime.date(2026, 10, 28))
+
+    landing = getattr(em, folder)(data_lake)
+    assert os.listdir(landing) == ["20261028.csv"]
+    with open(os.path.join(landing, "20261028.csv"), "rb") as handle:
+        assert handle.read() == REGISTER
+    (_, _, get), (method, _, post) = calls
+    assert method == "POST"
+    # The CSV export: the workbook stores an LEI of digits as a number.
+    assert post["data"]["__EVENTTARGET"].endswith("$lkbtnExport")
+    # The export goes to the server that issued the form's view state.
+    assert post["cookies"] == {"ApplicationGatewayAffinity": "backend-1"}
+    assert get["timeout"] and post["timeout"]
+    assert get["headers"]["User-Agent"]
+
+
+def test_an_export_that_is_not_the_register_is_not_stored(monkeypatch, data_lake):
+    """A form the server no longer accepts is answered with the page again."""
+    serve_register(monkeypatch, answer=FakePage(EIOPA_PAGE))
+
+    with pytest.raises(ValueError, match="did not answer the export with the register"):
+        em.download_eiopa_iorp(data_lake)
+
+    assert os.listdir(em.path_landing_eiopa_iorp(data_lake)) == []
+
+
+def serve_pages(monkeypatch, answers):
+    """The ECB: each address answered from ``answers``, a 404 otherwise."""
+    calls = []
+
+    def get(url, **options):
+        calls.append(url)
+        body = answers.get(url.split("?")[0])
+        return FakePage(body) if body is not None else FakePage(b"", status=404)
+
+    monkeypatch.setattr("fincommons.entitymasterdata.landing.requests.get", get)
+    return calls
+
+
+def lists_archive(names):
+    """An archive of the lists of investment funds, packed as the ECB packs it."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name in names:
+            archive.writestr(f"ecb.ifd_overview_2026.en/IF_overview_2026/{name}",
+                             b"workbook " + name.encode())
+        archive.writestr("ecb.ifd_overview_2026.en/IF_overview_2026/Read.me.rtf", b"x")
+        archive.writestr("ecb.ifd_overview_2026.en/IF_overview_2026/~$ead.me.rtf", b"x")
+    return buffer.getvalue()
+
+
+ECB = "https://www.ecb.europa.eu"
+LISTS_PAGE = """
+<a href="/stats/pdf/money/ecb.ifd_overview_2026.en.zip?b3d2">IFs Overview 2026</a>
+<a href="/stats/pdf/money/ecb.ifd_overview_2025.en.zip?c255">IFs Overview 2025</a>
+<a href="/stats/pdf/money/ecb.ifd_overview_2019-2024.en.zip?6c81">IFs Overview 2019-2024</a>
+<a href="/stats/pdf/money/fvc/ecb.fvcd_overview_2026.en.zip">FVCs Overview 2026</a>
+"""
+
+
+def test_the_lists_of_investment_funds_the_bronze_layer_lacks_are_unpacked(
+        monkeypatch, data_lake):
+    archive = lists_archive(["IF_2026_01.xlsx", "IF_2026_02.xlsx", "IF_2025_Q4.xlsx"])
+    calls = serve_pages(monkeypatch, {
+        em.ECB_LISTS_URL: LISTS_PAGE,
+        ECB + "/stats/pdf/money/ecb.ifd_overview_2026.en.zip": archive,
+    })
+    bronze = em.path_bronze_ecb_investment_fund(data_lake)
+    os.makedirs(bronze, exist_ok=True)
+    open(os.path.join(bronze, "2026-01-31.parquet"), "wb").close()
+
+    stored = em.download_ecb_investment_fund(data_lake)
+
+    # The archive of the latest single year, not the one of several years.
+    assert calls[1] == ECB + "/stats/pdf/money/ecb.ifd_overview_2026.en.zip"
+    assert stored == ["IF_2025_Q4.xlsx", "IF_2026_02.xlsx"]
+    landing = em.path_landing_ecb_investment_fund(data_lake)
+    assert sorted(os.listdir(landing)) == ["IF_2025_Q4.xlsx", "IF_2026_02.xlsx"]
+    with open(os.path.join(landing, "IF_2026_02.xlsx"), "rb") as handle:
+        assert handle.read() == b"workbook IF_2026_02.xlsx"
+
+
+@pytest.mark.parametrize("name, prefix, end", [
+    ("FVC_2026_Q3.xlsx", "FVC", "2026-09-30"),
+    ("FVC_2024_Q1.xlsx", "FVC", "2024-03-31"),
+    ("PSRIs_2021.xlsx", "PSRIs", "2021-12-31"),
+    ("PSRIs_2026_H1.xlsx", "PSRIs", "2026-06-30"),
+    ("PSRIs_2025_H2.xlsx", "PSRIs", "2025-12-31"),
+])
+def test_a_list_of_fvcs_or_psris_is_dated_at_the_end_of_its_period(name, prefix, end):
+    from fincommons.entitymasterdata import bronze
+    assert bronze.end_of_period(name, prefix) == end
+
+
+def test_a_list_named_otherwise_is_refused():
+    from fincommons.entitymasterdata import bronze
+    with pytest.raises(ValueError, match="does not spell out the period"):
+        bronze.end_of_period("FVC list Q3.xlsx", "FVC")
+
+
+def test_the_lists_of_psris_are_unpacked_and_imported_as_text(monkeypatch, data_lake):
+    from fincommons.entitymasterdata import bronze
+    lists = {}
+    for name, postal in [("PSRIs_2021.xlsx", 1070), ("PSRIs_2026_H1.xlsx", "1012 AB")]:
+        buffer = io.BytesIO()
+        pandas.DataFrame({"ID": ["BE0205764318"], "LEI": ["549300DYPOFMXOR7XM56"],
+                          "Postal Code": [postal]}).to_excel(buffer, index=False)
+        lists[name] = buffer.getvalue()
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as handle:
+        for name, content in lists.items():
+            handle.writestr(f"ecb.psrid_overview.en/{name}", content)
+        handle.writestr("ecb.psrid_overview.en/Read.me.rtf", b"x")
+    page = '<a href="/stats/pdf/money/psri/ecb.psrid_overview.en.zip?2125">PSRIs</a>'
+    serve_pages(monkeypatch, {
+        em.ECB_LISTS_URL: page,
+        ECB + "/stats/pdf/money/psri/ecb.psrid_overview.en.zip": archive.getvalue(),
+    })
+
+    assert em.download_ecb_psri(data_lake) == ["PSRIs_2021.xlsx", "PSRIs_2026_H1.xlsx"]
+    assert bronze.update_bronze_ecb_psri(data_lake) == 2
+
+    folder = em.path_bronze_ecb_psri(data_lake)
+    assert sorted(os.listdir(folder)) == ["2021-12-31.parquet", "2026-06-30.parquet"]
+    frame = pandas.read_parquet(os.path.join(folder, "2021-12-31.parquet"))
+    assert frame["Postal Code"].tolist() == ["1070"]
+    assert frame["REFDATE"].tolist() == ["2021-12-31"]
+    # Held in the Bronze layer, the lists are not unpacked again.
+    assert em.download_ecb_psri(data_lake) == []
+
+
+def test_a_page_without_an_archive_of_investment_funds_is_refused(
+        monkeypatch, data_lake):
+    serve_pages(monkeypatch, {em.ECB_LISTS_URL: "<html>moved</html>"})
+
+    with pytest.raises(ValueError, match="links no archive"):
+        em.download_ecb_investment_fund(data_lake)
+
+
+MFI_PAGE = """
+<a href="/stats/money/mfi/general/html/dla/mfi_MID/mfi_csv_261027.csv.gz">gz</a>
+<a href="/stats/money/mfi/general/html/dla/mfi_MID/mfi_csv_261027.csv">csv</a>
+<a href="/stats/money/mfi/general/html/dla/mfi_MID/mfi_csv_update_261027.csv">update</a>
+"""
+MFI_URL = ECB + "/stats/money/mfi/general/html/dla/mfi_MID/mfi_csv_261027.csv"
+MFI_LIST = ("RIAD_CODE\tLEI\tPOSTAL\tCATEGORY\r\n"
+            "DE05833\t391200DPSK6G0VJNFN83\t00187\tCredit Institution\r\n"
+            "DE05843\t\t1012 AB\tCredit Institution\r\n").encode("utf-16")
+
+
+def test_the_list_of_mfis_of_the_day_is_downloaded_and_read_as_text(
+        monkeypatch, data_lake):
+    from fincommons.entitymasterdata import bronze
+    serve_pages(monkeypatch, {em.ECB_MFI_URL: MFI_PAGE, MFI_URL: MFI_LIST})
+
+    assert em.download_ecb_mfi(data_lake) == "20261027.csv"
+
+    landing = em.path_landing_ecb_mfi(data_lake)
+    assert os.listdir(landing) == ["20261027.csv"]
+    assert bronze.update_bronze_ecb_mfi(data_lake) == 1
+    frame = pandas.read_parquet(os.path.join(em.path_bronze_ecb_mfi(data_lake),
+                                             "20261027.parquet"))
+    assert list(frame["POSTAL"]) == ["00187", "1012 AB"]
+    assert frame["LEI"].isna().tolist() == [False, True]
+    assert set(frame["REFDATE"]) == {"2026-10-27"}
+
+
+def test_the_list_of_mfis_the_bronze_layer_holds_is_not_downloaded_again(
+        monkeypatch, data_lake):
+    calls = serve_pages(monkeypatch, {em.ECB_MFI_URL: MFI_PAGE, MFI_URL: MFI_LIST})
+    bronze = em.path_bronze_ecb_mfi(data_lake)
+    os.makedirs(bronze, exist_ok=True)
+    open(os.path.join(bronze, "20261027.parquet"), "wb").close()
+
+    assert em.download_ecb_mfi(data_lake) is None
+    assert calls == [em.ECB_MFI_URL]
+
+
+def test_an_answer_that_is_not_the_list_of_mfis_is_not_stored(monkeypatch, data_lake):
+    serve_pages(monkeypatch, {em.ECB_MFI_URL: MFI_PAGE,
+                              MFI_URL: b"<html>Service unavailable</html>"})
+
+    with pytest.raises(ValueError, match="did not answer with the list of MFIs"):
+        em.download_ecb_mfi(data_lake)
+
+    assert os.listdir(em.path_landing_ecb_mfi(data_lake)) == []
+
+
+def test_an_export_turned_away_is_asked_for_again_from_a_fresh_page(
+        monkeypatch, data_lake):
+    """EIOPA's gateway answered the first live download with 403 and served
+    the same export a moment later."""
+    from fincommons.entitymasterdata import landing
+    answers = [FakePage("<html>403</html>", status=403), FakePage(REGISTER)]
+    calls = serve_register(monkeypatch)
+    waits = []
+    monkeypatch.setattr(landing.time, "sleep", waits.append)
+    post = landing.requests.post
+
+    def turned_away_once(url, **options):
+        post(url, **options)
+        return answers.pop(0)
+
+    monkeypatch.setattr("fincommons.entitymasterdata.landing.requests.post",
+                        turned_away_once)
+
+    em.download_eiopa_iorp(data_lake)
+
+    assert [method for method, _, _ in calls] == ["GET", "POST", "GET", "POST"]
+    assert waits == [landing.EIOPA_WAIT]
+    assert len(os.listdir(em.path_landing_eiopa_iorp(data_lake))) == 1
+
+
+def test_the_csv_export_is_imported_as_text_with_its_dates_read(data_lake):
+    from fincommons.entitymasterdata import bronze
+    landing = em.path_landing_eiopa_iorp(data_lake)
+    with open(os.path.join(landing, "20261028.csv"), "wb") as handle:
+        handle.write(REGISTER)
+    raw = bronze.read_eiopa_register(os.path.join(landing, "20261028.csv"),
+                                     "EIOPA_IORP")
+
+    # The LEI of digits is kept as it is, the empty column at the end dropped,
+    # and both spellings of a date read.
+    assert list(raw.columns) == ["Official name of the entity", "LEI",
+                                 "Registration Start Date", "Registration End Date"]
+    assert raw["LEI"].tolist()[0] == "31570010000000066734"
+    assert raw["Registration Start Date"].tolist() == ["2013-11-14", "1990-12-10"]
+    assert raw["Registration End Date"].isna().tolist() == [True, False]
+    assert raw["Official name of the entity"][0] == "Österreichische Pensionskasse"
+
+
+def test_a_workbook_with_mixed_cells_is_imported_as_text(data_lake, tmp_path):
+    """EIOPA's workbook holds a commercial name that is a date and street
+    numbers that are numbers; pyarrow refuses a column mixing them."""
+    import datetime
+    from fincommons.entitymasterdata import bronze
+    path = str(tmp_path / "20261028.xlsx")
+    pandas.DataFrame({
+        "Local/Commercial name": ["Name AG", datetime.datetime(2024, 9, 30)],
+        "Street Number": [1, "12a"],
+        "LEI": ["529900T8BM49AURSDO55", None],
+        "Registration start date": [datetime.datetime(2013, 11, 14), "29/04/2004"],
+        "Registration end date": [None, None],
+        "Operation Start Date": [None, None],
+        "Operation End Date": [None, None],
+    }).to_excel(path, index=False)
+
+    raw = bronze.read_eiopa_register(path, "EIOPA_IC")
+
+    assert all(str(t) == "string" for t in raw.dtypes)
+    assert raw["Street Number"].tolist() == ["1", "12a"]
+    assert raw["Registration start date"].tolist() == ["2013-11-14", "2004-04-29"]
+    bronze.write_parquet(raw, str(tmp_path / "out.parquet"))
+
+
+def test_a_date_that_is_not_one_is_refused():
+    from fincommons.entitymasterdata import bronze
+    with pytest.raises(ValueError, match="not dates"):
+        bronze.eiopa_dates(pandas.Series(["14/11/2013 00:00:00", "soon"]))
+
+
+def test_an_error_answer_to_the_export_is_not_stored(monkeypatch, data_lake):
+    serve_register(monkeypatch, answer=FakePage("<html>500</html>", status=500))
+
+    with pytest.raises(requests.HTTPError):
+        em.download_eiopa_insurance_undertaking(data_lake)
+
+    assert os.listdir(em.path_landing_eiopa_insurance_undertaking(data_lake)) == []
 
 
 # The Bronze layer

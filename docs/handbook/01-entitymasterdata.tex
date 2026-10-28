@@ -14,10 +14,10 @@ Under current European reporting regimes such as EMIR or SFTR the identification
 Within the \emph{fincommons} framework, the creation of an entity master data set follows \textcite{ESMA.2018} and \textcite{Lenoci.2021}.\footnote{More recently, also see \textcite{Pezzini.2024}.} The corresponding data pipeline is shown in figure \ref{fig:function_entitymasterdata} and consists of the following steps:
 %
 \begin{itemize}
-	\item Load data from various public sources (ECB, EIOPA, ESMA, GLEIF) into the respective folders of the landing zone. GLEIF describes who an entity is and how it is related to other entities, and the sectoral registers state what it does: the ECB lists of investment funds and of monetary financial institutions, the EIOPA registers of insurance undertakings and of institutions for occupational retirement provision (IORPs), and the ESMA list of central counterparties. Between them they fill the field SECTOR, whose values are listed in table \ref{tab:entitymasterdata-sector}.\footnote{The target folders are listed in the module's README file.} Two of these are downloaded by the package. The GLEIF golden copies are fetched from a link that has to be given to the download, because GLEIF publishes no stable address for the most recent release and changes it with every one of them. The list of central counterparties is taken from a public GitHub repository that keeps the information in machine-readable form, since ESMA publishes its registers of authorised and of recognised counterparties as pdf files, which cannot reasonably be read. The ECB and EIOPA registers cannot be reached through a standardised interface at all and have to be placed in the landing zone by hand, under the names the module's README file states, from which the reference date of the register is read.
+	\item Load data from various public sources (ECB, EIOPA, ESMA, GLEIF) into the respective folders of the landing zone. GLEIF describes who an entity is and how it is related to other entities, and the sectoral registers state what it does: the ECB lists of investment funds and of monetary financial institutions, the EIOPA registers of insurance undertakings and of institutions for occupational retirement provision (IORPs), and the ESMA list of central counterparties. Between them they fill the field SECTOR, whose values are listed in table \ref{tab:entitymasterdata-sector}.\footnote{The target folders are listed in the module's README file.} The ECB's lists of financial vehicle corporations (FVCs) and of payment statistics relevant institutions (PSRIs) are collected and imported as well, but do not yet contribute to SECTOR, since where they rank among the other registers is still to be decided. Every register is downloaded by the package, in the ways section \ref{sec:entitymasterdata-downloads} describes. A register can still be placed in the landing zone by hand, under the names the module's README file states, from which the reference date of the register is read.
 
 A download leaves the register or nothing. The answer is written under a temporary name and put in place only once it is complete, so an interrupted download leaves nothing behind under the name the Bronze import reads. An error answer, and an answer that is served with a success status but does not open as the archive it should be, are refused for the same reason: a GLEIF link that has gone stale answers with an error page, which would otherwise be stored under the name of the register and imported as if it were one.
-	\item The registers are imported into the Bronze layer to make them queryable. This entails that the data is converted to Parquet from the formats the publishers use: the GLEIF golden copies are read from the zipped CSV files that GLEIF publishes alongside its XML ones, the ECB and EIOPA registers from the Excel workbooks they are handed out as, and the list of CCPs from a CSV file. No major changes to the schema are made so that all potentially useful information remains available.
+	\item The registers are imported into the Bronze layer to make them queryable. This entails that the data is converted to Parquet from the formats the publishers use: the GLEIF golden copies are read from the zipped CSV files that GLEIF publishes alongside its XML ones, the ECB's lists from the workbooks they are handed out as, and the list of MFIs, the EIOPA registers and the list of CCPs from CSV files. The registers of the ECB and EIOPA are imported with every column as text: their workbooks mix numbers, dates and text in a column -- a postcode that is a number in one row and \verb|1012 AB| in the next, a commercial name that a spreadsheet took for a date -- which Parquet does not allow, and an identifier read as a number loses what makes it an identifier. No major changes to the schema are made so that all potentially useful information remains available.
 	\item Optional: Prepare internal entity master data so that it conforms to the structure described in the annex document \emph{Annex - Entity Master Data - Data Dictionary.xlsx}. This data could be obtained from supervisory or proprietary sources as in, e.g., \textcite{Lenoci.2021}. Save the result as a CSV-file in the Bronze layer as specified in the directory tree in figure \ref{fig:dirstruct_entitymasterdata}. The CSV file format was chosen, because it allows to impose a schema, which supports data validation and contributes to greater stability of the data pipeline. The file is checked before it is combined with anything: a file without the field LEI, one with a field the entity master data set does not have, and one that describes the same LEI twice are refused, because the first would displace nothing, the second would lose what it says under the unknown field when the table is written, and the third would leave the choice between the two descriptions to the order in which Spark happens to read them. An LEI that does not have the form of one is kept and named in a warning.
 	\item In case internal data is used, the public and internal data sets are combined and de-duplicated. The current implementation of \emph{fincommons} prefers internal data over public data. Thus, data engineers should ensure that when internal data is used, it is \emph{at least} of the same quality than the public data. This is because the processing function only keeps the internal information when there are duplicated values in the merged data set.\footnote{One approach to achieve this is to build on the public data set and enrich it with internal information before saving in the Bronze layer from where it is combined with the public data again. Although this leads to computational redundancies, it ensures that the \emph{fincommons} code base can be used within any organisation to produce the best internationally harmonised entity master data set}.
 	\item Add two catch-all entities, which serve at later stages of a data processing pipeline. The entity ``Other'' collects what an aggregation does not show on its own -- the reporting counterparties below the top fifteen of the data quality monitoring of EMIR and SFTR are filed under it, for example, and a chart whose legend names the top five categories puts the rest there -- and the entity ``Unknown'' takes what could not be identified at all, which makes data quality issues easy to spot. The package adds both to the entity master data set itself, under the LEIs \verb|XOTHERX0000000000064| and \verb|XUNKNOWNX00000000025|. Both have the form ISO 17442 prescribes, so that they pass every check an LEI is put to: eighteen characters, padded with zeros, followed by two check digits that make the whole number leave a remainder of one on division by 97. The first four characters of an LEI name the Local Operating Unit that issued it, and none has issued one under \verb|XOTH| or \verb|XUNK|: of the 3,424,918 LEIs of the GLEIF golden copy of 8 September 2026, 521 begin with an X and none with either prefix. A proprietary list that describes one of the two, with a sector of its own for instance, takes precedence over the package's description as it does for any other entity.
@@ -82,18 +82,24 @@ Either table can be written as Parquet or as Delta, and the update functions tak
 			[landing
 			[ecb
 			[investment\_fund
-			[IF\_2025\_Q3.xlsx]
+			[IF\_2026\_08.xlsx]
 			]
 			[mfi
-			[20250130.xlsx]
+			[20261027.csv]
+			]
+			[fvc
+			[FVC\_2026\_Q3.xlsx]
+			]
+			[psri
+			[PSRIs\_2026\_H1.xlsx]
 			]
 			]
 			[eiopa
 			[insurance\_undertaking
-			[20250202.xlsx]
+			[20261028.csv]
 			]
 			[iorp
-			[20250202.xlsx]
+			[20261028.csv]
 			]
 			]
 			[esma
@@ -139,20 +145,28 @@ Either table can be written as Parquet or as Delta, and the update functions tak
 			[bronze
 			[ecb
 			[investment\_fund
-			[2019Q1.parquet]	
+			[2019-03-31.parquet]
 			[...]
-			[2025Q3.parquet]
+			[2026-08-31.parquet]
 			]
 			[mfi
-			[20260130.parquet]
+			[20261027.parquet]
+			]
+			[fvc
+			[2026-09-30.parquet]
+			]
+			[psri
+			[2014-12-31.parquet]
+			[...]
+			[2026-06-30.parquet]
 			]
 			]
 			[eiopa
 			[insurance\_undertaking
-			[20260202.parquet]
+			[20261028.parquet]
 			]
 			[iorp
-			[20260202.parquet]
+			[20261028.parquet]
 			]
 			]
 			[esma
@@ -215,4 +229,18 @@ Either table can be written as Parquet or as Delta, and the update functions tak
 	\caption{Directory structures used for entity master data. A Silver table written as Parquet holds the same part files without the transaction log beside them.\label{fig:dirstruct_entitymasterdata}}
 \end{figure}
 
-The data processing steps described above are implemented in module \emph{entitymasterdata} of the \emph{fincommons} Python package. Documentation of its functionality and application is found in the README file of the module in the code repository, which also states the names the registers that cannot be downloaded have to be placed under, the reference date being read off the name of the file.
+The data processing steps described above are implemented in module \emph{entitymasterdata} of the \emph{fincommons} Python package. Documentation of its functionality and application is found in the README file of the module in the code repository, which also states the names under which a register stored by hand has to be placed, the reference date being read off the name of the file.
+
+\section{Downloading the registers}\label{sec:entitymasterdata-downloads}
+
+Until release 0.2.0 the registers of the ECB and EIOPA were placed in the landing zone by hand, and the link of the GLEIF golden copy had to be copied from GLEIF's download page, because none of the three publishers offers the latest version at a stable address. Each sits behind a page, and the package now reads the page the way a person would, but without one. The guarantee a download gives is the one stated above for every download: it leaves the register or nothing, and an answer that is not the register is refused rather than stored under its name. A register whose download fails does not stop the update. The failure is logged as an error and the update carries on with the register the Bronze layer already holds, since a cluster without internet access, a host that is down or a page that has changed should cost the entity master data set its freshness, not its existence.
+
+\paragraph{GLEIF's golden copy.} GLEIF publishes the golden copy three times a day, and the link of every file changes with every publication. Its Golden Copy API, however, names the files of the latest publication at a fixed address, and the update asks it for the links of Level 1 and Level 2 on every run. A file is downloaded only where the Bronze layer holds no golden copy of its day: Level 1 is about half a gigabyte zipped, and a second publication of the same day differs from the first by the changes of a few hours, which do not justify the transfer. A link passed to the update is downloaded instead of the latest file, which is how an earlier golden copy is brought in, and its failure stops the update, since it was asked for.
+
+\paragraph{The ECB's lists.} The ECB's page of the lists of financial institutions links each list under a name that changes with every list -- the daily list of MFIs carries its date, \verb|mfi_csv_261027.csv|, and the archives of the lists of investment funds and FVCs their year. The downloads therefore read the current link off the page rather than keeping an address that would go stale within a day. The lists of investment funds, FVCs and PSRIs come as zip archives of workbooks, one workbook per period, and the archive of a year is replaced as the year's lists are published. The latest archive is taken -- the latest of a single year, where the page also links archives of several years, which hold no newer list -- and only the workbooks whose period the Bronze layer does not hold yet are put into the landing zone. A run after the first thus unpacks only the lists published since, and the history stays as it was imported. The list of MFIs is published as text separated by tabs and encoded in UTF-16, which is why it used to be opened in a spreadsheet and saved as a workbook by hand. It is now imported as it is published, which removes a step at which a spreadsheet could alter a value, and a day the Bronze layer holds is not downloaded again.
+
+\paragraph{EIOPA's registers.} EIOPA's registers are SharePoint pages whose export is not a link but a postback of the page's form: the browser sends the form back with its hidden fields -- the view state and the event validation -- and the name of the link it clicked, and the server answers with the file. The download does the same. It reads the form off the page and sends it back as the link would, with the cookies the page set, which keep the export on the server that issued the form's view state. EIOPA's gateway now and then refuses an export with \verb|403 Forbidden| that it serves a moment later, as it did in the first run of the download, so an export that is turned away is asked for again from a fresh page, at most three times and thirty seconds apart.
+
+The CSV export is taken rather than the Excel one. The workbook stores an LEI that consists of digits alone as a number, and a twenty-digit number does not survive as a floating-point value: in the register of insurance undertakings of 28 October 2026, 276 LEIs came out of the workbook as \verb|31570010000000098304|, \verb|31570010000000000000| and the like, so that several undertakings shared one LEI and none of them had its own, and in the register of IORPs 337 did. Since every register is joined on the LEI, that is not a cosmetic loss but a wrong sector for each undertaking concerned. The CSV export writes every value as the register holds it, and every LEI of the insurance register then has the form ISO 17442 prescribes. Its dates are written day first with a time, \verb|14/11/2013 00:00:00|, and now and then as ISO 8601, \verb|1990-12-10T00:00:00Z|, within the same column; both are read into \verb|YYYY-MM-DD|, and a value that is neither is refused rather than taken for a missing date. A workbook stored by hand is still read, with whatever LEIs it has lost.
+
+\paragraph{FVCs and PSRIs.} The quarterly lists of financial vehicle corporations and the yearly, since 2022 half-yearly, lists of payment statistics relevant institutions are downloaded and imported into the Bronze layer like the lists of investment funds, each under the last day of its period, with their columns as each list names them. They do not yet contribute to the entity master data set. An FVC or a payment service provider can stand in another register too -- a credit institution is a payment service provider as well -- and where the two lists rank in table \ref{tab:entitymasterdata-sector} is a decision of its own.
