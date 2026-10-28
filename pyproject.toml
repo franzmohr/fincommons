@@ -76,3 +76,6 @@ include = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Set on every test that uses the Spark session, by tests/conftest.py.
+# pytest -m "not spark" runs the rest, in seconds.
+markers = ["spark: the test needs the local Spark session"]
