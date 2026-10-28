@@ -44,7 +44,7 @@ The two alternatives are not used:
 - A fixed `repartition(n)` gets the file size wrong for any day that is
   unusually large or small.
 
-The hint needs Spark 3.2 or later; fincommons requires 3.5. It relies on
+The hint needs Spark 3.2 or later; fincommons requires 4.0. It relies on
 adaptive query execution, which is on by default. If adaptive execution is
 switched off, the hint still produces one file per partition value, but it
 does not split a large one.

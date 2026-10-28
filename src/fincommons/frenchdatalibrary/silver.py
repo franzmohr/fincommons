@@ -107,6 +107,14 @@ def _parse_file(dataset, lines, chunk_rows=CHUNK_ROWS):
     values["REFDT"] = values["REFDT"].dt.date
     values["_ERROR"] = None
     values = values[_COLUMNS]
+    # pandas 3 keeps text in Arrow arrays, and a column the parser put
+    # together from several tables is an Arrow array in several chunks, which
+    # PySpark cannot hand back to Spark. As Python objects it travels as it
+    # does under pandas 2.
+    values = values.astype({
+        column: object for column in values.columns
+        if isinstance(values[column].dtype, pandas.StringDtype)
+    })
     for start in range(0, len(values), chunk_rows):
         yield values.iloc[start:start + chunk_rows]
 

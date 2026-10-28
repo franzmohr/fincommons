@@ -16,9 +16,9 @@ them.
 ## Setting up
 
 You need Python 3.10 or later and, for the tests that run Spark, a Java
-runtime. Java 17 is the version to install: Spark 3.5 runs on Java 8, 11 and
-17 and Spark 4 on 17 and 21, so 17 is the one both run on. A Java that Spark
-does not support need not fail with a clear message; the run may just stall.
+runtime. Java 17 is the version to install, the one continuous integration
+runs on; Spark 4 also runs on Java 21. A Java that Spark does not support need
+not fail with a clear message; the run may just stall.
 
 Install the package in editable mode with the `dev` extra, which brings
 PySpark, Delta and pytest, into a virtual environment of its own:

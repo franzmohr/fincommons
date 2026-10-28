@@ -44,8 +44,8 @@ dependencies = [
     "numpy>=1.22",
     # the ECB and EIOPA registers are published as Excel workbooks
     "openpyxl>=3.0.7",
-    "pandas>=1.5",
-    "pyarrow>=8",
+    "pandas>=2.0",
+    "pyarrow>=11",
     "polars>=1.0",
     "pyyaml>=6",
     "requests>=2.25",
@@ -60,12 +60,12 @@ Changelog = "https://github.com/franzmohr/fincommons/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Everything needed to run outside a Spark-provided environment.
-local = ["pyspark>=3.5", "delta-spark>=3.1"]
+local = ["pyspark>=4.0", "delta-spark>=4.0"]
 # Downloading from Yahoo Finance is the only thing in the package that needs
 # yfinance; the ECB, the New York Fed and the internal sources of
 # fincommons.marketpricedata run without it. See its README.
 marketprice = ["yfinance>=0.2"]
-dev = ["pytest>=7", "pytest-cov>=4", "pyspark>=3.5", "delta-spark>=3.1"]
+dev = ["pytest>=7", "pytest-cov>=4", "pyspark>=4.0", "delta-spark>=4.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fincommons"]
