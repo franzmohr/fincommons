@@ -17,6 +17,10 @@ release may change the public API, which `tests/test_public_api.py` lists.
   downloaded only where the server says it has changed, its text is kept
   line by line in the Bronze layer, and the Silver table is rebuilt file by
   file. `python -m fincommons.frenchdatalibrary` runs it as a scheduled job.
+- `marketpricedata`: the Yahoo exchange rates leave out a rate that stands
+  apart from both the days around it, and remove it from the Silver table if
+  it was merged before (`silver_yahoo.isolated_prints`). It took out Yahoo's
+  EUR/VND of 261.04 on 2019-11-08, a hundredth of the days around it.
 - `storage.replace_silver_partitions`: replaces some partitions of a Silver
   table, as parquet or as Delta, and leaves the others as they are.
 
