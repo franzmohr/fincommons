@@ -2,14 +2,15 @@
 
 Every source can be fetched over the network. GLEIF publishes its golden copy
 files behind a link that changes with every publication, which its Golden
-Copy API names, or which the caller hands over; the list of CCPs is served from a fixed address and
-needs no argument; the ECB's lists of MFIs, investment funds, FVCs and PSRIs
-are linked from its pages under names that change with each list, which are
-read off the pages; and EIOPA's registers of insurance undertakings and of IORPs are
-exported by a form on their pages, which :func:`download_eiopa_register`
-sends as the page's "Excel" link would. A register can still be placed into
-the landing zone by hand, as the module README describes, where a download
-does not work. Nothing here removes a file from the landing zone: that is
+Copy API names, or which the caller hands over; ESMA's lists of CCPs are pdf
+files at fixed addresses, which are read for the CCPs they name; the ECB's
+lists of MFIs, investment funds, FVCs and PSRIs are linked from its pages
+under names that change with each list, which are read off the pages; and
+EIOPA's registers of insurance undertakings and of IORPs are exported by a
+form on their pages, which :func:`download_eiopa_register` sends as the
+page's "CSV" link would. A register can still be placed into the landing
+zone by hand, as the module README describes, where a download does not
+work. Nothing here removes a file from the landing zone: that is
 the business of the Bronze layer, which does it once the file has been read.
 
 A download either leaves the file it was asked for or leaves nothing at all.
@@ -24,6 +25,7 @@ and, for an archive, once the archive opens.
 
 import datetime
 import html
+import io
 import logging
 import os
 import re
@@ -47,15 +49,19 @@ logger = logging.getLogger(__name__)
 #: download may take.
 TIMEOUT = (30, 300)
 
-#: The list of CCPs, at a fixed commit of the repository it is kept in. A
-#: commit rather than the branch is named, so that what the pipeline imports
-#: is the version that was reviewed: a change to the list reaches the data
-#: lake only when this address is moved to a newer commit, in a change of its
-#: own.
-ESMA_CCP_URL = (
-    "https://raw.githubusercontent.com/franzmohr/ccp-list/"
-    "8dc0cf66bceaccac6b0c07252987f9e5b875538f/data/ccp-list.csv"
-)
+#: ESMA's lists of CCPs, which it publishes under Article 88(1) of EMIR as pdf
+#: files at fixed addresses: the CCPs authorised in the Union, and the
+#: third-country CCPs recognised to offer their services in it, with the Tier
+#: ESMA put each of them in.
+ESMA_EU_CCP_URL = ("https://www.esma.europa.eu/sites/default/files/library/"
+                   "ccps_authorised_under_emir.pdf")
+ESMA_TC_CCP_URL = ("https://www.esma.europa.eu/sites/default/files/library/"
+                   "third-country_ccps_recognised_under_emir.pdf")
+
+#: The fewest CCPs a list may name before it is taken for a list that was not
+#: read: ESMA's lists named 15 authorised and 41 recognised CCPs in October
+#: 2026, and a layout the reader no longer understands yields few or none.
+ESMA_CCP_MINIMUM = {"EU": 5, "TC": 10}
 
 #: The suffix a file carries while it is being downloaded. The name the file is
 #: finally stored under is only given to it once it is complete.
@@ -275,32 +281,228 @@ def download_latest_gleif(config_path, data_sets=tuple(GLEIF_DATA_SETS)):
     return stored
 
 
-def download_esma_ccp(config_path):
-    """Download the list of CCPs into the landing zone.
+def lei_is_valid(lei):
+    """Whether a text is an LEI: its form and its check digits (ISO 17442)."""
+    return (re.fullmatch(r"[0-9A-Z]{18}[0-9]{2}", lei) is not None
+            and int("".join(str(int(c, 36)) for c in lei)) % 97 == 1)
 
-    ESMA publishes the central counterparties authorised under EMIR, and the
-    recognised third-country ones, as pdf files, which cannot reasonably be
-    read. Until that changes the list is taken from a public GitHub repository,
-    where the same information is kept in a machine-readable form.
+
+def _matrix(a, b):
+    """The product of two PDF transformation matrices."""
+    return [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3],
+            a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3],
+            a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]]
+
+
+def _page_items(page):
+    """The pieces of text of a page with their position, and its thin bars.
+
+    A piece of text comes as ``(text, x, y, size)`` in the coordinates of the
+    page, ``y`` its baseline. A bar is a rectangle at most 1.2 points high,
+    ``(x, y, width, height)``: the strike-through of a cell, and the rules
+    of the table.
+    """
+    pieces, bars = [], []
+
+    def text(value, cm, tm, font, size):
+        if value and value.strip():
+            m = _matrix(tm, cm)
+            pieces.append((value.strip(), m[4], m[5], size * abs(m[3] or 1)))
+
+    def operator(op, args, cm, tm):
+        if op != b"re":
+            return
+        x, y, w, h = (float(a) for a in args)
+        x0, y0 = x * cm[0] + y * cm[2] + cm[4], x * cm[1] + y * cm[3] + cm[5]
+        w, h = w * cm[0], h * cm[3]
+        if w < 0:
+            x0, w = x0 + w, -w
+        if h < 0:
+            y0, h = y0 + h, -h
+        if h <= 1.2 and w > 3:
+            bars.append((x0, y0, w, h))
+
+    page.extract_text(visitor_text=text, visitor_operand_before=operator)
+    return pieces, bars
+
+
+def _struck(x, y, size, bars):
+    """Whether a bar runs through text at ``(x, y)`` rather than under it."""
+    return any(bx <= x + 2 and bx + bw >= x + 6
+               and y + 0.05 * size <= by <= y + 0.6 * size
+               for bx, by, bw, bh in bars)
+
+
+def ccps_from_pdf(content):
+    """The CCPs of Table 1 of one of ESMA's lists, by LEI.
+
+    The reader looks at the table the way a person does rather than at its
+    words alone. A row ESMA has struck through is a CCP whose authorisation or
+    recognition was withdrawn -- the British CCPs since Brexit, the Indian
+    ones since 2023 -- which ESMA leaves in the table and crosses out. The
+    strike-through is not a property of the text but a thin bar drawn through
+    it, so it is found by comparing the bars of the page with the position of
+    each LEI. A CCP withdrawn and recognised again appears twice, crossed out
+    and not; it is current where one of its rows is not crossed out.
+
+    The LEI column is narrow, and an LEI is often wrapped over two lines.
+    The pieces are joined where they stand one below the other and only
+    where the result has the check digits of an LEI, so that a wrong join
+    yields no LEI rather than a false one. Only Table 1 is read: the tables
+    after it list the same CCPs again for other purposes.
+
+    Parameters
+    ----------
+    content: bytes
+        The pdf file.
+
+    Returns
+    -------
+    dict
+        For each LEI of the table, ``current`` -- whether a row of it is not
+        struck through -- and ``tier``, the Tier of a third-country CCP as
+        its current row states it, ``"1"`` or ``"2"``, None where none is
+        stated.
+    """
+    import pypdf
+
+    ccps = {}
+    state = "before"
+    for page in pypdf.PdfReader(io.BytesIO(content)).pages:
+        if state == "after":
+            break
+        pieces, bars = _page_items(page)
+        # The lines of the page, top to bottom, which is where the headings
+        # of the tables are told apart: a heading comes in several pieces.
+        lines = {}
+        for piece in pieces:
+            lines.setdefault(round(piece[2]), []).append(piece)
+        tokens = []
+        for y in sorted(lines, reverse=True):
+            line = sorted(lines[y], key=lambda p: p[1])
+            heading = " ".join(p[0] for p in line)
+            if state == "before" and re.match(r"Table 1\s*:", heading):
+                state = "inside"
+                continue
+            if state == "inside" and re.match(r"Table (1 bis|2)\b", heading):
+                state = "after"
+                break
+            if state == "inside":
+                tokens += [p for p in line if re.fullmatch(r"[0-9A-Z]{2,20}", p[0])]
+        for value, x, y, size in tokens:
+            lei = value if len(value) == 20 and lei_is_valid(value) else None
+            if lei is None and len(value) < 20:
+                for rest, x2, y2, size2 in tokens:
+                    if (y - 2.2 * size <= y2 <= y - 0.5 * size and abs(x2 - x) < 70
+                            and len(value) + len(rest) == 20
+                            and lei_is_valid(value + rest)):
+                        lei = value + rest
+                        break
+            if lei is None:
+                continue
+            tier = None
+            for piece in pieces:
+                match = re.fullmatch(r"Tier\s*([12])", piece[0])
+                if match and abs(piece[2] - y) < 1.5 * size:
+                    tier = match.group(1)
+            current = not _struck(x, y, size, bars)
+            known = ccps.setdefault(lei, {"current": False, "tier": None})
+            if current:
+                known["current"] = True
+                known["tier"] = tier
+    return ccps
+
+
+def esma_ccp_list(eu, tc):
+    """The list of current CCPs from ESMA's two lists, as the Bronze import reads it.
+
+    Parameters
+    ----------
+    eu, tc: bytes
+        The pdf files of the CCPs authorised in the Union and of the
+        recognised third-country CCPs.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``LEI``, ``SECTOR`` -- always ``CCP`` -- and ``SUBSECTOR``: ``EUCCP``
+        for a CCP authorised in the Union, ``T1CCP`` or ``T2CCP`` for a
+        recognised third-country CCP of Tier 1 or 2. A CCP whose rows are all
+        struck through is left out.
+
+    Raises
+    ------
+    ValueError
+        If either list names fewer current CCPs than
+        :data:`ESMA_CCP_MINIMUM`, which is a layout the reader does not
+        understand rather than a market without CCPs, or a third-country CCP
+        without a Tier.
+    """
+    import pandas
+
+    rows = []
+    for kind, content in (("EU", eu), ("TC", tc)):
+        ccps = {lei: ccp for lei, ccp in ccps_from_pdf(content).items()
+                if ccp["current"]}
+        if len(ccps) < ESMA_CCP_MINIMUM[kind]:
+            raise ValueError(
+                f"ESMA's list of {kind} CCPs was read as naming {len(ccps)} current "
+                "CCPs. ESMA may have changed the layout of the list; the list in "
+                "the Bronze layer is kept."
+            )
+        for lei, ccp in sorted(ccps.items()):
+            if kind == "EU":
+                subsector = "EUCCP"
+            elif ccp["tier"] in ("1", "2"):
+                subsector = f"T{ccp['tier']}CCP"
+            else:
+                raise ValueError(
+                    f"ESMA's list of third-country CCPs states no Tier for the "
+                    f"current CCP {lei}. ESMA may have changed the layout of the "
+                    "list; the list in the Bronze layer is kept."
+                )
+            rows.append((lei, "CCP", subsector))
+    return pandas.DataFrame(rows, columns=["LEI", "SECTOR", "SUBSECTOR"]) \
+        .drop_duplicates("LEI", keep="last")
+
+
+def download_esma_ccp(config_path):
+    """Download ESMA's lists of CCPs into the landing zone, as one list.
+
+    ESMA publishes the CCPs authorised in the Union and the recognised
+    third-country CCPs as pdf files; the two are read, see
+    :func:`ccps_from_pdf`, and stored as ``ccp_list.csv`` with the columns
+    ``LEI``, ``SECTOR`` and ``SUBSECTOR``, which the Bronze import reads.
+    Nothing is stored where either list cannot be read; see
+    :func:`esma_ccp_list`.
 
     Parameters
     ----------
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
+
+    Returns
+    -------
+    int
+        The number of current CCPs stored.
     """
     logger.info(
         "Downloading register into the landing zone",
-        extra=context(
-            module="entitymasterdata",
-            layer="landing",
-            source="ESMA_CCP",
-            file="ccp_list.csv",
-        ),
+        extra=context(module="entitymasterdata", layer="landing",
+                      source="ESMA_CCP", file="ccp_list.csv"),
     )
-    download_file(
-        ESMA_CCP_URL,
-        os.path.join(common.path_landing_esma_ccp(config_path), "ccp_list.csv"),
-    )
+    lists = []
+    for url in (ESMA_EU_CCP_URL, ESMA_TC_CCP_URL):
+        with requests.get(url, headers={"User-Agent": USER_AGENT},
+                          timeout=TIMEOUT) as answer:
+            answer.raise_for_status()
+            if not answer.content.startswith(b"%PDF"):
+                raise ValueError(f"{url} did not answer with a pdf file.")
+            lists.append(answer.content)
+    ccps = esma_ccp_list(*lists)
+    _store(ccps.to_csv(index=False).encode("utf-8"),
+           os.path.join(common.path_landing_esma_ccp(config_path), "ccp_list.csv"))
+    return len(ccps)
 
 
 # EIOPA
@@ -772,11 +974,14 @@ __all__ = [
     "CSV_EXPORT",
     "EIOPA_INSURANCE_UNDERTAKING_URL",
     "EIOPA_IORP_URL",
-    "ESMA_CCP_URL",
+    "ESMA_CCP_MINIMUM",
+    "ESMA_EU_CCP_URL",
+    "ESMA_TC_CCP_URL",
     "GLEIF_DATA_SETS",
     "GLEIF_LATEST_URL",
     "PARTIAL_SUFFIX",
     "TIMEOUT",
+    "ccps_from_pdf",
     "download_ecb_fvc",
     "download_ecb_investment_fund",
     "download_ecb_lists",
@@ -790,7 +995,9 @@ __all__ = [
     "download_gleif_level_1",
     "download_gleif_level_2",
     "download_latest_gleif",
+    "esma_ccp_list",
     "export_form",
     "gleif_file_name",
     "latest_gleif_urls",
+    "lei_is_valid",
 ]

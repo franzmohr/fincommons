@@ -47,6 +47,10 @@ dependencies = [
     "pandas>=2.0",
     "pyarrow>=11",
     "polars>=1.0",
+    # ESMA publishes its lists of CCPs as pdf files only; before 6.18.1 pypdf
+    # places a piece of text that follows another on its line at (0, 0), and
+    # the lists are read by where the text stands
+    "pypdf>=6.18.1",
     "pyyaml>=6",
     "requests>=2.25",
 ]

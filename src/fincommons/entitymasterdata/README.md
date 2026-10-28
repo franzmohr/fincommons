@@ -145,23 +145,26 @@ From the [register of institutions for occupational retirement provision](https:
 
 #### 1.4.1 CCPs
 
-**No manual steps required. This section can be skipped.**
-
-There are different types of CCP in the EU:
-
-* a list of EU CCPs is available at [https://www.esma.europa.eu/sites/default/files/library/ccps_authorised_under_emir.pdf](https://www.esma.europa.eu/sites/default/files/library/ccps_authorised_under_emir.pdf), and
-* a list of third-country CCPs at [https://www.esma.europa.eu/central-counterparties/third-country-ccps](https://www.esma.europa.eu/central-counterparties/third-country-ccps).
-
-ESMA publishes both only as pdf files, which are difficult to read with Python. Until that changes, the list is downloaded from the public GitHub repository [https://github.com/franzmohr/ccp-list](https://github.com/franzmohr/ccp-list), where the same information is kept in a machine-readable form. It is a csv file with the columns `LEI`, `SECTOR` (always `CCP`) and `SUBSECTOR` (`EUCCP`, `T1CCP` or `T2CCP`).
-
-Function `download_esma_ccp` fetches it, from a fixed commit of that repository, `ESMA_CCP_URL`, rather than from its current branch: what the pipeline imports is the version that was reviewed, and a newer list reaches the data lake only when the address is moved to a newer commit. It runs inside `update_entitymasterdata` as well, so it does not normally have to be called on its own. Where the download fails there -- on a cluster without internet access, say -- the failure is logged as an error and the update carries on with the list the Bronze layer already holds. Like every other register the file leaves the landing zone once the Bronze import has read it: the list is the one register whose name carries no reference date, so a copy left behind would be indistinguishable from one just downloaded, and a run whose download had failed would import it and report it as the register.
-
-
 ```python
 em.download_esma_ccp(config_path)
 ```
 
-Once ESMA publishes the information in a machine-readable form, a function can be written that reads it from the ESMA website directly.
+ESMA publishes the CCPs authorised in the Union and the third-country CCPs recognised to offer their services in it, with the Tier each of them is in, as two pdf files at fixed addresses, `ESMA_EU_CCP_URL` and `ESMA_TC_CCP_URL`:
+
+* [CCPs authorised under EMIR](https://www.esma.europa.eu/sites/default/files/library/ccps_authorised_under_emir.pdf), and
+* [third-country CCPs recognised under EMIR](https://www.esma.europa.eu/sites/default/files/library/third-country_ccps_recognised_under_emir.pdf).
+
+`download_esma_ccp` reads Table 1 of both and stores the CCPs that are current as `ccp_list.csv`, with the columns `LEI`, `SECTOR` (always `CCP`) and `SUBSECTOR` (`EUCCP`, `T1CCP` or `T2CCP`). It runs inside `update_entitymasterdata`.
+
+The tables are read for where their text stands, not for their words alone:
+
+* **A withdrawn CCP is struck through.** ESMA leaves a CCP whose authorisation or recognition was withdrawn in the table and crosses its row out -- the British CCPs since Brexit, the Indian ones since 2023. The strike-through is not a property of the text but a thin bar drawn through it, so the reader compares the bars of a page with the position of each LEI. A CCP withdrawn and recognised again stands in the table twice, crossed out and not, and counts as current.
+* **An LEI is joined where the table wraps it.** The LEI column is narrow, and an LEI is often split over two lines. The pieces are joined where they stand one below the other, and only where the result has the check digits of an LEI (ISO 17442), so that a wrong join yields no LEI rather than a false one.
+* **The Tier is read off the row** of a recognised third-country CCP. LCH Ltd and ICE Clear Europe, no longer authorised in the Union, are current in the second list as CCPs of Tier 2.
+
+In October 2026 the lists named 15 current EU CCPs, 39 of Tier 1 and 2 of Tier 2. A list read as naming fewer than `ESMA_CCP_MINIMUM` -- five and ten -- or a current third-country CCP without a Tier is refused, since that is a layout the reader no longer understands rather than a market without CCPs. Nothing is stored then, the failure is logged as an error, and the update carries on with the list the Bronze layer already holds. Like every other register the file leaves the landing zone once the Bronze import has read it: the list is the one register whose name carries no reference date, so a copy left behind would be indistinguishable from one just downloaded, and a run whose download had failed would import it and report it as the register.
+
+The list used to be taken from a reviewed copy kept by hand on GitHub. Reading ESMA's lists added six CCPs that copy lacked: CCP.RO Bucharest, authorised in July 2026, and CDS Clearing, Nasdaq Dubai, Dubai Clear, Dubai Commodities Clearing and the Clearing Corporation of India, recognised -- or recognised again -- since it was last updated. A list kept by hand can still be stored as `ccp_list.csv` in `{landing zone of entitymasterdata}/esma/ccp`.
 
 ## 2 Updating the Bronze layer
 
@@ -326,7 +329,7 @@ The module is covered by the tests in `tests/test_entitymasterdata.py`, which ru
 | Group | Covers |
 | --- | --- |
 | the data lake | creating the directory tree, including below a directory that does not exist yet, repeating the call, refusing an unknown table name, reporting a table that has never been built, and the package not re-exporting the modules its submodules import |
-| the downloads | that a GLEIF file keeps the name it was published under, that a link carrying a query string or a fragment still yields that name, that a link which is not a file is refused, that every request carries a timeout, that the connection is closed when the download fails, and that an error answer, an answer that is not an archive and an interrupted download all leave the landing zone as it was; that the ECB's lists are found on its pages, only the lists the Bronze layer lacks are unpacked and an answer that is not the list of MFIs is refused; and that EIOPA's form is read off the page and sent for the CSV export, asked for again when it is turned away, and refused where the answer is not the register |
+| the downloads | that a GLEIF file keeps the name it was published under, that a link carrying a query string or a fragment still yields that name, that a link which is not a file is refused, that every request carries a timeout, that the connection is closed when the download fails, and that an error answer, an answer that is not an archive and an interrupted download all leave the landing zone as it was; that the ECB's lists are found on its pages, only the lists the Bronze layer lacks are unpacked and an answer that is not the list of MFIs is refused; and that EIOPA's form is read off the page and sent for the CSV export, asked for again when it is turned away, and refused where the answer is not the register; and that ESMA's lists of CCPs are read for Table 1 alone, a wrapped LEI is joined, a struck-through row counts as withdrawn and a CCP recognised again as current, a list read as naming too few CCPs is refused and an answer that is not a pdf does not replace the list held |
 | the Bronze layer | the reference date read off the name, the file leaving the landing zone only once it has been written -- the list of CCPs included -- a file that cannot be read staying where it is, files of another kind being left alone and named in a warning, the monthly and the quarterly list of investment funds, a missing LEI staying missing, MFI postcodes kept as text, and the import carrying on where the list of CCPs was never downloaded; the MFI list and EIOPA's registers read from their CSV as text, both spellings of EIOPA's dates, a workbook with mixed cells, and the lists of FVCs and PSRIs dated at the end of their period |
 | the public table | the name and country from GLEIF, the sector each register contributes, which register wins where two describe the same entity, the fund characteristics surviving a register that outranks the fund register, a register that carries an LEI twice answering the same way whichever order the file holds the rows in, telling the two Level 2 relationships apart, reading only the relationships that are still active, the fallback sector for an unrecognised MFI category, using the most recent register, and reporting a register the Bronze layer never received |
 | how an LEI is written | a trailing space, lower case and a non-breaking space in a register, a parent written differently in the Level 2 data, and an LEI still malformed being named with its register |

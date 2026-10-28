@@ -415,13 +415,6 @@ def test_a_link_to_an_archive_spelled_in_upper_case_is_accepted():
     assert name == "20260724-0000-LEI2.CSV.ZIP"
 
 
-def test_the_list_of_ccps_is_read_from_a_fixed_commit():
-    """A branch would import whatever was last pushed to it; a commit is the
-    version that was reviewed."""
-    commit = em.ESMA_CCP_URL.split("/")[-3]
-    assert len(commit) == 40 and all(c in "0123456789abcdef" for c in commit)
-
-
 def test_the_update_carries_on_when_the_list_of_ccps_cannot_be_downloaded(
     monkeypatch, data_lake, caplog
 ):
@@ -527,27 +520,166 @@ def test_an_interrupted_download_leaves_nothing_behind(monkeypatch, data_lake):
     assert os.listdir(em.path_landing_gleif_level_1(data_lake)) == []
 
 
-def test_the_list_of_ccps_is_downloaded_into_the_landing_zone(monkeypatch, data_lake):
-    serve(monkeypatch, FakeResponse(b"LEI,SECTOR,SUBSECTOR\nLEI1,CCP,EUCCP\n"))
+# ESMA's lists of CCPs
+# --------------------------------------------------------------------------
 
-    em.download_esma_ccp(data_lake)
+
+def pdf(*pages):
+    """A pdf file whose pages hold text and bars at the positions given.
+
+    Each page is a list of ``(x, y, text)`` -- text in Helvetica of 8 points,
+    ``y`` its baseline -- and ``(x, y, width, height)`` for a filled
+    rectangle: the strike-through ESMA draws over a withdrawn CCP, and the
+    rules of its tables. ESMA's own files are not shipped with the tests.
+    """
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>", None,
+               "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    kids = []
+    for items in pages:
+        stream = []
+        for item in items:
+            if isinstance(item[2], str):
+                x, y, text = item
+                stream.append(f"BT /F1 8 Tf 1 0 0 1 {x} {y} Tm ({text}) Tj ET")
+            else:
+                stream.append("{} {} {} {} re f".format(*item))
+        content = "\n".join(stream).encode("latin-1")
+        objects.append(f"<< /Length {len(content)} >>\nstream\n"
+                       + content.decode("latin-1") + "\nendstream")
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] "
+                       f"/Resources << /Font << /F1 3 0 R >> >> "
+                       f"/Contents {len(objects)} 0 R >>")
+        kids.append(f"{len(objects)} 0 R")
+    objects[1] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>"
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n{body}\nendobj\n".encode("latin-1")
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    out += "".join(f"{o:010d} 00000 n \n" for o in offsets).encode()
+    out += (f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref}\n%%EOF\n").encode()
+    return out
+
+
+def struck(x, y, width=90):
+    """The bar ESMA draws through a cell whose baseline is at ``y``."""
+    return (x, y + 1.6, width, 0.4)
+
+
+#: ESMA's list of CCPs authorised in the Union, as far as the reader looks at
+#: it: the heading of Table 1, a row whose LEI is wrapped over two lines, a
+#: row struck through, and Table 1 bis, which lists the CCPs again.
+EU_LIST = pdf(
+    [(90, 520, "Table"), (114, 520, "1:"), (125, 520, "List of CCPs that have been authorised"),
+     (60, 413, "1"), (90, 413, "Nasdaq OMX Clearing AB"),
+     (166, 413, "54930002A8LR1AA"), (191, 403, "UCU78"),
+     (166, 370, "F226TOH6YD6XJB"), struck(166, 370), (191, 360, "17KS62"), struck(191, 360, 30),
+     (90, 360, "LCH Ltd"), struck(90, 360, 40),
+     (60, 330, "2"), (166, 330, "529900LN3S50JPU"), (191, 320, "47S06")],
+    [(120, 520, "Table"), (144, 520, "1 bis:"), (160, 520, "List of CCPs that have been granted"),
+     (60, 480, "1"), (166, 480, "6SI7IOVECKBHVYB"), (191, 470, "TB459")],
+)
+
+#: ESMA's list of recognised third-country CCPs: one of Tier 1, one of
+#: Tier 2, one withdrawn and one withdrawn and recognised again.
+TC_LIST = pdf(
+    [(60, 520, "Table"), (84, 520, "1:"), (95, 520, "List of CCPs established in a third country"),
+     (60, 480, "1"), (285, 480, "549300ZD7BBOVZFVHK49"), (700, 480, "Tier 1"),
+     (285, 450, "213800PJDCEXAVMM3J32"), struck(285, 450, 100), (700, 450, "Tier 1"),
+     (285, 420, "213800QL3V1PYPQMLU38"), struck(285, 420, 100), (700, 420, "Tier 1"),
+     (60, 390, "2"), (285, 390, "F226TOH6YD6XJB17KS62"), (700, 390, "Tier 2"),
+     (60, 360, "3"), (285, 360, "213800QL3V1PYPQMLU38"), (700, 360, "Tier 1"),
+     (60, 300, "Table 2: Classes of financial instruments"),
+     (285, 260, "549300JQL1BXTGCCGP11"), (700, 260, "Tier 1")],
+)
+
+
+def test_an_lei_is_known_by_its_check_digits():
+    assert em.lei_is_valid("54930002A8LR1AAUCU78")
+    assert not em.lei_is_valid("54930002A8LR1AAUCU79")
+    assert not em.lei_is_valid("54930002A8LR1AA")
+
+
+def test_a_wrapped_lei_is_joined_and_a_struck_row_is_withdrawn():
+    ccps = em.ccps_from_pdf(EU_LIST)
+
+    # Table 1 only: the CCP of Table 1 bis is not read.
+    assert ccps == {
+        "54930002A8LR1AAUCU78": {"current": True, "tier": None},
+        "F226TOH6YD6XJB17KS62": {"current": False, "tier": None},
+        "529900LN3S50JPU47S06": {"current": True, "tier": None},
+    }
+
+
+def test_a_recognised_ccp_keeps_its_tier_and_a_recognition_again_counts():
+    ccps = em.ccps_from_pdf(TC_LIST)
+
+    assert ccps == {
+        "549300ZD7BBOVZFVHK49": {"current": True, "tier": "1"},
+        "213800PJDCEXAVMM3J32": {"current": False, "tier": None},
+        "213800QL3V1PYPQMLU38": {"current": True, "tier": "1"},
+        "F226TOH6YD6XJB17KS62": {"current": True, "tier": "2"},
+    }
+
+
+def test_the_list_of_ccps_holds_the_current_ccps_of_both_lists(monkeypatch):
+    monkeypatch.setattr(em.landing, "ESMA_CCP_MINIMUM", {"EU": 1, "TC": 1})
+
+    ccps = em.esma_ccp_list(EU_LIST, TC_LIST)
+
+    # LCH Ltd is no longer authorised in the Union since Brexit, but
+    # recognised as a third-country CCP of Tier 2.
+    assert ccps.set_index("LEI")["SUBSECTOR"].to_dict() == {
+        "529900LN3S50JPU47S06": "EUCCP",
+        "54930002A8LR1AAUCU78": "EUCCP",
+        "213800QL3V1PYPQMLU38": "T1CCP",
+        "549300ZD7BBOVZFVHK49": "T1CCP",
+        "F226TOH6YD6XJB17KS62": "T2CCP",
+    }
+    assert set(ccps["SECTOR"]) == {"CCP"}
+
+
+def test_a_list_read_as_naming_too_few_ccps_is_refused():
+    """A layout the reader no longer understands yields few CCPs or none."""
+    with pytest.raises(ValueError, match="naming 2 current CCPs"):
+        em.esma_ccp_list(EU_LIST, TC_LIST)
+
+
+def serve_esma(monkeypatch, eu=EU_LIST, tc=TC_LIST):
+    def get(url, **options):
+        assert options["timeout"] and options["headers"]["User-Agent"]
+        return FakePage(eu if url == em.ESMA_EU_CCP_URL else tc)
+
+    monkeypatch.setattr("fincommons.entitymasterdata.landing.requests.get", get)
+    monkeypatch.setattr(em.landing, "ESMA_CCP_MINIMUM", {"EU": 1, "TC": 1})
+
+
+def test_the_list_of_ccps_is_downloaded_into_the_landing_zone(monkeypatch, data_lake):
+    serve_esma(monkeypatch)
+
+    assert em.download_esma_ccp(data_lake) == 5
 
     assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["ccp_list.csv"]
+    path = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
+    assert io.open(path, encoding="utf-8").readline().strip() == "LEI,SECTOR,SUBSECTOR"
 
 
-def test_an_error_answer_does_not_replace_the_list_of_ccps(monkeypatch, data_lake):
+def test_an_answer_that_is_not_a_list_does_not_replace_the_list_of_ccps(
+        monkeypatch, data_lake):
     """The list is not named after a reference date, so a failed download would
     overwrite the copy already held rather than sit beside it."""
-    serve(monkeypatch, FakeResponse(b"LEI,SECTOR,SUBSECTOR\nLEI1,CCP,EUCCP\n"))
+    serve_esma(monkeypatch)
     em.download_esma_ccp(data_lake)
 
-    serve(monkeypatch, FakeResponse(b"<html>502 Bad Gateway</html>", status=502))
-    with pytest.raises(requests.HTTPError):
+    serve_esma(monkeypatch, tc=b"<html>502 Bad Gateway</html>")
+    with pytest.raises(ValueError, match="did not answer with a pdf"):
         em.download_esma_ccp(data_lake)
 
     path = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
     assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["ccp_list.csv"]
-    assert "LEI1,CCP,EUCCP" in io.open(path, encoding="utf-8").read()
+    assert "F226TOH6YD6XJB17KS62,CCP,T2CCP" in io.open(path, encoding="utf-8").read()
 
 
 # GLEIF's latest golden copy

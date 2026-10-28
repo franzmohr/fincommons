@@ -53,6 +53,7 @@ OPEN_DEPENDENCIES = {
     "pandas",
     "polars",
     "pyarrow",
+    "pypdf",
     "pyspark",
     "pytest",     # the test suite and fincommons.testing
     "requests",
