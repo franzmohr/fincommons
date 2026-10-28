@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fincommons"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared infrastructure for basic financial data work: data lakes from public financial data on Spark and Delta Lake."
 readme = "README.md"
 license = "EUPL-1.2"
