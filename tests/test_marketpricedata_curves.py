@@ -1,9 +1,9 @@
 """The zero curves the market price table implies.
 
-The first nine tests came with the module from finsupverse, where the curves
-were built for the forward-looking analysis of EMIR, and are unchanged apart
-from their imports. The last two pin what the move made public without a test
-of its own: the parallel shift and the forward rate.
+The first nine tests came with the module from the analysis the curves were
+first built for, and are unchanged apart from their imports. The last two pin
+what the move made public without a test of its own: the parallel shift and
+the forward rate.
 """
 
 from __future__ import annotations

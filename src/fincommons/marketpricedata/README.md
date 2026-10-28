@@ -524,8 +524,6 @@ The short end is the overnight rate of each currency (`ON-ESTR`, `ON-SOFR`, `ON-
 
 A payment in a currency without a curve keeps its row and gets no discount factor, so a caller can report it as not covered rather than lose it. `parallel_shift` makes one copy of the curves per assumed shift of the continuously compounded zero rate, which `add_discount_factor` then evaluates in the same join with `keys=["SHOCK"]`, and `forward_rate` gives the simple forward rate of an accrual period from its two discount factors. The curves carry no credit or funding spread.
 
-The module came from the forward-looking analysis of EMIR in finsupverse, which still discounts on it.
-
 ## The layout of the data lake
 
 The helpers in `common.py` are the only place these paths are spelled out, and the rest of the module reaches the data lake through them rather than through a path written into the code.
