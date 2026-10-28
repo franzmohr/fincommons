@@ -3,7 +3,7 @@
 [![CI](https://github.com/franzmohr/fincommons/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/franzmohr/fincommons/actions/workflows/ci.yml)
 [![Handbook](https://github.com/franzmohr/fincommons/actions/workflows/handbook.yml/badge.svg?branch=main)](https://github.com/franzmohr/fincommons/actions/workflows/handbook.yml)
 [![codecov](https://codecov.io/gh/franzmohr/fincommons/branch/main/graph/badge.svg)](https://codecov.io/gh/franzmohr/fincommons)
-[![Python](https://img.shields.io/badge/python-%E2%89%A53.10-blue)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.11-blue)](pyproject.toml)
 [![License: EUPL-1.2](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSES/EUPL-1.2.txt)
 [![REUSE compliant](https://img.shields.io/badge/REUSE-compliant-green)](https://reuse.software/)
 
@@ -76,7 +76,7 @@ server without access to GitHub needs. Name a commit rather than a branch: the
 environment is then the same after a reinstall as before it, which is what a
 result computed on that server has to be able to rest on. Add the `local` extra
 -- `"fincommons[local] @ git+..."` -- where the pipelines are to be run, and
-check `python3 -V` first, since the package needs 3.10 or later and an image
+check `python3 -V` first, since the package needs 3.11 or later and an image
 built for R need not carry one.
 
 Where notebooks are served, the environment is reached by registering it as a
@@ -108,7 +108,7 @@ alone:
 ```
 
 Build the wheel first with `python -m build` (or `hatch build`); the result in
-`dist/` works on any Databricks Runtime with Python 3.10 or later.
+`dist/` works on any Databricks Runtime with Python 3.11 or later.
 
 Note that `paths.yaml` must point at Unity Catalog volumes (`/Volumes/...`)
 rather than at local paths, and that DBFS does not work in their place. The

@@ -15,7 +15,7 @@ them.
 
 ## Setting up
 
-You need Python 3.10 or later and, for the tests that run Spark, a Java
+You need Python 3.11 or later and, for the tests that run Spark, a Java
 runtime. Java 17 is the version to install, the one continuous integration
 runs on; Spark 4 also runs on Java 21. A Java that Spark does not support need
 not fail with a clear message; the run may just stall.
