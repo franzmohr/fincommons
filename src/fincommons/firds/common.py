@@ -1,7 +1,6 @@
 
 import os
 
-from ..storage import check_local_path
 from ..addressing import (
     delta_table,
     delta_table_exists,
@@ -129,7 +128,7 @@ def ref_silver_main(config_path):
     The main table is always Delta whichever way it is addressed: it is added
     to one delivery at a time and its versions are closed in place, which is
     what a transaction log is for. Only the compact table has a format to
-    choose; see :func:`compact_format`.
+    choose; see :func:`fincommons.storage.silver_format`.
     """
     return resolve(config_path, "firds", "silver", "main")
 
@@ -166,166 +165,39 @@ def path_silver_compact(config_path):
 # delivery at a time and the watermarks are updated in place, which is what a
 # transaction log is for; the compact table is rebuilt from the main table in
 # full, so nothing is lost by keeping it in a format that carries no log.
+#
+# How that choice is made is not a question about FIRDS, and the answer is
+# :mod:`fincommons.storage`, which the other modules with a Silver table
+# rebuilt in full already share. This module had a copy of it, and the copy
+# had fallen behind: it wrote Delta without stating the partition overwrite
+# mode, which a session configured for dynamic partition overwrite makes
+# Delta refuse together with the schema overwrite the rebuild asks for, and
+# it left the table without ``optimizeWrite``. The names are imported here so
+# that they remain reachable from this module, where callers have found them
+# so far.
+#
+# One rule of the shared module is stricter than the copy's: a table that
+# already stands keeps the format it is stored in, and asking for the other
+# one raises instead of converting the table. Overwriting a Delta table as
+# parquet deletes its transaction log along with the superseded files, which
+# is not something to do as a side effect of naming a format. Remove the
+# directory to change the format of a table that exists.
 
 
-COMPACT_FORMATS = ("parquet", "delta")
-"""The storage formats the compact table may be written in."""
-
-DEFAULT_COMPACT_FORMAT = "parquet"
-"""The format used where a caller does not ask for one.
-
-Parquet is the default because it is the format every engine reads without a
-further dependency, which is what the table meant to be handed on to analysis
-should be. Delta buys two things parquet does not have and is worth choosing
-where they matter: the rebuild replaces the table in one transaction rather
-than deleting it first, so a concurrent reader never finds it missing or
-half-written, and the previous versions of the table remain readable.
-"""
-
-
-def check_file_format(file_format):
-    """Reject a storage format the compact table is not written in.
-
-    Parameters
-    ----------
-    file_format: str
-        One of :data:`COMPACT_FORMATS`.
-    """
-    if file_format not in COMPACT_FORMATS:
-        raise ValueError(
-            f"File format {file_format!r} not recognised. Use "
-            + " or ".join(repr(f) for f in COMPACT_FORMATS)
-            + "."
-        )
-    return file_format
-
-
-def compact_format(ref, file_format = None):
-    """The format the compact table is written in.
-
-    A table addressed by catalogue name is a Delta table, because that is what
-    a Unity Catalog managed table is. There is no choice to make there, and an
-    explicit ``file_format`` may only confirm it. A table addressed by path
-    takes the format the caller asks for, and :data:`DEFAULT_COMPACT_FORMAT`
-    where it asks for none.
-
-    Parameters
-    ----------
-    ref: fincommons.addressing.TableRef
-        Where the table lives.
-    file_format: str, optional
-        One of :data:`COMPACT_FORMATS`.
-
-    Raises
-    ------
-    ValueError
-        If parquet is asked of a table addressed by catalogue name.
-    """
-    if ref.is_named:
-        if file_format not in (None, "delta"):
-            raise ValueError(
-                f"A table addressed by catalogue name is a Delta table, so "
-                f"{ref.name} cannot be written as {file_format!r}. Address the "
-                f"Silver layer of the configuration file by path to write parquet."
-            )
-        return "delta"
-    return check_file_format(file_format or DEFAULT_COMPACT_FORMAT)
-
-
-def read_compact(spark, ref):
-    """Read the compact table in whichever form it is addressed and stored.
-
-    Parameters
-    ----------
-    spark: pyspark.sql.session.SparkSession
-        An open Spark session.
-    ref: fincommons.addressing.TableRef
-        Where the table lives.
-    """
-    if ref.is_named:
-        return spark.read.table(ref.name)
-    # The format is read off the table rather than defaulted, because
-    # compact_format answers what a write would choose and not what is there.
-    return spark.read.format(file_format_on_disk(ref.path)).load(ref.path)
-
-
-def file_format_on_disk(path, default = DEFAULT_COMPACT_FORMAT):
-    """The format the table at ``path`` is stored in.
-
-    A Delta table keeps its transaction log in a ``_delta_log`` directory
-    beside the parquet files the table is made of, and that directory is what
-    tells the two formats apart. The format is read off the table rather than
-    asked of the caller because reading a Delta table as plain parquet does not
-    fail: it returns the superseded files of earlier versions along with the
-    current ones, and so quietly answers with rows that are no longer in the
-    table.
-
-    Where there is no table yet, ``default`` is returned.
-
-    Parameters
-    ----------
-    path: str
-        Path of the table.
-    default: str
-        The format assumed where the path holds no table.
-    """
-    check_local_path(path)
-    if os.path.isdir(os.path.join(path, "_delta_log")):
-        return "delta"
-    return default
-
-
-def write_compact(df, ref, file_format = None):
-    """Write a data frame over the compact table.
-
-    Both path formats replace the table rather than adding to it, but they do
-    not replace it in the same way: a Delta overwrite is one transaction,
-    while a parquet overwrite deletes the table before it writes the new one
-    and so leaves a window in which a reader finds it missing or half-written.
-    A table addressed by catalogue name is replaced the way a Delta table at a
-    path is, and stays the same table throughout, so what is granted on it
-    survives the write.
-
-    The format of a table that already exists is not changed in place. Writing
-    parquet over a Delta table works, since the delete that precedes it removes
-    the transaction log along with everything else, but writing Delta over a
-    plain parquet table is refused by Delta itself, because it will not adopt
-    files it has no log for. Remove the directory first to go that way.
-
-    Parameters
-    ----------
-    df: pyspark.sql.DataFrame
-        The data frame to be written.
-    ref: fincommons.addressing.TableRef
-        Where the table lives, from :func:`ref_silver_compact`.
-    file_format: str, optional
-        One of :data:`COMPACT_FORMATS`. Only a table addressed by path has a
-        choice; see :func:`compact_format`.
-
-    Returns
-    -------
-    fincommons.addressing.TableRef
-        The table that was written to.
-    """
-    file_format = compact_format(ref, file_format)
-
-    writer = df.write.format(file_format).mode("overwrite")
-    if file_format == "delta":
-        # Delta keeps the schema of the table across an overwrite unless it
-        # is told otherwise. Parquet needs no such option, because the files
-        # it writes are the whole of the table and carry their own schema.
-        writer = writer.option("overwriteSchema", "true")
-
-    if ref.is_named:
-        writer.saveAsTable(ref.name)
-    else:
-        writer.save(ref.path)
-    return ref
-
+from ..storage import (  # noqa: F401
+    DEFAULT_SILVER_FORMAT,
+    SILVER_FORMATS,
+    check_file_format,
+    check_local_path,
+    file_format_on_disk,
+    read_silver,
+    silver_format,
+    write_silver,
+)
 
 
 def create_directory_tree(config_path):
-    """Create an empty data lake direcotry tree.
+    """Create an empty data lake directory tree.
     
     Creates the basic directory tree for FIRDS data. Folders that already exist are not overwritten.
     
@@ -375,32 +247,35 @@ def connect_to_firds(spark, config_path, table):
         Name of the table. Current choices are 'main' and 'compact'.
 
         The main table is always Delta. The compact table is read in whichever
-        of :data:`COMPACT_FORMATS` it was written in, so a caller need not
-        repeat the choice made when it was built.
+        of :data:`fincommons.storage.SILVER_FORMATS` it was written in, so a
+        caller need not repeat the choice made when it was built.
+
+        The cancellations file is not a table of the Silver layer and is not
+        reached through here. It is kept in the Bronze layer as its own data
+        set, under :func:`path_bronze_auth_102_001_01`, and is read as the
+        partitioned parquet it is.
     """
     if table == "main":
         return read_delta(spark, ref_silver_main(config_path))
-    elif table == "compact":
-        return read_compact(spark, ref_silver_compact(config_path))
-    else:
-        raise ValueError(f"Table {table!r} not recognised. Use 'main' or 'compact'.")
+    if table == "compact":
+        return read_silver(spark, ref_silver_compact(config_path))
+    raise ValueError(f"Table {table!r} not recognised. Use 'main' or 'compact'.")
 
 
 #: What this module offers. The layout of the data lake, and the tables read from it. The
 #: watermark functions of :mod:`fincommons.firds.metadata` are re-exported
 #: below, so a caller reaches them through this module as well.
 __all__ = [
-    "COMPACT_FORMATS",
-    "DEFAULT_COMPACT_FORMAT",
+    "DEFAULT_SILVER_FORMAT",
     "METADATA_SCHEMA",
+    "SILVER_FORMATS",
     "check_file_format",
-    "compact_format",
+    "check_local_path",
     "connect_to_firds",
     "create_directory_tree",
     "file_format_on_disk",
     "delta_table",
     "delta_table_exists",
-    "read_compact",
     "read_delta",
     "read_delta_version",
     "sql_table",
@@ -428,6 +303,8 @@ __all__ = [
     "path_silver_compact",
     "path_silver_main",
     "read_metadata",
+    "read_silver",
+    "silver_format",
     "update_metadata_maxdate",
-    "write_compact",
+    "write_silver",
 ]

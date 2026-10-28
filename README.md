@@ -37,6 +37,58 @@ Install with the `local` extra, which adds PySpark:
 pip install -e ".[local,dev]"
 ```
 
+### A server
+
+A server that serves notebooks or R sessions to several people -- an analysis
+server of an organisation, or a machine a team shares -- is neither of the two
+cases above, and two decisions come before the install.
+
+The first is whether that server needs Spark at all. The pipeline functions
+take a `SparkSession` and need the `local` extra, a JVM (Java 17 or 21) and,
+the first time a session starts, access to Maven, from which `delta-spark`
+resolves its jars. Reading the lake needs none of that: a Silver table rebuilt
+in full is parquet by default, which every engine reads on its own, and that is
+what the format is for. Point a non-Spark reader at such a table rather than at
+one updated in place, since a table carrying deletion vectors is read correctly
+only by a reader that supports them.
+
+The second is where the environment lives. Where the sessions run in a
+container built afresh on every start, an install into the interpreter of the
+image is discarded with it, and only the paths mounted into the container
+survive. A virtual environment under one of those -- the home directory,
+usually -- is installed once and is still there on the next start:
+
+```
+python3 -m venv ~/.venvs/fincommons
+~/.venvs/fincommons/bin/pip install "fincommons @ git+https://github.com/franzmohr/fincommons.git@<commit>"
+```
+
+The package is not published on PyPI, so it is installed from the repository or
+from a wheel built with `python -m build` and copied over, which is what a
+server without access to GitHub needs. Name a commit rather than a branch: the
+environment is then the same after a reinstall as before it, which is what a
+result computed on that server has to be able to rest on. Add the `local` extra
+-- `"fincommons[local] @ git+..."` -- where the pipelines are to be run, and
+check `python3 -V` first, since the package needs 3.10 or later and an image
+built for R need not carry one.
+
+Where notebooks are served, the environment is reached by registering it as a
+kernel of its own:
+
+```
+~/.venvs/fincommons/bin/pip install ipykernel
+~/.venvs/fincommons/bin/python -m ipykernel install --user --name fincommons
+```
+
+From R, name the interpreter in `~/.Renviron` as
+`RETICULATE_PYTHON=/home/<user>/.venvs/fincommons/bin/python`, so that
+reticulate resolves it at the start of a session rather than whichever
+interpreter it finds first, and import the modules with
+`reticulate::import("fincommons.firds")`.
+
+As on a workstation, `paths.yaml` gives the server's own paths, and a path
+given as a URI is refused for the reason set out below.
+
 ### Databricks
 
 The Databricks Runtime already provides Spark, NumPy and PyArrow, so PySpark is

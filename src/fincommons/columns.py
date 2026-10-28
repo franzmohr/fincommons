@@ -180,11 +180,19 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES):
     """The columns the catalogued modules' code defines, by module.
 
     Read from the source rather than from data: every ``withColumn``,
-    ``withColumnRenamed`` and ``alias`` that names an upper-case column not
-    starting with an underscore, and every ``StructType().add`` in the
-    modules that declare their schemas.
+    ``withColumnRenamed``, ``alias`` and ``StructField`` that names an
+    upper-case column not starting with an underscore, and every
+    ``StructType().add`` in the modules that declare their schemas.
     Returns a data frame with ``module``, ``column`` and ``tables``, the
     tables named as ``module.file`` without the extension.
+
+    A column named through a module-level constant counts as named. The
+    history of the FIRDS database writes ``VLDFROM``, ``VLDTO`` and
+    ``LATESTRECORD`` as ``withColumn(VALID_FROM, ...)`` and so on, so that the
+    merge condition cannot drift away from the columns it matches on, and
+    reading literals alone left the three columns the historical database
+    exists for out of the catalogue -- and out of what this function can hold
+    the catalogue to.
 
     ``catalogues`` names the packages and modules to read, as for
     :func:`column_catalogue`; ``schema_declaring`` the modules whose
@@ -204,8 +212,10 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES):
                 table = os.path.relpath(path, package)[:-3].replace(os.sep, ".")
                 with open(path, encoding="utf-8") as handle:
                     tree = ast.parse(handle.read())
+                constants = _module_constants(tree)
                 for node in ast.walk(tree):
-                    name = _named_column(node, module, schema_declaring)
+                    name = _named_column(node, module, schema_declaring,
+                                         constants)
                     if name:
                         tables = found.setdefault((module, name), [])
                         if table not in tables:
@@ -215,20 +225,46 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES):
         columns=["module", "column", "tables"])
 
 
-def _named_column(node, module, schema_declaring=SCHEMA_DECLARING_MODULES):
-    """The column a call names, if it is one that defines a column."""
+def _module_constants(tree):
+    """The module-level ``NAME = "text"`` assignments of a parsed file."""
+    found = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target, value = node.targets[0], node.value
+        if (isinstance(target, ast.Name)
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)):
+            found[target.id] = value.value
+    return found
+
+
+def _named_column(node, module, schema_declaring=SCHEMA_DECLARING_MODULES,
+                  constants=None):
+    """The column a call names, if it is one that defines a column.
+
+    ``constants`` maps the module-level string constants of the file to their
+    values, so that a column named through one of them counts as named; see
+    :func:`defined_columns`.
+    """
     if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
         return None
     attr, args = node.func.attr, node.args
 
     def text(arg):
-        return arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else None
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return arg.value
+        if isinstance(arg, ast.Name):
+            return (constants or {}).get(arg.id)
+        return None
 
     if attr == "withColumn" and len(args) >= 2:
         name = text(args[0])
     elif attr == "withColumnRenamed" and len(args) >= 2:
         name = text(args[1])
     elif attr == "alias" and len(args) == 1:
+        name = text(args[0])
+    elif attr == "StructField" and len(args) >= 2:
         name = text(args[0])
     elif attr == "add" and len(args) >= 2 and module in schema_declaring:
         name = text(args[0])

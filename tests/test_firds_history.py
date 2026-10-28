@@ -245,6 +245,34 @@ def test_validity_periods_do_not_overlap(spark):
         assert earlier["VLDTO"] < later["VLDFROM"]
 
 
+def test_a_record_that_begins_before_the_version_in_force_is_refused(spark):
+    """Paragraph 27.b.ii closes the version in force on the day before the
+    incoming record begins, which assumes the incoming record begins later.
+    Where it begins earlier the arithmetic still goes through: the superseded
+    version is closed before its own VLDFROM and so is valid on no day, and a
+    point-in-time query answers for every later day with the older record."""
+    history = initialise_history(
+        records(spark, [("ISIN1", "MIC1", "A", "2016-09-10")])
+    )
+
+    with pytest.raises(ValueError, match="begin before the version in force"):
+        apply_changes(
+            history, delta(spark, [("ISIN1", "MIC1", "B", "2016-09-05", "ModfdRcrd")])
+        ).collect()
+
+
+def test_a_record_beginning_after_the_version_in_force_is_applied(spark):
+    history = initialise_history(
+        records(spark, [("ISIN1", "MIC1", "A", "2016-09-05")])
+    )
+    updated = apply_changes(
+        history, delta(spark, [("ISIN1", "MIC1", "B", "2016-09-10", "ModfdRcrd")])
+    )
+
+    versions = history_of(updated)
+    assert [r["VLDTO"] for r in versions] == [date(2016, 9, 9), None]
+
+
 # --------------------------------------------------------------------------
 # Querying, section 4.3
 # --------------------------------------------------------------------------

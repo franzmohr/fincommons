@@ -1,45 +1,17 @@
+"""Helpers shared by the stages of the FIRDS pipeline.
 
+What the names of ESMA's files say, which of them are in the import folder and
+how they are unpacked. Nothing here needs Spark, so the download stage reaches
+it without starting a session.
+"""
 
 from datetime import datetime
-import functools
-import itertools
 import ntpath
 import os
-import pyspark.sql.functions as func
 import re
 import zipfile
 
 from . import common
-
-
-def coalesce_paths_with_alias(paths):
-    # coalesce returns the first column that is not null.
-    return func.coalesce(*[func.col(path) for path in paths])
-
-
-
-def flatten_tuples(t):
-    for elem in t:
-        if isinstance(elem, tuple):
-            yield from flatten_tuples(elem)
-        else:
-            yield elem
-
-def combine_any_paths(array):
-    if not isinstance(array, list):
-        raise TypeError("A list of paths should be supplied")
-
-    if not all(isinstance(array_elem, list) for array_elem in array):
-        raise TypeError("All elements within the list should be lists")
-
-    all_paths_elements = []
-    all_combinations = list(functools.reduce(lambda a, b : itertools.product(a, b), array))
-    for combination in all_combinations:
-        all_paths_elements.append(tuple(flatten_tuples(combination)))
-    
-    return [".".join(path_elems) for path_elems in all_paths_elements]
-
-
 
 
 def remove_duplicates_from_landing_import_folder(config_path):
@@ -243,9 +215,17 @@ def unzip_and_get_names(config_path, zip_file):
     zip_file: str
         Name of the zip-file.
     """
-    with zipfile.ZipFile(os.path.join(common.path_landing_import(config_path), zip_file), 'r') as zip_ref:
-        zip_ref.extractall(common.path_landing_import(config_path))
-    return zip_ref.namelist()[0]
+    # The names are read inside the block, while the archive is open, and a
+    # directory entry is passed over: an archive that carries one would
+    # otherwise answer with a folder rather than with the file that was
+    # extracted from it.
+    folder = common.path_landing_import(config_path)
+    with zipfile.ZipFile(os.path.join(folder, zip_file), 'r') as zip_ref:
+        zip_ref.extractall(folder)
+        names = [name for name in zip_ref.namelist() if not name.endswith("/")]
+    if not names:
+        raise zipfile.BadZipFile(f"{zip_file} holds no file")
+    return names[0]
 
 def read_first_n_chars(filename, n):
     """Read first N characters of a text file.
@@ -283,9 +263,15 @@ def extract_between_keywords(text, node):
     if len(after_start) < 2:
         return None  # Start keyword not found
     
-    # Split by end keyword and take everything before it
+    # Split by end keyword and take everything before it. A text that does
+    # not carry the closing keyword states nothing about the node: the caller
+    # reads the first characters of a large file, so the node may have been
+    # cut in half, and answering with the remainder of the text would hand it
+    # a value the file does not state.
     before_end = after_start[1].split(end_keyword, 1)
-    return before_end[0] if before_end else None
+    if len(before_end) < 2:
+        return None  # End keyword not found
+    return before_end[0]
 
 
 #: What this module offers. Helpers shared by the stages: the files in the import folder,
@@ -293,10 +279,7 @@ def extract_between_keywords(text, node):
 __all__ = [
     "FILE_NAME",
     "PARTITION_PREFIX",
-    "coalesce_paths_with_alias",
-    "combine_any_paths",
     "extract_between_keywords",
-    "flatten_tuples",
     "get_candidates_for_import",
     "get_dltins_data_date",
     "get_fulcan_data_date",

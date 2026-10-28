@@ -131,13 +131,15 @@ def test_a_failure_to_read_the_table_is_not_taken_for_an_empty_database(
 # --------------------------------------------------------------------------
 
 
-def history_row(isin, tradgvn, cfi="ESVUFR", issuer="ISSUER1"):
-    return (isin, tradgvn, cfi, issuer, "NAME", "2030-01-01", "2030-01-01", "1.0", True)
+def history_row(isin, tradgvn, cfi="ESVUFR", issuer="ISSUER1", actntp="ModfdRcrd"):
+    return (isin, tradgvn, cfi, issuer, "NAME", "2030-01-01", "2030-01-01", "1.0",
+            True, actntp)
 
 
 HISTORY_SCHEMA = (
     "ISIN string, TRADGVN string, CFI string, ISSUER string, SHORTNAME string, "
-    "MTRTYDT string, XPRYDT string, PRICMLTPLR string, LATESTRECORD boolean"
+    "MTRTYDT string, XPRYDT string, PRICMLTPLR string, LATESTRECORD boolean, "
+    "ACTNTP string"
 )
 
 
@@ -166,7 +168,8 @@ def test_the_compact_table_holds_one_row_per_isin(spark, config):
 
 TYPED_HISTORY_SCHEMA = (
     "ISIN string, TRADGVN string, CFI string, ISSUER string, SHORTNAME string, "
-    "MTRTYDT date, XPRYDT date, PRICMLTPLR decimal(35,17), LATESTRECORD boolean"
+    "MTRTYDT date, XPRYDT date, PRICMLTPLR decimal(35,17), LATESTRECORD boolean, "
+    "ACTNTP string"
 )
 
 
@@ -176,10 +179,10 @@ def test_venues_that_disagree_leave_the_typed_columns_empty(spark, config):
     fail the whole rebuild."""
     common.create_directory_tree(config)
     spark.createDataFrame([
-        ("ISIN1", "MIC1", "D", "L", "N", date(2027, 1, 1), date(2027, 1, 1), Decimal("1"), True),
-        ("ISIN1", "MIC2", "D", "L", "N", date(2028, 1, 1), date(2027, 1, 1), Decimal("10"), True),
-        ("ISIN2", "MIC1", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"), True),
-        ("ISIN2", "MIC2", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"), True),
+        ("ISIN1", "MIC1", "D", "L", "N", date(2027, 1, 1), date(2027, 1, 1), Decimal("1"), True, "ModfdRcrd"),
+        ("ISIN1", "MIC2", "D", "L", "N", date(2028, 1, 1), date(2027, 1, 1), Decimal("10"), True, "ModfdRcrd"),
+        ("ISIN2", "MIC1", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"), True, "ModfdRcrd"),
+        ("ISIN2", "MIC2", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"), True, "ModfdRcrd"),
     ], TYPED_HISTORY_SCHEMA).write.format("delta").save(common.path_silver_main(config))
 
     silver.update_from_silver_main_to_silver_compact(spark, config)
@@ -193,6 +196,81 @@ def test_venues_that_disagree_leave_the_typed_columns_empty(spark, config):
     assert rows["ISIN2"]["PRICMLTPLR"] == Decimal("5")
     assert dict(common.connect_to_firds(spark, config, "compact").dtypes)[
         "PRICMLTPLR"] == "decimal(35,17)"
+
+
+def test_a_cancelled_record_is_left_out_of_the_compact_table(spark, config):
+    """The history carries a cancellation as the version in force of its
+    instrument and venue, as the Guide prescribes, but what it says is that the
+    instrument was never admitted to that venue. Counted, it would list the
+    venue among the ones the instrument trades on."""
+    build_main(spark, config, [
+        history_row("ISIN1", "MIC_LIVE"),
+        history_row("ISIN1", "MIC_CXL", cfi=None, issuer=None, actntp="CancRcrd"),
+        history_row("ISIN2", "MIC_CXL", cfi=None, issuer=None, actntp="CancRcrd"),
+    ])
+
+    silver.update_from_silver_main_to_silver_compact(spark, config)
+
+    rows = {r["ISIN"]: r for r in common.connect_to_firds(spark, config, "compact").collect()}
+    assert rows["ISIN1"]["TRADGVN"] == "MIC_LIVE"
+    # Every venue of ISIN2 was cancelled, so it trades nowhere and leaves the
+    # table rather than standing in it with no venue.
+    assert "ISIN2" not in rows
+
+
+def test_the_venues_of_an_isin_are_joined_in_order(spark, config):
+    """collect_set defines no order. The compact table is rebuilt in full on
+    every run, so without sorting a venue added to an ISIN can land anywhere in
+    the string and two lakes holding the same rows need not spell it alike."""
+    venues = [f"MIC{i:02d}" for i in range(1, 9)]
+    build_main(spark, config, [history_row("ISIN1", mic) for mic in venues])
+
+    silver.update_from_silver_main_to_silver_compact(spark, config)
+
+    row = common.connect_to_firds(spark, config, "compact").first()
+    assert row["TRADGVN"] == "+".join(venues)
+
+
+def test_a_field_no_venue_states_is_empty_rather_than_blank(spark, config):
+    """concat_ws answers the empty string for an empty array. The typed columns
+    are empty in that situation, and a reader should not have to tell NULL and
+    '' apart to ask the same question of two columns of one table."""
+    build_main(spark, config, [
+        history_row("ISIN1", "MIC1", cfi=None, issuer=None),
+        history_row("ISIN1", "MIC2", cfi=None, issuer=None),
+    ])
+
+    silver.update_from_silver_main_to_silver_compact(spark, config)
+
+    row = common.connect_to_firds(spark, config, "compact").first()
+    assert row["CFI"] is None
+    assert row["ISSUER"] is None
+    assert row["TRADGVN"] == "MIC1+MIC2"
+
+
+def test_a_value_one_venue_states_alone_is_kept(spark, config):
+    """A venue that states nothing is not a venue that disagrees."""
+    build_main(spark, config, [
+        history_row("ISIN1", "MIC1", cfi="ESVUFR"),
+        history_row("ISIN1", "MIC2", cfi=None),
+    ])
+
+    silver.update_from_silver_main_to_silver_compact(spark, config)
+
+    assert common.connect_to_firds(spark, config, "compact").first()["CFI"] == "ESVUFR"
+
+
+def test_the_compact_table_keeps_the_format_it_is_stored_in(spark, config):
+    """Overwriting a Delta table as parquet deletes its transaction log along
+    with the superseded files, which is not something to do as a side effect of
+    naming a format; see fincommons.storage.silver_format."""
+    build_main(spark, config, [history_row("ISIN1", "MIC1")])
+    silver.update_from_silver_main_to_silver_compact(spark, config, file_format="delta")
+
+    with pytest.raises(ValueError, match="keeps its format"):
+        silver.update_from_silver_main_to_silver_compact(
+            spark, config, file_format="parquet"
+        )
 
 
 def test_the_compact_table_is_parquet_unless_delta_is_asked_for(spark, config):
@@ -1420,6 +1498,29 @@ def test_a_record_without_a_publication_period_is_refused(spark, config):
 
     with pytest.raises(ValueError, match="state no publication start date"):
         silver.check_publication_period(records, "the delta file of 2016-09-04")
+
+
+def test_a_record_without_an_instrument_key_is_refused(spark, config):
+    """Every comparison on (ISIN, TRADGVN) is an equality, which no null meets,
+    so such a record is never found to supersede anything and is inserted again
+    by every file that carries it."""
+    records = spark.createDataFrame(
+        [("ISIN1", None, date(2016, 9, 4), "NewRcrd"),
+         ("ISIN2", "MIC1", date(2016, 9, 4), "NewRcrd")],
+        "ISIN string, TRADGVN string, TECH_PBLCTNPRD_FRDT date, ACTNTP string",
+    )
+
+    with pytest.raises(ValueError, match="state no ISIN or TRADGVN"):
+        silver.check_instrument_key(records, "the delta file of 2016-09-04")
+
+
+def test_records_that_all_state_an_instrument_key_are_passed_on(spark, config):
+    records = spark.createDataFrame(
+        [("ISIN1", "MIC1", date(2016, 9, 4), "NewRcrd")],
+        "ISIN string, TRADGVN string, TECH_PBLCTNPRD_FRDT date, ACTNTP string",
+    )
+
+    assert silver.check_instrument_key(records, "the full file of 2016-09-04") is records
 
 
 def test_records_that_all_state_a_publication_period_are_passed_on(spark, config):
