@@ -205,7 +205,7 @@ The date column may hold dates, timestamps or text such as `2020-01-01`. An amou
 
 ## Tests
 
-The module is covered by 64 tests in `tests/test_exchangerate.py`, which run
+The module is covered by the tests in `tests/test_exchangerate.py`, which run
 against the local Spark session built by `tests/conftest.py`. Nothing in them
 reaches the ECB or the BIS: the Bronze fixtures are written inline and the
 download is given an archive of its own, so what is asserted is what the module

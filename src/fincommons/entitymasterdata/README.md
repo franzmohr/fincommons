@@ -283,7 +283,7 @@ The entity master data set carries one row per entity:
 
 ## Tests
 
-The module is covered by 90 tests in `tests/test_entitymasterdata.py`, which run against the local Spark session built by `tests/conftest.py`. Nothing in them reaches GLEIF or GitHub: the landing zone fixtures are written inline in the shapes the publishers use, and the two downloads are given a response of their own.
+The module is covered by the tests in `tests/test_entitymasterdata.py`, which run against the local Spark session built by `tests/conftest.py`. Nothing in them reaches GLEIF or GitHub: the landing zone fixtures are written inline in the shapes the publishers use, and the two downloads are given a response of their own.
 
 | Group | Covers |
 | --- | --- |

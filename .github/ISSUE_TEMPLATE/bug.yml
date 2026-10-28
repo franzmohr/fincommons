@@ -1,0 +1,26 @@
+name: Bug
+description: Something does not do what its documentation says it does.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected from the documentation, and what happened instead. Paste error messages and log lines as text.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: The smallest example that shows it, on synthetic or public data. Never paste data that is not public.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: fincommons, Python, Spark and, on Databricks, the runtime version.
+      placeholder: fincommons 0.1.0, Python 3.12, Spark 4.0 (DBR 17.3)
+    validations:
+      required: true

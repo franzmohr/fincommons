@@ -333,8 +333,14 @@ See [`src/fincommons/firds/README.md`](src/fincommons/firds/README.md) and
 ## Tests
 
 ```
-pytest
+pytest -m "not spark"   # the tests that need no Spark session, in seconds
+pytest                  # the whole suite
 ```
+
+Every test that uses the Spark session is marked `spark` as it is collected,
+so the first command leaves those out without any test having to be marked by
+hand. [`CONTRIBUTING.md`](CONTRIBUTING.md) says how to set up, which Java
+version Spark needs, and what the continuous integration checks.
 
 The suite needs the `dev` extra. It runs against one local Spark session,
 built by `fincommons.testing` with the Delta extensions that the FIRDS
@@ -375,6 +381,13 @@ latexmk -pdf fincommons.tex
 
 which needs a TeX distribution with `biber`. A change to the code that alters
 what a chapter states comes with a change to that chapter.
+
+## Contributing
+
+Contributions are welcome from supervisory authorities, central banks and
+financial firms alike, and so are corrections to the documentation, which for a
+README can be made in the browser on GitHub. [`CONTRIBUTING.md`](CONTRIBUTING.md)
+says how.
 
 ## Security
 

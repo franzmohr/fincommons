@@ -413,7 +413,7 @@ firds_compact = firds.connect_to_firds(spark, config_path, "compact")
 
 ## Tests
 
-The module is covered by 215 tests, which run against a local Spark session
+The module is covered by tests that run against a local Spark session
 built by `tests/conftest.py` and need no data beyond what they write
 themselves. Nothing in them reaches ESMA's register or the network: where a
 response is needed, the test supplies it, so that what is asserted is what the

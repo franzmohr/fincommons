@@ -1,0 +1,28 @@
+name: Change at a data source
+description: A publisher changed a file format, an address, an API or what a field means.
+labels: [data source]
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      options:
+        - exchangerate
+        - entitymasterdata
+        - firds
+        - marketpricedata
+        - another
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: What changed
+      description: What the publisher changed, since when, and where it is announced if it is. A link to the publisher's notice helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: effect
+    attributes:
+      label: What it does to the pipeline
+      description: The error, or the data that came out wrong, if you have seen it.

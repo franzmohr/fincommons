@@ -1,0 +1,23 @@
+name: New data set
+description: Propose a pipeline for a public data set that fincommons does not hold yet.
+labels: [new data set]
+body:
+  - type: textarea
+    id: data
+    attributes:
+      label: The data set
+      description: Who publishes it, where, under which licence or terms of use, how often, and in which format.
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: What it is needed for
+      description: Which analyses it serves, and whether supervisors, firms or both would use it.
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: First thoughts on the pipeline
+      description: How it would fit the landing zone, Bronze and Silver layers, and anything about the data that makes it awkward. Optional; the issue is where the design is agreed before the work starts.

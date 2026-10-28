@@ -1,0 +1,19 @@
+name: Documentation
+description: Something in a docstring, a README or the handbook is missing, unclear or wrong.
+labels: [documentation]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: The file and section, or the function.
+      placeholder: docs/handbook/01-firds.tex, section on the historical database
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What is missing, unclear or wrong
+      description: Say what you were trying to find out. A proposed wording is welcome; for a README, a pull request edited in the browser is quicker still.
+    validations:
+      required: true

@@ -579,7 +579,7 @@ Check the inferred types by hand afterwards. Inference reads the types off which
 
 ## Tests
 
-The module is covered by 59 tests in `tests/test_marketpricedata.py`, which run against the local Spark session built by `tests/conftest.py`. Nothing in them reaches the ECB, the New York Fed, the Bank of England, the LBMA or Yahoo: the answers of the two APIs are written inline and handed to the download in place of a response, so what is asserted is what the module does with an answer rather than what those sources happen to be publishing today.
+The module is covered by the tests in `tests/test_marketpricedata.py`, which run against the local Spark session built by `tests/conftest.py`. Nothing in them reaches the ECB, the New York Fed, the Bank of England, the LBMA or Yahoo: the answers of the two APIs are written inline and handed to the download in place of a response, so what is asserted is what the module does with an answer rather than what those sources happen to be publishing today.
 
 | Group | Covers |
 | --- | --- |
