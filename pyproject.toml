@@ -14,7 +14,8 @@ requires-python = ">=3.11"
 authors = [{ name = "Franz X. Mohr" }]
 keywords = [
     "financial data", "data lake", "medallion architecture", "spark",
-    "delta lake", "exchange rates", "market data", "firds", "lei",
+    "delta lake", "exchange rates", "market data", "firds", "lei", "esef",
+    "xbrl",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

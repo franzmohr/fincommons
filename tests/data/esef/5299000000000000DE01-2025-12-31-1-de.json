@@ -1,0 +1,46 @@
+{
+ "documentInfo": {
+  "documentType": "https://xbrl.org/2021/xbrl-json"
+ },
+ "facts": {
+  "f-1": {
+   "value": "430569203.0",
+   "dimensions": {
+    "concept": "ifrs-full:Revenue",
+    "entity": "scheme:5299000000000000DE01",
+    "period": "2025-04-01T00:00:00/2026-04-01T00:00:00",
+    "unit": "iso4217:EUR"
+   },
+   "decimals": 0
+  },
+  "f-2": {
+   "value": "100.5",
+   "dimensions": {
+    "concept": "ifrs-full:Equity",
+    "entity": "scheme:5299000000000000DE01",
+    "period": "2026-04-01T00:00:00",
+    "unit": "iso4217:EUR",
+    "ifrs-full:ComponentsOfEquityAxis": "ifrs-full:RetainedEarningsMember"
+   },
+   "decimals": "INF"
+  },
+  "f-3": {
+   "value": "Parent AG",
+   "dimensions": {
+    "concept": "ifrs-full:NameOfParentEntity",
+    "entity": "scheme:5299000000000000DE01",
+    "period": "2025-04-01T00:00:00/2026-04-01T00:00:00",
+    "language": "de"
+   }
+  },
+  "f-4": {
+   "value": "<h4>13 Goodwill</h4><p>...</p>",
+   "dimensions": {
+    "concept": "ifrs-full:DisclosureOfGoodwillExplanatory",
+    "entity": "scheme:5299000000000000DE01",
+    "period": "2025-04-01T00:00:00/2026-04-01T00:00:00",
+    "language": "de"
+   }
+  }
+ }
+}

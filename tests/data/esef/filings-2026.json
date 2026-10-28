@@ -1,0 +1,48 @@
+{
+ "data": [
+  {
+   "type": "filing",
+   "id": "100",
+   "attributes": {
+    "period_end": "2026-03-31",
+    "country": "AT",
+    "fxo_id": "5299000000000000AT01-2026-03-31-ESEF-AT-0",
+    "date_added": "2026-08-04 16:42:36.542606",
+    "processed": "2026-08-04 16:48:35.245129",
+    "published": "2026-07-29 13:05:41",
+    "sha256": null,
+    "viewer_url": "/5299000000000000AT01/2026-03-31/ESEF/AT/0/5299000000000000AT01-2026-03-31-1-de/reports/ixbrlviewer.html",
+    "package_url": "/5299000000000000AT01/2026-03-31/ESEF/AT/0/5299000000000000AT01-2026-03-31.zip",
+    "report_url": "/5299000000000000AT01/2026-03-31/ESEF/AT/0/5299000000000000AT01-2026-03-31-1-de/reports/5299000000000000AT01-2026-03-31-1-de.xhtml",
+    "json_url": "/5299000000000000AT01/2026-03-31/ESEF/AT/0/5299000000000000AT01-2026-03-31-1-de.json",
+    "error_count": 0,
+    "warning_count": 2,
+    "inconsistency_count": 0
+   },
+   "relationships": {
+    "entity": {
+     "data": {
+      "type": "entity",
+      "id": "1"
+     }
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "entity",
+   "id": "1",
+   "attributes": {
+    "identifier": "5299000000000000AT01",
+    "name": "Erste Beispiel AG"
+   }
+  }
+ ],
+ "meta": {
+  "count": 1
+ },
+ "jsonapi": {
+  "version": "1.0"
+ }
+}

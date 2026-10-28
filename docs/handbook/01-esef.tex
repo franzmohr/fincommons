@@ -1,0 +1,47 @@
+\chapter{ESEF filings}\label{ch:esef}
+
+\section{Introduction}
+
+Issuers whose securities are admitted to trading on a regulated market in the European Union have filed their annual financial reports in the European Single Electronic Format (ESEF) for financial years beginning on or after 1 January 2020 \parencite{EU.2019}. A report is an XHTML document that a person reads like any other annual report, and its figures -- from 2022 on, its notes as well -- are tagged in Inline XBRL against the ESEF taxonomy, the IFRS taxonomy with ESMA's additions. Every figure of the primary statements is therefore available as data: the concept it reports, the period, the unit, the dimensions such as the component of equity, and the value.
+
+The reports are filed with the officially appointed mechanism of each member state, each with a site, a search and a format of its own. The repository filings.xbrl.org of XBRL International \parencite{XBRL.2026} collects them in one place, together with the reports of the United Kingdom and of Ukraine filed the same way, validates them, and publishes for each filing the report package as filed, the report in a viewer, and the facts it tags converted to xBRL-JSON, a plain JSON format for XBRL data. Module \emph{esef} of the \emph{fincommons} package reads the repository into two tables: one row per filing, and one row per fact.
+
+The facts are keyed by the LEI of the issuer, which is the key of the entity master data of chapter \ref{ch:entitymasterdata}. A supervisor can thus put the balance sheet an issuer published next to what it reports under a reporting regime, and a reader can compare a figure across all issuers of a market without opening a single report.
+
+The indexes and the reports are downloaded when the pipeline runs and never shipped with the package. The reports are the issuers' own publications, which they are required to make public. The repository states no licence for its copies; it provides its API free of charge, reserves the right to alter or withdraw it, and asks a client that uses it routinely to name a contact in its user agent, which the pipeline does where it is given one. The repository is not complete: a filing with technical errors may have no xBRL-JSON, and a filing whose LEI or date the repository cannot determine is not listed at all.
+
+\section{Data pipeline}
+
+\subsection{Landing zone}
+
+There is no landing zone. The indexes and the reports are small enough to be held in memory while they are checked, and are written into the Bronze layer once they are known to be what was asked for.
+
+\subsection{Bronze layer}
+
+The Bronze layer keeps what the repository publishes, as it was published. The repository lists its filings in one index file per year of the period end, and asks a client that keeps a copy of the index to read these files rather than every page of its API, and to send the \verb|Last-Modified| of its last answer as \verb|If-Modified-Since|. The pipeline does both. An index that has not changed comes back without a byte, and every index of every year is kept, since together they are a few tens of megabytes and they are the catalogue of what there is to collect.
+
+The reports are collected for the countries a run is asked for. A report is between a few hundred kilobytes and some tens of megabytes, most of it the notes, so the whole repository is a quantity a run should be asked for rather than one it collects by default. A report is downloaded when the Bronze layer does not hold it, or holds it from before the repository last processed the filing, which is what the repository does when it converts a filing anew. The report packages, the filings as they were made, are collected only where they are asked for, and are checked against the SHA-256 the index gives for them.
+
+Every file is written under a temporary name and put in place once complete, and a record of each collection is written after the file it describes, so that a run that dies collects the file again rather than trusting a record of one that never arrived. An answer that is not an index or a report -- an error page sent with status 200 -- is refused before it replaces what the layer holds, and the addresses an index gives are refused where they leave the repository, since what they point to is written into the lake.
+
+\subsection{Silver layer}
+
+The table of filings lists every filing of the indexes, whether its report was collected or not: the filing, the issuer's LEI and name, the country, the period end, the language of the report, when the repository processed it, how its validation went and where its files are. It is a few tens of thousands of rows and is rebuilt in full on every run.
+
+The table of facts holds one row per fact of every report collected. A fact has the concept it reports, the first and the last day of its period, the unit, the dimensions of the taxonomy as one text of sorted \verb|axis=member| pairs, and the value -- a number in \verb|VALUE| where the fact has a unit, a text in \verb|TEXT| otherwise. xBRL-JSON writes the end of a period as the start of the following day, so that a financial year to 31 March ends at midnight on 1 April; the table gives the day the period ends on, 31 March, so that it can be compared with the period end of the filing.
+
+Text blocks are left out. Most of a report, by size, is its notes, tagged whole as text blocks with their markup: the note on intangible assets of one report is half a megabyte of HTML, tagged again for goodwill and for intangible assets and goodwill together. Whether a concept is a text block is a type of the taxonomy, which the report does not carry, but the value says so, and a value with markup in it is the note as the report presents it rather than a value to compare. The Bronze layer keeps the whole report, so a table of the notes can be built from it where one is needed.
+
+The table of facts is partitioned by country and rebuilt country by country, for the countries whose reports changed, with the partition-wise write of the package's storage module that chapter \ref{ch:frenchdatalibrary} describes. A partition per filing would make each write smaller but leave the table in tens of thousands of directories of a few thousand rows each, which every query over it would have to open. Which reports each partition was built from is recorded in a mark beside the table, written after the partition is in place. The reports are read on the executors, one report at a time; a report that cannot be read is logged and counted, its country is written without it and left unmarked, so that the next run tries it again.
+
+\subsection{Gold layer}
+
+There is no Gold layer yet. The natural first table is one row per issuer and financial year with a selection of figures of the primary statements -- total assets, equity, revenue, profit -- in one currency, which needs a rule for which of several filings of the same report counts and a conversion with the exchange rates of chapter \ref{ch:exchangerate}.
+
+\section{Software architecture}
+
+Module \emph{esef} is organised along the layers of the pipeline. The part \emph{common} declares the layout of the data lake and the schemas of the two tables and opens them; \emph{parse} reads an index into filings and a report into facts, in plain Python, so that it can be tested on its own and run on the executors as it is; \emph{bronze} collects the indexes, the reports and the packages; \emph{silver} builds the two tables; and \emph{pipeline} runs the whole in one call, \verb|update_esef|. A scheduled run calls the module from the command line,
+\begin{quote}
+\verb|python -m fincommons.esef --config paths.yaml --country AT|
+\end{quote}
+which takes the countries to collect -- and, with \verb|--contact|, the contact the repository asks for -- but no argument saying what changed: that is read from the repository and from what the lake already holds.

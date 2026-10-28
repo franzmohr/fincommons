@@ -6,6 +6,33 @@ entitymasterdata,IF_UCITS_COMPL,entitymasterdata.silver,derived,code,"For an inv
 entitymasterdata,LEI,entitymasterdata.silver,derived,identifier,"Legal Entity Identifier (ISO 17442) of the entity, normalised the way GLEIF writes it (blanks removed, upper case); in the GLEIF Level 2 relationship data it is read from the start node of the relationship."
 entitymasterdata,SECTOR,entitymasterdata.silver,derived,code,"Sector of the entity, taken from the narrowest sectoral register it appears in: CCP (ESMA CCP list), INUN (EIOPA insurance undertaking), ORPI (EIOPA IORP), CB/CDTI/OFI/MMF or MFI (ECB MFI list, by category), or UCIT/AIFD/INVF (ECB investment fund register, by UCITS compliance)."
 entitymasterdata,SUBSECTOR,entitymasterdata.silver,derived,code,"Refinement of SECTOR offered by the register that set it: the type of CCP (EUCCP, T1CCP, T2CCP) for CCPs, or the investment policy for funds whose sector comes from the ECB fund register."
+esef,ADDED,esef.common,attributes.date_added,datetime,Filings: the time filings.xbrl.org added the filing to its repository (UTC).
+esef,CONCEPT,esef.common,dimensions.concept,code,"Facts: the concept the fact reports, as a prefixed name of the taxonomy (e.g. ifrs-full:Revenue, ifrs-full:Equity, or an extension concept of the issuer)."
+esef,COUNTRY,esef.common,attributes.country,code,"Country the filing was collected from, as filings.xbrl.org codes it (ISO 3166-1 alpha-2, e.g. AT, DE, GB); the partition column of the table of facts."
+esef,DECIMALS,esef.common,decimals,count,"Facts: the decimals the issuer states for a numeric fact, i.e. to how many decimal places it is accurate (0 for whole units, -3 for thousands); empty for INF (exact) and for text facts."
+esef,DIMENSIONS,esef.common,dimensions,text,"Facts: the dimensions of the taxonomy the fact is reported for, as axis=member sorted and joined by ';' (e.g. ifrs-full:ComponentsOfEquityAxis=ifrs-full:RetainedEarningsMember); empty for a fact without dimensions, which is the total."
+esef,ERRORS,esef.common,attributes.error_count,count,Filings: the number of errors filings.xbrl.org found when it validated the filing.
+esef,FACT,esef.common,facts key,identifier,"Facts: the identifier of the fact within its report, as the xBRL-JSON gives it; unique within a filing only."
+esef,FILING,esef.common,attributes.fxo_id,identifier,"Identifier of the filing at filings.xbrl.org: the LEI, the date, the filing system, the country and a number (e.g. 529900PD3SI453KAW989-2026-03-31-ESEF-AT-0); the name of its report in the Bronze layer."
+esef,INCONSISTENCIES,esef.common,attributes.inconsistency_count,count,Filings: the number of calculation inconsistencies filings.xbrl.org found in the filing.
+esef,JSONURL,esef.common,attributes.json_url,text,"Filings: address of the report as xBRL-JSON, relative to https://filings.xbrl.org; empty where the repository could not convert the filing, which then has no facts."
+esef,LANG,esef.common,dimensions.language,code,"Language of the report (filings, read off the name of its file) or of a text fact (facts), as an ISO 639-1 code (e.g. de, en); empty where none is stated, as for the filings of the United Kingdom."
+esef,LEI,esef.common,included entity.identifier,identifier,"LEI of the issuer that made the filing; for a fact, read off its entity (scheme:LEI). The key that joins the filings with entitymasterdata."
+esef,NAME,esef.common,included entity.name,text,Filings: the name of the issuer as filings.xbrl.org records it.
+esef,PACKAGESHA256,esef.common,attributes.sha256,identifier,"Filings: the SHA-256 of the report package as filed, as filings.xbrl.org gives it; what a collected package is checked against."
+esef,PACKAGEURL,esef.common,attributes.package_url,text,"Filings: address of the report package as filed (.zip or .xbri), relative to https://filings.xbrl.org."
+esef,PERIODEND,esef.common,attributes.period_end,date,"The last day of the period the filing reports on, usually the end of the financial year; on a fact, that of its filing."
+esef,PRDEND,esef.common,dimensions.period,date,"Facts: the last day of the period of the fact, included, or the day of an instant; xBRL-JSON writes it as the start of the following day, which is converted back."
+esef,PRDSTART,esef.common,dimensions.period,date,"Facts: the first day of the period of a fact for a duration; empty for a fact for an instant, such as a balance."
+esef,PROCESSED,esef.common,attributes.processed,datetime,Filings: the time filings.xbrl.org last processed the filing (UTC); a report is collected again where it changes.
+esef,PUBLISHED,esef.common,attributes.published,datetime,"Filings: the time the filing was published by its source, where the source states it; empty otherwise."
+esef,REPORTURL,esef.common,attributes.report_url,text,"Filings: address of the report as XHTML with Inline XBRL, relative to https://filings.xbrl.org."
+esef,SYSTEM,esef.common,attributes.fxo_id,code,"Filings: the filing system the filing was made under, read off FILING (ESEF, which the repository uses for the filings of the United Kingdom too, or UAIFRS)."
+esef,TEXT,esef.common,value,text,"Facts: the value of a fact without a unit, as text, and of a fact with a unit whose value is not a number; text blocks, which carry markup, are left out of the table."
+esef,UNIT,esef.common,dimensions.unit,code,"Facts: the unit of a numeric fact (e.g. iso4217:EUR, xbrli:shares, iso4217:EUR/xbrli:shares, xbrli:pure); empty for a text fact."
+esef,VALUE,esef.common,value,amount,"Facts: the value of a numeric fact, as reported, in UNIT and without any scaling (a report in thousands tags the full amount); empty for a text fact."
+esef,VIEWERURL,esef.common,attributes.viewer_url,text,"Filings: address of the report in the Inline XBRL viewer of filings.xbrl.org, relative to https://filings.xbrl.org."
+esef,WARNINGS,esef.common,attributes.warning_count,count,Filings: the number of warnings filings.xbrl.org raised when it validated the filing.
 exchangerate,BASE,exchangerate.common;exchangerate.silver,declared,currency,"ISO 4217 code of the base currency of the rate: EUR for ECB and (converted) BIS rates, or the rebase currency where the table is rebased."
 exchangerate,FX,exchangerate.silver,derived,rate,"Helper column: the rate used to convert a series, i.e. the EUR to rebase-currency rate on the same date (renamed from VALUE), or in the BIS conversion the EUR/USD rate; dropped from the final table."
 exchangerate,FX_IMPUTED,exchangerate.silver,derived,flag,Helper column: whether the EUR to rebase-currency rate used for rebasing on that date was itself carried forward from an earlier day (renamed from IMPUTED); dropped from the final table.

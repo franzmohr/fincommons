@@ -1,0 +1,84 @@
+{
+ "data": [
+  {
+   "type": "filing",
+   "id": "200",
+   "attributes": {
+    "period_end": "2025-12-31",
+    "country": "AT",
+    "fxo_id": "5299000000000000AT02-2025-12-31-ESEF-AT-0",
+    "date_added": "2026-08-04 16:42:36.542606",
+    "processed": "2026-08-04 16:48:35.245129",
+    "published": "2026-07-29 13:05:41",
+    "sha256": null,
+    "viewer_url": "/5299000000000000AT02/2025-12-31/ESEF/AT/0/5299000000000000AT02-2025-12-31-1-en/reports/ixbrlviewer.html",
+    "package_url": "/5299000000000000AT02/2025-12-31/ESEF/AT/0/5299000000000000AT02-2025-12-31.zip",
+    "report_url": "/5299000000000000AT02/2025-12-31/ESEF/AT/0/5299000000000000AT02-2025-12-31-1-en/reports/5299000000000000AT02-2025-12-31-1-en.xhtml",
+    "json_url": "/5299000000000000AT02/2025-12-31/ESEF/AT/0/5299000000000000AT02-2025-12-31-1-en.json",
+    "error_count": 0,
+    "warning_count": 2,
+    "inconsistency_count": 0
+   },
+   "relationships": {
+    "entity": {
+     "data": {
+      "type": "entity",
+      "id": "2"
+     }
+    }
+   }
+  },
+  {
+   "type": "filing",
+   "id": "300",
+   "attributes": {
+    "period_end": "2025-12-31",
+    "country": "DE",
+    "fxo_id": "5299000000000000DE01-2025-12-31-ESEF-DE-0",
+    "date_added": "2026-08-04 16:42:36.542606",
+    "processed": "2026-08-04 16:48:35.245129",
+    "published": "2026-07-29 13:05:41",
+    "sha256": null,
+    "viewer_url": "/5299000000000000DE01/2025-12-31/ESEF/DE/0/5299000000000000DE01-2025-12-31-1-de/reports/ixbrlviewer.html",
+    "package_url": "/5299000000000000DE01/2025-12-31/ESEF/DE/0/5299000000000000DE01-2025-12-31.zip",
+    "report_url": "/5299000000000000DE01/2025-12-31/ESEF/DE/0/5299000000000000DE01-2025-12-31-1-de/reports/5299000000000000DE01-2025-12-31-1-de.xhtml",
+    "json_url": "/5299000000000000DE01/2025-12-31/ESEF/DE/0/5299000000000000DE01-2025-12-31-1-de.json",
+    "error_count": 0,
+    "warning_count": 2,
+    "inconsistency_count": 0
+   },
+   "relationships": {
+    "entity": {
+     "data": {
+      "type": "entity",
+      "id": "3"
+     }
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "entity",
+   "id": "2",
+   "attributes": {
+    "identifier": "5299000000000000AT02",
+    "name": "Zweite AG"
+   }
+  },
+  {
+   "type": "entity",
+   "id": "3",
+   "attributes": {
+    "identifier": "5299000000000000DE01",
+    "name": "Beispiel SE"
+   }
+  }
+ ],
+ "meta": {
+  "count": 2
+ },
+ "jsonapi": {
+  "version": "1.0"
+ }
+}

@@ -24,6 +24,7 @@ approaches for handling basic data pipelines.
 | `firds` | ESMA's FIRDS reference data: download, import and the historical database ESMA's instructions describe |
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
 | `frenchdatalibrary` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
+| `esef` | the annual financial reports listed issuers file in the European Single Electronic Format, from filings.xbrl.org: a table of filings and every tagged fact in one table, keyed by LEI |
 | `addressing`, `storage`, `log`, `layout`, `schemas`, `columns` | the infrastructure the modules share: locations from `paths.yaml`, how a Silver table rebuilt in full is read and written as parquet or Delta, logging, the file layout of tables, declared schemas, and the catalogue of what a column holds |
 
 fincommons is open source and complete on its own. Pipelines on supervisory
@@ -167,8 +168,8 @@ message rather than inside it, so that the sentence stays constant across runs:
 `print` keeps a job next to this. Result tables that a script writes for
 someone watching the console are the output of the program and stay on
 standard output; the log goes to standard error. `python -m
-fincommons.marketpricedata` and `python -m fincommons.frenchdatalibrary` take
-`--log-level`.
+fincommons.marketpricedata`, `python -m fincommons.frenchdatalibrary` and
+`python -m fincommons.esef` take `--log-level`.
 
 ## Looking up what a column or a series is
 
@@ -331,6 +332,36 @@ copyright Eugene F. Fama and Kenneth R. French, and research that uses it
 cites the library. The details, the vocabulary of tables and a vignette that
 rebuilds HML and SMB from the six portfolios are documented in
 [`src/fincommons/frenchdatalibrary/README.md`](src/fincommons/frenchdatalibrary/README.md).
+
+### `fincommons.esef`
+
+The annual financial reports that issuers on European regulated markets file
+in the European Single Electronic Format (ESEF), as collected by
+[filings.xbrl.org](https://filings.xbrl.org), together with the reports of
+the United Kingdom and of Ukraine filed the same way. The repository
+converts each report's Inline XBRL to xBRL-JSON; the module keeps the indexes
+of the repository and the reports of the countries asked for, and reads them
+into two tables:
+
+| Table | One row per |
+|--------|---------|
+| `filings` | filing of the repository: `FILING`, `LEI`, `NAME`, `COUNTRY`, `PERIODEND`, when it was processed, how its validation went, where its files are |
+| `facts` | fact of a report collected: `FILING`, `LEI`, `CONCEPT` (e.g. `ifrs-full:Revenue`), `PRDSTART`, `PRDEND`, `UNIT`, `DIMENSIONS`, `VALUE` or `TEXT` |
+
+```python
+from fincommons import esef
+
+esef.update_esef(spark, "paths.yaml", ["AT"], contact="me@example.org")
+facts = esef.connect_to_esef(spark, "paths.yaml")
+filings = esef.connect_to_esef_filings(spark, "paths.yaml")
+```
+
+A report is downloaded again only where the repository has processed its
+filing anew, and the table of facts is rebuilt country by country. Text
+blocks -- the notes, with their markup -- are left out of the table and kept
+in the Bronze layer. The facts are keyed by LEI, as the entity master data
+is. The details are documented in
+[`src/fincommons/esef/README.md`](src/fincommons/esef/README.md).
 
 ### `fincommons.firds` and `fincommons.marketpricedata`
 

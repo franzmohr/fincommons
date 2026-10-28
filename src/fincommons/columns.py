@@ -49,12 +49,12 @@ __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
 #: what matters there is the identifier in it, see
 #: ``marketpricedata.describe_instrument``.
 CATALOGUED_MODULES = ("firds", "entitymasterdata", "exchangerate",
-                      "frenchdatalibrary")
+                      "frenchdatalibrary", "esef")
 
 #: The modules that declare their schemas with ``StructType().add`` rather
 #: than building their columns with ``withColumn``; see :func:`defined_columns`.
 SCHEMA_DECLARING_MODULES = ("exchangerate", "entitymasterdata",
-                            "frenchdatalibrary")
+                            "frenchdatalibrary", "esef")
 
 #: The catalogues read by default: the package that ships a catalogue, and
 #: the modules it covers.
