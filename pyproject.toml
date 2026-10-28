@@ -34,13 +34,19 @@ classifiers = [
 # force upgrades of DBR-provided packages. Spark itself is NOT listed here:
 # the Databricks Runtime provides it, and installing pyspark from PyPI on a
 # cluster shadows that installation. Use the "local" extra off-cluster.
+#
+# The bounds are the oldest versions the test suite passes on, which the
+# minimum-versions job of the continuous integration checks: with numpy 1.21
+# pandas 1.5 hangs in MultiIndex.equals, pandas 1.5 refuses openpyxl before
+# 3.0.7, and polars before 1.0 lacks polars.String and yields a scalar rather
+# than a tuple as the key of a group_by on one column.
 dependencies = [
-    "numpy>=1.21",
+    "numpy>=1.22",
     # the ECB and EIOPA registers are published as Excel workbooks
-    "openpyxl>=3.0",
+    "openpyxl>=3.0.7",
     "pandas>=1.5",
     "pyarrow>=8",
-    "polars>=0.20",
+    "polars>=1.0",
     "pyyaml>=6",
     "requests>=2.25",
 ]

@@ -1,0 +1,41 @@
+# Builds the handbook whenever it changes, so that a change to it can be
+# reviewed as it will read: the PDF is attached to the run as an artifact.
+# A document that does not compile fails the check.
+
+name: Handbook
+
+on:
+  pull_request:
+    paths:
+      - "docs/handbook/**"
+      - ".github/workflows/handbook.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/handbook/**"
+      - ".github/workflows/handbook.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build the handbook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # latexmk runs biber for the bibliography as often as it is needed.
+      - uses: xu-cheng/latex-action@v3
+        with:
+          root_file: fincommons.tex
+          working_directory: docs/handbook
+          latexmk_use_lualatex: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handbook
+          path: docs/handbook/fincommons.pdf
