@@ -63,7 +63,7 @@ def list_reference_dates(path):
     that happens to sort as text.
     """
     if not os.path.isdir(path):
-        # A data lake need not hold both delta message definitions: one whose
+        # A data lake need not hold every message definition: one whose
         # history begins after 2022-02-01 never sees auth.036.001.02 at all.
         return []
     dates = [
@@ -78,9 +78,9 @@ def list_reference_dates(path):
 def dltins_reference_dates(config_path):
     """The reference dates the Bronze layer holds a delta partition for.
 
-    ESMA published the delta file under two message definitions and each has a
-    folder of its own, so a date may sit in either. The history cares only
-    about the date, so the folders are read as one.
+    ESMA published the delta file under three message definitions and each has
+    a folder of its own, so a date may sit in any of them. The history cares
+    only about the date, so the folders are read as one.
     """
     dates = set()
     for path in common.paths_bronze_dltins(config_path):
@@ -124,11 +124,39 @@ def read_dltins_partition(spark, config_path, datadt, records=()):
     if not frames:
         raise RuntimeError(
             f"The Bronze layer holds no delta partition for {datadt} under "
-            "either message definition."
+            "any message definition."
         )
     # Both folders are read through the paths of SOURCE_FIELDS and cast to the
     # types named there, so the frames agree whichever definition they came
     # from and can simply be put together.
+    return functools.reduce(DataFrame.unionByName, frames)
+
+
+def fulins_reference_dates(config_path):
+    """The reference dates the Bronze layer holds a full file for.
+
+    ESMA published the full file under a draft message definition before
+    ``auth.017.001.02``, and each has a folder of its own; see
+    :func:`fincommons.firds.common.paths_bronze_fulins`.
+    """
+    dates = set()
+    for path in common.paths_bronze_fulins(config_path):
+        dates.update(list_reference_dates(path))
+    return sorted(dates)
+
+
+def read_fulins_partition(spark, config_path, datadt):
+    """Read the full file of one reference date, whichever folder holds it."""
+    frames = [
+        read_bronze_partition(spark, path, datadt)
+        for path in common.paths_bronze_fulins(config_path)
+        if os.path.isdir(os.path.join(path, PARTITION_PREFIX + datadt))
+    ]
+    if not frames:
+        raise RuntimeError(
+            f"The Bronze layer holds no full file for {datadt} under any "
+            "message definition."
+        )
     return functools.reduce(DataFrame.unionByName, frames)
 
 
@@ -664,12 +692,12 @@ def initialise_firds_database(spark, config_path):
         Path to the configuration file, where paths are specified. This must be
         a yaml-file.
     """
-    dates = list_reference_dates(common.path_bronze_auth_017_001_02(config_path))
+    dates = fulins_reference_dates(config_path)
 
     if len(dates) == 0:
         raise RuntimeError(
             "There is no full file (FULINS) in the Bronze layer at "
-            f"{common.path_bronze_auth_017_001_02(config_path)}, so the "
+            f"{' or '.join(common.paths_bronze_fulins(config_path))}, so the "
             "historical database cannot be initialised. Download and import "
             "one first."
         )
@@ -740,9 +768,7 @@ def initialise_firds_database(spark, config_path):
             ),
         )
 
-    df = read_bronze_partition(
-        spark, common.path_bronze_auth_017_001_02(config_path), maxdate
-    )
+    df = read_fulins_partition(spark, config_path, maxdate)
     df = translate_xml_to_analytics_schema_017_001_02(df)
     df = check_instrument_key(df, f"the full file of {maxdate}")
     df = check_publication_period(df, f"the full file of {maxdate}")
@@ -1610,6 +1636,7 @@ __all__ = [
     "dltins_reference_dates",
     "finished_files",
     "format_reference_date",
+    "fulins_reference_dates",
     "get_analytical_fields",
     "initialise_firds_database",
     "list_reference_dates",
@@ -1619,6 +1646,7 @@ __all__ = [
     "read_cancellations",
     "read_daily_changes",
     "read_dltins_partition",
+    "read_fulins_partition",
     "tagged_commits",
     "translate_xml_to_analytics_schema",
     "translate_xml_to_analytics_schema_017_001_02",

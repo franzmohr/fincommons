@@ -14,6 +14,30 @@ from .utilities import *
 logger = logging.getLogger(__name__)
 
 
+#: The time zone the timestamps of the draft message definitions are read in.
+#:
+#: The files ESMA published under the drafts state their timestamps without a
+#: zone -- ``2019-01-02T08:00:00`` where a later file states
+#: ``2019-09-23T08:43:16Z`` -- and Spark reads such a timestamp in the time zone
+#: of the session. Read in Europe/Vienna, the first trading day above came out
+#: as 07:00 UTC, and a termination at midnight fell on the day before once it
+#: was taken as a date. The figures of FIRDS are stated in UTC, so the drafts
+#: are read in UTC whatever the session says.
+DRAFT_TIME_ZONE = "UTC"
+
+
+def _read_fulins(spark, file, options=None):
+    """Read a full file of either message definition."""
+    reconstructed_schema = load_pyspark_schema("firds_schema_017_001_02")
+
+    df = spark.read.format("xml") \
+                .options(rowTag='RefData', **(options or {})) \
+                .schema(reconstructed_schema) \
+                .load(file)
+
+    return df
+
+
 def read_xml_017_001_02(spark, file):
     """Reads FIRDS data from an XML file.
     
@@ -26,22 +50,33 @@ def read_xml_017_001_02(spark, file):
     file: str
         File that should be imported.
     """
-    
-    reconstructed_schema = load_pyspark_schema("firds_schema_017_001_02")
-
-    df = spark.read.format("xml") \
-                .options(rowTag='RefData') \
-                .schema(reconstructed_schema) \
-                .load(file)
-    
-    return df
+    return _read_fulins(spark, file)
 
 
-#: The schema both delta message definitions are read with.
+def read_xml_draft13_017_001_01(spark, file):
+    """Reads FIRDS data from a full file of the draft definition.
+
+    Reads a full file with the schema DRAFT13auth.017.001.01, which ESMA
+    published before ``auth.017.001.02``, up to and including 2019-09-21. Every
+    element path its files use is present in the newer schema, so it is read
+    with that one, as the older delta files are; see :data:`DLTINS_SCHEMA`. Its
+    timestamps carry no time zone and are read in :data:`DRAFT_TIME_ZONE`.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    file: str
+        File that should be imported.
+    """
+    return _read_fulins(spark, file, {"timeZone": DRAFT_TIME_ZONE})
+
+
+#: The schema every delta message definition is read with.
 #:
-#: ESMA published the delta file as ``auth.036.001.02`` and revised it to
-#: ``auth.036.001.03``; a history that reaches back far enough is therefore
-#: built from files of both. They are read with the schema derived from the
+#: ESMA published the delta file as the draft ``DRAFT6auth.036.001.01``, then as
+#: ``auth.036.001.02``, and revised it to ``auth.036.001.03``; a history that
+#: reaches back far enough is therefore built from files of all three. They are read with the schema derived from the
 #: newer XSD rather than one schema each. Every element path the older files
 #: use is present in it, so nothing they state is dropped, and the elements it
 #: adds come back empty for a file that does not state them, which is what an
@@ -56,8 +91,8 @@ def read_xml_017_001_02(spark, file):
 DLTINS_SCHEMA = "firds_schema_036_001_03"
 
 
-def _read_dltins(spark, file):
-    """Read a delta file of either message definition.
+def _read_dltins(spark, file, options=None):
+    """Read a delta file of any of the message definitions.
 
     Parameters
     ----------
@@ -65,11 +100,13 @@ def _read_dltins(spark, file):
         An open Spark session.
     file: str
         File that should be imported.
+    options: dict, optional
+        Further options of the XML reader.
     """
     reconstructed_schema = load_pyspark_schema(DLTINS_SCHEMA)
 
     df = spark.read.format("xml") \
-                .options(rowTag='FinInstrm') \
+                .options(rowTag='FinInstrm', **(options or {})) \
                 .schema(reconstructed_schema) \
                 .load(file)
 
@@ -113,6 +150,25 @@ def read_xml_036_001_02(spark, file):
         File that should be imported.
     """
     return _read_dltins(spark, file)
+
+
+def read_xml_draft6_036_001_01(spark, file):
+    """Reads FIRDS data from a delta file of the draft definition.
+
+    Reads a delta file with the schema DRAFT6auth.036.001.01, which ESMA
+    published before ``auth.036.001.02``, up to and including 2019-09-21. Its
+    records have the shape of the later definitions and are read with
+    :data:`DLTINS_SCHEMA`; its timestamps carry no time zone and are read in
+    :data:`DRAFT_TIME_ZONE`.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    file: str
+        File that should be imported.
+    """
+    return _read_dltins(spark, file, {"timeZone": DRAFT_TIME_ZONE})
 
 
 def read_xml_102_001_01(spark, file):
@@ -176,6 +232,12 @@ SCHEMAS = {
     # two folders together; see
     # :func:`fincommons.firds.common.paths_bronze_dltins`.
     "auth.036.001.02": ("read_xml_036_001_02", path_bronze_auth_036_001_02, get_dltins_data_date),
+    # The drafts ESMA published the full and the delta file under before the
+    # definitions above, up to and including 2019-09-21. Their identifiers
+    # carry the draft's number, ``DRAFT13auth.017.001.01`` and
+    # ``DRAFT6auth.036.001.01``, so none of the keys above is part of them.
+    "DRAFT13auth.017.001.01": ("read_xml_draft13_017_001_01", path_bronze_draft13auth_017_001_01, get_fulins_data_date),
+    "DRAFT6auth.036.001.01": ("read_xml_draft6_036_001_01", path_bronze_draft6auth_036_001_01, get_dltins_data_date),
     "auth.102.001.01": ("read_xml_102_001_01", path_bronze_auth_102_001_01, get_fulcan_data_date),
 }
 
@@ -356,7 +418,10 @@ def _update_from_landing_to_bronze(spark, config_path, outcome):
 #: What this module offers. Reading the files of the landing zone into the Bronze layer.
 __all__ = [
     "SCHEMAS",
+    "DRAFT_TIME_ZONE",
+    "read_xml_draft13_017_001_01",
     "read_xml_017_001_02",
+    "read_xml_draft6_036_001_01",
     "read_xml_036_001_02",
     "read_xml_036_001_03",
     "read_xml_102_001_01",

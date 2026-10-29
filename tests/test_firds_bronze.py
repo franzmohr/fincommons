@@ -6,11 +6,15 @@ into ``finished`` when it was read, into ``error`` when it was not. That routing
 is what the tests below are about. The readers themselves are replaced, because
 what is at stake here is where a file ends up rather than how FIRDS XML is
 parsed -- the parsing is covered by the Silver tests, which work on the frames
-the readers produce.
+the readers produce. The exception is the readers of the drafts ESMA published
+before 2019-09-22, whose timestamps state no time zone: what they make of one
+is a question of parsing, and is tested on records of those files.
 """
 
 from __future__ import annotations
 
+import calendar
+from datetime import date, datetime
 import logging
 import os
 import zipfile
@@ -63,7 +67,9 @@ def readers(monkeypatch, spark):
     def read(session, file):
         return spark.createDataFrame([("ISIN1",)], "ISIN string")
 
+    monkeypatch.setattr(bronze, "read_xml_draft13_017_001_01", read)
     monkeypatch.setattr(bronze, "read_xml_017_001_02", read)
+    monkeypatch.setattr(bronze, "read_xml_draft6_036_001_01", read)
     monkeypatch.setattr(bronze, "read_xml_036_001_02", read)
     monkeypatch.setattr(bronze, "read_xml_036_001_03", read)
     monkeypatch.setattr(bronze, "read_xml_102_001_01", read)
@@ -200,6 +206,125 @@ def test_the_full_and_delta_files_go_to_their_own_folders(spark, config, readers
 
     assert "DATADT=2024-01-01" in os.listdir(common.path_bronze_auth_017_001_02(config))
     assert "DATADT=2024-01-02" in os.listdir(common.path_bronze_auth_036_001_03(config))
+
+
+def test_the_files_of_the_drafts_go_to_their_own_folders(spark, config, readers):
+    """Before 2019-09-22 ESMA published the full and the delta file under
+    drafts of their message definitions, which a history starting in 2018
+    is built from."""
+    put_xml(config, "FULINS_C_20181229_01of01.xml", "DRAFT13auth.017.001.01")
+    put_xml(config, "DLTINS_20190101_01of01.xml", "DRAFT6auth.036.001.01")
+
+    bronze.update_from_landing_to_bronze(spark, config)
+
+    imports, finished, errors = landing_folders(config)
+    assert imports == []
+    assert finished == ["DLTINS_20190101_01of01.xml", "FULINS_C_20181229_01of01.xml"]
+    assert errors == []
+    assert "DATADT=2018-12-29" in os.listdir(common.path_bronze_draft13auth_017_001_01(config))
+    assert "DATADT=2019-01-01" in os.listdir(common.path_bronze_draft6auth_036_001_01(config))
+    assert os.listdir(common.path_bronze_auth_017_001_02(config)) == []
+    assert os.listdir(common.path_bronze_auth_036_001_02(config)) == []
+
+
+def test_the_silver_layer_sees_a_date_in_every_folder(spark, config, readers):
+    put_xml(config, "FULINS_C_20181229_01of01.xml", "DRAFT13auth.017.001.01")
+    put_xml(config, "FULINS_C_20190928_01of01.xml", "auth.017.001.02")
+    put_xml(config, "DLTINS_20190101_01of01.xml", "DRAFT6auth.036.001.01")
+    put_xml(config, "DLTINS_20200105_01of01.xml", "auth.036.001.02")
+
+    bronze.update_from_landing_to_bronze(spark, config)
+
+    from fincommons.firds import silver
+    assert [str(d) for d in silver.fulins_reference_dates(config)] == [
+        "2018-12-29", "2019-09-28"
+    ]
+    assert [str(d) for d in silver.dltins_reference_dates(config)] == [
+        "2019-01-01", "2020-01-05"
+    ]
+
+
+# The drafts' timestamps
+# --------------------------------------------------------------------------
+
+#: A record of the delta file of 2019-01-01 and one of the full file of
+#: 2018-12-29, as ESMA published them: their timestamps state no time zone.
+DRAFT_DLTINS = (
+    "<?xml version='1.0' encoding='UTF-8'?>"
+    "<BizData xmlns='urn:iso:std:iso:20022:tech:xsd:head.003.001.01'><Hdr><AppHdr>"
+    "<MsgDefIdr>DRAFT6auth.036.001.01</MsgDefIdr></AppHdr></Hdr><Pyld>"
+    "<Document xmlns='urn:iso:std:iso:20022:tech:xsd:DRAFT6auth.036.001.01'>"
+    "<FinInstrmRptgRefDataDltaRpt><FinInstrm><NewRcrd>"
+    "<FinInstrmGnlAttrbts><Id>CH0456025623</Id><ClssfctnTp>RWINPA</ClssfctnTp>"
+    "</FinInstrmGnlAttrbts><TradgVnRltdAttrbts><Id>STUB</Id>"
+    "<FrstTradDt>2019-01-02T08:00:00</FrstTradDt>"
+    "<TermntnDt>2020-06-18T21:00:00</TermntnDt></TradgVnRltdAttrbts>"
+    "<TechAttrbts><RlvntCmptntAuthrty>DE</RlvntCmptntAuthrty>"
+    "<PblctnPrd><FrDt>2019-01-01</FrDt></PblctnPrd></TechAttrbts>"
+    "</NewRcrd></FinInstrm></FinInstrmRptgRefDataDltaRpt></Document></Pyld></BizData>"
+)
+DRAFT_FULINS = (
+    "<?xml version='1.0' encoding='UTF-8'?>"
+    "<BizData xmlns='urn:iso:std:iso:20022:tech:xsd:head.003.001.01'><Hdr><AppHdr>"
+    "<MsgDefIdr>DRAFT13auth.017.001.01</MsgDefIdr></AppHdr></Hdr><Pyld>"
+    "<Document xmlns='urn:iso:std:iso:20022:tech:xsd:DRAFT13auth.017.001.01'>"
+    "<FinInstrmRptgRefDataRpt><RefData>"
+    "<FinInstrmGnlAttrbts><Id>JE00B23SZL05</Id><ClssfctnTp>CBCGXQ</ClssfctnTp>"
+    "</FinInstrmGnlAttrbts><TradgVnRltdAttrbts><Id>XMSM</Id>"
+    "<FrstTradDt>2009-07-02T15:10:08.800</FrstTradDt></TradgVnRltdAttrbts>"
+    "<TechAttrbts><RlvntCmptntAuthrty>IE</RlvntCmptntAuthrty>"
+    "<PblctnPrd><FrDt>2018-10-15</FrDt></PblctnPrd></TechAttrbts>"
+    "</RefData></FinInstrmRptgRefDataRpt></Document></Pyld></BizData>"
+)
+
+
+@pytest.fixture
+def vienna(spark):
+    """A session that reads a timestamp without a zone as one in Vienna."""
+    before = spark.conf.get("spark.sql.session.timeZone")
+    spark.conf.set("spark.sql.session.timeZone", "Europe/Vienna")
+    yield spark
+    spark.conf.set("spark.sql.session.timeZone", before)
+
+
+def seconds(dt):
+    return calendar.timegm(dt.timetuple())
+
+
+def test_a_draft_delta_file_states_its_timestamps_in_utc(vienna, tmp_path):
+    """Read in the session's zone, 08:00 would come out as 07:00 UTC, and a
+    termination at midnight would fall on the day before."""
+    func = pytest.importorskip("pyspark.sql.functions")
+    path = tmp_path / "DLTINS_20190101_01of01.xml"
+    path.write_text(DRAFT_DLTINS)
+
+    row = bronze.read_xml_draft6_036_001_01(vienna, str(path)).select(
+        func.col("NewRcrd.FinInstrmGnlAttrbts.Id").alias("isin"),
+        func.col("NewRcrd.TradgVnRltdAttrbts.FrstTradDt").cast("long").alias("first"),
+        func.col("NewRcrd.TradgVnRltdAttrbts.TermntnDt").cast("long").alias("term"),
+        func.col("NewRcrd.TechAttrbts.PblctnPrd.FrDt").alias("from_date"),
+    ).first()
+
+    assert row["isin"] == "CH0456025623"
+    assert row["first"] == seconds(datetime(2019, 1, 2, 8, 0))
+    assert row["term"] == seconds(datetime(2020, 6, 18, 21, 0))
+    assert row["from_date"] == date(2019, 1, 1)
+
+
+def test_a_draft_full_file_states_its_timestamps_in_utc(vienna, tmp_path):
+    func = pytest.importorskip("pyspark.sql.functions")
+    path = tmp_path / "FULINS_C_20181229_01of01.xml"
+    path.write_text(DRAFT_FULINS)
+
+    row = bronze.read_xml_draft13_017_001_01(vienna, str(path)).select(
+        func.col("FinInstrmGnlAttrbts.Id").alias("isin"),
+        func.col("TradgVnRltdAttrbts.FrstTradDt").cast("double").alias("first"),
+        func.col("TechAttrbts.PblctnPrd.FrDt").alias("from_date"),
+    ).first()
+
+    assert row["isin"] == "JE00B23SZL05"
+    assert row["first"] == seconds(datetime(2009, 7, 2, 15, 10, 8)) + 0.8
+    assert row["from_date"] == date(2018, 10, 15)
 
 
 # Archives
