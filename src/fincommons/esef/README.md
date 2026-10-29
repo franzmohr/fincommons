@@ -132,7 +132,7 @@ The table is rebuilt country by country, and only for the countries whose report
 
 ## An analyst factsheet
 
-`factsheet/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto, with Raiffeisen Bank International AG as its example. It reads the two Silver tables as parquet and shows the profile of the issuer from the texts of its latest report, its key figures and ratios over the last six financial years, the composition of its balance sheet and of its operating income, its earnings and dividend per share, checks on the tags and the filings it was built from.
+`factsheet/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto, with Raiffeisen Bank International AG as its example. It reads the two Silver tables as parquet and shows the profile of the issuer from the texts of its latest report, its key figures and ratios over the last six financial years, the composition of its balance sheet and of its operating income, its earnings and dividend per share, checks on the tags and the filings it was built from. It shows numbers and their development; the only prose on the page is the text of the filing itself, and what the reader of the template needs to know about the figures is in the comments of its chunks.
 
 ```
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
