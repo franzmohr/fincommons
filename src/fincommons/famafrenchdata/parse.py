@@ -186,7 +186,7 @@ def table_code(title: str, breakpoints: bool = False) -> str:
     code = slug(title)
     logger.warning(
         "A table title matches no rule and is filed under a code made from it",
-        extra=context(module="frenchdatalibrary", title=title, table=code),
+        extra=context(module="famafrenchdata", title=title, table=code),
     )
     return code
 
@@ -457,7 +457,7 @@ def parse_lines(dataset: str, lines) -> pandas.DataFrame:
             logger.warning(
                 "Two tables of a file are filed under the same code, the "
                 "later one is numbered",
-                extra=context(module="frenchdatalibrary", dataset=dataset,
+                extra=context(module="famafrenchdata", dataset=dataset,
                               title=table.title, table=f"{code}_{number}",
                               line=table.lineno),
             )

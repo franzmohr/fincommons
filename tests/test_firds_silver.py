@@ -905,7 +905,7 @@ def test_the_update_stops_at_the_first_incomplete_day(spark, config):
     )
 
 
-def write_full_bronze(spark, config, datadt, isin="ISIN1"):
+def write_full_bronze(spark, config, datadt, isin="ISIN1", folder=None):
     spark.createDataFrame(
         [{"FinInstrmGnlAttrbts": {"Id": isin}, "TradgVnRltdAttrbts": {"Id": "MIC1"},
           "TechAttrbts": {"PblctnPrd": {"FrDt": datadt}}, "DATADT": format_reference_date(datadt)}],
@@ -914,7 +914,7 @@ def write_full_bronze(spark, config, datadt, isin="ISIN1"):
             + [types.StructField("DATADT", types.StringType())]
         ),
     ).write.partitionBy("DATADT").mode("append").parquet(
-        common.path_bronze_auth_017_001_02(config)
+        (folder or common.path_bronze_auth_017_001_02)(config)
     )
 
 
@@ -938,6 +938,34 @@ def test_the_history_is_started_from_a_complete_full_file(spark, config):
 
     assert common.connect_to_firds(spark, config, "main").count() == 1
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-02"
+
+
+def test_the_history_is_started_from_a_full_file_of_the_draft(spark, config):
+    """The last full file of 2018 was published under the draft
+    DRAFT13auth.017.001.01, and a history can start from it."""
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2018, 12, 29),
+                      folder=common.path_bronze_draft13auth_017_001_01)
+    finished(config, "FULINS_E_20181229_01of01.zip")
+
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    assert common.connect_to_firds(spark, config, "main").count() == 1
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2018-12-29"
+
+
+def test_the_newest_full_file_is_taken_whichever_definition_it_has(spark, config):
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2018, 12, 29), isin="OLD",
+                      folder=common.path_bronze_draft13auth_017_001_01)
+    write_full_bronze(spark, config, date(2019, 9, 28), isin="NEW")
+    finished(config, "FULINS_E_20181229_01of01.zip", "FULINS_E_20190928_01of01.zip")
+
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    rows = common.connect_to_firds(spark, config, "main").collect()
+    assert [row["ISIN"] for row in rows] == ["NEW"]
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2019-09-28"
 
 
 def test_the_history_is_not_started_without_a_letter_the_register_lists(spark, config):

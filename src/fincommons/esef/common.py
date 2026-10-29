@@ -236,7 +236,7 @@ def path_silver_watermarks(config_path):
     directory to be written to, which a schema in a catalogue is not; a
     configuration file that addresses the Silver layer by catalogue name
     therefore has to give a ``path`` beside the ``table`` for them, as for
-    :mod:`fincommons.frenchdatalibrary`.
+    :mod:`fincommons.famafrenchdata`.
     """
     silver = resolve(config_path, "esef", "silver")
     if silver.path is None:

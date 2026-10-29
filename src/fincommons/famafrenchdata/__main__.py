@@ -2,7 +2,7 @@
 
 Run with::
 
-    python -m fincommons.frenchdatalibrary --config /path/to/paths.yaml
+    python -m fincommons.famafrenchdata --config /path/to/paths.yaml
 
 This is the command a job scheduler runs. It opens a Spark session, collects
 every file of the library that has changed into the Bronze layer and rebuilds
@@ -23,7 +23,7 @@ import argparse
 import sys
 
 from ..log import add_log_level_argument, configure
-from .pipeline import update_frenchdatalibrary
+from .pipeline import update_famafrenchdata
 
 
 def parse_arguments():
@@ -92,7 +92,7 @@ def build_session(master, driver_memory=DRIVER_MEMORY):
 
     builder = (
         SparkSession.builder.master(master)
-        .appName("fincommons-frenchdatalibrary")
+        .appName("fincommons-famafrenchdata")
         .config("spark.driver.memory", driver_memory)
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config(
@@ -120,7 +120,7 @@ def main():
 
     spark = build_session(args.master, args.driver_memory)
     try:
-        outcome = update_frenchdatalibrary(spark, args.config, full=args.full,
+        outcome = update_famafrenchdata(spark, args.config, full=args.full,
                                            datasets=args.datasets)
     finally:
         spark.stop()

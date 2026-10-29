@@ -58,6 +58,8 @@ The results are stored in the `import` folder of the landing zone.
 firds.update_landing_import(config_path, start_date = "2026-01-01")
 ```
 
+`start_date = "2018-12-29"` starts the history from the last full file of 2018, which ESMA published under a draft of the message definition; see below.
+
 ## Update data in Bronze layer
 
 Function `update_from_landing_to_bronze` imports data from the landing zone into the Bronze layer. The main change in the data is the format. Not major changes to the schema are made.
@@ -71,9 +73,13 @@ The import decides what a file is from the message definition identifier in its 
 | File | Schema | Bronze folder | Row element |
 | --- | --- | --- | --- |
 | Full file, FULINS | `auth.017.001.02` | `auth_017_001_02` | `RefData` |
+| Full file, FULINS, published up to 2019-09-21 | `DRAFT13auth.017.001.01` | `DRAFT13auth_017_001_01` | `RefData` |
 | Delta file, DLTINS | `auth.036.001.03` | `auth_036_001_03` | `FinInstrm` |
 | Delta file, DLTINS, published up to 2022-01-31 | `auth.036.001.02` | `auth_036_001_02` | `FinInstrm` |
+| Delta file, DLTINS, published up to 2019-09-21 | `DRAFT6auth.036.001.01` | `DRAFT6auth_036_001_01` | `FinInstrm` |
 | Cancellations file, FULCAN | `auth.102.001.01` | `auth_102_001_01` | `CxlData` |
+
+Up to 2019-09-21 ESMA published the full and the delta file under drafts of their message definitions. A history can start from one of them: the register still lists every file back to 2018, and the last full file of 2018 is that of 2018-12-29. Every element path the drafts use is present in the schema of the definition that replaced them, so they are read with that schema, and the Silver layer reads the folders of a kind together. Two things differ. The drafts do not state the relevant trading venue, so `TECH_RLVNTTRADGVN` is empty for the records they carry; and they state their timestamps without a time zone, `2019-01-02T08:00:00` where a later file states `2019-09-23T08:43:16Z`, which Spark would read in the time zone of the session. They are read in UTC, `bronze.DRAFT_TIME_ZONE`, whatever the session says.
 
 A record of the cancellations file carries nothing but the instrument and the trading venue whose combination was cancelled, as `FinInstrmGnlAttrbts.Id` and `TradgVnRltdAttrbts.Id`.
 

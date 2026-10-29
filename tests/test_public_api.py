@@ -36,11 +36,11 @@ PUBLIC_API = {
     ],
     "fincommons.exchangerate": ["connect_to_exchangerate"],
     "fincommons.exchangerate.common": ["path_silver_exchangerate_table"],
+    "fincommons.famafrenchdata": [
+        "connect_to_famafrenchdata", "series", "update_famafrenchdata",
+    ],
     "fincommons.firds": ["connect_to_firds"],
     "fincommons.firds.common": ["path_silver_compact"],
-    "fincommons.frenchdatalibrary": [
-        "connect_to_frenchdatalibrary", "series", "update_frenchdatalibrary",
-    ],
     "fincommons.layout": ["rebalanced"],
     "fincommons.log": [
         "ContextFormatter", "DEFAULT_DATE_FORMAT", "DEFAULT_FORMAT", "LOGGER_NAME",

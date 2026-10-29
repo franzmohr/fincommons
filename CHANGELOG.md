@@ -11,6 +11,26 @@ release may change the public API, which `tests/test_public_api.py` lists.
 - `esef`: a template for an analyst factsheet on one issuer, in R and
   Quarto, with voestalpine AG as its example:
   `src/fincommons/esef/factsheet/esef-analyst-factsheet.qmd`.
+- `firds`: a history can start in 2018. The full and the delta files ESMA
+  published up to 2019-09-21 under drafts of their message definitions,
+  `DRAFT13auth.017.001.01` and `DRAFT6auth.036.001.01`, are imported into
+  folders of their own instead of being set aside as unrecognised, and the
+  history starts from a full file of either definition;
+  `update_landing_import(config_path, start_date="2018-12-29")` starts it
+  from the last full file of 2018. The drafts state their timestamps without
+  a time zone and are read in UTC, and they do not state the relevant
+  trading venue.
+
+### Changed
+
+- `frenchdatalibrary` is renamed `famafrenchdata`, after the name the data
+  is known by. Its functions follow: `update_famafrenchdata`,
+  `connect_to_famafrenchdata`, `update_bronze_famafrenchdata`,
+  `update_silver_famafrenchdata` and `path_silver_famafrenchdata`, and
+  `python -m fincommons.famafrenchdata` runs the job. The section of the
+  configuration file is `famafrenchdata`, and so is the Silver table: a data
+  lake built under the old name renames the section and moves the table, or
+  builds it again with `full=True`.
 
 ## 0.2.0
 

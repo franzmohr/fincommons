@@ -19,7 +19,7 @@ every query over it has to open.
 
 The reports are read on the executors, since a country is hundreds of
 reports of up to tens of megabytes each, as for
-:mod:`fincommons.frenchdatalibrary.silver`. Each report reaches them as the
+:mod:`fincommons.famafrenchdata.silver`. Each report reaches them as the
 path of its file, and its facts come back through
 :meth:`pyspark.sql.DataFrame.mapInPandas`. A report that cannot be read does
 not fail the others: its error is carried back to the driver as a row of its

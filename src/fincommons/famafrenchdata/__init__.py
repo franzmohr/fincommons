@@ -20,7 +20,7 @@ them into the data lake in these stages:
     :func:`series`, which turns a table of it back into the shape it was
     published in,
 ``pipeline``
-    the whole pipeline in one call, :func:`update_frenchdatalibrary`.
+    the whole pipeline in one call, :func:`update_famafrenchdata`.
 
 The files are downloaded when the pipeline runs and are never shipped with
 the package. They are copyright Eugene F. Fama and Kenneth R. French, and

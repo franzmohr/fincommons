@@ -67,8 +67,36 @@ def path_landing_watermark(config_path):
 def path_bronze_base(config_path):
     return resolve(config_path, "firds", "bronze").path
 
+def path_bronze_draft13auth_017_001_01(config_path):
+    """Path of the full files ESMA published as ``DRAFT13auth.017.001.01``.
+
+    The draft of the message definition it replaced with ``auth.017.001.02``;
+    the last full file under it is that of 2019-09-21. The Silver layer reads
+    the two together; see :func:`fincommons.firds.common.paths_bronze_fulins`.
+    """
+    return os.path.join(path_bronze_base(config_path), "DRAFT13auth_017_001_01")
+
 def path_bronze_auth_017_001_02(config_path):
     return os.path.join(path_bronze_base(config_path), "auth_017_001_02")
+
+def paths_bronze_fulins(config_path):
+    """The Bronze folders holding full files, oldest definition first.
+
+    Like :func:`paths_bronze_dltins`, so that the history can start from a
+    full file published under either definition.
+    """
+    return (
+        path_bronze_draft13auth_017_001_01(config_path),
+        path_bronze_auth_017_001_02(config_path),
+    )
+
+def path_bronze_draft6auth_036_001_01(config_path):
+    """Path of the delta files ESMA published as ``DRAFT6auth.036.001.01``.
+
+    The draft of the message definition it replaced with ``auth.036.001.02``;
+    the last delta file under it is that of 2019-09-21.
+    """
+    return os.path.join(path_bronze_base(config_path), "DRAFT6auth_036_001_01")
 
 def path_bronze_auth_036_001_02(config_path):
     """Path of the delta files ESMA published as ``auth.036.001.02``.
@@ -93,6 +121,7 @@ def paths_bronze_dltins(config_path):
     the Silver layer that looks for a date looks in all of them.
     """
     return (
+        path_bronze_draft6auth_036_001_01(config_path),
         path_bronze_auth_036_001_02(config_path),
         path_bronze_auth_036_001_03(config_path),
     )
@@ -212,7 +241,9 @@ def create_directory_tree(config_path):
                    path_landing_finished(config_path), \
                    path_landing_import(config_path), \
                    path_bronze_base(config_path), \
+                   path_bronze_draft13auth_017_001_01(config_path), \
                    path_bronze_auth_017_001_02(config_path), \
+                   path_bronze_draft6auth_036_001_01(config_path), \
                    path_bronze_auth_036_001_02(config_path), \
                    path_bronze_auth_036_001_03(config_path), \
                    path_bronze_auth_102_001_01(config_path)]
@@ -287,7 +318,10 @@ __all__ = [
     "initialise_metadata",
     "load_paths",
     "metadata_exists",
+    "path_bronze_draft13auth_017_001_01",
     "path_bronze_auth_017_001_02",
+    "paths_bronze_fulins",
+    "path_bronze_draft6auth_036_001_01",
     "path_bronze_auth_036_001_02",
     "path_bronze_auth_036_001_03",
     "paths_bronze_dltins",

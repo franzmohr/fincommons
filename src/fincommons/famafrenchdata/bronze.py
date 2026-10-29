@@ -91,7 +91,7 @@ def parse_index(html, base_url=LIBRARY_URL):
             logger.warning(
                 "A link of the library names a file that is not a plain name, "
                 "it is left out",
-                extra=context(module="frenchdatalibrary", layer="bronze",
+                extra=context(module="famafrenchdata", layer="bronze",
                               file=name),
             )
             continue
@@ -99,7 +99,7 @@ def parse_index(html, base_url=LIBRARY_URL):
         if urlparse(url).netloc != urlparse(base_url).netloc:
             logger.warning(
                 "A link of the library points to another server, it is left out",
-                extra=context(module="frenchdatalibrary", layer="bronze",
+                extra=context(module="famafrenchdata", layer="bronze",
                               file=name, url=url),
             )
             continue
@@ -260,7 +260,7 @@ def collect_dataset(config_path, dataset, url, now=None):
     if present and unchanged(previous, last_modified, etag):
         logger.debug(
             "The file has not changed since it was collected, it is skipped",
-            extra=context(module="frenchdatalibrary", layer="bronze",
+            extra=context(module="famafrenchdata", layer="bronze",
                           source=dataset),
         )
         return "unchanged"
@@ -303,14 +303,14 @@ def collect_dataset(config_path, dataset, url, now=None):
                             f"{dataset}.json"), record)
     logger.info(
         "Collected a file into the Bronze layer",
-        extra=context(module="frenchdatalibrary", layer="bronze",
+        extra=context(module="famafrenchdata", layer="bronze",
                       source=dataset, rows=len(lines),
                       last_modified=last_modified),
     )
     return "collected"
 
 
-def update_bronze_frenchdatalibrary(config_path, datasets=None, url=LIBRARY_URL):
+def update_bronze_famafrenchdata(config_path, datasets=None, url=LIBRARY_URL):
     """Collect the files of the library into the Bronze layer.
 
     The page of the library is read for the files it offers, and each of them
@@ -344,14 +344,14 @@ def update_bronze_frenchdatalibrary(config_path, datasets=None, url=LIBRARY_URL)
 
     Examples
     --------
-    >>> outcome = update_bronze_frenchdatalibrary("path/to/configuration/file")
+    >>> outcome = update_bronze_famafrenchdata("path/to/configuration/file")
     >>> outcome["failed"]
     0
     """
     with pipeline_run(
         logger,
-        "update_bronze_frenchdatalibrary",
-        module="frenchdatalibrary",
+        "update_bronze_famafrenchdata",
+        module="famafrenchdata",
         layer="bronze",
         config_path=config_path,
     ) as outcome:
@@ -370,7 +370,7 @@ def update_bronze_frenchdatalibrary(config_path, datasets=None, url=LIBRARY_URL)
             except Exception:
                 logger.exception(
                     "A file failed and was set aside",
-                    extra=context(module="frenchdatalibrary", layer="bronze",
+                    extra=context(module="famafrenchdata", layer="bronze",
                                   source=dataset),
                 )
                 outcome["failed"] += 1
@@ -379,7 +379,7 @@ def update_bronze_frenchdatalibrary(config_path, datasets=None, url=LIBRARY_URL)
         if outcome["failed"]:
             logger.warning(
                 "Files were set aside, the run did not update them",
-                extra=context(module="frenchdatalibrary", layer="bronze",
+                extra=context(module="famafrenchdata", layer="bronze",
                               failed=outcome["failed"],
                               sources=",".join(outcome["failed_sources"])),
             )
@@ -392,5 +392,5 @@ __all__ = [
     "parse_index",
     "probe",
     "read_archive",
-    "update_bronze_frenchdatalibrary",
+    "update_bronze_famafrenchdata",
 ]

@@ -27,7 +27,7 @@ def update_esef(spark, config_path, countries, years=None, full=False,
 
     A report that fails, in either layer, is set aside with its traceback and
     the run carries on, as in
-    :func:`fincommons.frenchdatalibrary.update_frenchdatalibrary`. The reports
+    :func:`fincommons.famafrenchdata.update_famafrenchdata`. The reports
     set aside are counted in the outcome the function returns and in a
     closing ``WARNING``, and the function returns rather than raises: the
     command line, :mod:`fincommons.esef.__main__`, turns a count above nought

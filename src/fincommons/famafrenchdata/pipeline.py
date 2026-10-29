@@ -4,14 +4,14 @@ import logging
 
 from ..log import context, pipeline_run
 from ..storage import silver_format
-from .bronze import update_bronze_frenchdatalibrary
-from .common import LIBRARY_URL, create_directory_tree, ref_silver_frenchdatalibrary
-from .silver import update_silver_frenchdatalibrary
+from .bronze import update_bronze_famafrenchdata
+from .common import LIBRARY_URL, create_directory_tree, ref_silver_famafrenchdata
+from .silver import update_silver_famafrenchdata
 
 logger = logging.getLogger(__name__)
 
 
-def update_frenchdatalibrary(spark, config_path, full=False, file_format=None,
+def update_famafrenchdata(spark, config_path, full=False, file_format=None,
                              datasets=None, url=LIBRARY_URL):
     """Brings the French Data Library up to date, from the page to the table.
 
@@ -30,7 +30,7 @@ def update_frenchdatalibrary(spark, config_path, full=False, file_format=None,
     :func:`fincommons.marketpricedata.update_marketpricedata`. The files set
     aside are counted in the outcome the function returns and in a closing
     ``WARNING``, and the function returns rather than raises: the command
-    line, :mod:`fincommons.frenchdatalibrary.__main__`, turns a count above
+    line, :mod:`fincommons.famafrenchdata.__main__`, turns a count above
     nought into an exit code a scheduler sees.
 
     Parameters
@@ -41,7 +41,7 @@ def update_frenchdatalibrary(spark, config_path, full=False, file_format=None,
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     full: bool
         Rebuild every partition of the Silver table, whether its file changed
-        or not; see :func:`update_silver_frenchdatalibrary`.
+        or not; see :func:`update_silver_famafrenchdata`.
     file_format: str, optional
         Format of the Silver table, ``'parquet'`` or ``'delta'``. Where it is
         left out the configuration file and the table on disk decide.
@@ -60,22 +60,22 @@ def update_frenchdatalibrary(spark, config_path, full=False, file_format=None,
 
     Examples
     --------
-    >>> outcome = update_frenchdatalibrary(spark, "path/to/configuration/file")
+    >>> outcome = update_famafrenchdata(spark, "path/to/configuration/file")
     >>> outcome["failed"]
     0
     """
-    file_format = silver_format(ref_silver_frenchdatalibrary(config_path), file_format)
+    file_format = silver_format(ref_silver_famafrenchdata(config_path), file_format)
     with pipeline_run(
         logger,
-        "update_frenchdatalibrary",
-        module="frenchdatalibrary",
+        "update_famafrenchdata",
+        module="famafrenchdata",
         config_path=config_path,
         file_format=file_format,
     ) as outcome:
         create_directory_tree(config_path)
         stages = (
-            update_bronze_frenchdatalibrary(config_path, datasets, url),
-            update_silver_frenchdatalibrary(spark, config_path, full,
+            update_bronze_famafrenchdata(config_path, datasets, url),
+            update_silver_famafrenchdata(spark, config_path, full,
                                             file_format, datasets),
         )
         outcome["failed"] = sum(stage["failed"] for stage in stages)
@@ -85,12 +85,12 @@ def update_frenchdatalibrary(spark, config_path, full=False, file_format=None,
         if outcome["failed"]:
             logger.warning(
                 "Files were set aside, the run did not update them",
-                extra=context(module="frenchdatalibrary",
-                              stage="update_frenchdatalibrary",
+                extra=context(module="famafrenchdata",
+                              stage="update_famafrenchdata",
                               failed=outcome["failed"],
                               sources=",".join(outcome["failed_sources"])),
             )
     return outcome
 
 
-__all__ = ["update_frenchdatalibrary"]
+__all__ = ["update_famafrenchdata"]
