@@ -14,16 +14,10 @@ brand:
     foreground: ink
     primary: blue
 
+  # No font is named, so the page keeps Bootstrap's stack of the sans-serif
+  # fonts every system has, and nothing is fetched from a font service.
   typography:
-    fonts:
-      - family: Roboto Condensed
-        source: google
-      - family: Source Sans Pro
-        source: google
-    base:
-      family: Source Sans Pro
     headings:
-      family: Roboto Condensed
       weight: bold
       color: red
 toc: true
