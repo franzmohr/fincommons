@@ -1,20 +1,20 @@
 """The Kenneth R. French Data Library: the layout of the data lake.
 
 The Bronze and the Silver layer are addressed through
-:mod:`fincommons.addressing`, which reads the ``frenchdatalibrary`` section of
+:mod:`fincommons.addressing`, which reads the ``famafrenchdata`` section of
 the configuration file, so that the same code runs against a local directory
 tree, against a Unity Catalog volume and against a schema in a catalogue::
 
-    frenchdatalibrary:
-        bronze: /data/frenchdatalibrary/bronze
-        silver: /data/frenchdatalibrary/silver
+    famafrenchdata:
+        bronze: /data/famafrenchdata/bronze
+        silver: /data/famafrenchdata/silver
 
 The Bronze layer holds two things. ``files`` is the text of every file of the
 library, one row per line and partitioned by ``DATASET``, the name of the
 file; ``collections`` holds, per file, a small record of when it was collected
 and what the server said about it, which is how the next run knows that a file
 has not changed and need not be downloaded again. The Silver layer holds one
-table, ``frenchdatalibrary``, with every value of every file in long form,
+table, ``famafrenchdata``, with every value of every file in long form,
 also partitioned by ``DATASET``, and beside it the marks that say which
 collection of each file the table was last built from.
 
@@ -83,7 +83,7 @@ periods it has.
 
 
 def path_bronze_base(config_path):
-    return resolve(config_path, "frenchdatalibrary", "bronze").path
+    return resolve(config_path, "famafrenchdata", "bronze").path
 
 
 def path_bronze_files(config_path):
@@ -107,7 +107,7 @@ def read_collection(config_path, dataset):
     The record says which address the file was fetched from, the
     ``Last-Modified`` and ``ETag`` the server sent with it, the SHA-256 of
     its text, how many lines it had and when it was collected; see
-    :func:`fincommons.frenchdatalibrary.bronze.collect_dataset`. A record
+    :func:`fincommons.famafrenchdata.bronze.collect_dataset`. A record
     that cannot be read is treated as one that was never written, which
     costs a download and nothing else.
     """
@@ -156,10 +156,10 @@ def path_silver_base(config_path):
     ``None`` where the layer is a schema in a catalogue rather than a
     directory, which is what setting up the directory tree checks for.
     """
-    return resolve(config_path, "frenchdatalibrary", "silver").path
+    return resolve(config_path, "famafrenchdata", "silver").path
 
 
-def ref_silver_frenchdatalibrary(config_path):
+def ref_silver_famafrenchdata(config_path):
     """Where the table of the library lives.
 
     In a local data lake this is a directory in the Silver layer. Where the
@@ -172,17 +172,17 @@ def ref_silver_frenchdatalibrary(config_path):
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     """
-    return resolve(config_path, "frenchdatalibrary", "silver", "frenchdatalibrary")
+    return resolve(config_path, "famafrenchdata", "silver", "famafrenchdata")
 
 
-def path_silver_frenchdatalibrary(config_path):
+def path_silver_famafrenchdata(config_path):
     """Path of the table of the library.
 
     Kept for the tests and for a notebook that looks at the files themselves.
     It is ``None`` where the table is addressed by catalogue name, so the
-    pipeline goes through :func:`ref_silver_frenchdatalibrary` instead.
+    pipeline goes through :func:`ref_silver_famafrenchdata` instead.
     """
-    return ref_silver_frenchdatalibrary(config_path).path
+    return ref_silver_famafrenchdata(config_path).path
 
 
 def path_silver_watermarks(config_path):
@@ -202,10 +202,10 @@ def path_silver_watermarks(config_path):
     refused here where it gives none: without the marks every run would parse
     all three hundred files again.
     """
-    silver = resolve(config_path, "frenchdatalibrary", "silver")
+    silver = resolve(config_path, "famafrenchdata", "silver")
     if silver.path is None:
         raise ValueError(
-            f"the 'silver' layer of 'frenchdatalibrary' in {config_path!r} is "
+            f"the 'silver' layer of 'famafrenchdata' in {config_path!r} is "
             "addressed by catalogue name alone, and the marks that say which "
             "collection of each file the table was built from are files. Give "
             "the layer a 'path' beside its 'table' for them to be written to."
@@ -247,12 +247,12 @@ def write_watermark(config_path, dataset, collection):
     )
 
 
-def connect_to_frenchdatalibrary(spark, config_path):
+def connect_to_famafrenchdata(spark, config_path):
     """Opens the table of the library in the Silver layer.
 
     One row per file, table, series and period: ``REFDT``, ``DATASET`` (the
     name of the file, ``F-F_Research_Data_Factors``), ``TABLE`` (a code such
-    as ``RET_VW``, see :data:`fincommons.frenchdatalibrary.parse.TABLE_CODES`),
+    as ``RET_VW``, see :data:`fincommons.famafrenchdata.parse.TABLE_CODES`),
     ``FREQUENCY`` (``D``, ``W``, ``M`` or ``A``), ``SERIES`` (the column as
     the file names it), ``VALUE`` as published -- returns in percent -- and
     ``TITLE``, the title of the table in the file. Filter on ``DATASET``
@@ -265,7 +265,7 @@ def connect_to_frenchdatalibrary(spark, config_path):
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     """
-    return read_silver(spark, ref_silver_frenchdatalibrary(config_path))
+    return read_silver(spark, ref_silver_famafrenchdata(config_path))
 
 
 def create_directory_tree(config_path):
@@ -288,7 +288,7 @@ def create_directory_tree(config_path):
                    path_bronze_files(config_path),
                    path_bronze_collections(config_path)]
 
-    silver = resolve(config_path, "frenchdatalibrary", "silver")
+    silver = resolve(config_path, "famafrenchdata", "silver")
     if not silver.is_named and silver.path is not None:
         folder_list.append(silver.path)
 
@@ -302,19 +302,19 @@ __all__ = [
     "LIBRARY_URL",
     "SOURCE",
     "bronze_schema",
-    "connect_to_frenchdatalibrary",
+    "connect_to_famafrenchdata",
     "create_directory_tree",
     "path_bronze_base",
     "path_bronze_collections",
     "path_bronze_dataset",
     "path_bronze_files",
     "path_silver_base",
-    "path_silver_frenchdatalibrary",
+    "path_silver_famafrenchdata",
     "path_silver_watermarks",
     "read_collection",
     "read_collections",
     "read_watermark",
-    "ref_silver_frenchdatalibrary",
+    "ref_silver_famafrenchdata",
     "silver_schema",
     "write_json",
     "write_watermark",

@@ -22,9 +22,9 @@ import pyarrow.parquet
 import pytest
 import requests
 
-import fincommons.frenchdatalibrary as fdl
+import fincommons.famafrenchdata as ffd
 
-FIXTURES = Path(__file__).resolve().parent / "data" / "frenchdatalibrary"
+FIXTURES = Path(__file__).resolve().parent / "data" / "famafrenchdata"
 BASE = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/"
 PAGE = BASE + "data_library.html"
 
@@ -34,13 +34,13 @@ def data_lake(tmp_path):
     """A configuration file pointing at an empty data lake."""
     config_path = tmp_path / "paths.yaml"
     config_path.write_text(
-        "frenchdatalibrary:\n"
+        "famafrenchdata:\n"
         f"  bronze: {tmp_path / 'bronze'}\n"
         f"  silver: {tmp_path / 'silver'}\n",
         encoding="utf-8",
     )
     config_path = str(config_path)
-    fdl.create_directory_tree(config_path)
+    ffd.create_directory_tree(config_path)
     return config_path
 
 
@@ -144,7 +144,7 @@ def library(monkeypatch):
 
 
 def bronze_lines(config_path, dataset):
-    path = os.path.join(fdl.path_bronze_dataset(config_path, dataset),
+    path = os.path.join(ffd.path_bronze_dataset(config_path, dataset),
                         "part-00000.parquet")
     return pyarrow.parquet.ParquetFile(path).read().to_pandas()
 
@@ -156,7 +156,7 @@ def bronze_lines(config_path, dataset):
 def test_the_page_is_read_for_the_csv_archives_only():
     html = page("F-F_Research_Data_Factors", "6_Portfolios_2x3").decode()
 
-    files = fdl.parse_index(html, PAGE)
+    files = ffd.parse_index(html, PAGE)
 
     assert files == {
         "6_Portfolios_2x3": BASE + "ftp/6_Portfolios_2x3_CSV.zip",
@@ -166,7 +166,7 @@ def test_the_page_is_read_for_the_csv_archives_only():
 
 def test_a_page_without_a_file_is_refused():
     with pytest.raises(ValueError, match="links no zipped CSV file"):
-        fdl.parse_index("<html>Service unavailable</html>", PAGE)
+        ffd.parse_index("<html>Service unavailable</html>", PAGE)
 
 
 def test_a_link_that_is_not_a_plain_name_or_leaves_the_server_is_left_out(caplog):
@@ -174,7 +174,7 @@ def test_a_link_that_is_not_a_plain_name_or_leaves_the_server_is_left_out(caplog
             '<a href="https://elsewhere.example/ftp/Other_CSV.zip">y</a>'
             '<a href="ftp/Good_CSV.zip">z</a>')
     with caplog.at_level(logging.WARNING, logger="fincommons"):
-        files = fdl.parse_index(html, PAGE)
+        files = ffd.parse_index(html, PAGE)
 
     assert list(files) == ["Good"]
     assert len(caplog.records) == 2
@@ -185,7 +185,7 @@ def test_a_name_with_parentheses_is_a_plain_name(caplog):
     parentheses set all twelve aside on the first collection into a lake."""
     name = "Europe_32_Portfolios_ME_INV(TA)_OP_2x4x4"
     with caplog.at_level(logging.WARNING, logger="fincommons"):
-        files = fdl.parse_index(f'<a href="ftp/{name}_CSV.zip">x</a>', PAGE)
+        files = ffd.parse_index(f'<a href="ftp/{name}_CSV.zip">x</a>', PAGE)
 
     assert files == {name: BASE + f"ftp/{name}_CSV.zip"}
     assert not caplog.records
@@ -196,7 +196,7 @@ def test_a_name_with_parentheses_is_a_plain_name(caplog):
 
 
 def test_a_file_is_kept_line_by_line_with_its_preamble(data_lake, library):
-    outcome = fdl.update_bronze_frenchdatalibrary(data_lake)
+    outcome = ffd.update_bronze_famafrenchdata(data_lake)
 
     assert outcome["collected"] == 3 and outcome["failed"] == 0
     lines = bronze_lines(data_lake, "F-F_Research_Data_Factors")
@@ -206,39 +206,39 @@ def test_a_file_is_kept_line_by_line_with_its_preamble(data_lake, library):
     assert lines.LINE.iloc[0].startswith("This file was created using")
     assert str(lines.LASTMODIFIED.iloc[0]) == "2026-10-27 15:19:14"
     # The name of the file is the partition, not a column of the file.
-    path = os.path.join(fdl.path_bronze_dataset(data_lake, "6_Portfolios_2x3"),
+    path = os.path.join(ffd.path_bronze_dataset(data_lake, "6_Portfolios_2x3"),
                         "part-00000.parquet")
     assert "DATASET" not in pyarrow.parquet.ParquetFile(path).schema_arrow.names
 
 
 def test_the_record_of_a_collection_says_what_the_server_said(data_lake, library):
-    fdl.update_bronze_frenchdatalibrary(data_lake)
+    ffd.update_bronze_famafrenchdata(data_lake)
 
-    record = fdl.read_collection(data_lake, "6_Portfolios_2x3")
+    record = ffd.read_collection(data_lake, "6_Portfolios_2x3")
     assert record["etag"] == library.tags["6_Portfolios_2x3"]
     assert record["last_modified"] == "Tue, 27 Oct 2026 15:19:14 GMT"
     assert record["url"] == library.url("6_Portfolios_2x3")
     assert len(record["sha256"]) == 64
-    assert set(fdl.read_collections(data_lake)) == set(library.files)
+    assert set(ffd.read_collections(data_lake)) == set(library.files)
 
 
 def test_a_file_whose_tag_has_not_changed_is_not_downloaded_again(data_lake, library):
-    fdl.update_bronze_frenchdatalibrary(data_lake)
+    ffd.update_bronze_famafrenchdata(data_lake)
     library.requests.clear()
 
-    outcome = fdl.update_bronze_frenchdatalibrary(data_lake)
+    outcome = ffd.update_bronze_famafrenchdata(data_lake)
 
     assert outcome["unchanged"] == 3 and outcome["collected"] == 0
     assert library.downloads() == []
 
 
 def test_a_file_whose_tag_has_changed_is_downloaded_again(data_lake, library):
-    fdl.update_bronze_frenchdatalibrary(data_lake)
+    ffd.update_bronze_famafrenchdata(data_lake)
     library.requests.clear()
     library.tags["ME_Breakpoints"] = '"new"'
     library.files["ME_Breakpoints"] += "A note added.\n"
 
-    outcome = fdl.update_bronze_frenchdatalibrary(data_lake)
+    outcome = ffd.update_bronze_famafrenchdata(data_lake)
 
     assert outcome["collected"] == 1 and outcome["unchanged"] == 2
     assert library.downloads() == [library.url("ME_Breakpoints")]
@@ -246,16 +246,16 @@ def test_a_file_whose_tag_has_changed_is_downloaded_again(data_lake, library):
 
 
 def test_the_same_text_under_a_new_tag_is_not_written_again(data_lake, library):
-    fdl.update_bronze_frenchdatalibrary(data_lake)
-    before = fdl.read_collection(data_lake, "ME_Breakpoints")
-    partition = os.path.join(fdl.path_bronze_dataset(data_lake, "ME_Breakpoints"),
+    ffd.update_bronze_famafrenchdata(data_lake)
+    before = ffd.read_collection(data_lake, "ME_Breakpoints")
+    partition = os.path.join(ffd.path_bronze_dataset(data_lake, "ME_Breakpoints"),
                              "part-00000.parquet")
     written = os.stat(partition).st_mtime_ns
     library.tags["ME_Breakpoints"] = '"republished"'
 
-    outcome = fdl.update_bronze_frenchdatalibrary(data_lake)
+    outcome = ffd.update_bronze_famafrenchdata(data_lake)
 
-    after = fdl.read_collection(data_lake, "ME_Breakpoints")
+    after = ffd.read_collection(data_lake, "ME_Breakpoints")
     assert outcome["unchanged"] == 3
     assert os.stat(partition).st_mtime_ns == written
     # The record follows the new tag, so the next run skips the download, and
@@ -266,11 +266,11 @@ def test_the_same_text_under_a_new_tag_is_not_written_again(data_lake, library):
 
 
 def test_a_server_that_does_not_answer_head_is_compared_by_text(data_lake, library):
-    fdl.update_bronze_frenchdatalibrary(data_lake)
+    ffd.update_bronze_famafrenchdata(data_lake)
     library.head = False
     library.requests.clear()
 
-    outcome = fdl.update_bronze_frenchdatalibrary(data_lake)
+    outcome = ffd.update_bronze_famafrenchdata(data_lake)
 
     # Every file is downloaded, and none is written, since none has changed.
     assert len(library.downloads()) == 3
@@ -280,20 +280,20 @@ def test_a_server_that_does_not_answer_head_is_compared_by_text(data_lake, libra
 def test_a_file_removed_from_the_bronze_layer_is_collected_again(data_lake, library):
     import shutil
 
-    fdl.update_bronze_frenchdatalibrary(data_lake)
-    shutil.rmtree(fdl.path_bronze_dataset(data_lake, "ME_Breakpoints"))
+    ffd.update_bronze_famafrenchdata(data_lake)
+    shutil.rmtree(ffd.path_bronze_dataset(data_lake, "ME_Breakpoints"))
 
-    outcome = fdl.update_bronze_frenchdatalibrary(data_lake)
+    outcome = ffd.update_bronze_famafrenchdata(data_lake)
 
     assert outcome["collected"] == 1
 
 
 def test_only_the_files_asked_for_are_collected(data_lake, library):
-    outcome = fdl.update_bronze_frenchdatalibrary(
+    outcome = ffd.update_bronze_famafrenchdata(
         data_lake, datasets=["F-F_Research_Data_Factors"])
 
     assert outcome["collected"] == 1
-    assert list(fdl.read_collections(data_lake)) == ["F-F_Research_Data_Factors"]
+    assert list(ffd.read_collections(data_lake)) == ["F-F_Research_Data_Factors"]
 
 
 # What fails
@@ -305,23 +305,23 @@ def test_a_file_that_fails_is_set_aside_and_the_others_are_collected(
     library.broken["6_Portfolios_2x3"] = b"<html>Error</html>"
 
     with caplog.at_level(logging.INFO, logger="fincommons"):
-        outcome = fdl.update_bronze_frenchdatalibrary(data_lake)
+        outcome = ffd.update_bronze_famafrenchdata(data_lake)
 
     assert outcome["failed"] == 1
     assert outcome["failed_sources"] == ["bronze/6_Portfolios_2x3"]
     assert outcome["collected"] == 2
-    assert fdl.read_collection(data_lake, "6_Portfolios_2x3") is None
+    assert ffd.read_collection(data_lake, "6_Portfolios_2x3") is None
     error = next(r for r in caplog.records if r.levelno == logging.ERROR)
     assert error.ctx["source"] == "6_Portfolios_2x3" and error.exc_info
 
 
 def test_a_file_that_fails_keeps_the_text_collected_before(data_lake, library):
-    fdl.update_bronze_frenchdatalibrary(data_lake)
+    ffd.update_bronze_famafrenchdata(data_lake)
     before = bronze_lines(data_lake, "6_Portfolios_2x3")
     library.tags["6_Portfolios_2x3"] = '"new"'
     library.broken["6_Portfolios_2x3"] = archive("")
 
-    outcome = fdl.update_bronze_frenchdatalibrary(data_lake)
+    outcome = ffd.update_bronze_famafrenchdata(data_lake)
 
     assert outcome["failed"] == 1
     assert bronze_lines(data_lake, "6_Portfolios_2x3").equals(before)
@@ -336,11 +336,11 @@ def test_an_archive_of_more_than_one_file_is_refused(tmp_path):
     path.write_bytes(buffer.getvalue())
 
     with pytest.raises(ValueError, match="holds 2 CSV files"):
-        fdl.read_archive(str(path), "Example")
+        ffd.read_archive(str(path), "Example")
 
 
 def test_a_file_the_page_does_not_link_is_counted_as_failed(data_lake, library):
-    outcome = fdl.update_bronze_frenchdatalibrary(data_lake, datasets=["Missing"])
+    outcome = ffd.update_bronze_famafrenchdata(data_lake, datasets=["Missing"])
 
     assert outcome["failed"] == 1 and outcome["failed_sources"] == ["bronze/Missing"]
 
@@ -350,13 +350,13 @@ def test_a_page_that_is_not_the_library_fails_the_stage(data_lake, monkeypatch):
                         lambda url, **kwargs: FakeResponse(200, b"<html></html>"))
 
     with pytest.raises(ValueError, match="links no zipped CSV file"):
-        fdl.update_bronze_frenchdatalibrary(data_lake)
+        ffd.update_bronze_famafrenchdata(data_lake)
 
 
 def test_the_records_are_json(data_lake, library):
-    fdl.update_bronze_frenchdatalibrary(data_lake)
+    ffd.update_bronze_famafrenchdata(data_lake)
 
-    folder = fdl.path_bronze_collections(data_lake)
+    folder = ffd.path_bronze_collections(data_lake)
     for name in os.listdir(folder):
         with open(os.path.join(folder, name), encoding="utf-8") as handle:
             assert json.load(handle)["dataset"] + ".json" == name

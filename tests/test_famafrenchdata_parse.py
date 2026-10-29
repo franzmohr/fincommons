@@ -4,7 +4,7 @@ The files are texts written for a person, and the reader recognises their
 tables by shape: a header row that begins with a comma, the lines of text
 above it as its title, rows keyed by a year, a month or a day. The tests run
 it over small files written in the layouts the library uses -- they are in
-``tests/data/frenchdatalibrary``, synthetic values in the library's shape --
+``tests/data/famafrenchdata``, synthetic values in the library's shape --
 and over the odd turns of the real files that the layouts alone do not show:
 a title split over two lines, a lone carriage return before a header, a blank
 line between a header and its first row, two tables titled alike. None of
@@ -24,9 +24,9 @@ from pathlib import Path
 import numpy
 import pytest
 
-from fincommons.frenchdatalibrary import parse as P
+from fincommons.famafrenchdata import parse as P
 
-FIXTURES = Path(__file__).resolve().parent / "data" / "frenchdatalibrary"
+FIXTURES = Path(__file__).resolve().parent / "data" / "famafrenchdata"
 
 
 def lines_of(name):

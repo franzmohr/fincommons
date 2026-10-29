@@ -106,7 +106,7 @@ def build_session(master, driver_memory=DRIVER_MEMORY):
     """Open a Spark session with the Delta extensions.
 
     The same session as the one of
-    :mod:`fincommons.frenchdatalibrary.__main__`.
+    :mod:`fincommons.famafrenchdata.__main__`.
     """
     from pyspark.sql import SparkSession
 

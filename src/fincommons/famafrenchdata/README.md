@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Module `frenchdatalibrary` brings the [Kenneth R. French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html) into the data lake: the factors of the Fama-French three- and five-factor models, momentum and the reversal factors, the returns of the portfolios they are built from -- sorted on size, book-to-market, profitability, investment, prior returns, industries and more -- and the NYSE breakpoints of the sorts, for the US since 1926 and for the international regions since 1990.
+Module `famafrenchdata` brings the [Kenneth R. French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html) into the data lake: the factors of the Fama-French three- and five-factor models, momentum and the reversal factors, the returns of the portfolios they are built from -- sorted on size, book-to-market, profitability, investment, prior returns, industries and more -- and the NYSE breakpoints of the sorts, for the US since 1926 and for the international regions since 1990.
 
 Much of empirical asset pricing rests on these files, and every institution that uses them downloads them, opens a zipped CSV file meant for a person to read, and writes a parser for the file it needs. The library publishes some three hundred such files, and Kenneth French rebuilds all of them each month as CRSP is updated. This module reads every one of them into one table, in one shape, and keeps it up to date.
 
@@ -20,25 +20,25 @@ The US files are built from CRSP and Compustat, the international files from Blo
 
 ## Setting up
 
-The paths of the data lake are read from the configuration file, which needs a `frenchdatalibrary` section with the keys `bronze` and `silver`:
+The paths of the data lake are read from the configuration file, which needs a `famafrenchdata` section with the keys `bronze` and `silver`:
 
 ```yaml
-frenchdatalibrary:
-    bronze: /data/frenchdatalibrary/bronze
-    silver: /data/frenchdatalibrary/silver
+famafrenchdata:
+    bronze: /data/famafrenchdata/bronze
+    silver: /data/famafrenchdata/silver
 ```
 
 The Silver layer may name a schema in a catalogue instead of a directory, which puts the table within reach of Unity Catalog's grants and lineage. It then needs a `path` beside the `table`, because the marks that record which collection of each file the table was built from are files, and a schema is not a directory to write them to:
 
 ```yaml
-frenchdatalibrary:
-    bronze: /Volumes/fincommons/frenchdatalibrary/lake/bronze
+famafrenchdata:
+    bronze: /Volumes/fincommons/famafrenchdata/lake/bronze
     silver:
-        table: fincommons.frenchdatalibrary
-        path: /Volumes/fincommons/frenchdatalibrary/lake/silver
+        table: fincommons.famafrenchdata
+        path: /Volumes/fincommons/famafrenchdata/lake/silver
 ```
 
-The table is then `fincommons.frenchdatalibrary.frenchdatalibrary`, always Delta.
+The table is then `fincommons.famafrenchdata.famafrenchdata`, always Delta.
 
 ## Reproducing a Fama-French factor
 
@@ -46,27 +46,27 @@ This is the module in five minutes: set it up, bring two files of the library in
 
 ```python
 # Start Spark, with the Delta extensions where delta-spark is installed
-from fincommons.frenchdatalibrary.__main__ import build_session
+from fincommons.famafrenchdata.__main__ import build_session
 spark = build_session("local[*]")
 
-from fincommons import frenchdatalibrary as fdl
+from fincommons import famafrenchdata as ffd
 
 config_path = "paths.yaml"
 
 # Collect two files into the Bronze layer and read them into the Silver table.
 # Leave datasets out to collect the whole library, about 150 MB zipped.
-outcome = fdl.update_frenchdatalibrary(
+outcome = ffd.update_famafrenchdata(
     spark, config_path,
     datasets=["F-F_Research_Data_Factors", "6_Portfolios_2x3"])
 assert outcome["failed"] == 0
 
-df = fdl.connect_to_frenchdatalibrary(spark, config_path)
+df = ffd.connect_to_famafrenchdata(spark, config_path)
 
 # The monthly value-weighted returns of the six portfolios formed on size
 # and book-to-market, and the published factors, each as the file shows them:
 # one column per series, indexed by the last day of the month.
-portfolios = fdl.series(df, "6_Portfolios_2x3", "RET_VW", "M")
-factors = fdl.series(df, "F-F_Research_Data_Factors", "FACTORS", "M")
+portfolios = ffd.series(df, "6_Portfolios_2x3", "RET_VW", "M")
+factors = ffd.series(df, "F-F_Research_Data_Factors", "FACTORS", "M")
 
 # HML: value minus growth, the average of the two high book-to-market
 # portfolios minus the average of the two low ones.
@@ -89,18 +89,18 @@ What this shows, and what it does not:
 * It shows that the published files are consistent with one another -- the factor file is the six-portfolio file combined as the definitions say -- and that the module reads both correctly: the right table, the right series under the right name, every month on the right date. A reader that took the equal-weighted table for the value-weighted one, shifted a month or dropped a portfolio would miss by far more than the rounding.
 * It does not reconstruct the factors from their sources. The portfolios themselves are built by French from CRSP and Compustat -- the NYSE breakpoints, book equity, the June rebalancing -- and fincommons has neither database. Whether the portfolios are right is a question the library answers, not this check.
 
-The same comparison runs in the test suite against synthetic files (`tests/test_frenchdatalibrary_silver.py`), and against the library itself where `FINCOMMONS_NETWORK=1` is set.
+The same comparison runs in the test suite against synthetic files (`tests/test_famafrenchdata_silver.py`), and against the library itself where `FINCOMMONS_NETWORK=1` is set.
 
 ## Keeping the table up to date
 
 ```python
-fdl.update_frenchdatalibrary(spark, config_path)
+ffd.update_famafrenchdata(spark, config_path)
 ```
 
 or, as the command a job scheduler runs,
 
 ```
-python -m fincommons.frenchdatalibrary --config paths.yaml --log-level INFO
+python -m fincommons.famafrenchdata --config paths.yaml --log-level INFO
 ```
 
 which exits with 1 where a file was set aside. `--dataset NAME` restricts the run to a file and may be given more than once; `--full` rebuilds every partition of the table from the Bronze layer, which is how the table follows a new version of the reader.
@@ -128,7 +128,7 @@ The archives are downloaded into a temporary directory on the driver, not into t
 
 ## The Silver table
 
-One table, `frenchdatalibrary`, with a row per file, table, series and period, partitioned by `DATASET`:
+One table, `famafrenchdata`, with a row per file, table, series and period, partitioned by `DATASET`:
 
 | Column | Meaning |
 | --- | --- |
@@ -173,7 +173,7 @@ The titles are prose and vary from file to file; 57 distinct titles occur in the
 | `BETA_VW`, `VAR_VW` | value-weighted average of prior beta, of past return variance | `Value-Weighted Average of Prior Beta` |
 | `PRIOR_VW`, `PRIOR_EW` | value- and equal-weighted average of the prior return the portfolios are formed on | `Value-Weighted Average of Prior Returns` |
 
-The vocabulary and its rules are `TABLE_CODES` and `TABLE_RULES` in `fincommons.frenchdatalibrary.parse`, and a test checks every one of the 57 published titles against them.
+The vocabulary and its rules are `TABLE_CODES` and `TABLE_RULES` in `fincommons.famafrenchdata.parse`, and a test checks every one of the 57 published titles against them.
 
 Two cases fall outside it, and neither loses a table:
 

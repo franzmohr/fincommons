@@ -23,7 +23,7 @@ approaches for handling basic data pipelines.
 | `marketpricedata` | prices and rates from public publishers (ECB, Federal Reserve Bank of New York, Bank of England, Yahoo Finance and others) in one table, and the risk-free zero curves its overnight and swap rates imply |
 | `firds` | ESMA's FIRDS reference data: download, import and the historical database ESMA's instructions describe |
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
-| `frenchdatalibrary` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
+| `famafrenchdata` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
 | `esef` | the annual financial reports listed issuers file in the European Single Electronic Format, from filings.xbrl.org: a table of filings and every tagged fact in one table, keyed by LEI |
 | `addressing`, `storage`, `log`, `layout`, `schemas`, `columns` | the infrastructure the modules share: locations from `paths.yaml`, how a Silver table rebuilt in full is read and written as parquet or Delta, logging, the file layout of tables, declared schemas, and the catalogue of what a column holds |
 
@@ -168,7 +168,7 @@ message rather than inside it, so that the sentence stays constant across runs:
 `print` keeps a job next to this. Result tables that a script writes for
 someone watching the console are the output of the program and stay on
 standard output; the log goes to standard error. `python -m
-fincommons.marketpricedata`, `python -m fincommons.frenchdatalibrary` and
+fincommons.marketpricedata`, `python -m fincommons.famafrenchdata` and
 `python -m fincommons.esef` take `--log-level`.
 
 ## Looking up what a column or a series is
@@ -298,7 +298,7 @@ The details, including the layout a proprietary source has to have, are
 documented in
 [`src/fincommons/exchangerate/README.md`](src/fincommons/exchangerate/README.md).
 
-### `fincommons.frenchdatalibrary`
+### `fincommons.famafrenchdata`
 
 The [Kenneth R. French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html):
 the factors of the Fama-French models, the returns of the portfolios they are
@@ -318,11 +318,11 @@ them every month; the module reads every one of them into one long table.
 | `TITLE` | the title of the table as published |
 
 ```python
-from fincommons import frenchdatalibrary as fdl
+from fincommons import famafrenchdata as ffd
 
-fdl.update_frenchdatalibrary(spark, "paths.yaml")     # the files that changed, to Silver
-df = fdl.connect_to_frenchdatalibrary(spark, "paths.yaml")
-fdl.series(df, "F-F_Research_Data_Factors", "FACTORS", "M")   # as published, wide
+ffd.update_famafrenchdata(spark, "paths.yaml")     # the files that changed, to Silver
+df = ffd.connect_to_famafrenchdata(spark, "paths.yaml")
+ffd.series(df, "F-F_Research_Data_Factors", "FACTORS", "M")   # as published, wide
 ```
 
 A file is downloaded only where the server says it has changed, and the table
@@ -331,7 +331,7 @@ downloaded when the pipeline runs and is not shipped with the package; it is
 copyright Eugene F. Fama and Kenneth R. French, and research that uses it
 cites the library. The details, the vocabulary of tables and a vignette that
 rebuilds HML and SMB from the six portfolios are documented in
-[`src/fincommons/frenchdatalibrary/README.md`](src/fincommons/frenchdatalibrary/README.md).
+[`src/fincommons/famafrenchdata/README.md`](src/fincommons/famafrenchdata/README.md).
 
 ### `fincommons.esef`
 

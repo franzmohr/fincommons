@@ -3,7 +3,7 @@
 The Silver layer reads every file of the Bronze layer into one long table and
 rebuilds it file by file, for the files whose collection has changed. The
 tests fill the Bronze layer with the small files in
-``tests/data/frenchdatalibrary`` and check what the table holds, which files
+``tests/data/famafrenchdata`` and check what the table holds, which files
 a run rebuilds, what happens to a file that cannot be read, and that the
 table is the one the reader in plain Python gives -- in parquet and in Delta.
 
@@ -28,10 +28,10 @@ import pandas
 import pytest
 import requests
 
-import fincommons.frenchdatalibrary as fdl
-from fincommons.frenchdatalibrary import bronze as fdl_bronze
+import fincommons.famafrenchdata as ffd
+from fincommons.famafrenchdata import bronze as ffd_bronze
 
-FIXTURES = Path(__file__).resolve().parent / "data" / "frenchdatalibrary"
+FIXTURES = Path(__file__).resolve().parent / "data" / "famafrenchdata"
 NAMES = ["F-F_Research_Data_Factors", "6_Portfolios_2x3", "ME_Breakpoints",
          "BE-ME_Breakpoints", "F-F_Research_Data_Factors_weekly",
          "F-F_Research_Data_Factors_daily", "F-F_Momentum_Factor"]
@@ -42,13 +42,13 @@ def data_lake(tmp_path):
     """A configuration file pointing at an empty data lake."""
     config_path = tmp_path / "paths.yaml"
     config_path.write_text(
-        "frenchdatalibrary:\n"
+        "famafrenchdata:\n"
         f"  bronze: {tmp_path / 'bronze'}\n"
         f"  silver: {tmp_path / 'silver'}\n",
         encoding="utf-8",
     )
     config_path = str(config_path)
-    fdl.create_directory_tree(config_path)
+    ffd.create_directory_tree(config_path)
     return config_path
 
 
@@ -60,10 +60,10 @@ def collect(config_path, name, text=None):
     """Put a file into the Bronze layer as a collection of it would."""
     text = fixture_text(name) if text is None else text
     now = datetime.datetime(2026, 10, 27, 15, 19)
-    fdl_bronze.write_dataset(config_path, name, fdl.split_lines(text),
+    ffd_bronze.write_dataset(config_path, name, ffd.split_lines(text),
                              "Tue, 27 Oct 2026 15:19:14 GMT", now)
-    fdl.write_json(
-        os.path.join(fdl.path_bronze_collections(config_path), f"{name}.json"),
+    ffd.write_json(
+        os.path.join(ffd.path_bronze_collections(config_path), f"{name}.json"),
         {"dataset": name, "url": f"ftp/{name}_CSV.zip", "etag": None,
          "last_modified": None, "lines": 0,
          "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
@@ -72,13 +72,13 @@ def collect(config_path, name, text=None):
 
 
 def table(spark, config_path):
-    frame = fdl.connect_to_frenchdatalibrary(spark, config_path).toPandas()
+    frame = ffd.connect_to_famafrenchdata(spark, config_path).toPandas()
     frame["REFDT"] = pandas.to_datetime(frame["REFDT"])
     return frame
 
 
 def expected(name):
-    frame = fdl.parse_lines(name, fdl.split_lines(fixture_text(name)))
+    frame = ffd.parse_lines(name, ffd.split_lines(fixture_text(name)))
     frame["DATASET"] = name
     return frame
 
@@ -101,7 +101,7 @@ def test_the_table_holds_what_the_reader_gives_for_every_file(spark, data_lake):
     for name in NAMES:
         collect(data_lake, name)
 
-    outcome = fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    outcome = ffd.update_silver_famafrenchdata(spark, data_lake)
 
     assert outcome["written"] == len(NAMES) and outcome["failed"] == 0
     frame = table(spark, data_lake)
@@ -115,12 +115,12 @@ def test_a_file_that_comes_back_in_many_chunks_is_written_whole(
     hundred portfolios returned as one frame is more than a gigabyte and
     exhausted the direct memory of the first collection into a real lake.
     Chunks of seven rows split every file of the fixtures many times over."""
-    from fincommons.frenchdatalibrary import silver
+    from fincommons.famafrenchdata import silver
     monkeypatch.setattr(silver, "CHUNK_ROWS", 7)
     for name in NAMES:
         collect(data_lake, name)
 
-    outcome = fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    outcome = ffd.update_silver_famafrenchdata(spark, data_lake)
 
     assert outcome["written"] == len(NAMES) and outcome["failed"] == 0
     same_rows(table(spark, data_lake), pandas.concat([expected(n) for n in NAMES]))
@@ -128,9 +128,9 @@ def test_a_file_that_comes_back_in_many_chunks_is_written_whole(
 
 def test_the_table_has_the_declared_columns_and_no_null(spark, data_lake):
     collect(data_lake, "6_Portfolios_2x3")
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
 
-    df = fdl.connect_to_frenchdatalibrary(spark, data_lake)
+    df = ffd.connect_to_famafrenchdata(spark, data_lake)
     types = dict(df.dtypes)
     assert types == {"REFDT": "date", "DATASET": "string", "TABLE": "string",
                      "FREQUENCY": "string", "SERIES": "string",
@@ -138,16 +138,16 @@ def test_the_table_has_the_declared_columns_and_no_null(spark, data_lake):
     for column in df.columns:
         assert df.filter(df[column].isNull()).count() == 0, column
     # Partitioned by the file.
-    assert os.path.isdir(os.path.join(fdl.path_silver_frenchdatalibrary(data_lake),
+    assert os.path.isdir(os.path.join(ffd.path_silver_famafrenchdata(data_lake),
                                       "DATASET=6_Portfolios_2x3"))
 
 
 def test_a_run_with_nothing_new_writes_nothing(spark, data_lake, caplog):
     collect(data_lake, "F-F_Research_Data_Factors")
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
 
     with caplog.at_level(logging.INFO, logger="fincommons"):
-        outcome = fdl.update_silver_frenchdatalibrary(spark, data_lake)
+        outcome = ffd.update_silver_famafrenchdata(spark, data_lake)
 
     assert outcome["written"] == 0
     assert any("nothing to do" in r.getMessage() for r in caplog.records)
@@ -156,11 +156,11 @@ def test_a_run_with_nothing_new_writes_nothing(spark, data_lake, caplog):
 def test_only_the_file_that_changed_is_rebuilt(spark, data_lake):
     for name in ["F-F_Research_Data_Factors", "ME_Breakpoints"]:
         collect(data_lake, name)
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
     text = fixture_text("ME_Breakpoints").replace("202409,", "202410,")
     collect(data_lake, "ME_Breakpoints", text)
 
-    outcome = fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    outcome = ffd.update_silver_famafrenchdata(spark, data_lake)
 
     assert outcome["written"] == 1
     frame = table(spark, data_lake)
@@ -174,9 +174,9 @@ def test_only_the_file_that_changed_is_rebuilt(spark, data_lake):
 def test_full_rebuilds_every_file(spark, data_lake):
     for name in ["F-F_Research_Data_Factors", "ME_Breakpoints"]:
         collect(data_lake, name)
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
 
-    outcome = fdl.update_silver_frenchdatalibrary(spark, data_lake, full=True)
+    outcome = ffd.update_silver_famafrenchdata(spark, data_lake, full=True)
 
     assert outcome["written"] == 2
     assert len(table(spark, data_lake)) == sum(len(expected(n)) for n in
@@ -188,15 +188,15 @@ def test_a_file_that_cannot_be_read_is_set_aside_and_keeps_its_partition(
         spark, data_lake, caplog):
     for name in ["F-F_Research_Data_Factors", "ME_Breakpoints"]:
         collect(data_lake, name)
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
-    mark = fdl.read_watermark(data_lake, "ME_Breakpoints")
+    ffd.update_silver_famafrenchdata(spark, data_lake)
+    mark = ffd.read_watermark(data_lake, "ME_Breakpoints")
     collect(data_lake, "ME_Breakpoints",
             fixture_text("ME_Breakpoints") + "202410, 1, 2, 3\n")
     collect(data_lake, "F-F_Research_Data_Factors",
             fixture_text("F-F_Research_Data_Factors").replace("0.40", "0.41"))
 
     with caplog.at_level(logging.INFO, logger="fincommons"):
-        outcome = fdl.update_silver_frenchdatalibrary(spark, data_lake)
+        outcome = ffd.update_silver_famafrenchdata(spark, data_lake)
 
     assert outcome["failed"] == 1
     assert outcome["failed_sources"] == ["silver/ME_Breakpoints"]
@@ -206,7 +206,7 @@ def test_a_file_that_cannot_be_read_is_set_aside_and_keeps_its_partition(
     assert set(frame[(frame.DATASET == "F-F_Research_Data_Factors")
                      & (frame.SERIES == "RF") & (frame.FREQUENCY == "M")].VALUE) == {0.41}
     # The mark stays where it was, so the next run tries the file again.
-    assert fdl.read_watermark(data_lake, "ME_Breakpoints") == mark
+    assert ffd.read_watermark(data_lake, "ME_Breakpoints") == mark
     error = next(r for r in caplog.records if r.levelno == logging.ERROR)
     assert error.ctx["source"] == "ME_Breakpoints"
     assert "percentiles" in error.ctx["error"]
@@ -217,7 +217,7 @@ def test_a_table_under_a_code_of_its_own_making_is_reported(spark, data_lake, ca
             "Preamble.\n\n  Median Dividend Yield -- Monthly\n,Lo,Hi\n202401, 1, 2\n")
 
     with caplog.at_level(logging.WARNING, logger="fincommons"):
-        fdl.update_silver_frenchdatalibrary(spark, data_lake)
+        ffd.update_silver_famafrenchdata(spark, data_lake)
 
     record = next(r for r in caplog.records
                   if "not in the vocabulary" in r.getMessage())
@@ -230,13 +230,13 @@ def test_the_table_is_rebuilt_a_partition_at_a_time_as_delta(spark, data_lake):
 
     for name in ["F-F_Research_Data_Factors", "ME_Breakpoints"]:
         collect(data_lake, name)
-    fdl.update_silver_frenchdatalibrary(spark, data_lake, file_format="delta")
+    ffd.update_silver_famafrenchdata(spark, data_lake, file_format="delta")
     collect(data_lake, "ME_Breakpoints",
             fixture_text("ME_Breakpoints").replace("202409,", "202410,"))
 
-    outcome = fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    outcome = ffd.update_silver_famafrenchdata(spark, data_lake)
 
-    path = fdl.path_silver_frenchdatalibrary(data_lake)
+    path = ffd.path_silver_famafrenchdata(data_lake)
     assert DeltaTable.isDeltaTable(spark, path)
     assert outcome["written"] == 1
     frame = table(spark, data_lake)
@@ -249,15 +249,15 @@ def test_the_table_is_rebuilt_a_partition_at_a_time_as_delta(spark, data_lake):
 def test_the_marks_need_a_path_beside_a_catalogue_name(tmp_path):
     config_path = tmp_path / "paths.yaml"
     config_path.write_text(
-        "frenchdatalibrary:\n"
+        "famafrenchdata:\n"
         f"  bronze: {tmp_path / 'bronze'}\n"
         "  silver:\n"
-        "    table: fincommons.frenchdatalibrary\n",
+        "    table: fincommons.famafrenchdata\n",
         encoding="utf-8",
     )
 
     with pytest.raises(ValueError, match="addressed by catalogue name alone"):
-        fdl.path_silver_watermarks(str(config_path))
+        ffd.path_silver_watermarks(str(config_path))
 
 
 # Reading the table
@@ -266,10 +266,10 @@ def test_the_marks_need_a_path_beside_a_catalogue_name(tmp_path):
 
 def test_a_table_of_a_file_is_turned_back_into_its_published_shape(spark, data_lake):
     collect(data_lake, "6_Portfolios_2x3")
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
-    df = fdl.connect_to_frenchdatalibrary(spark, data_lake)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
+    df = ffd.connect_to_famafrenchdata(spark, data_lake)
 
-    wide = fdl.series(df, "6_Portfolios_2x3", "RET_VW", "M",
+    wide = ffd.series(df, "6_Portfolios_2x3", "RET_VW", "M",
                       columns=["SMALL LoBM", "BIG HiBM"])
 
     assert list(wide.columns) == ["SMALL LoBM", "BIG HiBM"]
@@ -279,16 +279,16 @@ def test_a_table_of_a_file_is_turned_back_into_its_published_shape(spark, data_l
     assert wide.loc["2023-01-31", "SMALL LoBM"] == -1.3149
     # The same from rows already in pandas.
     pandas.testing.assert_frame_equal(
-        fdl.series(df.toPandas(), "6_Portfolios_2x3", "RET_VW", "M",
+        ffd.series(df.toPandas(), "6_Portfolios_2x3", "RET_VW", "M",
                    columns=["SMALL LoBM", "BIG HiBM"]), wide)
 
 
 def test_a_missing_value_is_a_gap_in_the_wide_frame(spark, data_lake):
     collect(data_lake, "6_Portfolios_2x3")
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
-    df = fdl.connect_to_frenchdatalibrary(spark, data_lake)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
+    df = ffd.connect_to_famafrenchdata(spark, data_lake)
 
-    wide = fdl.series(df, "6_Portfolios_2x3", "RET_EW", "M")
+    wide = ffd.series(df, "6_Portfolios_2x3", "RET_EW", "M")
 
     assert wide.isna().sum().sum() == 1
     assert list(wide.columns) == sorted(wide.columns)
@@ -296,13 +296,13 @@ def test_a_missing_value_is_a_gap_in_the_wide_frame(spark, data_lake):
 
 def test_a_misspelt_name_is_an_error_rather_than_an_empty_frame(spark, data_lake):
     collect(data_lake, "6_Portfolios_2x3")
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
-    df = fdl.connect_to_frenchdatalibrary(spark, data_lake)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
+    df = ffd.connect_to_famafrenchdata(spark, data_lake)
 
     with pytest.raises(LookupError, match="no row"):
-        fdl.series(df, "6_Portfolios_2x3", "RET_VW", "Q")
+        ffd.series(df, "6_Portfolios_2x3", "RET_VW", "Q")
     with pytest.raises(LookupError, match="no series"):
-        fdl.series(df.toPandas(), "6_Portfolios_2x3", "RET_VW", "M",
+        ffd.series(df.toPandas(), "6_Portfolios_2x3", "RET_VW", "M",
                    columns=["SMALL LoBM", "MEDIUM"])
 
 
@@ -353,19 +353,19 @@ def library(monkeypatch):
 
 
 def test_the_pipeline_runs_from_the_page_to_the_table(spark, data_lake, library):
-    outcome = fdl.update_frenchdatalibrary(spark, data_lake)
+    outcome = ffd.update_famafrenchdata(spark, data_lake)
 
     assert outcome["failed"] == 0
     frame = table(spark, data_lake)
     assert set(frame.DATASET) == set(library)
 
     # A second run finds the files unchanged and writes nothing.
-    again = fdl.update_silver_frenchdatalibrary(spark, data_lake)
+    again = ffd.update_silver_famafrenchdata(spark, data_lake)
     assert again["written"] == 0
 
 
 def test_the_command_fails_where_a_file_was_set_aside(monkeypatch):
-    import fincommons.frenchdatalibrary.__main__ as cli
+    import fincommons.famafrenchdata.__main__ as cli
 
     class Session:
         def stop(self):
@@ -375,9 +375,9 @@ def test_the_command_fails_where_a_file_was_set_aside(monkeypatch):
     monkeypatch.setattr(cli, "build_session",
                         lambda master, driver_memory=None: Session())
     monkeypatch.setattr(cli, "configure", lambda level: None)
-    monkeypatch.setattr(cli, "update_frenchdatalibrary",
+    monkeypatch.setattr(cli, "update_famafrenchdata",
                         lambda spark, config, full, datasets: outcome)
-    monkeypatch.setattr(sys, "argv", ["fincommons.frenchdatalibrary",
+    monkeypatch.setattr(sys, "argv", ["fincommons.famafrenchdata",
                                       "--config", "paths.yaml"])
 
     assert cli.main() == 1
@@ -394,8 +394,8 @@ def rebuilt_factors(df, frequency="M"):
 
     The code of the vignette in the README and the handbook.
     """
-    portfolios = fdl.series(df, "6_Portfolios_2x3", "RET_VW", frequency)
-    factors = fdl.series(df, "F-F_Research_Data_Factors", "FACTORS", frequency)
+    portfolios = ffd.series(df, "6_Portfolios_2x3", "RET_VW", frequency)
+    factors = ffd.series(df, "F-F_Research_Data_Factors", "FACTORS", frequency)
 
     hml = (portfolios["SMALL HiBM"] + portfolios["BIG HiBM"]) / 2 \
         - (portfolios["SMALL LoBM"] + portfolios["BIG LoBM"]) / 2
@@ -421,8 +421,8 @@ def assert_the_factors_are_reproduced(comparison, periods):
 def test_the_published_factors_are_rebuilt_from_the_six_portfolios(spark, data_lake):
     for name in ["F-F_Research_Data_Factors", "6_Portfolios_2x3"]:
         collect(data_lake, name)
-    fdl.update_silver_frenchdatalibrary(spark, data_lake)
-    df = fdl.connect_to_frenchdatalibrary(spark, data_lake)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
+    df = ffd.connect_to_famafrenchdata(spark, data_lake)
 
     assert_the_factors_are_reproduced(rebuilt_factors(df, "M"), 24)
     assert_the_factors_are_reproduced(rebuilt_factors(df, "A"), 2)
@@ -431,10 +431,10 @@ def test_the_published_factors_are_rebuilt_from_the_six_portfolios(spark, data_l
 @pytest.mark.skipif(os.environ.get("FINCOMMONS_NETWORK") != "1",
                     reason="reaches the French Data Library; set FINCOMMONS_NETWORK=1")
 def test_the_published_factors_are_rebuilt_from_the_library_itself(spark, data_lake):
-    outcome = fdl.update_frenchdatalibrary(
+    outcome = ffd.update_famafrenchdata(
         spark, data_lake, datasets=["F-F_Research_Data_Factors", "6_Portfolios_2x3"])
     assert outcome["failed"] == 0
-    df = fdl.connect_to_frenchdatalibrary(spark, data_lake)
+    df = ffd.connect_to_famafrenchdata(spark, data_lake)
 
     comparison = rebuilt_factors(df, "M")
 
@@ -447,7 +447,7 @@ def test_a_batch_is_bounded_by_its_lines_as_well_as_its_files():
     """Fifty daily files of a hundred portfolios in one batch ran the session
     out of heap, so a batch closes before the next file takes it over its
     budget of lines, and a file larger than the budget is a batch alone."""
-    from fincommons.frenchdatalibrary import silver
+    from fincommons.famafrenchdata import silver
     pending = {"a": {"lines": 40}, "b": {"lines": 40}, "c": {"lines": 150},
                "d": {"lines": 10}, "e": {}, "f": {"lines": 10}}
 

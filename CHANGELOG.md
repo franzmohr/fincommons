@@ -12,6 +12,17 @@ release may change the public API, which `tests/test_public_api.py` lists.
   Quarto, with voestalpine AG as its example:
   `src/fincommons/esef/factsheet/esef-analyst-factsheet.qmd`.
 
+### Changed
+
+- `frenchdatalibrary` is renamed `famafrenchdata`, after the name the data
+  is known by. Its functions follow: `update_famafrenchdata`,
+  `connect_to_famafrenchdata`, `update_bronze_famafrenchdata`,
+  `update_silver_famafrenchdata` and `path_silver_famafrenchdata`, and
+  `python -m fincommons.famafrenchdata` runs the job. The section of the
+  configuration file is `famafrenchdata`, and so is the Silver table: a data
+  lake built under the old name renames the section and moves the table, or
+  builds it again with `full=True`.
+
 ## 0.2.0
 
 Two modules are new, `esef` and `frenchdatalibrary`, and `entitymasterdata`

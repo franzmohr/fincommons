@@ -1,10 +1,10 @@
-\chapter{The Kenneth R. French Data Library}\label{ch:frenchdatalibrary}
+\chapter{The Kenneth R. French Data Library}\label{ch:famafrenchdata}
 
 \section{Introduction}
 
 Much of empirical asset pricing rests on one public collection of files. The Kenneth R.\ French Data Library \parencite{French.2026} publishes the factors of the three- and five-factor models of \textcite{Fama.1993} and \textcite{Fama.2015}, the momentum and reversal factors, the returns of the portfolios those factors are built from -- sorted on size, book-to-market, operating profitability, investment, prior returns, industries and further characteristics -- and the NYSE breakpoints of the sorts. The US files reach back to 1926 and are built from CRSP and Compustat; the international files, for the developed and emerging regions, reach back to 1990 and are built from Bloomberg. A supervisor that assesses the market risk of a portfolio, a central bank that studies the pricing of risk, and a firm that attributes the performance of its funds all start from the same files.
 
-Every institution that uses them downloads them, opens a zipped CSV file that is written for a person rather than for a program, and writes a reader for the file it happens to need. The library offers some three hundred such files, about 150\,MB zipped and close to a hundred million values, and Kenneth French rebuilds all of them once a month as CRSP is updated, so a reader written for one file has to be kept working for that file every month. Module \emph{frenchdatalibrary} of the \emph{fincommons} package reads every file of the library into one table, in one shape, and keeps it up to date.
+Every institution that uses them downloads them, opens a zipped CSV file that is written for a person rather than for a program, and writes a reader for the file it happens to need. The library offers some three hundred such files, about 150\,MB zipped and close to a hundred million values, and Kenneth French rebuilds all of them once a month as CRSP is updated, so a reader written for one file has to be kept working for that file every month. Module \emph{famafrenchdata} of the \emph{fincommons} package reads every file of the library into one table, in one shape, and keeps it up to date.
 
 The files are downloaded from the library when the pipeline runs and are never shipped with the package, which holds only the code that collects them and a few synthetic files in its tests. They are copyright Eugene F.\ Fama and Kenneth R.\ French, and the library's page states no licence: research that uses them cites the library and the papers the factors come from, and any other use is a question for the authors rather than one the package could settle.
 
@@ -40,7 +40,7 @@ A file of the library is read for its shape rather than from a description of ea
 
 The reader was run over all 297 files of the 202609 edition before it was released, and it reads 86{,}029{,}613 values from them. The run turned up the irregularities that a description of the layout does not show and that the reader now handles: a title written over two lines, a carriage return alone at the start of a header row -- so a line ends at a line feed and nowhere else --, a blank line between a header and its first row, and a misspelt title. A row with more values than its header has columns, or a value that is not a number, fails the file rather than putting values under the wrong series.
 
-The titles are prose and vary from one file to the next: \emph{Average Firm Size} here, \emph{Average Market Cap} there, \emph{Value Weight Returns -- Annual from January to December} beside \emph{Average Value Weighted Returns -- Annual}. The 57 distinct titles of the 202609 edition are mapped onto the codes of table \ref{tab:frenchdatalibrary-codes}. The frequency is not part of a code, since it has a column of its own, and neither is the treatment of dividends, which the library publishes as files of their own.
+The titles are prose and vary from one file to the next: \emph{Average Firm Size} here, \emph{Average Market Cap} there, \emph{Value Weight Returns -- Annual from January to December} beside \emph{Average Value Weighted Returns -- Annual}. The 57 distinct titles of the 202609 edition are mapped onto the codes of table \ref{tab:famafrenchdata-codes}. The frequency is not part of a code, since it has a column of its own, and neither is the treatment of dividends, which the library publishes as files of their own.
 
 \begin{table}[h!]
 	\centering
@@ -63,7 +63,7 @@ The titles are prose and vary from one file to the next: \emph{Average Firm Size
 		\verb|PRIOR_VW|, \verb|PRIOR_EW| & value- and equal-weighted average of the prior return the portfolios are formed on \\
 		\hline
 	\end{tabular}
-	\caption{The codes the tables of the library are filed under.\label{tab:frenchdatalibrary-codes}}
+	\caption{The codes the tables of the library are filed under.\label{tab:famafrenchdata-codes}}
 \end{table}
 
 Two cases fall outside the vocabulary, and in neither is a table lost. A title that no rule matches is filed under a code made from the title itself, and a warning names it, so that a table the library adds appears under a name that says what it is until a rule is written for it, rather than going missing or appearing under a code that says something it is not. Two tables of one file that land on the same code are numbered rather than merged, again with a warning. This happens once in the 202609 edition, where the weekly file of the six portfolios on size and book-to-market gives its first two tables the same title, \emph{Average Value Weighted Returns -- Weekly}. The daily file of the same portfolios holds value- and then equal-weighted returns, but the weekly file does not say which the second table is, and the module does not guess.
@@ -80,19 +80,19 @@ and SMB, small minus big, as the average return of the three small portfolios mi
 $$SMB = \frac{1}{3}\left(\textit{Small Low} + \textit{Small Neutral} + \textit{Small High}\right) - \frac{1}{3}\left(\textit{Big Low} + \textit{Big Neutral} + \textit{Big High}\right).$$
 
 \begin{verbatim}
-from fincommons.frenchdatalibrary.__main__ import build_session
-from fincommons import frenchdatalibrary as fdl
+from fincommons.famafrenchdata.__main__ import build_session
+from fincommons import famafrenchdata as ffd
 
 spark = build_session("local[*]")
 config_path = "paths.yaml"
 
-fdl.update_frenchdatalibrary(
+ffd.update_famafrenchdata(
     spark, config_path,
     datasets=["F-F_Research_Data_Factors", "6_Portfolios_2x3"])
-df = fdl.connect_to_frenchdatalibrary(spark, config_path)
+df = ffd.connect_to_famafrenchdata(spark, config_path)
 
-p = fdl.series(df, "6_Portfolios_2x3", "RET_VW", "M")
-factors = fdl.series(df, "F-F_Research_Data_Factors", "FACTORS", "M")
+p = ffd.series(df, "6_Portfolios_2x3", "RET_VW", "M")
+factors = ffd.series(df, "F-F_Research_Data_Factors", "FACTORS", "M")
 
 hml = (p["SMALL HiBM"] + p["BIG HiBM"]) / 2 \
     - (p["SMALL LoBM"] + p["BIG LoBM"]) / 2
@@ -109,11 +109,11 @@ It is worth being precise about what this shows. It shows that the published fil
 
 \section{Software architecture}
 
-Module \emph{frenchdatalibrary} is organised along the layers of the pipeline. The part \emph{common} declares the layout of the data lake and the schemas of the two layers and opens the table; \emph{bronze} reads the library's page and collects the files that have changed; \emph{parse} reads the tables of one file into long records, in plain Python and without Spark, so that it can be run over a downloaded file on its own and so that the Silver layer runs the very same code on its executors; \emph{silver} runs it over the Bronze layer and replaces the partitions of the files that changed, and offers \verb|series|; and \emph{pipeline} runs the whole in one call, \verb|update_frenchdatalibrary|. The partition-wise write is not specific to the library and lives with the other writes of Silver tables, in the package's storage module.
+Module \emph{famafrenchdata} is organised along the layers of the pipeline. The part \emph{common} declares the layout of the data lake and the schemas of the two layers and opens the table; \emph{bronze} reads the library's page and collects the files that have changed; \emph{parse} reads the tables of one file into long records, in plain Python and without Spark, so that it can be run over a downloaded file on its own and so that the Silver layer runs the very same code on its executors; \emph{silver} runs it over the Bronze layer and replaces the partitions of the files that changed, and offers \verb|series|; and \emph{pipeline} runs the whole in one call, \verb|update_famafrenchdata|. The partition-wise write is not specific to the library and lives with the other writes of Silver tables, in the package's storage module.
 
 A scheduled run calls the module from the command line,
 \begin{quote}
-\verb|python -m fincommons.frenchdatalibrary --config paths.yaml --log-level INFO|
+\verb|python -m fincommons.famafrenchdata --config paths.yaml --log-level INFO|
 \end{quote}
 which takes no argument saying what to collect, since what has changed is read from the server and from what the lake already holds.
 
@@ -180,7 +180,7 @@ which takes no argument saying what to collect, since what has changed is read f
 				before computing xy={l=15pt},
 			}
 			[silver
-				[frenchdatalibrary
+				[famafrenchdata
 					[{DATASET=...}]
 				]
 				[\_watermarks
@@ -191,7 +191,7 @@ which takes no argument saying what to collect, since what has changed is read f
 		\end{forest}
 		\caption{Silver layer.}
 	\end{subfigure}
-	\caption{Directory structures for the French Data Library. \emph{files} and \emph{frenchdatalibrary} are the directories of tables partitioned by the name of the file, not single files.\label{fig:dirstruct_frenchdatalibrary}}
+	\caption{Directory structures for the French Data Library. \emph{files} and \emph{famafrenchdata} are the directories of tables partitioned by the name of the file, not single files.\label{fig:dirstruct_famafrenchdata}}
 \end{figure}
 
 Further documentation of the module, including the full vocabulary of tables with the titles they are mapped from, can be found in its README file.

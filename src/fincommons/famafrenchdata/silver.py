@@ -4,7 +4,7 @@ Every file of the Bronze layer is read into the same seven columns -- the
 reference date, the file, a code for the table within it, the frequency, the
 series, the value and the title of the table -- so that a factor, the return
 of a portfolio and a breakpoint are all found the same way. How a file is read
-is :mod:`fincommons.frenchdatalibrary.parse`; this module runs it over the
+is :mod:`fincommons.famafrenchdata.parse`; this module runs it over the
 Bronze layer and writes the result.
 
 **The table is rebuilt file by file, and only for the files that changed.**
@@ -176,7 +176,7 @@ def batches(pending, size=None, lines=None):
         yield batch
 
 
-def update_silver_frenchdatalibrary(spark, config_path, full=False,
+def update_silver_famafrenchdata(spark, config_path, full=False,
                                     file_format=None, datasets=None):
     """Rebuild the partitions of the files whose collection has changed.
 
@@ -205,11 +205,11 @@ def update_silver_frenchdatalibrary(spark, config_path, full=False,
         files that failed and ``failed_sources`` names them as
         ``silver/<name>``.
     """
-    file_format = silver_format(ref_silver_frenchdatalibrary(config_path), file_format)
+    file_format = silver_format(ref_silver_famafrenchdata(config_path), file_format)
     with pipeline_run(
         logger,
-        "update_silver_frenchdatalibrary",
-        module="frenchdatalibrary",
+        "update_silver_famafrenchdata",
+        module="famafrenchdata",
         layer="silver",
         config_path=config_path,
         file_format=file_format,
@@ -219,7 +219,7 @@ def update_silver_frenchdatalibrary(spark, config_path, full=False,
         if not pending:
             logger.info(
                 "No file has changed since the table was built, nothing to do",
-                extra=context(module="frenchdatalibrary", layer="silver"),
+                extra=context(module="famafrenchdata", layer="silver"),
             )
             return outcome
 
@@ -229,7 +229,7 @@ def update_silver_frenchdatalibrary(spark, config_path, full=False,
         if outcome["failed"]:
             logger.warning(
                 "Files were set aside, the run did not update them",
-                extra=context(module="frenchdatalibrary", layer="silver",
+                extra=context(module="famafrenchdata", layer="silver",
                               failed=outcome["failed"],
                               sources=",".join(outcome["failed_sources"])),
             )
@@ -284,11 +284,11 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
             logger.error(
                 "A file could not be read into the table and was set aside; "
                 "its partition is left as it was",
-                extra=context(module="frenchdatalibrary", layer="silver",
+                extra=context(module="famafrenchdata", layer="silver",
                               source=dataset, error=error.strip().splitlines()[-1]),
             )
             logger.debug("The error of the file", extra=context(
-                module="frenchdatalibrary", layer="silver", source=dataset,
+                module="famafrenchdata", layer="silver", source=dataset,
                 traceback=error))
             outcome["failed"] += 1
             outcome["failed_sources"].append(f"silver/{dataset}")
@@ -302,7 +302,7 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
         _report_unknown_tables(result)
 
         replace_silver_partitions(
-            result, ref_silver_frenchdatalibrary(config_path), "DATASET", good,
+            result, ref_silver_famafrenchdata(config_path), "DATASET", good,
             file_format=file_format,
         )
         for dataset in good:
@@ -312,7 +312,7 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
         outcome["rows"] += rows
         logger.info(
             "Replaced the partitions of a batch of files",
-            extra=context(module="frenchdatalibrary", layer="silver",
+            extra=context(module="famafrenchdata", layer="silver",
                           files=len(good), rows=rows),
         )
     finally:
@@ -331,7 +331,7 @@ def _report_unknown_tables(result):
     for row in unknown:
         logger.warning(
             "A table is filed under a code that is not in the vocabulary",
-            extra=context(module="frenchdatalibrary", layer="silver",
+            extra=context(module="famafrenchdata", layer="silver",
                           source=row["DATASET"], table=row["TABLE"],
                           title=row["TITLE"]),
         )
@@ -348,14 +348,14 @@ def series(data, dataset, table, frequency, columns=None):
     Parameters
     ----------
     data: pyspark.sql.DataFrame or pandas.DataFrame
-        The table of the library, as :func:`connect_to_frenchdatalibrary`
+        The table of the library, as :func:`connect_to_famafrenchdata`
         opens it, or rows of it already in pandas. A Spark frame is filtered
         before anything is collected, so only the rows asked for leave Spark.
     dataset: str
         The file, ``"F-F_Research_Data_Factors"``.
     table: str
         The code of the table, ``"FACTORS"``; see
-        :data:`fincommons.frenchdatalibrary.parse.TABLE_CODES`.
+        :data:`fincommons.famafrenchdata.parse.TABLE_CODES`.
     frequency: str
         ``"D"``, ``"W"``, ``"M"`` or ``"A"``.
     columns: list of str, optional
@@ -418,5 +418,5 @@ __all__ = [
     "batches",
     "pending_datasets",
     "series",
-    "update_silver_frenchdatalibrary",
+    "update_silver_famafrenchdata",
 ]
