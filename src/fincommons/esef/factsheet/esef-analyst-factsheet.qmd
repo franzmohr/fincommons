@@ -352,6 +352,18 @@ knitr::kable(temp, col.names = c(amount_label, names(temp)[-1]),
 ### Ratios
 
 ```{r, echo=FALSE, message=FALSE}
+# The page shows numbers and the texts of the filing, and no prose of its
+# own, so what a reader of the template needs to know about a figure is said
+# in the comments of its chunk.
+#
+# The ratios are computed from the figures above and are not the issuer's own
+# key performance indicators, which a report states in its management report
+# and often defines differently. The return on equity and the interest margin
+# put the flow of a year against the average of the balances at its start
+# and its end. Operating income is derived as the operating result plus
+# general administrative expenses, which is how RBI presents it; another
+# issuer may present its income statement in another order, and the
+# derivation in the first chunk is then the one to change.
 rows <- tribble(
   ~key,                  ~en,                                   ~de,                                 ~digits,
   "equity_ratio",        "Equity to total assets, %",           "Eigenkapital zu Bilanzsumme, %",     1,
@@ -382,15 +394,6 @@ temp <- temp %>%
 knitr::kable(temp, col.names = c("", names(temp)[-1]),
              align = paste0("l", strrep("r", ncol(temp) - 1)))
 ```
-
-The ratios are computed from the figures above and are not the issuer's own
-key performance indicators, which a report states in its management report
-and often defines differently. The return on equity and the interest margin
-put the flow of a year against the average of the balances at its start and
-its end. Operating income is derived as the operating result plus general
-administrative expenses, which is how RBI presents it; another issuer may
-present its income statement in another order, and the derivation in the
-first chunk is then the one to change.
 
 ## Balance sheet
 
@@ -602,14 +605,21 @@ ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
 
 ## Checks on the data
 
-The figures are the issuer's tags, as filed, and a tag can be wrong while the
-report a reader sees is right: the scale of a number is an attribute of the
-tag, invisible on the page. The checks below put figures of the same report
-against one another. A balance sheet that does not balance, or earnings per
-share that the profit and the number of shares do not give back, point at
-a tag to look at in the report before the figure is used.
-
 ```{r, echo=FALSE, message=FALSE}
+# The figures are the issuer's tags, as filed, and a tag can be wrong while
+# the report a reader sees is right: the scale of a number is an attribute of
+# the tag, invisible on the page. The checks put figures of the same report
+# against one another. A balance sheet that does not balance, or earnings per
+# share that the profit and the number of shares do not give back, point at
+# a tag to look at in the report before the figure is used.
+#
+# Profit to owners per share is the profit attributable to the owners of the
+# parent divided by the weighted average number of shares. It comes out
+# higher than earnings per share wherever coupons on additional tier 1
+# capital are deducted from the profit before earnings per share are
+# computed, as RBI does; a difference of a factor of a thousand is a tag with
+# the wrong scale.
+#
 # The flag is set before the figures are formatted, since it compares them.
 # It is meant for a tag with the wrong scale, which is off by a factor of a
 # thousand, and not for the coupons on additional tier 1 capital, which put
@@ -652,12 +662,6 @@ if (lang == "de") {
 
 knitr::kable(temp, col.names = col_names, align = "lrrrrrrl")
 ```
-
-Profit to owners per share is the profit attributable to the owners of the
-parent divided by the weighted average number of shares, and it comes out
-higher than earnings per share wherever coupons on additional tier 1 capital
-are deducted from the profit before earnings per share are computed, as RBI
-does. A difference of a factor of a thousand is a tag with the wrong scale.
 
 ## The filings
 
