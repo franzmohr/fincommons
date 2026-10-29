@@ -4,6 +4,14 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
+## Unreleased
+
+### New
+
+- `esef`: a template for an analyst factsheet on one issuer, in R and
+  Quarto, with Raiffeisen Bank International AG as its example:
+  `src/fincommons/esef/factsheet/esef-analyst-factsheet.qmd`.
+
 ## 0.2.0
 
 Two modules are new, `esef` and `frenchdatalibrary`, and `entitymasterdata`

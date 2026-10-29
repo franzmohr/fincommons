@@ -1,0 +1,684 @@
+---
+title: "Analyst Factsheet"
+format:
+  html:
+    self-contained: true
+brand:
+  color:
+    palette:
+      white: "#ffffff"
+      black: "#000000"
+      orange: "#EC6600"
+    background: white
+
+  typography:
+    fonts:
+      - family: Source Sans Pro
+        source: google
+    base:
+      family: Source Sans Pro
+    headings:
+      family: Source Sans Pro
+      color: orange
+toc: true
+toc-depth: 4
+execute:
+  error: true
+---
+
+```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+# The path to the config file, whose esef section names the Silver layer of
+# the module. A chunk runs with the directory of this template as its working
+# directory, which is inside the installed package, so the path is taken from
+# the environment variable FINCOMMONS_CONFIG where it is set and is otherwise
+# a paths.yaml beside the template.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# The issuer, by its LEI. This is Raiffeisen Bank International AG; any other
+# issuer whose country the esef pipeline has collected can be put here.
+lei <- "9ZHRYM6F437SQJ6OUG95"
+
+# The number of financial years shown, counted back from the latest filing.
+n_years <- 6
+
+# Amounts are shown in millions of the currency of the report.
+scale <- 1e6
+
+# You can change the language of the figures here, but they must be
+# implemented for each figure separately by you. The language also picks the
+# filing: an issuer that files its report in English and in German has two
+# filings per year with the same figures, and the texts are taken from the
+# one in the language of the factsheet where there is one.
+lang <- "en"
+
+# The month names in the captions come from the system locale rather than
+# from the language set above, so the locale for dates is set from lang.
+invisible(Sys.setlocale("LC_TIME", if (lang == "de") "German" else "C"))
+
+# The concepts the factsheet is built from. Only concepts of the IFRS
+# taxonomy are used. An issuer may tag a line of its statements with a
+# concept of its own instead, and RBI does so for its operating income, its
+# trading result and its provisioning, but an extension concept is the
+# issuer's to name and rename: RBI's net provisioning is tagged under three
+# different names across six years, one of them in German. A figure that is
+# not in the taxonomy is derived from those that are, in the next chunk, or
+# left out. The key is what the code below refers to, so a concept can be
+# swapped for another issuer's presentation without touching the figures.
+concepts <- c(
+  assets = "ifrs-full:Assets",
+  cash = "ifrs-full:CashAndCashEquivalents",
+  assets_ac = "ifrs-full:FinancialAssetsAtAmortisedCost",
+  liabilities_ac = "ifrs-full:FinancialLiabilitiesAtAmortisedCost",
+  equity = "ifrs-full:Equity",
+  equity_owners = "ifrs-full:EquityAttributableToOwnersOfParent",
+  equity_and_liabilities = "ifrs-full:EquityAndLiabilities",
+  provisions = "ifrs-full:Provisions",
+  nii = "ifrs-full:InterestRevenueExpense",
+  net_fees = "ifrs-full:FeeAndCommissionIncomeExpense",
+  admin_expense = "ifrs-full:GeneralAndAdministrativeExpense",
+  staff_expense = "ifrs-full:EmployeeBenefitsExpense",
+  depreciation = "ifrs-full:DepreciationAndAmortisationExpense",
+  impairment = "ifrs-full:ImpairmentLossImpairmentGainAndReversalOfImpairmentLossDeterminedInAccordanceWithIFRS9",
+  operating_result = "ifrs-full:ProfitLossFromOperatingActivities",
+  profit_before_tax = "ifrs-full:ProfitLossBeforeTax",
+  income_tax = "ifrs-full:IncomeTaxExpenseContinuingOperations",
+  profit = "ifrs-full:ProfitLoss",
+  profit_owners = "ifrs-full:ProfitLossAttributableToOwnersOfParent",
+  eps = "ifrs-full:BasicEarningsLossPerShare",
+  dps = "ifrs-full:DividendsProposedOrDeclaredBeforeFinancialStatementsAuthorisedForIssueButNotRecognisedAsDistributionToOwnersPerShare",
+  shares = "ifrs-full:WeightedAverageShares",
+  operating_cash_flow = "ifrs-full:CashFlowsFromUsedInOperatingActivities"
+)
+
+# The texts of the report shown in the profile of the issuer.
+text_concepts <- c(
+  name = "ifrs-full:NameOfReportingEntityOrOtherMeansOfIdentification",
+  legal_form = "ifrs-full:LegalFormOfEntity",
+  domicile = "ifrs-full:DomicileOfEntity",
+  address = "ifrs-full:AddressOfRegisteredOfficeOfEntity",
+  parent = "ifrs-full:NameOfUltimateParentOfGroup",
+  activities = "ifrs-full:DescriptionOfNatureOfEntitysOperationsAndPrincipalActivities"
+)
+
+# You can adapt your corporate design in the sourced R-Skript
+library(ggplot2)
+source("r-corporate-design-functions-ggplot2.R")
+
+# Format of the labels on the x-axis of a time series plot
+time_series_labels_x_axis <- "%Y"
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+yaml_paths <- read_yaml(config_path)
+path_silver <- yaml_paths[["esef"]][["silver"]]
+
+# The Silver layer may name a schema in a catalogue rather than a directory,
+# with the directory the tables are written to beside it. R reads files, so
+# it takes the directory.
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+
+# arrow reads every parquet file under a directory. A Delta table keeps the
+# files it has replaced until it is vacuumed, and the table of facts replaces
+# a country's partition on every run that finds new reports, so a Delta table
+# read this way counts a fact once for every time it was written. The
+# factsheet therefore refuses one rather than show those sums.
+for (table in c("filings", "facts")) {
+  if (dir.exists(file.path(path_silver, table, "_delta_log"))) {
+    stop("The ", table, " table of the esef module is a Delta table, which ",
+         "this template does not read. Write the Silver layer as parquet, ",
+         "or read the table through Spark.")
+  }
+}
+
+filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
+  filter(LEI == lei) %>%
+  collect()
+
+if (nrow(filings_all) == 0) {
+  stop("The table of filings lists no filing of ", lei, ". The table lists ",
+       "every country, so the LEI is likely wrong.")
+}
+
+# One filing per financial year. A report filed in two languages, or filed
+# again with corrections, is a filing of its own with facts of its own, and
+# the figures of the year are taken from one of them: the one in the
+# language of the factsheet, then the one with fewer validation errors, then
+# the one the repository processed last. A filing without a JSONURL has no
+# facts and is never chosen while another one is there.
+filings <- filings_all %>%
+  arrange(PERIODEND,
+          is.na(JSONURL),
+          coalesce(LANG, "") != lang,
+          coalesce(ERRORS, 0L),
+          desc(PROCESSED)) %>%
+  group_by(PERIODEND) %>%
+  slice(1) %>%
+  ungroup() %>%
+  filter(!is.na(JSONURL)) %>%
+  arrange(PERIODEND) %>%
+  slice_tail(n = n_years + 1)
+
+if (nrow(filings) == 0) {
+  stop("No filing of ", lei, " has facts in the Silver layer. Run the esef ",
+       "pipeline for the issuer's country first.")
+}
+
+latest <- filings %>% slice_tail(n = 1)
+issuer_name <- latest$NAME
+
+facts <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(LEI == lei, FILING %in% filings$FILING) %>%
+  collect()
+
+# The figures of a year are the totals the year's own filing reports for the
+# year: no dimensions, a period that ends on the period end of the filing,
+# and, for a flow, a period that begins a year before it. The comparative
+# figures of the previous year that every filing carries as well are left
+# aside, so that a restated figure does not stand beside the one first
+# reported without saying so. The same fact may be tagged more than once in
+# a report, in the statements and again in the notes, with the same value.
+figures <- facts %>%
+  filter(is.na(DIMENSIONS), !is.na(VALUE), PRDEND == PERIODEND,
+         is.na(PRDSTART) | PRDSTART == PERIODEND - 364 |
+           PRDSTART == PERIODEND - 365) %>%
+  distinct(PERIODEND, CONCEPT, UNIT, VALUE) %>%
+  group_by(PERIODEND, CONCEPT) %>%
+  slice(1) %>%
+  ungroup()
+
+currency <- figures %>%
+  filter(CONCEPT == concepts[["assets"]]) %>%
+  slice_tail(n = 1) %>%
+  pull("UNIT") %>%
+  sub("^iso4217:", "", x = .)
+if (length(currency) == 0) currency <- ""
+
+# One row per year, one column per key of the concepts above. A concept the
+# issuer did not tag stays a column of missing values, so that the figures
+# below show a gap rather than fail.
+wide <- figures %>%
+  inner_join(tibble(key = names(concepts), CONCEPT = unname(concepts)),
+             by = "CONCEPT") %>%
+  select(PERIODEND, key, VALUE) %>%
+  pivot_wider(names_from = "key", values_from = "VALUE") %>%
+  arrange(PERIODEND)
+for (key in setdiff(names(concepts), names(wide))) wide[[key]] <- NA_real_
+
+# The figures a bank's statements do not carry under a concept of the
+# taxonomy. Operating income is what RBI presents as the sum of its income
+# lines, before general administrative expenses and before impairments; the
+# operating result is tagged and so are the expenses, which gives it back.
+# The rest of the operating income beyond interest and fees is trading,
+# hedging, other operating income and the like, which RBI tags with
+# extension concepts only.
+wide <- wide %>%
+  mutate(year = as.integer(format(PERIODEND, "%Y")),
+         operating_income = operating_result + admin_expense,
+         other_income = operating_income - nii - coalesce(net_fees, 0),
+         other_expense = admin_expense - coalesce(staff_expense, 0) -
+           coalesce(depreciation, 0),
+         assets_other = assets - coalesce(cash, 0) - coalesce(assets_ac, 0),
+         liabilities_other = equity_and_liabilities -
+           coalesce(liabilities_ac, 0) - coalesce(equity, 0),
+         # The ratios. The return on equity and the interest margin put a
+         # flow against the average of two balances, which the first year
+         # shown takes from the year before it; that year is read for this
+         # and then dropped.
+         equity_ratio = equity / assets * 100,
+         roe = profit_owners / ((equity_owners + lag(equity_owners)) / 2) * 100,
+         cost_income = admin_expense / operating_income * 100,
+         cost_of_risk = impairment / ((assets_ac + lag(assets_ac)) / 2) * 100,
+         net_interest_margin = nii / ((assets + lag(assets)) / 2) * 100,
+         tax_rate = income_tax / profit_before_tax * 100,
+         payout = dps / eps * 100,
+         implied_eps = profit_owners / shares)
+
+if (nrow(wide) > n_years) wide <- wide %>% slice_tail(n = n_years)
+
+max_date <- max(wide$PERIODEND)
+
+texts <- facts %>%
+  filter(FILING == latest$FILING, !is.na(TEXT), is.na(DIMENSIONS)) %>%
+  inner_join(tibble(key = names(text_concepts),
+                    CONCEPT = unname(text_concepts)), by = "CONCEPT") %>%
+  arrange(key, coalesce(LANG, "") != lang) %>%
+  group_by(key) %>%
+  slice(1) %>%
+  ungroup()
+text_of <- function(key) {
+  value <- texts$TEXT[texts$key == key]
+  if (length(value) == 0) NA_character_ else value
+}
+
+# Numbers are written as the language of the factsheet writes them.
+big_mark <- if (lang == "de") "." else ","
+decimal_mark <- if (lang == "de") "," else "."
+fmt <- function(x, digits = 0) {
+  ifelse(is.na(x), "",
+         formatC(x, format = "f", digits = digits, big.mark = big_mark,
+                 decimal.mark = decimal_mark))
+}
+
+# A caption wider than the figure is clipped rather than wrapped, so it is
+# broken into lines once here.
+wrap_caption <- function(text, width = 95) {
+  paste(strwrap(text, width = width), collapse = "\n")
+}
+
+source_caption <- if (lang == "de") {
+  paste0("Quelle: ESEF-Finanzberichte, filings.xbrl.org. Eigene Berechnungen. ",
+         "Letzter Wert: ", format(max_date, "%d.%m.%Y"), ".")
+} else {
+  paste0("Source: ESEF annual financial reports, filings.xbrl.org. ",
+         "Own calculations. Last value: ", format(max_date, "%d %b. %Y"), ".")
+}
+
+amount_label <- if (lang == "de") paste0("Mio. ", currency) else
+  paste0(currency, " million")
+```
+
+Generated on `r format(Sys.Date(), if (lang == "de") "%d.%m.%Y" else "%d %b. %Y")`.
+
+## `r issuer_name`
+
+```{r, echo=FALSE, message=FALSE}
+viewer <- if (is.na(latest$VIEWERURL)) "" else
+  paste0("[", if (lang == "de") "Bericht ansehen" else "View the report",
+         "](https://filings.xbrl.org", latest$VIEWERURL, ")")
+
+temp <- tibble(
+  item = c("LEI", "Legal form", "Domicile", "Registered office",
+           "Ultimate parent", "Latest report", "Language of the report",
+           "Validation errors and warnings", "Report"),
+  value = c(lei,
+            text_of("legal_form"),
+            text_of("domicile"),
+            text_of("address"),
+            text_of("parent"),
+            format(latest$PERIODEND, "%d %b. %Y"),
+            coalesce(latest$LANG, ""),
+            paste0(coalesce(latest$ERRORS, 0L), " / ",
+                   coalesce(latest$WARNINGS, 0L)),
+            viewer))
+
+if (lang == "de") {
+  temp$item <- c("LEI", "Rechtsform", "Sitz", "Anschrift", "Oberste Muttergesellschaft",
+                 "Letzter Bericht", "Sprache des Berichts",
+                 "Validierungsfehler und -warnungen", "Bericht")
+  temp$value[6] <- format(latest$PERIODEND, "%d.%m.%Y")
+}
+
+knitr::kable(temp %>% filter(!is.na(value), value != ""),
+             col.names = c("", ""), align = "ll")
+```
+
+`r if (!is.na(text_of("activities"))) paste0("> ", gsub("\\s+", " ", text_of("activities")))`
+
+## Key figures
+
+```{r, echo=FALSE, message=FALSE}
+rows <- tribble(
+  ~key,                ~en,                                   ~de,                                        ~digits,
+  "assets",            "Total assets",                        "Bilanzsumme",                              0,
+  "assets_ac",         "Financial assets at amortised cost",  "Finanzielle Vermögenswerte zu fortgeführten Anschaffungskosten", 0,
+  "liabilities_ac",    "Financial liabilities at amortised cost", "Finanzielle Verbindlichkeiten zu fortgeführten Anschaffungskosten", 0,
+  "equity",            "Equity",                              "Eigenkapital",                             0,
+  "equity_owners",     "Equity attributable to owners",       "Den Eigentümern zurechenbares Eigenkapital", 0,
+  "nii",               "Net interest income",                 "Zinsüberschuss",                           0,
+  "net_fees",          "Net fee and commission income",       "Provisionsüberschuss",                     0,
+  "operating_income",  "Operating income",                    "Betriebserträge",                          0,
+  "admin_expense",     "General administrative expenses",     "Verwaltungsaufwendungen",                  0,
+  "impairment",        "Impairment losses (IFRS 9)",          "Wertminderungen (IFRS 9)",                 0,
+  "profit_before_tax", "Profit before tax",                   "Ergebnis vor Steuern",                     0,
+  "profit",            "Profit after tax",                    "Ergebnis nach Steuern",                    0,
+  "profit_owners",     "Profit attributable to owners",       "Den Eigentümern zurechenbares Ergebnis",   0
+)
+
+temp <- wide %>%
+  select("year", all_of(rows$key)) %>%
+  mutate(across(-"year", ~ fmt(.x / scale))) %>%
+  pivot_longer(-"year", names_to = "key") %>%
+  pivot_wider(names_from = "year", values_from = "value") %>%
+  left_join(rows, by = "key") %>%
+  mutate(item = if (lang == "de") de else en) %>%
+  select("item", matches("^[0-9]{4}$"))
+
+knitr::kable(temp, col.names = c(amount_label, names(temp)[-1]),
+             align = paste0("l", strrep("r", ncol(temp) - 1)))
+```
+
+### Ratios
+
+```{r, echo=FALSE, message=FALSE}
+rows <- tribble(
+  ~key,                  ~en,                                   ~de,                                 ~digits,
+  "equity_ratio",        "Equity to total assets, %",           "Eigenkapital zu Bilanzsumme, %",     1,
+  "roe",                 "Return on equity, %",                 "Eigenkapitalrendite, %",             1,
+  "cost_income",         "Cost/income ratio, %",                "Kosten-Ertrags-Relation, %",         1,
+  "net_interest_margin", "Net interest income to assets, %",    "Zinsüberschuss zu Bilanzsumme, %",   2,
+  "cost_of_risk",        "Impairments to loans and securities at amortised cost, %",
+                         "Wertminderungen zu Vermögenswerten zu fortgeführten Anschaffungskosten, %", 2,
+  "tax_rate",            "Effective tax rate, %",               "Effektive Steuerquote, %",           1,
+  "eps",                 paste0("Earnings per share, ", currency),
+                         paste0("Ergebnis je Aktie, ", currency), 2,
+  "dps",                 paste0("Dividend per share proposed, ", currency),
+                         paste0("Vorgeschlagene Dividende je Aktie, ", currency), 2,
+  "payout",              "Payout ratio, %",                     "Ausschüttungsquote, %",              1
+)
+
+temp <- wide %>% select("year", all_of(rows$key))
+for (i in seq_len(nrow(rows))) {
+  temp[[rows$key[i]]] <- fmt(temp[[rows$key[i]]], rows$digits[i])
+}
+temp <- temp %>%
+  pivot_longer(-"year", names_to = "key") %>%
+  pivot_wider(names_from = "year", values_from = "value") %>%
+  left_join(rows, by = "key") %>%
+  mutate(item = if (lang == "de") de else en) %>%
+  select("item", matches("^[0-9]{4}$"))
+
+knitr::kable(temp, col.names = c("", names(temp)[-1]),
+             align = paste0("l", strrep("r", ncol(temp) - 1)))
+```
+
+The ratios are computed from the figures above and are not the issuer's own
+key performance indicators, which a report states in its management report
+and often defines differently. The return on equity and the interest margin
+put the flow of a year against the average of the balances at its start and
+its end. Operating income is derived as the operating result plus general
+administrative expenses, which is how RBI presents it; another issuer may
+present its income statement in another order, and the derivation in the
+first chunk is then the one to change.
+
+## Balance sheet
+
+### By type of asset
+
+```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+temp <- wide %>%
+  select("PERIODEND", "assets_ac", "cash", "assets_other") %>%
+  pivot_longer(-"PERIODEND", names_to = "var") %>%
+  mutate(value = value / scale)
+
+var_levels <- c("assets_ac", "cash", "assets_other")
+
+# Default is English
+var_labels <- c("Financial assets at amortised cost", "Cash and cash equivalents",
+                "Other assets")
+y_label <- amount_label
+
+if (lang == "de") {
+  var_labels <- c("Finanzielle Vermögenswerte zu fortgeführten Anschaffungskosten",
+                  "Zahlungsmittel", "Sonstige Aktiva")
+}
+
+temp <- temp %>%
+  mutate(var = factor(var, levels = var_levels, labels = var_labels))
+
+ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
+  geom_col() +
+  scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
+               breaks = wide$PERIODEND) +
+  scale_y_continuous(labels = function(x) fmt(x)) +
+  scale_fill_manual(values = colours_corporate_design) +
+  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
+  guides(fill = guide_legend(ncol = 2)) +
+  theme_corporate_design()
+```
+
+### By type of funding
+
+```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+temp <- wide %>%
+  select("PERIODEND", "liabilities_ac", "liabilities_other", "equity") %>%
+  pivot_longer(-"PERIODEND", names_to = "var") %>%
+  mutate(value = value / scale)
+
+var_levels <- c("liabilities_ac", "liabilities_other", "equity")
+
+# Default is English
+var_labels <- c("Financial liabilities at amortised cost", "Other liabilities",
+                "Equity")
+y_label <- amount_label
+
+if (lang == "de") {
+  var_labels <- c("Finanzielle Verbindlichkeiten zu fortgeführten Anschaffungskosten",
+                  "Sonstige Passiva", "Eigenkapital")
+}
+
+temp <- temp %>%
+  mutate(var = factor(var, levels = var_levels, labels = var_labels))
+
+ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
+  geom_col() +
+  scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
+               breaks = wide$PERIODEND) +
+  scale_y_continuous(labels = function(x) fmt(x)) +
+  scale_fill_manual(values = colours_corporate_design) +
+  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
+  guides(fill = guide_legend(ncol = 2)) +
+  theme_corporate_design()
+```
+
+## Income statement
+
+### Operating income by source
+
+```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+temp <- wide %>%
+  select("PERIODEND", "nii", "net_fees", "other_income") %>%
+  pivot_longer(-"PERIODEND", names_to = "var") %>%
+  mutate(value = value / scale)
+
+var_levels <- c("nii", "net_fees", "other_income")
+
+# Default is English
+var_labels <- c("Net interest income", "Net fee and commission income",
+                "Other operating income")
+y_label <- amount_label
+
+if (lang == "de") {
+  var_labels <- c("Zinsüberschuss", "Provisionsüberschuss",
+                  "Sonstige Betriebserträge")
+}
+
+temp <- temp %>%
+  mutate(var = factor(var, levels = var_levels, labels = var_labels))
+
+ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
+  geom_col() +
+  geom_hline(yintercept = 0, colour = "#000000") +
+  scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
+               breaks = wide$PERIODEND) +
+  scale_y_continuous(labels = function(x) fmt(x)) +
+  scale_fill_manual(values = colours_corporate_design) +
+  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
+  theme_corporate_design()
+```
+
+### From operating income to profit
+
+```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+temp <- wide %>%
+  select("PERIODEND", "operating_income", "operating_result",
+         "profit_before_tax", "profit_owners") %>%
+  pivot_longer(-"PERIODEND", names_to = "var") %>%
+  mutate(value = value / scale)
+
+var_levels <- c("operating_income", "operating_result", "profit_before_tax",
+                "profit_owners")
+
+# Default is English
+var_labels <- c("Operating income", "Operating result", "Profit before tax",
+                "Profit attributable to owners")
+y_label <- amount_label
+
+if (lang == "de") {
+  var_labels <- c("Betriebserträge", "Betriebsergebnis", "Ergebnis vor Steuern",
+                  "Den Eigentümern zurechenbares Ergebnis")
+}
+
+temp <- temp %>%
+  mutate(var = factor(var, levels = var_levels, labels = var_labels))
+
+ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
+  geom_col(position = position_dodge(width = 300)) +
+  geom_hline(yintercept = 0, colour = "#000000") +
+  scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
+               breaks = wide$PERIODEND) +
+  scale_y_continuous(labels = function(x) fmt(x)) +
+  scale_fill_manual(values = colours_corporate_design) +
+  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
+  guides(fill = guide_legend(ncol = 2)) +
+  theme_corporate_design()
+```
+
+### Profitability and efficiency
+
+```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+temp <- wide %>%
+  select("PERIODEND", "roe", "cost_income", "equity_ratio") %>%
+  pivot_longer(-"PERIODEND", names_to = "var") %>%
+  filter(!is.na(value))
+
+var_levels <- c("roe", "cost_income", "equity_ratio")
+
+# Default is English
+var_labels <- c("Return on equity", "Cost/income ratio",
+                "Equity to total assets")
+y_label <- "%"
+
+if (lang == "de") {
+  var_labels <- c("Eigenkapitalrendite", "Kosten-Ertrags-Relation",
+                  "Eigenkapital zu Bilanzsumme")
+}
+
+temp <- temp %>%
+  mutate(var = factor(var, levels = var_levels, labels = var_labels))
+
+ggplot(temp, aes(x = PERIODEND, y = value, colour = var)) +
+  geom_line(linewidth = linewidth_corporate_design) +
+  geom_point() +
+  scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
+               breaks = wide$PERIODEND) +
+  scale_y_continuous(labels = function(x) fmt(x), limits = c(0, NA)) +
+  scale_colour_manual(values = colours_corporate_design) +
+  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
+  theme_corporate_design()
+```
+
+## Per share
+
+```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+temp <- wide %>%
+  select("PERIODEND", "eps", "dps") %>%
+  pivot_longer(-"PERIODEND", names_to = "var") %>%
+  filter(!is.na(value))
+
+var_levels <- c("eps", "dps")
+
+# Default is English
+var_labels <- c("Earnings per share", "Dividend per share proposed")
+y_label <- currency
+
+if (lang == "de") {
+  var_labels <- c("Ergebnis je Aktie", "Vorgeschlagene Dividende je Aktie")
+}
+
+temp <- temp %>%
+  mutate(var = factor(var, levels = var_levels, labels = var_labels))
+
+ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
+  geom_col(position = position_dodge(width = 250)) +
+  scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
+               breaks = wide$PERIODEND) +
+  scale_y_continuous(labels = function(x) fmt(x, 2)) +
+  scale_fill_manual(values = colours_corporate_design) +
+  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
+  theme_corporate_design()
+```
+
+## Checks on the data
+
+The figures are the issuer's tags, as filed, and a tag can be wrong while the
+report a reader sees is right: the scale of a number is an attribute of the
+tag, invisible on the page. The checks below put figures of the same report
+against one another. A balance sheet that does not balance, or earnings per
+share that the profit and the number of shares do not give back, point at
+a tag to look at in the report before the figure is used.
+
+```{r, echo=FALSE, message=FALSE}
+# The flag is set before the figures are formatted, since it compares them.
+# It is meant for a tag with the wrong scale, which is off by a factor of a
+# thousand, and not for the coupons on additional tier 1 capital, which put
+# the two apart by some per cent; RBI's are about ten per cent of its profit.
+checks <- wide %>%
+  transmute(year,
+            flag = ifelse(!is.na(implied_eps) & !is.na(eps) &
+                            abs(log(implied_eps / eps)) > log(2),
+                          if (lang == "de") "prüfen" else "check", ""),
+            balance = fmt((assets - equity_and_liabilities) / scale),
+            eps = fmt(eps, 2),
+            implied_eps = fmt(implied_eps, 2),
+            shares = fmt(shares / 1e6, 1))
+
+extension <- facts %>%
+  filter(FILING %in% (filings %>% filter(PERIODEND %in% wide$PERIODEND))$FILING,
+         !is.na(VALUE)) %>%
+  group_by(year = as.integer(format(PERIODEND, "%Y"))) %>%
+  summarise(facts = n(),
+            extension = fmt(mean(!startsWith(CONCEPT, "ifrs-full:")) * 100, 1),
+            .groups = "drop")
+
+temp <- checks %>%
+  left_join(extension, by = "year") %>%
+  select("year", "facts", "extension", "balance", "eps", "implied_eps",
+         "shares", "flag")
+
+col_names <- c("Year", "Numeric facts", "Extension concepts, %",
+               paste0("Assets less equity and liabilities, ", amount_label),
+               paste0("EPS reported, ", currency),
+               paste0("Profit to owners per share, ", currency),
+               "Weighted average shares, million", "")
+if (lang == "de") {
+  col_names <- c("Jahr", "Numerische Fakten", "Erweiterungskonzepte, %",
+                 paste0("Aktiva abzüglich Passiva, ", amount_label),
+                 paste0("Ergebnis je Aktie berichtet, ", currency),
+                 paste0("Ergebnis der Eigentümer je Aktie, ", currency),
+                 "Gewichtete Aktienanzahl, Mio.", "")
+}
+
+knitr::kable(temp, col.names = col_names, align = "lrrrrrrl")
+```
+
+Profit to owners per share is the profit attributable to the owners of the
+parent divided by the weighted average number of shares, and it comes out
+higher than earnings per share wherever coupons on additional tier 1 capital
+are deducted from the profit before earnings per share are computed, as RBI
+does. A difference of a factor of a thousand is a tag with the wrong scale.
+
+## The filings
+
+```{r, echo=FALSE, message=FALSE}
+temp <- filings_all %>%
+  filter(PERIODEND %in% wide$PERIODEND) %>%
+  arrange(desc(PERIODEND), FILING) %>%
+  transmute(FILING,
+            PERIODEND = format(PERIODEND, "%Y-%m-%d"),
+            LANG = coalesce(LANG, ""),
+            used = ifelse(FILING %in% filings$FILING, "x", ""),
+            ERRORS, WARNINGS,
+            PROCESSED = format(PROCESSED, "%Y-%m-%d"))
+
+col_names <- c("Filing", "Period end", "Language", "Used", "Errors",
+               "Warnings", "Processed")
+if (lang == "de") {
+  col_names <- c("Einreichung", "Stichtag", "Sprache", "Verwendet", "Fehler",
+                 "Warnungen", "Verarbeitet")
+}
+
+knitr::kable(temp, col.names = col_names, align = "lllcrrl")
+```
