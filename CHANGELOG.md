@@ -9,7 +9,7 @@ release may change the public API, which `tests/test_public_api.py` lists.
 ### New
 
 - `esef`: a template for an analyst factsheet on one issuer, in R and
-  Quarto, with Raiffeisen Bank International AG as its example:
+  Quarto, with voestalpine AG as its example:
   `src/fincommons/esef/factsheet/esef-analyst-factsheet.qmd`.
 
 ## 0.2.0
