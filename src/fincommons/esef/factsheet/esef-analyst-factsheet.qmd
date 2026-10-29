@@ -6,20 +6,26 @@ format:
 brand:
   color:
     palette:
-      white: "#ffffff"
-      black: "#000000"
-      orange: "#EC6600"
-    background: white
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
 
   typography:
     fonts:
+      - family: Roboto Condensed
+        source: google
       - family: Source Sans Pro
         source: google
     base:
       family: Source Sans Pro
     headings:
-      family: Source Sans Pro
-      color: orange
+      family: Roboto Condensed
+      weight: bold
+      color: red
 toc: true
 toc-depth: 4
 execute:
@@ -268,13 +274,12 @@ wrap_caption <- function(text, width = 95) {
   paste(strwrap(text, width = width), collapse = "\n")
 }
 
-source_caption <- if (lang == "de") {
-  paste0("Quelle: ESEF-Finanzberichte, filings.xbrl.org. Eigene Berechnungen. ",
-         "Letzter Wert: ", format(max_date, "%d.%m.%Y"), ".")
-} else {
-  paste0("Source: ESEF annual financial reports, filings.xbrl.org. ",
-         "Own calculations. Last value: ", format(max_date, "%d %b. %Y"), ".")
-}
+# The source line in the wording of the corporate design.
+source_caption <- caption_corporate_design(
+  source = if (lang == "de") "ESEF-Finanzberichte, filings.xbrl.org." else
+    "ESEF annual financial reports, filings.xbrl.org.",
+  last = format(max_date, if (lang == "de") "%d.%m.%Y" else "%d %b. %Y"),
+  lang = lang)
 
 amount_label <- if (lang == "de") paste0("Mio. ", currency) else
   paste0(currency, " million")
@@ -423,10 +428,10 @@ ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
   scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
                breaks = wide$PERIODEND) +
   scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_manual(values = colours_corporate_design) +
+  scale_fill_corporate_design() +
   labs(caption = wrap_caption(source_caption), subtitle = y_label) +
   guides(fill = guide_legend(ncol = 2)) +
-  theme_corporate_design()
+  theme_corporate_design(axis.title = element_blank())
 ```
 
 ### By type of funding
@@ -457,10 +462,10 @@ ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
   scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
                breaks = wide$PERIODEND) +
   scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_manual(values = colours_corporate_design) +
+  scale_fill_corporate_design() +
   labs(caption = wrap_caption(source_caption), subtitle = y_label) +
   guides(fill = guide_legend(ncol = 2)) +
-  theme_corporate_design()
+  theme_corporate_design(axis.title = element_blank())
 ```
 
 ## Income statement
@@ -490,13 +495,13 @@ temp <- temp %>%
 
 ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
   geom_col() +
-  geom_hline(yintercept = 0, colour = "#000000") +
+  geom_zeroline() +
   scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
                breaks = wide$PERIODEND) +
   scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_manual(values = colours_corporate_design) +
+  scale_fill_corporate_design() +
   labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  theme_corporate_design()
+  theme_corporate_design(axis.title = element_blank())
 ```
 
 ### From operating income to profit
@@ -526,14 +531,14 @@ temp <- temp %>%
 
 ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
   geom_col(position = position_dodge(width = 300)) +
-  geom_hline(yintercept = 0, colour = "#000000") +
+  geom_zeroline() +
   scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
                breaks = wide$PERIODEND) +
   scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_manual(values = colours_corporate_design) +
+  scale_fill_corporate_design() +
   labs(caption = wrap_caption(source_caption), subtitle = y_label) +
   guides(fill = guide_legend(ncol = 2)) +
-  theme_corporate_design()
+  theme_corporate_design(axis.title = element_blank())
 ```
 
 ### Profitability and efficiency
@@ -565,9 +570,9 @@ ggplot(temp, aes(x = PERIODEND, y = value, colour = var)) +
   scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
                breaks = wide$PERIODEND) +
   scale_y_continuous(labels = function(x) fmt(x), limits = c(0, NA)) +
-  scale_colour_manual(values = colours_corporate_design) +
+  scale_colour_corporate_design() +
   labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  theme_corporate_design()
+  theme_corporate_design(axis.title = element_blank())
 ```
 
 ## Per share
@@ -596,9 +601,9 @@ ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
   scale_x_date(expand = c(.01, 0), date_labels = time_series_labels_x_axis,
                breaks = wide$PERIODEND) +
   scale_y_continuous(labels = function(x) fmt(x, 2)) +
-  scale_fill_manual(values = colours_corporate_design) +
+  scale_fill_corporate_design() +
   labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  theme_corporate_design()
+  theme_corporate_design(axis.title = element_blank())
 ```
 
 ## Checks on the data
