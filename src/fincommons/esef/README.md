@@ -129,3 +129,15 @@ xBRL-JSON writes the end of a period as the start of the following day, so that 
 **Text blocks are left out.** Most of a report, by size, is its notes, tagged whole as text blocks: the note on intangible assets of one report is half a megabyte of HTML, tagged again for goodwill and for intangible assets and goodwill together. The concept does not say that it is a text block -- that is a type of the taxonomy, which the report does not carry -- but the value does, and a text with markup in it is the note as the report presents it rather than a value to compare. The Bronze layer keeps the whole report.
 
 The table is rebuilt country by country, and only for the countries whose reports changed. A country is one partition, and one whose Bronze layer holds a report its partition was not built from is read again and replaces its partition, leaving the others as they were. A report that cannot be read is logged and counted; its country is written without it and left unmarked, so that the next run tries it again.
+
+## An analyst factsheet
+
+`factsheet/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto, with Raiffeisen Bank International AG as its example. It reads the two Silver tables as parquet and shows the profile of the issuer from the texts of its latest report, its key figures and ratios over the last six financial years, the composition of its balance sheet and of its operating income, its earnings and dividend per share, checks on the tags and the filings it was built from.
+
+```
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
+```
+
+The issuer is set by its LEI in the first chunk, together with the number of years and the language; the country of the issuer has to have been collected by the pipeline. The figures of a year are the totals its own filing reports for it, from the filing in the language of the factsheet where an issuer files in two. Only concepts of the IFRS taxonomy are used, because an issuer's extension concepts change their names from one year to the next -- RBI tags its net provisioning under three names in six years, one of them German -- and the figures a bank presents only under extension concepts, such as its operating income, are derived from those of the taxonomy. The derivation follows RBI's presentation and is the part to adapt for another issuer. The corporate design is in `r-corporate-design-functions-ggplot2.R` beside the template.
+
+A Delta Silver layer is refused rather than read: the table of facts replaces a country's partition whenever its reports change, and a Delta table keeps the files it replaced until it is vacuumed, which a reader of the files alone would count again.
