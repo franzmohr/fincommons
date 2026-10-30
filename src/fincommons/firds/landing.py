@@ -524,6 +524,31 @@ def _update_landing_import(config_path, start_date, end_date=None):
         if parsed is not None and parsed["kind"] == "FULINS"
     )
 
+    # A start date before the full file held asks for the history to begin
+    # earlier. The register is asked whether a full file was published between
+    # the two, and where one was, the run starts over from it as if nothing
+    # were held: the watermark, which speaks of the days after the later full
+    # file, says nothing about the delta files between the two. Where none
+    # was, the full file held stays the start, as it did on the run that found
+    # it, and the run carries on from the watermark.
+    held_from = str(held_fulins[0]) if held_fulins else None
+    if held_from is not None and start_date < held_from:
+        before = str(
+            datetime.strptime(held_from, "%Y-%m-%d").date() - timedelta(days=1)
+        )
+        earlier = get_downloadable_files(
+            date_from = start_date, date_to = min(before, until)
+        ).filter(pl.col("file_type") == "FULINS")
+        if len(earlier) > 0:
+            logger.info(
+                "The history is moved back to an earlier full file",
+                extra=context(
+                    module="firds", layer="landing",
+                    requested=start_date, datadt=held_from,
+                ),
+            )
+            held_fulins = []
+
     # The register is asked only for the days that may still be missing
     # something: from the last day up to which every file needed has been
     # imported, or from the full file where no such day is recorded. Asking
@@ -621,10 +646,14 @@ def _update_landing_import(config_path, start_date, end_date=None):
         [day for day in (through, state["applied_through"]) if day is not None],
         default=None,
     )
+    #
+    # A delta file up to the full file the history was built from before the
+    # run moved it back is not late: that full file holds its records already.
     if settled is not None:
         appearing = {
             row["publication_date"] for row in docs.iter_rows(named=True)
             if row["file_type"] == "DLTINS" and row["publication_date"] <= settled
+            and (held_from is None or row["publication_date"] > held_from)
         }
         for day in sorted(appearing - late):
             logger.error(

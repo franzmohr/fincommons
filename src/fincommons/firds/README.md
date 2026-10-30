@@ -43,6 +43,7 @@ firds.create_directory_tree(config_path)
 Function `update_landing_import` downloads FIRDS data from ESMA's website into the landing zone. The function proceeds in the following way:
 * Check if a full FIRDS sample is already available in the `finished` folder of the landing zone. This sample is treated as the basis of the FIRDS data set.
 * If a full sample (FULINS) is not already available, it is downloaded for the date specified in argument `start_date` or - if not available - the next date, where such data is available on ESMA's website. Every part of it is fetched, so a part that failed before is fetched again. If no full sample was published from `start_date` on, the function raises.
+* A `start_date` before the full sample already held moves the history back, where ESMA published a full sample between the two: that one is downloaded with every delta file after it, and the record of what has been imported starts again from it. Where none was published, the full sample held stays the start.
 * Every delta file (DLTINS) published after the full sample is downloaded, unless it is already held. What is fetched is decided by name rather than by resuming after the newest file held: resuming would pass over a part that failed while a later file succeeded, and the history would lack its records for good.
 * The cancellations file (FULCAN) is downloaded as well, but only its most recent publication. ESMA publishes one every morning beside the delta file, and each is the consolidated list of every record cancelled so far rather than the change of one day: two of them a week apart were found to hold 854,571 and 854,573 pairs, differing by four added and two removed. An older one therefore says nothing the newest does not, and a publication already held is not fetched again.
 * Download candidates, for which a file with the same name is already in the `import` or the `finished` folder of the landing zone, are skipped. A file in the `error` folder is not held and is downloaded again. The comparison relies on `finished` being kept: it is the record of what the Bronze layer has been built from.
@@ -105,7 +106,7 @@ firds.update_from_bronze_to_silver_main(spark, config_path)
 The update follows section 4.2 of ESMA65-8-5014 rev 3. Every record carries the
 validity dates `VLDFROM` / `VLDTO` and the flag `LATESTRECORD`, and an
 instrument is identified by the pair `(ISIN, TRADGVN)`. On the first run the
-records of the newest full file are registered with the start of their publication
+records of the full file the landing zone downloaded are registered with the start of their publication
 period as `VLDFROM`, an empty `VLDTO` and `LATESTRECORD` set. Every delta file
 that follows is then applied in chronological order, and each of its records
 implies one of three operations:
@@ -350,10 +351,14 @@ order and the marker is dropped.
 The history is not initialised from a full file whose parts are incomplete
 either, and a missing full file is reported as such rather than leaving the run
 to complain about the watermark it then has no way to write. Where the Bronze
-layer holds several full files, the newest is the one the history starts from
-and the others are passed over with a warning: a full file states the reference
+layer holds several full files, the history starts from the one the landing
+zone records under `full_sample`, which is the one it downloads delta files
+after, and the others are passed over with a warning. Starting from a later one
+would pass over the delta files between the two. A data lake filled by hand,
+without that record, starts from the newest: a full file states the reference
 data in full, so an older one only adds instruments the newest one no longer
-carries. Parts are checked per CFI letter, and a letter of which not a single
+carries. A recorded full file the Bronze layer does not hold yet is reported
+rather than replaced by another. Parts are checked per CFI letter, and a letter of which not a single
 part arrived leaves no trace among the others. The landing zone therefore
 records the parts the register lists for the full file, under `full_sample` in
 its record, and the history is not initialised until every one of them is in

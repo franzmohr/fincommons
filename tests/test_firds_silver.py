@@ -1071,6 +1071,39 @@ def test_the_history_starts_from_the_newest_full_file(spark, config):
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-09"
 
 
+def test_the_history_starts_from_the_full_file_the_landing_zone_records(spark, config):
+    """The landing zone fetches the delta files after the full file it
+    records, which after the history was moved back is not the newest one;
+    starting from the newest would pass over the delta files between."""
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2016, 9, 2), isin="OLD")
+    write_full_bronze(spark, config, date(2016, 9, 9), isin="NEW")
+    finished(config, "FULINS_E_20160902_01of01.zip", "FULINS_E_20160909_01of01.zip")
+    landing.write_landing_watermark(config, None, full_sample={
+        "date": "2016-09-02", "files": ["FULINS_E_20160902_01of01.zip"],
+    })
+
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    built = common.connect_to_firds(spark, config, "main")
+    assert [r["ISIN"] for r in built.collect()] == ["OLD"]
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-02"
+
+
+def test_a_recorded_full_file_not_in_bronze_is_reported(spark, config):
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2016, 9, 9))
+    finished(config, "FULINS_E_20160909_01of01.zip")
+    landing.write_landing_watermark(config, None, full_sample={
+        "date": "2016-09-02", "files": ["FULINS_E_20160902_01of01.zip"],
+    })
+
+    with pytest.raises(RuntimeError, match="2016-09-02"):
+        silver.update_from_bronze_to_silver_main(spark, config)
+
+    assert not os.path.isdir(os.path.join(common.path_silver_main(config), "_delta_log"))
+
+
 def test_a_watermark_lost_after_the_history_was_written_is_recovered(spark, config):
     """The history is written before the watermark, so a run that died between
     the two left a database that could not be updated at all."""

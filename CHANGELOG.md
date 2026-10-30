@@ -23,6 +23,14 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `firds`: `update_landing_import` with a `start_date` before the full file
+  already held moves the history back to an earlier full file, where ESMA
+  published one, and fetches every delta file after it. It used to keep the
+  full file held and fetch only what was newer. The historical database is
+  initialised from the full file the landing zone records, rather than the
+  newest one in the Bronze layer, so that a history rebuilt after such a run
+  starts from the earlier full file; a data lake without that record still
+  starts from the newest.
 - `frenchdatalibrary` is renamed `famafrenchdata`, after the name the data
   is known by. Its functions follow: `update_famafrenchdata`,
   `connect_to_famafrenchdata`, `update_bronze_famafrenchdata`,
