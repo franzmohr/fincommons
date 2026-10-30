@@ -702,13 +702,35 @@ def initialise_firds_database(spark, config_path):
             "one first."
         )
 
-    # A full file states the reference data in full, so the newest one is the
-    # state to start from. An older one holds instruments the newest one no
-    # longer carries, and taking them along would register them as in force.
-    maxdate = format_reference_date(dates[-1])
+    # The history starts from the full file the landing zone downloads, whose
+    # parts it records as the register listed them: the oldest it holds, so
+    # that every delta file after it is fetched, and an earlier one where a
+    # run was asked to start the history before it. Starting from a later
+    # full file would pass over the delta files between the two. Without that
+    # record, in a data lake filled by hand, the newest full file is the state
+    # to start from: an older one holds instruments the newest one no longer
+    # carries, and taking them along would register them as in force.
+    listed = read_landing_state(config_path)["full_sample"]
+    held = {format_reference_date(d): d for d in dates}
+    if listed is not None:
+        maxdate = listed.get("date")
+        if maxdate not in held:
+            raise RuntimeError(
+                f"The landing zone starts the history from the full file of "
+                f"{maxdate}, which the Bronze layer does not hold. The "
+                "historical database is not initialised until it has been "
+                "imported into the Bronze layer."
+            )
+    else:
+        maxdate = format_reference_date(dates[-1])
+        logger.warning(
+            "The landing zone holds no list of the full file's parts, so a "
+            "letter of the CFI code of which no part arrived cannot be noticed",
+            extra=context(module="firds", layer="silver", table="MAIN", datadt=maxdate),
+        )
     if len(dates) > 1:
         logger.warning(
-            "The Bronze layer holds several full files, the newest is used",
+            "The Bronze layer holds several full files, one of them is used",
             extra=context(
                 module="firds",
                 layer="bronze",
@@ -719,7 +741,7 @@ def initialise_firds_database(spark, config_path):
 
     # A full file is published in parts, and an instrument missing from it
     # would only reappear in the history once a delta file changed it.
-    missing = missing_parts(finished_files(config_path), "FULINS", dates[-1])
+    missing = missing_parts(finished_files(config_path), "FULINS", held[maxdate])
     if missing:
         raise RuntimeError(
             f"The full file is incomplete, missing {', '.join(missing)}. The "
@@ -732,8 +754,7 @@ def initialise_firds_database(spark, config_path):
     # against the parts the register listed, which the landing zone records;
     # without that record the history would lack the asset class until delta
     # files happened to change its instruments.
-    listed = read_landing_state(config_path)["full_sample"]
-    if listed is not None and listed.get("date") == maxdate:
+    if listed is not None:
         unimported = unimported_listed_files(
             finished_files(config_path), listed.get("files", [])
         )
@@ -744,29 +765,6 @@ def initialise_firds_database(spark, config_path):
                 "initialised until every part has been imported into the "
                 "Bronze layer."
             )
-    elif listed is None:
-        logger.warning(
-            "The landing zone holds no list of the full file's parts, so a "
-            "letter of the CFI code of which no part arrived cannot be noticed",
-            extra=context(module="firds", layer="silver", table="MAIN", datadt=maxdate),
-        )
-    else:
-        # The landing zone records the parts of the full file the history
-        # starts from, which is the one it downloads: the oldest it holds, so
-        # that every delta file after it is fetched. A newer full file put
-        # into the lake by hand is the one the history starts from instead,
-        # and the recorded list says nothing about it. Naming both dates is
-        # what tells the two apart from the log, since the check is skipped
-        # either way.
-        logger.warning(
-            "The landing zone's list of the full file's parts is for another "
-            "day, so a letter of the CFI code of which no part arrived cannot "
-            "be noticed",
-            extra=context(
-                module="firds", layer="silver", table="MAIN",
-                datadt=maxdate, listed=listed.get("date"),
-            ),
-        )
 
     df = read_fulins_partition(spark, config_path, maxdate)
     df = translate_xml_to_analytics_schema_017_001_02(df)

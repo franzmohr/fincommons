@@ -734,6 +734,89 @@ def test_the_watermark_is_recorded_although_a_download_fails(monkeypatch, config
     assert landing.read_landing_watermark(config) == "2024-01-02"
 
 
+# Moving the start back
+# --------------------------------------------------------------------------
+
+
+def register(monkeypatch, available):
+    """Answer each question to the register with the files of its window."""
+    windows = []
+
+    def answer(date_from, date_to):
+        windows.append((date_from, date_to))
+        return available.filter(
+            (pl.col("publication_date") >= date_from)
+            & (pl.col("publication_date") <= date_to)
+        )
+
+    monkeypatch.setattr(landing, "get_downloadable_files", answer)
+    requested = []
+    monkeypatch.setattr(
+        landing, "download_files",
+        lambda config_path, docs: requested.extend(docs["file_name"].to_list()),
+    )
+    return windows, requested
+
+
+def test_an_earlier_start_date_moves_the_history_back(monkeypatch, config):
+    """A start date before the full file held fetches an earlier full file
+    and every delta file since, not only what is newer than the files held."""
+    finished(config, "FULINS_E_20240106_01of01.zip", "DLTINS_20240107_01of01.zip")
+    landing.write_landing_watermark(config, "2024-01-07")
+    available = docs(("FULINS", "2023-12-30", "FULINS_E_20231230_01of01.zip"),
+                     ("DLTINS", "2023-12-31", "DLTINS_20231231_01of01.zip"),
+                     ("FULINS", "2024-01-06", "FULINS_E_20240106_01of01.zip"),
+                     ("DLTINS", "2024-01-07", "DLTINS_20240107_01of01.zip"),
+                     ("DLTINS", "2024-01-08", "DLTINS_20240108_01of01.zip"))
+    freeze(monkeypatch, dtmodule.datetime(2024, 1, 9, 12, tzinfo=dtmodule.timezone.utc))
+    windows, requested = register(monkeypatch, available)
+
+    landing.update_landing_import(config, "2023-12-29")
+
+    assert windows[-1] == ("2023-12-29", "2024-01-08")
+    assert requested == ["FULINS_E_20231230_01of01.zip", "DLTINS_20231231_01of01.zip",
+                         "DLTINS_20240108_01of01.zip"]
+    # The days after the earlier full file are not imported yet.
+    assert landing.read_landing_watermark(config) is None
+    assert landing.read_landing_state(config)["full_sample"]["date"] == "2023-12-30"
+
+
+def test_an_earlier_start_date_without_an_earlier_full_file_changes_nothing(
+    monkeypatch, config
+):
+    finished(config, "FULINS_E_20240106_01of01.zip", "DLTINS_20240107_01of01.zip")
+    landing.write_landing_watermark(config, "2024-01-07")
+    available = docs(("DLTINS", "2024-01-05", "DLTINS_20240105_01of01.zip"),
+                     ("FULINS", "2024-01-06", "FULINS_E_20240106_01of01.zip"),
+                     ("DLTINS", "2024-01-07", "DLTINS_20240107_01of01.zip"),
+                     ("DLTINS", "2024-01-08", "DLTINS_20240108_01of01.zip"))
+    freeze(monkeypatch, dtmodule.datetime(2024, 1, 9, 12, tzinfo=dtmodule.timezone.utc))
+    windows, requested = register(monkeypatch, available)
+
+    landing.update_landing_import(config, "2024-01-01")
+
+    assert windows[0] == ("2024-01-01", "2024-01-05")
+    assert windows[-1][0] == "2024-01-06"
+    assert requested == ["DLTINS_20240108_01of01.zip"]
+    assert landing.read_landing_watermark(config) == "2024-01-07"
+
+
+def test_the_delta_files_before_the_full_file_moved_from_are_not_late(monkeypatch, config):
+    """The full file the history was built from holds their records."""
+    finished(config, "FULINS_E_20240106_01of01.zip", "DLTINS_20240107_01of01.zip")
+    landing.write_landing_watermark(config, "2024-01-07", applied_through="2024-01-07")
+    available = docs(("FULINS", "2023-12-30", "FULINS_E_20231230_01of01.zip"),
+                     ("DLTINS", "2023-12-31", "DLTINS_20231231_01of01.zip"),
+                     ("FULINS", "2024-01-06", "FULINS_E_20240106_01of01.zip"),
+                     ("DLTINS", "2024-01-07", "DLTINS_20240107_01of01.zip"))
+    freeze(monkeypatch, dtmodule.datetime(2024, 1, 8, 12, tzinfo=dtmodule.timezone.utc))
+    register(monkeypatch, available)
+
+    landing.update_landing_import(config, "2023-12-29")
+
+    assert landing.read_landing_state(config)["late"] == []
+
+
 # A file published after its day was settled
 # --------------------------------------------------------------------------
 
