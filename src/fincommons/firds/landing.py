@@ -290,12 +290,22 @@ def read_landing_state(config_path):
     parts that did; the listing is what tells the Silver layer that it is
     missing.
 
+    ``history_from`` is the full file the Silver layer actually built the
+    history from, which it records here for the same reason it records
+    ``applied_through``: it lives in a Delta table the landing zone cannot
+    read, and the log of that table is no substitute, since the commit that
+    names it is cleaned out once it is older than the log retention. Where it
+    is earlier than the date under ``full_sample``, a run has moved the start
+    of the history back and the history has to be built again from the
+    earlier full file.
+
     A file that cannot be read is treated as no record at all, so that a
     truncated write does not stop the pipeline; the next run writes it again.
     """
     path = common.path_landing_watermark(config_path)
     empty = {"complete_through": None, "applied_through": None,
-             "published": [], "late": [], "full_sample": None}
+             "published": [], "late": [], "full_sample": None,
+             "history_from": None}
     if not os.path.exists(path):
         return empty
     try:
@@ -313,6 +323,7 @@ def read_landing_state(config_path):
         "published": state.get("published", []),
         "late": state.get("late", []),
         "full_sample": state.get("full_sample"),
+        "history_from": state.get("history_from"),
     }
 
 
@@ -353,11 +364,56 @@ def record_applied_through(config_path, day):
         late=state["late"],
         applied_through=day,
         full_sample=state["full_sample"],
+        history_from=state["history_from"],
+    )
+
+
+def record_history_from(config_path, day):
+    """Record the full file the history has been built from.
+
+    The Silver layer calls this whenever it initialises the history, so that
+    the landing zone's record says which full file the history actually
+    starts at and not only which one the landing zone downloaded for it; see
+    :func:`read_landing_state`.
+
+    A history that has just been initialised stands at ``day`` and has
+    applied nothing after it, so ``applied_through`` is set to that day --
+    lowered, where the history was built again from an earlier full file than
+    it stood at before. :func:`record_applied_through` refuses to lower it,
+    because the Silver layer only ever moves forward there; a history built
+    again is the one case in which it moves back, and this is the function
+    that says so.
+
+    The days up to and including ``day`` are taken off the list of days
+    published late for the same reason: a day is on that list because the
+    history had been built past it by the time its delta file appeared, and
+    the full file the history now starts from holds the records of every day
+    up to its own. The days after it are kept and are applied in the ordinary
+    way.
+
+    Parameters
+    ----------
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be
+        a yaml-file.
+    day: str
+        The reference date of the full file the history starts from, spelled
+        ``'YYYY-MM-DD'``.
+    """
+    state = read_landing_state(config_path)
+    write_landing_watermark(
+        config_path,
+        state["complete_through"],
+        published=state["published"],
+        late=[recorded for recorded in state["late"] if recorded > day],
+        applied_through=day,
+        full_sample=state["full_sample"],
+        history_from=day,
     )
 
 
 def write_landing_watermark(config_path, day, published=(), late=(), applied_through=None,
-                            full_sample=None):
+                            full_sample=None, history_from=None):
     """Record the day everything is imported up to, and the days still open.
 
     Parameters
@@ -377,6 +433,9 @@ def write_landing_watermark(config_path, day, published=(), late=(), applied_thr
         The full file the history starts from as the register listed it,
         ``{"date": "YYYY-MM-DD", "files": [...]}``; see
         :func:`read_landing_state`.
+    history_from: str
+        The full file the history has been built from; see
+        :func:`read_landing_state`.
     """
     path = common.path_landing_watermark(config_path)
     with open(path + ".tmp", "w", encoding="utf-8") as handle:
@@ -387,6 +446,7 @@ def write_landing_watermark(config_path, day, published=(), late=(), applied_thr
                 "published": sorted(published),
                 "late": sorted(late),
                 "full_sample": full_sample,
+                "history_from": history_from,
             },
             handle,
         )
@@ -416,6 +476,7 @@ def clear_late_day(config_path, day):
         late=[recorded for recorded in state["late"] if recorded != day],
         applied_through=state["applied_through"],
         full_sample=state["full_sample"],
+        history_from=state["history_from"],
     )
 
 
@@ -676,6 +737,7 @@ def _update_landing_import(config_path, start_date, end_date=None):
     write_landing_watermark(
         config_path, through, published=published, late=sorted(late),
         applied_through=state["applied_through"], full_sample=full_sample,
+        history_from=state["history_from"],
     )
     if through is not None and (watermark is None or through > watermark):
         logger.info(
@@ -702,6 +764,7 @@ __all__ = [
     "get_downloadable_files",
     "read_landing_state",
     "record_applied_through",
+    "record_history_from",
     "read_landing_watermark",
     "update_landing_import",
     "url_for_available_files",

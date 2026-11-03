@@ -19,7 +19,10 @@ import functools
 
 from . import common
 from . import history
-from .landing import clear_late_day, read_landing_state, record_applied_through
+from .landing import (
+    clear_late_day, read_landing_state, record_applied_through,
+    record_history_from,
+)
 from .utilities import (PARTITION_PREFIX, missing_parts, parse_file_name,
                         unimported_listed_files)
 from ..log import context, pipeline_run
@@ -290,6 +293,42 @@ def reference_dates_to_apply(config_path, after):
     return sorted(d for d in dates if d > after)
 
 
+def moved_back_to(state):
+    """The earlier full file the history has to be built again from, if any.
+
+    The landing zone records two dates: the full file it downloads the delta
+    files after, under ``full_sample``, and the one the Silver layer built the
+    history from, under ``history_from``; see
+    :func:`fincommons.firds.landing.read_landing_state`. They are the same
+    date until a run is asked to start the history before the full file it
+    was built from and the landing zone moves the start back to an earlier
+    one, which is the case this reports.
+
+    Returns ``None`` where the two agree, where the landing zone has recorded
+    neither -- a data lake filled by hand -- and where the full file the
+    history was built from is not recorded, since nothing can then be
+    concluded from the one date that is. It also returns ``None`` where the
+    landing zone records a *later* full file than the history was built from:
+    that is the ordinary state of a lake whose history reaches further back
+    than the sample the landing zone last listed, and the delta files between
+    the two have been applied to the history already.
+
+    Parameters
+    ----------
+    state: dict
+        What the landing zone knows, from
+        :func:`fincommons.firds.landing.read_landing_state`.
+    """
+    listed = state["full_sample"]
+    started = state["history_from"]
+    if listed is None or started is None:
+        return None
+    wanted = listed.get("date")
+    if wanted is None or wanted >= started:
+        return None
+    return wanted
+
+
 def _partition_holds_records(config_path, datadt):
     """Whether the Bronze partition of ``datadt`` holds a file.
 
@@ -325,6 +364,17 @@ def update_from_bronze_to_silver_main(spark, config_path):
     the watermark beyond it, and its missing records could then never be
     applied.
 
+    The history is also built again where a run of the landing zone has been
+    asked to start it before the full file it stands on and has moved the
+    start back to an earlier one; see
+    :func:`fincommons.firds.landing.update_landing_import` and
+    :func:`moved_back_to`. That full file and the delta files between it and
+    the one the history was built from are all older than the watermark, so
+    there is no applying them: the history has to start from the earlier full
+    file, and every delta file since is then applied to it as usual. The
+    rebuild replaces the database in one transaction, so a reader sees either
+    the history as it stood or the one built from the earlier full file.
+
     Parameters
     ----------
     spark: pyspark.sql.session.SparkSession
@@ -347,6 +397,9 @@ def update_from_bronze_to_silver_main(spark, config_path):
 def _update_from_bronze_to_silver_main(spark, config_path, outcome):
     """Do the work of :func:`update_from_bronze_to_silver_main`."""
 
+    state = read_landing_state(config_path)
+    moved = moved_back_to(state)
+
     # Whether the database exists is asked directly rather than inferred from a
     # read failing. Catching every exception here would treat a permission
     # problem or an unreadable transaction log as an empty database, and the
@@ -357,6 +410,41 @@ def _update_from_bronze_to_silver_main(spark, config_path, outcome):
             extra=context(module="firds", layer="silver", table="MAIN"),
         )
         initialise_firds_database(spark, config_path)
+        state = read_landing_state(config_path)
+    elif moved is not None:
+        # A run of the landing zone was asked to start the history before the
+        # full file it was built from and moved it back to an earlier one; see
+        # :func:`fincommons.firds.landing.update_landing_import`. That full
+        # file and the delta files between it and the one the history stands
+        # on are all older than the watermark, so the update would pass over
+        # every one of them and report that there was nothing to do. The
+        # history is built again from the earlier full file instead, which is
+        # the only way its records reach it.
+        logger.warning(
+            "The start of the history was moved back, so it is built again "
+            "from the earlier full file",
+            extra=context(
+                module="firds", layer="silver", table="MAIN",
+                datadt=moved, started=state["history_from"],
+            ),
+        )
+        initialise_firds_database(spark, config_path)
+        state = read_landing_state(config_path)
+    elif state["full_sample"] is not None and state["history_from"] is None:
+        # Which full file the history was built from is not recorded, so a
+        # run that moves the start back cannot be noticed and the history
+        # would quietly stay where it is. The log of the historical database
+        # is no substitute: the commit that names the full file is cleaned out
+        # once it is older than the log retention.
+        logger.warning(
+            "The full file the history was built from is not recorded, so a "
+            "start date moved back cannot be noticed. Record it with "
+            "fincommons.firds.record_history_from(config_path, day)",
+            extra=context(
+                module="firds", layer="silver", table="MAIN",
+                datadt=state["full_sample"].get("date"),
+            ),
+        )
 
     recorded = common.get_metadata_maxdate(spark, config_path, "MAIN")
 
@@ -398,8 +486,9 @@ def _update_from_bronze_to_silver_main(spark, config_path, outcome):
 
     # A delta file that ESMA published after its own day had been settled.
     # Where the history has already been built past that day, its records are
-    # not in it and applying the days after it would not put them there.
-    state = read_landing_state(config_path)
+    # not in it and applying the days after it would not put them there. The
+    # record is the one read above, which is the one a history built again in
+    # the meantime has already had its days taken off.
     passed = sorted(
         day for day in state["late"] if parse_reference_date(day) <= maxdate
     )
@@ -774,14 +863,29 @@ def initialise_firds_database(spark, config_path):
 
     # The commit names the reference date the history starts at, so that the
     # watermark can be recovered from it if this run does not reach it.
+    #
+    # The write replaces a database that already stands, which is how a
+    # history whose start was moved back is built again, so the schema is
+    # replaced along with it: the database may hold its amounts as doubles,
+    # which Delta will not widen into the decimals the Bronze layer is read
+    # as, and refusing the write over a vintage that is being discarded
+    # anyway would leave the history where it is.
     common.write_delta(
         df,
         common.ref_silver_main(config_path),
-        options={"userMetadata": commit_tag(maxdate, "init")},
+        options={
+            "userMetadata": commit_tag(maxdate, "init"),
+            "overwriteSchema": "true",
+        },
     )
     declare_silver_main_layout(spark, config_path)
 
     common.initialise_metadata(spark, config_path, maxdate=maxdate)
+    # The landing zone cannot read which full file the history was built
+    # from, and needs to know it to tell that a run has moved the start back;
+    # see record_history_from. It is recorded last, because it also says that
+    # the history has applied nothing after this date.
+    record_history_from(config_path, maxdate)
 
 
 #: The paths of the XML schema that the translation to the analytics schema
@@ -1639,6 +1743,7 @@ __all__ = [
     "initialise_firds_database",
     "list_reference_dates",
     "migrate_silver_main_to_decimal",
+    "moved_back_to",
     "parse_reference_date",
     "read_bronze_partition",
     "read_cancellations",

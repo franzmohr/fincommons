@@ -31,6 +31,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
   newest one in the Bronze layer, so that a history rebuilt after such a run
   starts from the earlier full file; a data lake without that record still
   starts from the newest.
+- `firds`: `update_from_bronze_to_silver_main` builds the history again by
+  itself where such a run has moved the start back. It used to apply only the
+  reference dates after its watermark, and since the earlier full file and the
+  delta files between it and the one the history stood on are all older than
+  that, every one of them was passed over and the run reported that there was
+  nothing to do. The rebuild replaces the database in one transaction, moves
+  the day the history stands at back with it, and takes the days up to the
+  earlier full file off the list of days published late. `watermark.json`
+  gains `history_from`, the full file the history was built from, which the
+  Silver layer records and `firds.record_history_from(config_path, day)` sets
+  by hand; the transaction log is no substitute, since the commit naming that
+  full file is cleaned out once it is older than the log retention. A history
+  built before that record existed is left alone, with a warning that a start
+  date moved back cannot be noticed until it is recorded.
 - `frenchdatalibrary` is renamed `famafrenchdata`, after the name the data
   is known by. Its functions follow: `update_famafrenchdata`,
   `connect_to_famafrenchdata`, `update_bronze_famafrenchdata`,

@@ -1104,6 +1104,139 @@ def test_a_recorded_full_file_not_in_bronze_is_reported(spark, config):
     assert not os.path.isdir(os.path.join(common.path_silver_main(config), "_delta_log"))
 
 
+# A history whose start was moved back
+# --------------------------------------------------------------------------
+
+
+def test_two_dates_in_the_landing_record_say_the_start_was_moved_back():
+    assert silver.moved_back_to({
+        "full_sample": {"date": "2023-12-30"}, "history_from": "2024-01-06",
+    }) == "2023-12-30"
+
+
+def test_one_date_in_the_landing_record_says_nothing_about_the_start():
+    """A data lake filled by hand records no full sample, and one whose
+    history was built before the start was recorded records no start."""
+    assert silver.moved_back_to(
+        {"full_sample": None, "history_from": "2024-01-06"}
+    ) is None
+    assert silver.moved_back_to(
+        {"full_sample": {"date": "2023-12-30"}, "history_from": None}
+    ) is None
+
+
+def test_a_full_sample_the_history_reaches_back_past_is_not_a_move_back():
+    """A history reaching further back than the sample the landing zone last
+    listed is the ordinary state: the delta files between the two have been
+    applied to it already."""
+    assert silver.moved_back_to(
+        {"full_sample": {"date": "2024-01-06"}, "history_from": "2024-01-06"}
+    ) is None
+    assert silver.moved_back_to(
+        {"full_sample": {"date": "2024-01-20"}, "history_from": "2024-01-06"}
+    ) is None
+
+
+def test_the_full_file_the_history_was_built_from_is_recorded(spark, config):
+    """The landing zone cannot read it off the historical database, and needs
+    it to tell that a run has moved the start of the history back."""
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2016, 9, 2))
+    finished(config, "FULINS_E_20160902_01of01.zip")
+
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    assert landing.read_landing_state(config)["history_from"] == "2016-09-02"
+
+
+def test_a_history_whose_start_was_moved_back_is_built_again(spark, config):
+    """The earlier full file and the delta files between it and the one the
+    history stands on are all older than the watermark, so the update would
+    pass over every one of them and report that there was nothing to do."""
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2016, 9, 9), isin="NEW")
+    finished(config, "FULINS_E_20160909_01of01.zip")
+    landing.write_landing_watermark(config, "2016-09-09", full_sample={
+        "date": "2016-09-09", "files": ["FULINS_E_20160909_01of01.zip"],
+    })
+    silver.update_from_bronze_to_silver_main(spark, config)
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-09"
+
+    # A run of the landing zone was asked to start the history earlier and
+    # fetched the earlier full file with the delta file published between the
+    # two; the Bronze layer has imported both.
+    write_full_bronze(spark, config, date(2016, 9, 2), isin="OLD")
+    write_bronze(spark, config, [
+        (date(2016, 9, 5), [("ISIN9", "MIC1", "Between", date(2016, 9, 5), "NewRcrd")]),
+    ])
+    finished(config, "FULINS_E_20160902_01of01.zip", "DLTINS_20160905_01of01.zip")
+    state = landing.read_landing_state(config)
+    landing.write_landing_watermark(
+        config, None,
+        applied_through=state["applied_through"],
+        history_from=state["history_from"],
+        full_sample={"date": "2016-09-02",
+                     "files": ["FULINS_E_20160902_01of01.zip"]},
+    )
+
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    built = common.connect_to_firds(spark, config, "main")
+    assert sorted(r["ISIN"] for r in built.collect()) == ["ISIN9", "OLD"]
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-05"
+    assert landing.read_landing_state(config)["history_from"] == "2016-09-02"
+
+
+def test_a_history_built_again_does_not_inherit_the_tags_of_the_one_before(
+    spark, config
+):
+    """The rebuild replaces the database, so the commits of the history it
+    replaced must not be read as the state of the one that stands."""
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2016, 9, 9), isin="NEW")
+    finished(config, "FULINS_E_20160909_01of01.zip")
+    landing.write_landing_watermark(config, "2016-09-09", full_sample={
+        "date": "2016-09-09", "files": ["FULINS_E_20160909_01of01.zip"],
+    })
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    write_full_bronze(spark, config, date(2016, 9, 2), isin="OLD")
+    finished(config, "FULINS_E_20160902_01of01.zip")
+    landing.write_landing_watermark(
+        config, None, history_from="2016-09-09",
+        full_sample={"date": "2016-09-02",
+                     "files": ["FULINS_E_20160902_01of01.zip"]},
+    )
+
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    assert silver.watermark_from_commits(
+        spark, common.ref_silver_main(config)
+    ) == "2016-09-02"
+
+
+def test_an_unrecorded_start_of_the_history_is_reported(spark, config, caplog):
+    """A data lake whose history was built before the start was recorded. The
+    log of the historical database is no substitute: the commit naming the
+    full file is cleaned out once it is older than the log retention."""
+    full = full_file(spark, [("ISIN1", "MIC1", "Company X", date(2016, 9, 2))])
+    start_history(spark, config, full)
+    common.update_metadata_maxdate(
+        spark, config, table="MAIN", maxdate="2016-09-02"
+    )
+    landing.write_landing_watermark(config, "2016-09-02", full_sample={
+        "date": "2016-09-02", "files": ["FULINS_E_20160902_01of01.zip"],
+    })
+
+    with caplog.at_level(logging.WARNING):
+        silver.update_from_bronze_to_silver_main(spark, config)
+
+    assert any("is not recorded" in record.message for record in caplog.records)
+    # The history is left as it stands: rebuilding it on a guess would
+    # discard a history that may be perfectly good.
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-02"
+
+
 def test_a_watermark_lost_after_the_history_was_written_is_recovered(spark, config):
     """The history is written before the watermark, so a run that died between
     the two left a database that could not be updated at all."""
