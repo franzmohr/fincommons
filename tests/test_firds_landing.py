@@ -867,6 +867,7 @@ def test_a_record_that_cannot_be_read_is_taken_as_empty(config):
     assert landing.read_landing_state(config) == {
         "complete_through": None, "applied_through": None,
         "published": [], "late": [], "full_sample": None,
+        "history_from": None,
     }
 
 
@@ -891,6 +892,70 @@ def test_the_day_the_history_stands_at_is_only_ever_moved_forward(config):
     landing.record_applied_through(config, "2024-01-03")
 
     assert landing.read_landing_state(config)["applied_through"] == "2024-01-05"
+
+
+# The full file the history was built from
+# --------------------------------------------------------------------------
+
+
+def test_the_full_file_the_history_was_built_from_is_recorded(config):
+    landing.record_history_from(config, "2024-01-01")
+
+    state = landing.read_landing_state(config)
+    assert state["history_from"] == "2024-01-01"
+    assert state["applied_through"] == "2024-01-01"
+
+
+def test_a_history_built_again_moves_the_day_it_stands_at_back(config):
+    """record_applied_through only ever moves it forward, because the Silver
+    layer only ever moves forward; a history built again from an earlier full
+    file is the one case in which it moves back."""
+    landing.record_applied_through(config, "2024-01-05")
+
+    landing.record_history_from(config, "2023-12-30")
+
+    state = landing.read_landing_state(config)
+    assert state["history_from"] == "2023-12-30"
+    assert state["applied_through"] == "2023-12-30"
+
+
+def test_a_history_built_again_keeps_the_rest_of_the_record(config):
+    landing.write_landing_watermark(
+        config, "2024-01-05", published=["2024-01-06"],
+        full_sample={"date": "2023-12-30", "files": ["FULINS_E_20231230_01of01.zip"]},
+    )
+
+    landing.record_history_from(config, "2023-12-30")
+
+    state = landing.read_landing_state(config)
+    assert state["complete_through"] == "2024-01-05"
+    assert state["published"] == ["2024-01-06"]
+    assert state["full_sample"]["date"] == "2023-12-30"
+
+
+def test_the_days_the_earlier_full_file_holds_are_no_longer_late(config):
+    """A day is late because the history had been built past it by the time
+    its delta file appeared. The full file the history now starts from holds
+    the records of every day up to its own, so only the days after it are."""
+    landing.write_landing_watermark(
+        config, "2024-01-05", late=["2023-12-28", "2023-12-30", "2024-01-03"],
+    )
+
+    landing.record_history_from(config, "2023-12-30")
+
+    assert landing.read_landing_state(config)["late"] == ["2024-01-03"]
+
+
+def test_the_full_file_the_history_was_built_from_survives_an_import(monkeypatch, config):
+    finished(config, "FULINS_E_20240101_01of01.zip")
+    landing.record_history_from(config, "2024-01-01")
+    available = docs(("FULINS", "2024-01-01", "FULINS_E_20240101_01of01.zip"),
+                     ("DLTINS", "2024-01-02", "DLTINS_20240102_01of01.zip"))
+    record_downloads(monkeypatch, available)
+
+    landing.update_landing_import(config, "2024-01-01")
+
+    assert landing.read_landing_state(config)["history_from"] == "2024-01-01"
 
 
 # The full file as the register lists it
