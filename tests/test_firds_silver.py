@@ -1104,6 +1104,90 @@ def test_a_recorded_full_file_not_in_bronze_is_reported(spark, config):
     assert not os.path.isdir(os.path.join(common.path_silver_main(config), "_delta_log"))
 
 
+# The size the weekly compaction writes
+# --------------------------------------------------------------------------
+
+
+def test_the_compaction_is_held_at_the_target_file_size(spark, config):
+    """Open-source Delta takes the size from the session, since the property
+    that would record it on the table is one it refuses."""
+    with silver.compaction_file_size(spark):
+        inside = [spark.conf.get(key) for key in silver.OPTIMIZE_SIZE_CONFS]
+
+    assert inside == [str(silver.OPTIMIZE_FILE_SIZE)] * 2
+    assert silver.OPTIMIZE_FILE_SIZE == 128 * 1024 * 1024
+
+
+def test_both_ends_of_the_size_are_set(spark, config):
+    """Left at Delta's gigabyte, the minimum makes every file below a
+    gigabyte eligible and each run rewrites what it has already compacted."""
+    assert silver.OPTIMIZE_SIZE_CONFS == (
+        "spark.databricks.delta.optimize.maxFileSize",
+        "spark.databricks.delta.optimize.minFileSize",
+    )
+
+
+def test_a_session_shared_with_other_tables_is_left_as_it_was(spark, config):
+    """The settings are the session's, so this table's layout must not stay
+    behind on it."""
+    key = silver.OPTIMIZE_SIZE_CONFS[0]
+    spark.conf.set(key, "999999")
+    try:
+        with silver.compaction_file_size(spark):
+            pass
+        assert spark.conf.get(key) == "999999"
+    finally:
+        spark.conf.unset(key)
+
+
+def test_a_setting_that_was_not_set_is_unset_again(spark, config):
+    """Asked with a default, the session reports only what it carries itself.
+    A bare read would answer with Delta's own default instead, once a Delta
+    write has initialised it, so it cannot say whether the setting is there."""
+    key = silver.OPTIMIZE_SIZE_CONFS[1]
+    spark.conf.unset(key)
+
+    with silver.compaction_file_size(spark):
+        assert spark.conf.get(key) == str(silver.OPTIMIZE_FILE_SIZE)
+
+    assert spark.conf.get(key, None) is None
+
+
+def test_the_settings_are_restored_although_the_compaction_fails(spark, config):
+    """A compaction that raises must not leave the session behind it."""
+    key = silver.OPTIMIZE_SIZE_CONFS[0]
+    spark.conf.unset(key)
+
+    with pytest.raises(RuntimeError, match="compaction failed"):
+        with silver.compaction_file_size(spark):
+            raise RuntimeError("the compaction failed")
+
+    assert spark.conf.get(key, None) is None
+
+
+def test_delta_s_own_default_is_not_taken_for_a_setting_of_the_session(
+    spark, config
+):
+    """Delta registers a default for these settings, which a session that has
+    written a Delta table reports as though it had asked for it. Restoring
+    that would pin the value of the Delta in use into the session."""
+    key = silver.OPTIMIZE_SIZE_CONFS[0]
+    spark.conf.unset(key)
+    # A Delta write, so that Delta's configuration is initialised and its
+    # default is what a bare read answers with.
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2016, 9, 2))
+    finished(config, "FULINS_E_20160902_01of01.zip")
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    assert spark.conf.get(key) == str(1024 * 1024 * 1024)
+
+    with silver.compaction_file_size(spark):
+        pass
+
+    assert spark.conf.get(key, None) is None
+
+
 # A history whose start was moved back
 # --------------------------------------------------------------------------
 

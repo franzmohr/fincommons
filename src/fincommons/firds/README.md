@@ -264,6 +264,29 @@ the history, not the week; what deletion vectors move off the daily path they
 put back here once a week, which is a seventh of the rewrites and the reason
 the trade is worth making.
 
+`OPTIMIZE` fills a file to `silver.OPTIMIZE_FILE_SIZE`, 128 MB, rather than to
+the gigabyte Delta aims at by default. A gigabyte is eight times
+`spark.sql.files.maxPartitionBytes`, so a read of such a file is split only as
+far as its row groups allow, and one task's share of the plan of a day then
+unrolls to several hundred megabytes -- enough for the cache of the plan not to
+fit in the storage memory of a session that has plenty, which Spark reports as
+a file it could not cache and then spills to disk. It is the size
+`layout.TARGET_FILE_SIZE` states for the Parquet tables, for the reason given
+there.
+
+Open-source Delta takes that size from the session and not from the table.
+`delta.targetFileSize`, which would record it on the table itself, is a
+property of Databricks' Delta: this one validates every `delta.` property and
+raises `DELTA_UNKNOWN_CONFIGURATION` for it. `silver.compaction_file_size`
+therefore holds the two session settings around the compaction and restores
+them afterwards, so that a session shared with other tables does not keep this
+table's layout. Both ends are set: left at Delta's gigabyte, `minFileSize`
+makes every file below a gigabyte eligible and each run would rewrite what it
+had already compacted. The setting says what a compaction writes from now on
+and nothing about what is already written -- a file at or above the size is not
+eligible, so a table that accumulated gigabyte files under the default keeps
+them until something rewrites them, such as the history being built again.
+
 #### The watermark
 
 How far the history has been built is recorded in a small Delta table of its

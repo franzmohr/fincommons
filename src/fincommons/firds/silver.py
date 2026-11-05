@@ -9,6 +9,7 @@ keeps track of which delta files have already been processed.
 """
 
 from datetime import datetime, timedelta
+import contextlib
 import logging
 import os
 
@@ -579,6 +580,9 @@ def _update_from_bronze_to_silver_main(spark, config_path, outcome):
         # the files that have arrived since the previous OPTIMIZE and leaves
         # the ones it has already clustered alone, so the cost follows the
         # week rather than the size of the history.
+        #
+        # The files are sized to OPTIMIZE_FILE_SIZE rather than to Delta's
+        # gigabyte; see compaction_file_size.
         if d.weekday() == 4:
 
             logger.debug(
@@ -588,7 +592,8 @@ def _update_from_bronze_to_silver_main(spark, config_path, outcome):
                 ),
             )
             dt = common.delta_table(spark, common.ref_silver_main(config_path))
-            dt.optimize().executeCompaction()
+            with compaction_file_size(spark):
+                dt.optimize().executeCompaction()
 
         outcome["datadt"] = datadt
         outcome["periods"] += 1
@@ -652,6 +657,90 @@ def declare_silver_main_layout(spark, config_path):
         "('delta.autoOptimize.optimizeWrite' = 'true', "
         "'delta.enableDeletionVectors' = 'true')"
     )
+
+
+#: The size the weekly compaction aims at for a file of the historical
+#: database, in bytes.
+#:
+#: Delta aims at a gigabyte, and a table left at that was found to hold files
+#: of that size beside the small ones of the days since the last compaction. A
+#: gigabyte is eight times ``spark.sql.files.maxPartitionBytes``, so a read of
+#: such a file is split only as far as its row groups allow, and one task's
+#: share of the plan of a day then unrolls to several hundred megabytes --
+#: enough for the cache of the plan not to fit in the storage memory of a
+#: session that has plenty, which is reported as a file that could not be
+#: cached and spills to disk instead.
+#:
+#: The size is the one :data:`fincommons.layout.TARGET_FILE_SIZE` states for
+#: the Parquet tables and for the same reason: large enough that opening a
+#: file costs little against reading it, small enough that a few hundred
+#: megabytes are still read by several tasks at once. It is stated again here
+#: because a Delta table is sized through ``OPTIMIZE`` rather than through
+#: that module, and the two mechanisms are free to part company.
+OPTIMIZE_FILE_SIZE = 128 * 1024 * 1024
+
+#: The settings :func:`compaction_file_size` holds. ``maxFileSize`` is what a
+#: bin is filled to; ``minFileSize`` is which files are eligible for a bin at
+#: all.
+OPTIMIZE_SIZE_CONFS = (
+    "spark.databricks.delta.optimize.maxFileSize",
+    "spark.databricks.delta.optimize.minFileSize",
+)
+
+
+@contextlib.contextmanager
+def compaction_file_size(spark, size=OPTIMIZE_FILE_SIZE):
+    """Hold the session at ``size`` for the files a compaction writes.
+
+    Open-source Delta takes the size from the session and not from the table.
+    ``delta.targetFileSize``, which would record it on the table itself, is a
+    property of Databricks' Delta and this one refuses it outright -- it
+    validates every ``delta.`` property and raises ``DELTA_UNKNOWN
+    CONFIGURATION`` for one it does not know -- so there is nowhere on the
+    table to put it. The settings are therefore put in place around the
+    compaction and restored afterwards, so that a session shared with other
+    tables is left as it was found rather than having this table's layout
+    imposed on it: a setting the session carried keeps its value, and one it
+    did not carry is unset again rather than being left at this size or at
+    Delta's.
+
+    Both settings are needed. Left at Delta's gigabyte, ``minFileSize`` makes
+    every file below a gigabyte eligible, so each run would rewrite files it
+    had already compacted towards the smaller maximum; set to the same size,
+    only the files below it are binned and the ones already at it are left
+    alone.
+
+    Note that this says what a compaction writes from now on and nothing about
+    what is already written: a file at or above ``size`` is not eligible, so
+    the gigabyte files a table accumulated under the old setting stay as they
+    are until something rewrites them, such as the history being built again.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    size: int
+        The size in bytes, :data:`OPTIMIZE_FILE_SIZE` by default.
+    """
+    # Read with a default rather than bare, because that is what distinguishes
+    # a setting the session carries from one that merely resolves to Delta's
+    # own default. A bare read raises for a setting that is not there, but
+    # only until Delta's configuration object has been initialised in the JVM
+    # -- the first Delta write does it -- after which it answers with the
+    # default instead and the two cannot be told apart. Restoring that default
+    # as though the session had asked for it would pin the value of the Delta
+    # in use into the session and hide a later one's.
+    previous = {key: spark.conf.get(key, None) for key in OPTIMIZE_SIZE_CONFS}
+    for key in OPTIMIZE_SIZE_CONFS:
+        spark.conf.set(key, str(size))
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                spark.conf.unset(key)
+            else:
+                spark.conf.set(key, value)
 
 
 def migrate_silver_main_to_decimal(spark, config_path):
@@ -1724,6 +1813,8 @@ __all__ = [
     "ANALYTICS_COLUMNS",
     "COMMIT_TAG_PREFIX",
     "DECIMAL_COLUMNS",
+    "OPTIMIZE_FILE_SIZE",
+    "OPTIMIZE_SIZE_CONFS",
     "PARTITION_PREFIX",
     "REFERENCE_DATE_FORMAT",
     "REWRITING_OPERATIONS",
@@ -1742,6 +1833,7 @@ __all__ = [
     "get_analytical_fields",
     "initialise_firds_database",
     "list_reference_dates",
+    "compaction_file_size",
     "migrate_silver_main_to_decimal",
     "moved_back_to",
     "parse_reference_date",
