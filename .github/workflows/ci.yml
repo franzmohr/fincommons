@@ -86,7 +86,7 @@ jobs:
       - name: Test
         run: python -m pytest -v --durations=25 ${{ matrix.python == '3.12' && '--cov=fincommons --cov-report=xml' || '' }}
 
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: matrix.python == '3.12'
         with:
           files: coverage.xml
@@ -109,7 +109,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
 
       - uses: actions/cache@v6
         with:

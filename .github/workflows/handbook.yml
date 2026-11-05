@@ -30,12 +30,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # latexmk runs biber for the bibliography as often as it is needed.
-      - uses: xu-cheng/latex-action@v3
+      - uses: xu-cheng/latex-action@v4
         with:
           root_file: fincommons.tex
           working_directory: docs/handbook
           latexmk_use_lualatex: false
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: handbook
           path: docs/handbook/fincommons.pdf
