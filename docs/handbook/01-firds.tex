@@ -28,7 +28,7 @@ The register itself is read page by page. It publishes some three thousand files
 
 \subsection{Bronze layer\label{sec:firds-bronze}}
 
-For further processing, the data in the landing zone must be decompressed. Afterwards, the content of the resulting XML file is parsed and stored in the Bronze layer in the Parquet file format. Since the received XML files can have different schemas, which can also change over time, data with a specific schema is stored in a dedicated directory. Within those directories, data is partitioned based on the date information that is contained in the file name of an XML file. Panel (b) of figure \ref{fig:dirstruct_firds_landing_bronze} illustrates this structure.
+For further processing, the data in the landing zone must be decompressed. Afterwards, the content of the resulting XML file is parsed and stored in the Bronze layer in the Parquet file format. Since the received XML files can have different schemas, which can also change over time, data with a specific schema is stored in a dedicated directory. Within those directories, data is partitioned based on the date information that is contained in the file name of an XML file. Panel (b) of figure \ref{fig:dirstruct_firds_landing_bronze} illustrates this structure. The reference date is the only column the Bronze layer is partitioned by, because it is the only one by which the layer is read: the Silver layer takes one publication day at a time, so a partition is exactly what one read needs and nothing more. A finer cut, by trading venue or by type of instrument, would buy no pruning for that read and would multiply the files of every import, as the Silver layer below shows by measurement. Each import is written through \verb|rebalanced|, so that a day arrives as one file or a few rather than one per task, and a partition that holds small files all the same can be rewritten into files of 128 megabytes by \verb|compact_partitions|; section \ref{sec:intro-data-layout} gives the reasons for both.
 
 That the Bronze layer is plain Parquet and not a Delta table follows from what it is asked to do. Each file of the landing zone is written into it once, as a partition of its own, and nothing that has been written is altered afterwards, so there is no row to update, no version to read back and nothing for a transaction log to reconcile. The directories themselves carry the information the Silver layer needs: the schema a file was published under is the directory it lies in, its reference date is the name of its partition, and an empty partition records that a file was imported and held no records. The Silver layer finds all of this by listing directories, which is as cheap as it is transparent, whereas a Delta table records its partitions in its log and has no way of stating an empty one. Plain Parquet is finally what any reader opens without a further dependency, which suits a layer that serves as the queryable archive of what was delivered.
 
@@ -146,7 +146,7 @@ That leaves the question of which types the database should carry, which is a qu
 \end{figure}
 
 
-\subsection{Silver layer}
+\subsection{Silver layer\label{sec:firds-silver}}
 
 The Silver layer consists of two data sets. First, a table named \emph{main}, which is the implementation of the historical database as described in section 4.2 of ESMA's Guide mentioned above.
 
