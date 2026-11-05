@@ -45,6 +45,18 @@ release may change the public API, which `tests/test_public_api.py` lists.
   full file is cleaned out once it is older than the log retention. A history
   built before that record existed is left alone, with a warning that a start
   date moved back cannot be noticed until it is recorded.
+- `firds`: the weekly `OPTIMIZE` of the historical database fills a file to
+  `silver.OPTIMIZE_FILE_SIZE`, 128 MB, rather than to the gigabyte Delta aims
+  at by default, which left the table holding gigabyte files beside the small
+  ones of the days since the last compaction. A gigabyte is eight times
+  `spark.sql.files.maxPartitionBytes`, so one task's share of the plan of a day
+  unrolled to several hundred megabytes and the cache of the plan did not fit
+  in the storage memory of a session that had plenty. Open-source Delta takes
+  the size from the session rather than from the table, so
+  `silver.compaction_file_size` holds the two settings around the compaction
+  and restores them afterwards. Files already written at the old size are not
+  eligible for a smaller bin and stay as they are until something rewrites
+  them.
 - `frenchdatalibrary` is renamed `famafrenchdata`, after the name the data
   is known by. Its functions follow: `update_famafrenchdata`,
   `connect_to_famafrenchdata`, `update_bronze_famafrenchdata`,
