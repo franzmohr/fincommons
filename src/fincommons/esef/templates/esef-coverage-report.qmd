@@ -1,0 +1,1754 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+
+  # No font is named beyond the one above, so nothing is fetched from a font
+  # service; a system without it falls back to the default of the renderer.
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  error: true
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a report
+# --------------------------------------------------------------------------
+
+# The path to the config file, whose esef section names the Silver layer of
+# the module. A chunk runs with the directory of this template as its working
+# directory, which is inside the installed package, so the path is taken from
+# the environment variable FINCOMMONS_CONFIG where it is set and is otherwise
+# a paths.yaml beside the template.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# The countries the report covers, as the repository codes them, or NULL for
+# every country the lake holds. A country the pipeline has not collected has
+# filings in the table of filings and no facts, and the report says so
+# rather than leaving it out.
+report_countries <- NULL
+
+# The financial years shown, by the calendar year the period ends in, or
+# NULL for the last `n_years` the lake holds. A financial year to 31 March
+# 2026 counts as 2026 here, and is labelled 2025/26 wherever it is named.
+report_years <- NULL
+n_years <- 5
+
+# The language of the report.
+lang <- "en"
+
+# How many months after the period end the annual financial report has to be
+# public. Article 4 of the Transparency Directive says four, and every
+# member state transposed it; a report measured against another deadline
+# changes this.
+deadline_months <- 4
+
+# How many rows the rankings of concepts show.
+top_n <- 20
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# The month names in the captions come from the system locale rather than
+# from the language set above, so the locale for dates is set from lang.
+invisible(Sys.setlocale("LC_TIME", if (lang == "de") "German" else "C"))
+
+# --------------------------------------------------------------------------
+# What counts as a concept of the taxonomy
+# --------------------------------------------------------------------------
+
+# A fact names its concept by a prefix and a local name. These prefixes are
+# the taxonomy every issuer tags against -- the IFRS taxonomy and ESMA's
+# additions to it -- and a concept under any other prefix is one the issuer
+# created for its own report. That distinction carries the whole report, so
+# it is one list in one place: a lake that holds reports tagged against a
+# taxonomy not named here would count them as extensions.
+taxonomy_prefixes <- c("ifrs-full", "ifrs-smes", "esef_cor", "esef_all",
+                       "ifrs", "esma")
+
+# --------------------------------------------------------------------------
+# The lines the report looks for
+# --------------------------------------------------------------------------
+
+# One row per concept, and a key that may have several rows: a line the
+# taxonomy offers more than one concept for counts as tagged where the
+# issuer tagged any of them. These are the lines of the primary statements
+# that an analysis of several issuers rests on, and they are the lines the
+# factsheet of a single issuer in this directory reads; the coverage of a
+# line is therefore also the answer to how many issuers that factsheet could
+# be built for.
+#
+# `statement` groups the lines: "pl" the statement of profit or loss, "sfp"
+# the statement of financial position, "cf" the statement of cash flows.
+lines <- tibble::tribble(
+  ~key,                 ~CONCEPT,                                                       ~statement, ~en,                            ~de,
+  "revenue",            "ifrs-full:Revenue",                                            "pl",  "Revenue",                           "Umsatzerlöse",
+  "revenue",            "ifrs-full:RevenueFromContractsWithCustomers",                  "pl",  "Revenue",                           "Umsatzerlöse",
+  "cost_of_sales",      "ifrs-full:CostOfSales",                                        "pl",  "Cost of sales",                     "Umsatzkosten",
+  "gross_profit",       "ifrs-full:GrossProfit",                                        "pl",  "Gross profit",                      "Bruttoergebnis",
+  "distribution_costs", "ifrs-full:DistributionCosts",                                  "pl",  "Distribution costs",                "Vertriebskosten",
+  "admin_expense",      "ifrs-full:AdministrativeExpense",                              "pl",  "Administrative expenses",           "Verwaltungskosten",
+  "employee_expense",   "ifrs-full:EmployeeBenefitsExpense",                            "pl",  "Employee benefits expense",         "Personalaufwand",
+  "depreciation",       "ifrs-full:DepreciationAndAmortisationExpense",                 "pl",  "Depreciation and amortisation",     "Abschreibungen",
+  "ebit",               "ifrs-full:ProfitLossFromOperatingActivities",                  "pl",  "Operating result",                  "Betriebsergebnis",
+  "finance_income",     "ifrs-full:FinanceIncome",                                      "pl",  "Finance income",                    "Finanzerträge",
+  "finance_costs",      "ifrs-full:FinanceCosts",                                       "pl",  "Finance costs",                     "Finanzaufwendungen",
+  "profit_before_tax",  "ifrs-full:ProfitLossBeforeTax",                                "pl",  "Profit before tax",                 "Ergebnis vor Steuern",
+  "income_tax",         "ifrs-full:IncomeTaxExpenseContinuingOperations",                "pl",  "Income tax expense",                "Steueraufwand",
+  "profit",             "ifrs-full:ProfitLoss",                                         "pl",  "Profit for the year",               "Jahresergebnis",
+  "profit_owners",      "ifrs-full:ProfitLossAttributableToOwnersOfParent",             "pl",  "Profit attributable to the owners", "Ergebnis der Eigentümer",
+  "eps",                "ifrs-full:BasicEarningsLossPerShare",                          "pl",  "Basic earnings per share",          "Ergebnis je Aktie",
+  "assets",             "ifrs-full:Assets",                                             "sfp", "Total assets",                      "Bilanzsumme",
+  "noncurrent_assets",  "ifrs-full:NoncurrentAssets",                                   "sfp", "Non-current assets",                "Langfristiges Vermögen",
+  "current_assets",     "ifrs-full:CurrentAssets",                                      "sfp", "Current assets",                    "Kurzfristiges Vermögen",
+  "ppe",                "ifrs-full:PropertyPlantAndEquipment",                          "sfp", "Property, plant and equipment",     "Sachanlagen",
+  "ppe",                "ifrs-full:PropertyPlantAndEquipmentIncludingRightofuseAssets", "sfp", "Property, plant and equipment",     "Sachanlagen",
+  "goodwill",           "ifrs-full:Goodwill",                                           "sfp", "Goodwill",                          "Firmenwert",
+  "intangibles",        "ifrs-full:IntangibleAssetsOtherThanGoodwill",                  "sfp", "Other intangible assets",           "Sonstige immaterielle Vermögenswerte",
+  "inventories",        "ifrs-full:Inventories",                                        "sfp", "Inventories",                       "Vorräte",
+  "receivables",        "ifrs-full:TradeAndOtherCurrentReceivables",                    "sfp", "Trade and other receivables",       "Forderungen",
+  "cash",               "ifrs-full:CashAndCashEquivalents",                             "sfp", "Cash and cash equivalents",         "Zahlungsmittel",
+  "equity",             "ifrs-full:Equity",                                             "sfp", "Equity",                            "Eigenkapital",
+  "equity_owners",      "ifrs-full:EquityAttributableToOwnersOfParent",                 "sfp", "Equity of the owners",              "Eigenkapital der Eigentümer",
+  "issued_capital",     "ifrs-full:IssuedCapital",                                      "sfp", "Issued capital",                    "Grundkapital",
+  "retained_earnings",  "ifrs-full:RetainedEarnings",                                   "sfp", "Retained earnings",                 "Gewinnrücklagen",
+  "liabilities",        "ifrs-full:Liabilities",                                        "sfp", "Total liabilities",                 "Schulden",
+  "noncurrent_liab",    "ifrs-full:NoncurrentLiabilities",                              "sfp", "Non-current liabilities",           "Langfristige Schulden",
+  "current_liab",       "ifrs-full:CurrentLiabilities",                                 "sfp", "Current liabilities",               "Kurzfristige Schulden",
+  "payables",           "ifrs-full:TradeAndOtherCurrentPayables",                       "sfp", "Trade and other payables",          "Verbindlichkeiten",
+  "debt_noncurrent",    "ifrs-full:OtherNoncurrentFinancialLiabilities",                "sfp", "Non-current financial liabilities", "Langfristige Finanzschulden",
+  "debt_noncurrent",    "ifrs-full:LongtermBorrowings",                                 "sfp", "Non-current financial liabilities", "Langfristige Finanzschulden",
+  "debt_current",       "ifrs-full:OtherCurrentFinancialLiabilities",                   "sfp", "Current financial liabilities",     "Kurzfristige Finanzschulden",
+  "debt_current",       "ifrs-full:ShorttermBorrowings",                                "sfp", "Current financial liabilities",     "Kurzfristige Finanzschulden",
+  "ocf",                "ifrs-full:CashFlowsFromUsedInOperatingActivities",             "cf",  "Operating cash flow",               "Operativer Cashflow",
+  "icf",                "ifrs-full:CashFlowsFromUsedInInvestingActivities",             "cf",  "Investing cash flow",               "Cashflow aus Investitionen",
+  "fcf_financing",      "ifrs-full:CashFlowsFromUsedInFinancingActivities",             "cf",  "Financing cash flow",               "Cashflow aus Finanzierung",
+  "interest_paid",      "ifrs-full:InterestPaidClassifiedAsOperatingActivities",        "cf",  "Interest paid",                     "Gezahlte Zinsen",
+  "taxes_paid",         "ifrs-full:IncomeTaxesPaidRefundClassifiedAsOperatingActivities", "cf", "Income taxes paid",                "Gezahlte Steuern",
+  "dividends_paid",     "ifrs-full:DividendsPaidClassifiedAsFinancingActivities",       "cf",  "Dividends paid",                    "Gezahlte Dividenden")
+
+# --------------------------------------------------------------------------
+# The indicators the report tests the record against
+# --------------------------------------------------------------------------
+
+# An indicator is feasible for an issuer and a year where every line it
+# rests on was tagged. `prior` marks an indicator that compares a year with
+# the one before it, which needs the lines of both years. The recipes are
+# those of the factsheet in this directory, so that the share of issuers an
+# indicator is feasible for is the share the factsheet's page on that
+# indicator could be filled for.
+#
+# No indicator rests on EBITDA. Depreciation and amortisation are not a line
+# of the primary statements under a concept of the taxonomy, so the cover
+# ratios here stand against the operating result and the operating cash
+# flow; the coverage of `depreciation` in the table of lines says how far an
+# EBITDA could be reached at all.
+indicators <- tibble::tribble(
+  ~en,                           ~de,                               ~keys,                                                              ~prior,
+  "Operating margin",            "EBIT-Marge",                      "revenue,ebit",                                                     FALSE,
+  "Net margin",                   "Nettomarge",                     "revenue,profit",                                                   FALSE,
+  "Gross margin",                 "Bruttomarge",                    "revenue,gross_profit",                                             FALSE,
+  "Equity ratio",                 "Eigenkapitalquote",              "equity,assets",                                                    FALSE,
+  "Gearing",                      "Verschuldungsgrad",              "debt_noncurrent,debt_current,cash,equity",                         FALSE,
+  "Interest cover",               "Zinsdeckung",                    "ebit,finance_costs",                                               FALSE,
+  "Current ratio",                "Liquidität 3. Grades",           "current_assets,current_liab",                                       FALSE,
+  "Quick ratio",                  "Liquidität 2. Grades",           "current_assets,inventories,current_liab",                           FALSE,
+  "Return on equity",             "Eigenkapitalrendite",            "profit_owners,equity_owners",                                      TRUE,
+  "Return on assets",             "Gesamtkapitalrendite",           "profit,assets",                                                    TRUE,
+  "Return on capital employed",   "Rendite auf eingesetztes Kapital", "ebit,assets,current_liab",                                       TRUE,
+  "Cash flow to operating result", "Cashflow zum Betriebsergebnis",  "ocf,ebit",                                                         FALSE,
+  "Accruals",                     "Periodenabgrenzungen",           "profit,ocf,icf,assets",                                            TRUE,
+  "Cash conversion cycle",        "Geldumschlagsdauer",             "inventories,receivables,payables,revenue,cost_of_sales",            TRUE,
+  "Earnings per share",           "Ergebnis je Aktie",              "eps",                                                              FALSE,
+  "Piotroski F-score",            "Piotroski-F-Score",              "profit,ocf,assets,debt_noncurrent,current_assets,current_liab,issued_capital,gross_profit,revenue", TRUE,
+  "Altman Z''-score",             "Altman-Z''-Score",               "current_assets,current_liab,retained_earnings,assets,ebit,equity,liabilities", FALSE)
+
+# You can adapt your corporate design in the sourced R-Skript
+library(ggplot2)
+source("r-corporate-design-functions-ggplot2.R")
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+# The label of a financial year. A year that ends on 31 December is named by
+# its calendar year, and any other by the two it spans: a financial year to
+# 31 March 2026 is 2025/26.
+fy_label <- function(date) {
+  y <- as.integer(format(date, "%Y"))
+  ifelse(format(date, "%m-%d") == "12-31", as.character(y),
+         paste0(y - 1, "/", sprintf("%02d", y %% 100)))
+}
+
+# The day a deadline of whole months after a date falls on. A month is added
+# by its name rather than by a number of days, because the deadline of a
+# period ending on 31 December is 30 April and not the 1st of May, and the
+# day is kept where the month it lands in is shorter: four months after
+# 31 October is the last day of February.
+add_months <- function(date, n) {
+  lt <- as.POSIXlt(date)
+  mday <- lt$mday
+  lt$mday <- 1L
+  lt$mon <- lt$mon + n
+  start <- as.Date(lt)
+  lt2 <- as.POSIXlt(start)
+  lt2$mon <- lt2$mon + 1L
+  len <- as.numeric(as.Date(lt2) - start)
+  start + pmin(mday, len) - 1L
+}
+
+# The prefix of a concept, and whether it is one of the taxonomy.
+prefix_of <- function(concept) sub(":.*$", "", concept)
+local_name_of <- function(concept) sub("^[^:]*:", "", concept)
+is_taxonomy <- function(concept) prefix_of(concept) %in% taxonomy_prefixes
+
+# --------------------------------------------------------------------------
+# The Silver layer
+# --------------------------------------------------------------------------
+
+yaml_paths <- read_yaml(config_path)
+path_silver <- yaml_paths[["esef"]][["silver"]]
+
+# The Silver layer may name a schema in a catalogue rather than a directory,
+# with the directory the tables are written to beside it. R reads files, so
+# it takes the directory.
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+
+# arrow reads every parquet file under a directory. A Delta table keeps the
+# files it has replaced until it is vacuumed, and the table of facts replaces
+# a country's partition on every run that finds new reports, so a Delta table
+# read this way counts a fact once for every time it was written. This report
+# counts facts, so it refuses one rather than show those counts.
+for (table in c("filings", "facts")) {
+  if (dir.exists(file.path(path_silver, table, "_delta_log"))) {
+    stop("The ", table, " table of the esef module is a Delta table, which ",
+         "this template does not read. Write the Silver layer as parquet, ",
+         "or read the table through Spark.")
+  }
+}
+
+filings_all <- open_dataset(file.path(path_silver, "filings")) %>% collect()
+
+if (nrow(filings_all) == 0) {
+  stop("The table of filings of the esef module is empty. Run the pipeline ",
+       "first: python -m fincommons.esef --config <paths.yaml> --country AT ",
+       "--contact <you@example.org>")
+}
+
+# The countries and the years the report covers. A country named in the
+# settings that the table does not list is an error rather than an empty
+# column, because a report that silently covers less than it says is worse
+# than one that does not render.
+countries_held <- sort(unique(filings_all$COUNTRY))
+if (is.null(report_countries)) {
+  report_countries <- countries_held
+} else {
+  unknown <- setdiff(report_countries, countries_held)
+  if (length(unknown) > 0) {
+    stop("The table of filings lists no filing of ",
+         paste(unknown, collapse = ", "), ". It lists ",
+         paste(countries_held, collapse = ", "), ".")
+  }
+}
+
+# The issuers the lake holds a filing for at all, before the countries and
+# the years of this report narrow the table. The comparison with the market
+# further down puts FIRDS against this rather than against the selection: a
+# report on one country and one year would otherwise read as though the rest
+# of the market had never filed.
+leis_in_record <- unique(filings_all$LEI)
+countries_in_record <- countries_held
+years_in_record <- range(as.integer(format(filings_all$PERIODEND, "%Y")))
+
+filings_all <- filings_all %>% filter(COUNTRY %in% report_countries)
+
+years_held <- sort(unique(as.integer(format(filings_all$PERIODEND, "%Y"))))
+if (is.null(report_years)) {
+  report_years <- tail(years_held, n_years)
+} else {
+  report_years <- sort(intersect(report_years, years_held))
+  if (length(report_years) == 0) {
+    stop("The table of filings holds none of the financial years asked for. ",
+         "It holds ", paste(range(years_held), collapse = " to "), ".")
+  }
+}
+
+filings_all <- filings_all %>%
+  mutate(fy = as.integer(format(PERIODEND, "%Y"))) %>%
+  filter(fy %in% report_years) %>%
+  mutate(year = fy_label(PERIODEND),
+         has_facts = !is.na(JSONURL),
+         lag_days = as.numeric(as.Date(PUBLISHED) - PERIODEND),
+         deadline = add_months(PERIODEND, deadline_months),
+         late = as.Date(PUBLISHED) > deadline)
+
+# One filing per issuer and financial year, which is what a cross-section
+# counts: an issuer that filed its report in two languages, or filed it again
+# with corrections, has a filing per language and per correction, each with
+# facts of its own. The one kept is the one with facts, then the one with
+# fewer validation errors, then the one the repository processed last. The
+# language is not part of the choice here, as it is in the factsheet, because
+# the figures of the two filings of a year are the same figures and this
+# report reads no texts.
+chosen <- filings_all %>%
+  arrange(LEI, PERIODEND, !has_facts, coalesce(ERRORS, 0L), desc(PROCESSED)) %>%
+  group_by(LEI, PERIODEND) %>%
+  mutate(rank = row_number()) %>%
+  ungroup()
+
+selected <- chosen %>% filter(rank == 1, has_facts)
+superseded <- chosen %>% filter(rank > 1)
+
+if (nrow(selected) == 0) {
+  stop("No filing of the countries and years asked for has facts. The ",
+       "pipeline collects the indexes for every country and the reports ",
+       "only for the countries it is given.")
+}
+
+# --------------------------------------------------------------------------
+# The facts
+# --------------------------------------------------------------------------
+
+# Four queries, each of which arrow answers over the parquet files and hands
+# back a result of the size of the market rather than of the size of the
+# lake. The table of facts is the largest table of the module -- a year of
+# the repository is a few thousand reports of a few thousand facts each --
+# and none of these collects it.
+facts_ds <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(FILING %in% selected$FILING)
+
+# 1. One row per filing: how much was tagged, and how much of it under the
+#    issuer's own concepts. A numeric fact is one with a value; everything
+#    else is a text, and the text blocks of the notes are not in the table at
+#    all.
+per_filing <- facts_ds %>%
+  group_by(FILING) %>%
+  summarise(
+    facts = n(),
+    numeric_facts = sum(!is.na(VALUE)),
+    text_facts = sum(is.na(VALUE)),
+    dimensional = sum(!is.na(VALUE) & !is.na(DIMENSIONS)),
+    own_facts = sum(!is.na(VALUE) & !startsWith(CONCEPT, "ifrs-full:")),
+    concepts = n_distinct(CONCEPT)) %>%
+  collect() %>%
+  ungroup() %>%
+  inner_join(selected %>% select(FILING, COUNTRY, LEI, NAME, PERIODEND, year, fy),
+             by = "FILING") %>%
+  mutate(own_share = own_facts / numeric_facts * 100)
+
+# 2. Which concepts each issuer tagged, for the lines the report looks for.
+#    The totals of the year the filing reports on: no dimensions, and a
+#    period that ends on the period end of the filing. The comparative
+#    figures of the year before, which every report carries as well, are
+#    left aside, so that a line counts as tagged in the year it was reported
+#    for and not in the year it was repeated in.
+line_concepts <- unique(lines$CONCEPT)
+tagged_lines <- facts_ds %>%
+  filter(!is.na(VALUE), is.na(DIMENSIONS), PRDEND == PERIODEND,
+         CONCEPT %in% line_concepts) %>%
+  distinct(COUNTRY, LEI, PERIODEND, CONCEPT) %>%
+  collect() %>%
+  ungroup() %>%
+  inner_join(lines %>% select(key, CONCEPT), by = "CONCEPT", relationship = "many-to-many") %>%
+  distinct(COUNTRY, LEI, PERIODEND, key)
+
+# 3. How many issuers tag each concept of the taxonomy, by financial year:
+#    the common ground of the market, which is what a cross-section can be
+#    built on at all.
+concept_reach <- facts_ds %>%
+  filter(!is.na(VALUE), is.na(DIMENSIONS), PRDEND == PERIODEND) %>%
+  distinct(PERIODEND, LEI, CONCEPT) %>%
+  group_by(PERIODEND, CONCEPT) %>%
+  summarise(issuers = n()) %>%
+  collect() %>%
+  ungroup() %>%
+  mutate(fy = as.integer(format(PERIODEND, "%Y")),
+         year = fy_label(PERIODEND))
+
+# 4. The concepts the issuers created themselves, one row per issuer and
+#    concept. The local name is all there is to go on: the label an issuer
+#    gives a concept is in the taxonomy of its report package, which the
+#    Silver layer does not hold, so two issuers are counted as having
+#    invented the same thing only where they spelt it the same way.
+own_concepts <- facts_ds %>%
+  filter(!is.na(VALUE), !startsWith(CONCEPT, "ifrs-full:")) %>%
+  distinct(COUNTRY, LEI, PERIODEND, CONCEPT) %>%
+  collect() %>%
+  ungroup() %>%
+  filter(!is_taxonomy(CONCEPT)) %>%
+  mutate(local = local_name_of(CONCEPT),
+         fy = as.integer(format(PERIODEND, "%Y")))
+
+# The prefixes the facts are tagged against, which says whether the list in
+# the settings above covers this lake.
+prefix_census <- facts_ds %>%
+  filter(!is.na(VALUE)) %>%
+  mutate(prefix = sub(":.*$", "", CONCEPT)) %>%
+  count(prefix) %>%
+  collect() %>%
+  ungroup() %>%
+  mutate(taxonomy = prefix %in% taxonomy_prefixes) %>%
+  arrange(desc(n))
+
+# --------------------------------------------------------------------------
+# The lines and the indicators, per issuer and year
+# --------------------------------------------------------------------------
+
+lines_meta <- lines %>%
+  distinct(key, statement, en, de) %>%
+  mutate(label = if (lang == "de") de else en)
+line_keys <- lines_meta$key
+n_lines <- length(line_keys)
+
+# One row per issuer, year and line, true where the line was tagged. Every
+# combination is present, so that a line nobody tagged is a row of FALSE
+# rather than a row that is missing.
+issuer_years <- selected %>% distinct(COUNTRY, LEI, NAME, PERIODEND, year, fy)
+
+presence <- issuer_years %>%
+  select(COUNTRY, LEI, PERIODEND, fy) %>%
+  tidyr::crossing(key = line_keys) %>%
+  left_join(tagged_lines %>% mutate(found = TRUE),
+            by = c("COUNTRY", "LEI", "PERIODEND", "key")) %>%
+  mutate(found = coalesce(found, FALSE))
+
+# The coverage of a line: the share of the issuers of a year that tagged it.
+line_coverage <- presence %>%
+  group_by(fy, key) %>%
+  summarise(issuers = n(), found = sum(found), .groups = "drop") %>%
+  mutate(share = found / issuers * 100) %>%
+  left_join(lines_meta, by = "key")
+
+# How many of the lines each issuer tagged.
+per_issuer <- presence %>%
+  group_by(COUNTRY, LEI, PERIODEND, fy) %>%
+  summarise(found = sum(found), .groups = "drop") %>%
+  mutate(share = found / n_lines * 100)
+
+# Whether an indicator could be computed for an issuer and a year: every
+# line it rests on tagged, and, where it compares a year with the one
+# before it, tagged in that year as well. The year before is the issuer's
+# own previous filing, which for an issuer that did not file is missing and
+# leaves the indicator infeasible rather than feasible by default.
+found_wide <- presence %>%
+  select(COUNTRY, LEI, PERIODEND, fy, key, found) %>%
+  pivot_wider(names_from = "key", values_from = "found")
+
+has_keys <- function(data, keys) {
+  if (length(keys) == 0) return(rep(TRUE, nrow(data)))
+  Reduce(`&`, lapply(keys, function(k) data[[k]]))
+}
+
+prior_year <- found_wide %>%
+  group_by(COUNTRY, LEI) %>%
+  arrange(PERIODEND, .by_group = TRUE) %>%
+  mutate(across(all_of(line_keys), ~ lag(.x) & (fy - lag(fy)) == 1,
+                .names = "prior_{.col}")) %>%
+  ungroup()
+
+indicator_coverage <- indicators %>%
+  mutate(label = if (lang == "de") de else en) %>%
+  rowwise() %>%
+  do({
+    row <- .
+    keys <- trimws(strsplit(row$keys, ",")[[1]])
+    ok <- has_keys(prior_year, keys)
+    if (row$prior) {
+      ok <- ok & has_keys(prior_year, paste0("prior_", keys))
+    }
+    tibble(label = row$label, n_keys = length(keys), prior = row$prior,
+           fy = prior_year$fy, feasible = coalesce(ok, FALSE))
+  }) %>%
+  ungroup() %>%
+  group_by(label, n_keys, prior, fy) %>%
+  summarise(issuers = n(), feasible = sum(feasible), .groups = "drop") %>%
+  mutate(share = feasible / issuers * 100)
+
+# --------------------------------------------------------------------------
+# The figures the cover and the prose quote
+# --------------------------------------------------------------------------
+
+years <- selected %>%
+  distinct(PERIODEND, year, fy) %>%
+  arrange(fy, PERIODEND) %>%
+  distinct(fy, .keep_all = TRUE)
+year_labels <- as.character(report_years)
+latest_fy <- max(report_years)
+n_filings <- nrow(filings_all)
+n_selected <- nrow(selected)
+n_issuers <- length(unique(selected$LEI))
+n_facts <- sum(per_filing$facts)
+n_numeric <- sum(per_filing$numeric_facts)
+max_date <- max(selected$PERIODEND)
+period_range <- paste0(min(report_years), " – ", max(report_years))
+
+latest <- per_filing %>% filter(fy == latest_fy)
+latest_issuers <- per_issuer %>% filter(fy == latest_fy)
+own_share_latest <- if (nrow(latest) > 0)
+  sum(latest$own_facts) / sum(latest$numeric_facts) * 100 else NA_real_
+median_lines_latest <- if (nrow(latest_issuers) > 0)
+  median(latest_issuers$found) else NA_real_
+late_share <- mean(filings_all$late, na.rm = TRUE) * 100
+no_facts_share <- mean(!filings_all$has_facts) * 100
+```
+
+```{r formats}
+# --------------------------------------------------------------------------
+# Writing numbers and words
+# --------------------------------------------------------------------------
+
+big_mark <- if (lang == "de") "." else ","
+decimal_mark <- if (lang == "de") "," else "."
+
+fmt <- function(x, digits = 0) {
+  x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
+  ifelse(is.na(x), "–",
+         formatC(x, format = "f", digits = digits, big.mark = big_mark,
+                 decimal.mark = decimal_mark))
+}
+
+fmt_signed <- function(x, digits = 1) {
+  ifelse(is.na(x), "–",
+         paste0(ifelse(x > 0, "+", ""),
+                formatC(x, format = "f", digits = digits, big.mark = big_mark,
+                        decimal.mark = decimal_mark)))
+}
+
+# Translate a label: `tr("Filings", "Einreichungen")`.
+tr <- function(en, de) if (lang == "de") de else en
+
+wrap_caption <- function(text, width = 125) {
+  paste(strwrap(text, width = width), collapse = "\n")
+}
+
+source_caption <- caption_corporate_design(
+  source = tr("ESEF annual financial reports, filings.xbrl.org.",
+              "ESEF-Finanzberichte, filings.xbrl.org."),
+  last = format(max_date, tr("%d %b %Y", "%d.%m.%Y")),
+  lang = lang)
+
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", x)
+  gsub("\"", "\\\\\"", x)
+}
+
+# A table of one row per item and one column per financial year, which most
+# of this report's tables are.
+render_years <- function(data, value, digits = 0, label_column = "label",
+                         header = "", order = NULL) {
+  wide <- data %>%
+    mutate(.v = {{ value }}) %>%
+    select(all_of(label_column), fy, .v) %>%
+    pivot_wider(names_from = "fy", values_from = ".v")
+  if (!is.null(order)) {
+    wide <- wide[match(order, wide[[label_column]]), ]
+    wide[[label_column]] <- order
+  }
+  out <- tibble(item = wide[[label_column]])
+  for (y in report_years) {
+    column <- as.character(y)
+    out[[column]] <- if (column %in% names(wide)) fmt(wide[[column]], digits)
+                     else "–"
+  }
+  knitr::kable(out, col.names = c(header, year_labels),
+               align = paste0("l", strrep("r", length(report_years))))
+}
+
+# A chart of one line per group over the financial years.
+chart_by_year <- function(data, value, group, subtitle = "%", digits = 0,
+                          ncol = 5, zero = TRUE) {
+  d <- data %>% mutate(.v = {{ value }}, .g = {{ group }}) %>% filter(!is.na(.v))
+  g <- ggplot(d, aes(x = fy, y = .v, colour = .g)) +
+    geom_line(linewidth = linewidth_corporate_design) +
+    geom_point(size = 1.4) +
+    scale_x_continuous(breaks = report_years, labels = year_labels,
+                       expand = c(.02, 0)) +
+    scale_y_continuous(labels = function(x) fmt(x, digits)) +
+    scale_colour_corporate_design() +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    guides(colour = guide_legend(ncol = ncol)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+  if (zero) g <- g + geom_zeroline()
+  g
+}
+
+# A chart of bars, one per category, read from top to bottom.
+chart_ranked <- function(data, value, label, subtitle = "%", digits = 0,
+                         wrap = 44) {
+  d <- data %>%
+    mutate(.v = {{ value }}, .l = wrap_labels({{ label }}, wrap)) %>%
+    arrange(.v) %>%
+    mutate(.l = factor(.l, levels = .l))
+  ggplot(d, aes(x = .v, y = .l)) +
+    geom_col(fill = palette_corporate_design("cat")[1], width = 0.72) +
+    geom_zeroline(x = 0) +
+    scale_x_continuous(labels = function(x) fmt(x, digits),
+                       expand = expansion(mult = c(0, .06))) +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    theme_corporate_design(base_size = chart_base_size, grid = "x",
+                           axis.title = element_blank())
+}
+```
+
+```{r cover, results='asis'}
+# --------------------------------------------------------------------------
+# The cover and the running head
+# --------------------------------------------------------------------------
+
+ts <- function(x) {
+  if (length(x) == 0 || is.na(x)) x <- "–"
+  paste0("\"", typst_string(as.character(x)), "\"")
+}
+
+typst_kv <- function(items) {
+  rows <- vapply(seq_along(items), function(i) {
+    paste0("  text(size: 7.5pt, fill: soft, ", ts(names(items)[i]), "),\n",
+           "  text(size: 8.5pt, ", ts(items[[i]]), "),")
+  }, character(1))
+  paste0("#grid(columns: (3.5cm, 1fr), row-gutter: 5.5pt, column-gutter: 6pt,\n",
+         paste(rows, collapse = "\n"), "\n)")
+}
+
+record_items <- list()
+record_items[[tr("Countries", "Länder")]] <-
+  paste(report_countries, collapse = ", ")
+record_items[[tr("Financial years", "Geschäftsjahre")]] <- period_range
+record_items[[tr("Filings listed", "Gelistete Einreichungen")]] <- fmt(n_filings)
+record_items[[tr("Reports read", "Gelesene Berichte")]] <- fmt(n_selected)
+record_items[[tr("Issuers", "Emittenten")]] <- fmt(n_issuers)
+record_items[[tr("Facts", "Fakten")]] <- fmt(n_facts)
+record_items[[tr("Latest period end", "Letzter Stichtag")]] <-
+  format(max_date, tr("%d %B %Y", "%d.%m.%Y"))
+
+compare_items <- list()
+compare_items[[tr("Lines looked for", "Gesuchte Zeilen")]] <- fmt(n_lines)
+compare_items[[tr("Found, median issuer", "Gefunden, Median")]] <-
+  paste0(fmt(median_lines_latest), " / ", n_lines)
+compare_items[[tr("Facts under the taxonomy, %", "Fakten der Taxonomie, %")]] <-
+  fmt(100 - own_share_latest, 1)
+compare_items[[tr("Issuers with a revenue", "Emittenten mit Umsatzerlösen")]] <-
+  paste0(fmt(line_coverage$share[line_coverage$fy == latest_fy &
+                                   line_coverage$key == "revenue"], 1), " %")
+compare_items[[tr("Published late, %", "Verspätet, %")]] <- fmt(late_share, 1)
+compare_items[[tr("Listed without facts, %", "Gelistet ohne Fakten, %")]] <-
+  fmt(no_facts_share, 1)
+
+notice <- tr(
+  paste("Compiled from the indexes and the reports that filings.xbrl.org",
+        "publishes for annual financial reports filed in the European",
+        "Single Electronic Format. The report counts what the issuers",
+        "tagged; it does not read a figure out of a report, and nothing in",
+        "it is an accounting statement about an issuer. Coverage is counted",
+        "over the reports the repository holds and converted to xBRL-JSON,",
+        "which is not every report filed in Europe. This document is",
+        "produced by a template of the open-source project fincommons: it",
+        "is a summary of a public record, given without warranty as to",
+        "correctness or completeness and without any association with the",
+        "issuers or with XBRL International. The notes on what this report",
+        "cannot say, and the disclaimer on the last page, apply."),
+  paste("Erstellt aus den Verzeichnissen und Berichten, die",
+        "filings.xbrl.org für Finanzberichte im European Single Electronic",
+        "Format veröffentlicht. Der Bericht zählt, was die Emittenten",
+        "ausgezeichnet haben; er liest keine Zahl aus einem Bericht, und",
+        "nichts darin ist eine Aussage über die Rechnungslegung eines",
+        "Emittenten. Die Abdeckung wird über die Berichte gezählt, die das",
+        "Repository hält und nach xBRL-JSON umgewandelt hat, und das sind",
+        "nicht alle in Europa eingereichten Berichte. Dieses Dokument wird",
+        "von einer Vorlage des Open-Source-Projekts fincommons erzeugt: es",
+        "ist eine Zusammenfassung eines öffentlichen Registers, ohne",
+        "Gewähr für Richtigkeit und Vollständigkeit und ohne jede",
+        "Verbindung zu den Emittenten oder zu XBRL International. Es gelten",
+        "die Hinweise darauf, was dieser Bericht nicht sagen kann, und der",
+        "Haftungsausschluss auf der letzten Seite."))
+
+title <- tr("The ESEF record", "Das ESEF-Register")
+subtitle <- tr("What the filings hold, and what of it can be compared",
+               "Was die Einreichungen enthalten und was davon vergleichbar ist")
+
+cat("```{=typst}\n")
+cat("#set page(numbering: none)\n")
+cat("#let ink = rgb(\"#22282E\")\n")
+cat("#let soft = rgb(\"#5C666F\")\n")
+cat("#let rule = rgb(\"#DCE1E5\")\n")
+cat("#let accent = rgb(\"#C10016\")\n\n")
+
+cat("#v(1.4cm)\n")
+cat("#text(size: 8pt, tracking: 1.6pt, fill: soft, ",
+    ts(toupper(tr("Coverage report · Example",
+                  "Abdeckungsbericht · Beispiel"))), ")\n", sep = "")
+cat("#v(4pt)\n#line(length: 100%, stroke: 1.2pt + accent)\n#v(14pt)\n")
+cat("#text(size: 25pt, weight: \"bold\", ", ts(title), ")\n", sep = "")
+cat("#v(3pt)\n")
+cat("#text(size: 10.5pt, fill: soft, ", ts(subtitle), ")\n", sep = "")
+cat("#v(28pt)\n")
+cat("#grid(columns: (1fr, 1fr), column-gutter: 16pt,\n")
+cat("  [#text(size: 8pt, weight: \"bold\", ",
+    ts(tr("The record", "Das Register")), ")\n  #v(6pt)\n  ",
+    typst_kv(record_items), "],\n", sep = "")
+cat("  [#text(size: 8pt, weight: \"bold\", ",
+    ts(paste(tr("Comparability", "Vergleichbarkeit"),
+             year_labels[length(year_labels)])),
+    ")\n  #v(6pt)\n  ", typst_kv(compare_items), "]\n)\n", sep = "")
+cat("#v(1fr)\n#line(length: 100%, stroke: 0.5pt + rule)\n#v(6pt)\n")
+cat("#text(size: 7pt, fill: soft, ", ts(notice), ")\n", sep = "")
+cat("#v(8pt)\n")
+cat("#text(size: 7pt, fill: soft, ",
+    ts(paste0(tr("Compiled on ", "Erstellt am "),
+              format(Sys.Date(), tr("%d %B %Y", "%d.%m.%Y")), ". ",
+              tr("Source: filings.xbrl.org, XBRL International.",
+                 "Quelle: filings.xbrl.org, XBRL International."))),
+    ")\n", sep = "")
+
+cat("\n#set page(\n")
+cat("  header: [#set text(size: 7pt, fill: soft)\n",
+    "    #grid(columns: (1fr, auto), ",
+    "[#text(weight: \"bold\", ", ts(title), ") #h(6pt) ",
+    "#text(", ts(paste(tr("Coverage report", "Abdeckungsbericht"),
+                       "·", period_range)), ")], ",
+    "[#text(", ts(tr("ESEF annual report data", "ESEF-Berichtsdaten")), ")])\n",
+    "    #v(-4pt) #line(length: 100%, stroke: 0.5pt + rule)],\n", sep = "")
+cat("  footer: [#set text(size: 7pt, fill: soft)\n",
+    "    #line(length: 100%, stroke: 0.5pt + rule) #v(-2pt)\n",
+    "    #grid(columns: (1fr, auto), ",
+    "[#text(", ts(tr("Source: ESEF annual financial reports, filings.xbrl.org. Own calculations.",
+                     "Quelle: ESEF-Finanzberichte, filings.xbrl.org. Eigene Berechnungen.")),
+    ")], [#context counter(page).display()])],\n", sep = "")
+cat("  numbering: \"1\",\n)\n")
+cat("```\n")
+```
+
+## `r tr("Contents", "Inhalt")`
+
+```{=typst}
+#outline(title: none, depth: 2, indent: 1em)
+```
+
+{{< pagebreak >}}
+
+### `r tr("How this report is built", "Wie dieser Bericht zustande kommt")`
+
+```{r basis, results='asis'}
+basis <- c(
+  tr(paste0("**What it counts.** The report reads the two Silver tables of ",
+            "the `esef` module of fincommons: one row per filing listed in ",
+            "the indexes of filings.xbrl.org, and one row per tagged fact ",
+            "of every report the pipeline collected. It covers ",
+            length(report_countries), " countries and the financial years ",
+            period_range, ": ", fmt(n_filings), " filings, of which ",
+            fmt(n_selected), " reports of ", fmt(n_issuers),
+            " issuers carry facts, and ", fmt(n_facts), " facts in all. ",
+            "Every number in this report is a count of facts, filings or ",
+            "issuers. Not one is an amount out of a report."),
+     paste0("**Was gezählt wird.** Der Bericht liest die beiden ",
+            "Silver-Tabellen des Moduls `esef` von fincommons: eine Zeile ",
+            "je in den Verzeichnissen von filings.xbrl.org gelisteter ",
+            "Einreichung und eine Zeile je ausgezeichnetem Fakt jedes ",
+            "eingesammelten Berichts. Er umfasst ", length(report_countries),
+            " Länder und die Geschäftsjahre ", period_range, ": ",
+            fmt(n_filings), " Einreichungen, davon ", fmt(n_selected),
+            " Berichte von ", fmt(n_issuers), " Emittenten mit Fakten, und ",
+            "insgesamt ", fmt(n_facts), " Fakten. Jede Zahl in diesem ",
+            "Bericht ist eine Anzahl von Fakten, Einreichungen oder ",
+            "Emittenten. Keine ist ein Betrag aus einem Bericht.")),
+  tr(paste("**One report per issuer and year.** An issuer may file the same",
+           "report twice -- in two languages, or again with corrections --",
+           "and each filing carries facts of its own. A cross-section",
+           "counts an issuer once per financial year, so the report kept",
+           "is the one with facts, then the one with fewer validation",
+           "errors, then the one the repository processed last. The",
+           "filings set aside this way are counted in their own right in",
+           "section 1."),
+     paste("**Ein Bericht je Emittent und Jahr.** Ein Emittent kann denselben",
+           "Bericht zweimal einreichen -- in zwei Sprachen oder korrigiert",
+           "--, und jede Einreichung trägt eigene Fakten. Ein Querschnitt",
+           "zählt einen Emittenten einmal je Geschäftsjahr, also wird die",
+           "Einreichung mit Fakten behalten, dann die mit weniger",
+           "Validierungsfehlern, dann die zuletzt verarbeitete. Die so",
+           "beiseitegelegten Einreichungen werden in Abschnitt 1 eigens",
+           "gezählt.")),
+  tr(paste("**The figures of the year, not the comparatives.** A report",
+           "states the figures of the year it reports on and the",
+           "comparative figures of the year before. A line counts as tagged",
+           "in the year it was reported for: the facts counted are those",
+           "without dimensions whose period ends on the period end of the",
+           "filing. A fact tagged twice in one report, in the statements",
+           "and again in the notes, counts once."),
+     paste("**Die Zahlen des Jahres, nicht die Vorjahreszahlen.** Ein",
+           "Bericht nennt die Zahlen des Jahres, über das er berichtet,",
+           "und die Vergleichszahlen des Vorjahres. Eine Zeile gilt als",
+           "ausgezeichnet in dem Jahr, für das sie berichtet wurde: gezählt",
+           "werden die Fakten ohne Dimensionen, deren Periode auf den",
+           "Stichtag der Einreichung endet. Ein Fakt, der in einem Bericht",
+           "zweimal ausgezeichnet ist, in den Abschlüssen und erneut in den",
+           "Erläuterungen, zählt einmal.")),
+  tr(paste0("**A concept of the taxonomy, or one of the issuer's own.** A ",
+            "fact names its concept by a prefix and a local name. The ",
+            "prefixes counted as the taxonomy are ",
+            paste0("`", taxonomy_prefixes, "`", collapse = ", "),
+            " -- the IFRS taxonomy and ESMA's additions to it -- and ",
+            "everything else is a concept the issuer created for its own ",
+            "report. ESMA allows such an extension where the taxonomy has ",
+            "no concept for a line, and requires it to be anchored to a ",
+            "wider concept of the taxonomy; the anchoring is in the ",
+            "taxonomy of the report package and not in the facts, so this ",
+            "report counts extensions and cannot say what they were ",
+            "anchored to."),
+     paste0("**Ein Konzept der Taxonomie oder ein eigenes.** Ein Fakt nennt ",
+            "sein Konzept durch einen Präfix und einen lokalen Namen. Als ",
+            "Taxonomie gelten die Präfixe ",
+            paste0("`", taxonomy_prefixes, "`", collapse = ", "),
+            " -- die IFRS-Taxonomie und die Ergänzungen der ESMA --, alles ",
+            "andere ist ein Konzept, das der Emittent für seinen eigenen ",
+            "Bericht geschaffen hat. Die ESMA erlaubt eine solche ",
+            "Erweiterung, wo die Taxonomie kein Konzept für eine Zeile hat, ",
+            "und verlangt ihre Verankerung an einem weiteren Konzept der ",
+            "Taxonomie; die Verankerung steht in der Taxonomie des ",
+            "Berichtspakets und nicht in den Fakten, daher zählt dieser ",
+            "Bericht Erweiterungen und kann nicht sagen, woran sie ",
+            "verankert wurden.")),
+  tr(paste0("**The lines looked for.** ", n_lines, " lines of the primary ",
+            "statements, listed in section 3. They are the lines the ",
+            "factsheet of a single issuer in this directory reads, so the ",
+            "coverage of a line is also the answer to how many issuers ",
+            "that factsheet could be built for. A line the taxonomy offers ",
+            "several concepts for counts as tagged where the issuer tagged ",
+            "any of them."),
+     paste0("**Die gesuchten Zeilen.** ", n_lines, " Zeilen der ",
+            "Hauptabschlüsse, aufgeführt in Abschnitt 3. Es sind die ",
+            "Zeilen, die das Factsheet eines einzelnen Emittenten in ",
+            "diesem Verzeichnis liest, daher ist die Abdeckung einer Zeile ",
+            "auch die Antwort darauf, für wie viele Emittenten dieses ",
+            "Factsheet erstellt werden könnte. Eine Zeile, für die die ",
+            "Taxonomie mehrere Konzepte anbietet, gilt als ausgezeichnet, ",
+            "wenn der Emittent eines davon ausgezeichnet hat.")))
+
+cat(paste(basis, collapse = "\n\n"))
+```
+
+{{< pagebreak >}}
+
+## `r tr("1 The record", "1 Das Register")`
+
+### `r tr("What the repository lists, by country", "Was das Repository listet, nach Land")`
+
+```{r record-countries}
+# One row per country: what the indexes list, how much of it carries facts,
+# and how much was set aside as a second filing of a year. A country whose
+# reports the pipeline was never given stands here with filings and without
+# facts, which is a statement about the lake and not about the country.
+by_country <- filings_all %>%
+  group_by(COUNTRY) %>%
+  summarise(filings = n(),
+            issuers = n_distinct(LEI),
+            no_facts = sum(!has_facts),
+            .groups = "drop") %>%
+  left_join(selected %>%
+              group_by(COUNTRY) %>%
+              summarise(read = n(), read_issuers = n_distinct(LEI),
+                        .groups = "drop"),
+            by = "COUNTRY") %>%
+  left_join(superseded %>% count(COUNTRY, name = "second"), by = "COUNTRY") %>%
+  left_join(per_filing %>%
+              group_by(COUNTRY) %>%
+              summarise(facts = sum(facts), .groups = "drop"),
+            by = "COUNTRY") %>%
+  mutate(across(c(read, read_issuers, second, facts), ~ coalesce(.x, 0L)))
+
+temp <- by_country %>%
+  mutate(per_report = ifelse(read > 0, facts / read, NA)) %>%
+  transmute(COUNTRY,
+            filings = fmt(filings),
+            issuers = fmt(issuers),
+            second = fmt(second),
+            no_facts = fmt(no_facts),
+            read = fmt(read),
+            facts = fmt(facts),
+            per_report = fmt(per_report))
+
+knitr::kable(temp, align = "lrrrrrrr", col.names = c(
+  tr("Country", "Land"),
+  tr("Filings", "Einreichungen"),
+  tr("Issuers", "Emittenten"),
+  tr("Second of a year", "Zweite des Jahres"),
+  tr("No facts", "Ohne Fakten"),
+  tr("Reports read", "Gelesene Berichte"),
+  tr("Facts", "Fakten"),
+  tr("Per report", "Je Bericht")))
+```
+
+### `r tr("Reports read, by financial year", "Gelesene Berichte, nach Geschäftsjahr")`
+
+```{r record-years}
+render_years(selected %>% count(COUNTRY, fy) %>% rename(label = COUNTRY),
+             n, header = tr("Country", "Land"))
+```
+
+```{r record-years-chart}
+#| fig-height: 2.3
+chart_by_year(selected %>% count(COUNTRY, fy),
+              n, COUNTRY,
+              subtitle = tr("Reports with facts", "Berichte mit Fakten"))
+```
+
+{{< pagebreak >}}
+
+### `r tr("Timeliness", "Rechtzeitigkeit")`
+
+```{r timeliness, results='asis'}
+cat(tr(paste0("Article 4 of the Transparency Directive requires an issuer to ",
+              "make its annual financial report public at the latest ",
+              deadline_months, " months after the end of its financial ",
+              "year. The dates here are the ones the repository records: ",
+              "`PUBLISHED` is when the source -- the officially appointed ",
+              "mechanism of the member state -- published the filing, which ",
+              "is not necessarily the day the issuer released its results. ",
+              "A filing the repository could not date is left out of this ",
+              "table."),
+       paste0("Artikel 4 der Transparenzrichtlinie verlangt, dass ein ",
+              "Emittent seinen Finanzbericht spätestens ", deadline_months,
+              " Monate nach Ende des Geschäftsjahres veröffentlicht. Die ",
+              "Daten hier sind die vom Repository erfassten: `PUBLISHED` ist ",
+              "der Tag, an dem die Quelle -- der amtlich bestellte ",
+              "Mechanismus des Mitgliedstaats -- die Einreichung ",
+              "veröffentlicht hat, und nicht notwendigerweise der Tag, an ",
+              "dem der Emittent seine Zahlen bekannt gegeben hat. Eine ",
+              "Einreichung ohne Datum bleibt in dieser Tabelle außen vor.")))
+```
+
+```{r timeliness-table}
+timely <- filings_all %>%
+  filter(!is.na(lag_days)) %>%
+  group_by(COUNTRY) %>%
+  summarise(filings = n(),
+            median = median(lag_days),
+            p90 = quantile(lag_days, 0.9),
+            late = mean(late) * 100,
+            .groups = "drop")
+
+total <- filings_all %>%
+  filter(!is.na(lag_days)) %>%
+  summarise(COUNTRY = tr("All", "Alle"), filings = n(),
+            median = median(lag_days), p90 = quantile(lag_days, 0.9),
+            late = mean(late) * 100)
+
+temp <- bind_rows(timely, total) %>%
+  transmute(COUNTRY, filings = fmt(filings), median = fmt(median),
+            p90 = fmt(p90), late = fmt(late, 1))
+
+knitr::kable(temp, align = "lrrrr", col.names = c(
+  tr("Country", "Land"),
+  tr("Filings dated", "Datierte Einreichungen"),
+  tr("Days to publication, median", "Tage bis zur Veröffentlichung, Median"),
+  tr("90th percentile", "90. Perzentil"),
+  tr("Beyond the deadline, %", "Nach der Frist, %")))
+```
+
+```{r timeliness-chart}
+#| fig-height: 2.3
+chart_by_year(filings_all %>%
+                filter(!is.na(lag_days)) %>%
+                group_by(COUNTRY, fy) %>%
+                summarise(median = median(lag_days), .groups = "drop"),
+              median, COUNTRY,
+              subtitle = tr("Days from the period end to publication, median",
+                            "Tage vom Stichtag zur Veröffentlichung, Median"))
+```
+
+### `r tr("What the repository's validation found", "Was die Validierung des Repository fand")`
+
+```{r validation}
+# The repository validates every filing it takes in and records what the
+# check found. These are its counts, not this report's: an inconsistency is
+# a calculation in the filing that does not add up, which is a warning
+# rather than an error, and the repository publishes the filing either way.
+validation <- filings_all %>%
+  group_by(COUNTRY) %>%
+  summarise(filings = n(),
+            with_errors = mean(coalesce(ERRORS, 0L) > 0) * 100,
+            with_warnings = mean(coalesce(WARNINGS, 0L) > 0) * 100,
+            with_inconsistencies = mean(coalesce(INCONSISTENCIES, 0L) > 0) * 100,
+            median_inconsistencies = median(coalesce(INCONSISTENCIES, 0L)),
+            .groups = "drop")
+
+temp <- validation %>%
+  transmute(COUNTRY, filings = fmt(filings),
+            with_errors = fmt(with_errors, 1),
+            with_warnings = fmt(with_warnings, 1),
+            with_inconsistencies = fmt(with_inconsistencies, 1),
+            median_inconsistencies = fmt(median_inconsistencies))
+
+knitr::kable(temp, align = "lrrrrr", col.names = c(
+  tr("Country", "Land"),
+  tr("Filings", "Einreichungen"),
+  tr("With an error, %", "Mit Fehler, %"),
+  tr("With a warning, %", "Mit Warnung, %"),
+  tr("With an inconsistency, %", "Mit Inkonsistenz, %"),
+  tr("Inconsistencies, med.", "Inkonsistenzen, Med.")))
+```
+
+### `r tr("The record against the market", "Das Register gegen den Markt")`
+
+```{r firds, results='asis'}
+# How many issuers the record is missing. The table of filings lists the
+# issuers whose reports reached the repository; FIRDS lists the shares
+# admitted to trading in the Union, and the issuer of each. The comparison
+# is the one check of this report that reaches outside the module, and it
+# needs the firds module's Silver layer in the same config file.
+#
+# Two things to read it with. A share with a record in force in FIRDS is not
+# the same population as an issuer required to file an annual financial
+# report in ESEF: the compact table carries no flag for admission to a
+# regulated market at the issuer's request, so the count here is of every
+# issuer of a share FIRDS still holds a record for, which is the wider
+# population. And FIRDS is a register of the Union: the United Kingdom and
+# Ukraine, whose filings the repository also collects, are not in it.
+firds_silver <- tryCatch(yaml_paths[["firds"]][["silver"]], error = function(e) NULL)
+if (is.list(firds_silver)) firds_silver <- firds_silver[["path"]]
+firds_compact <- if (is.null(firds_silver)) NULL else
+  file.path(firds_silver, "compact")
+
+if (is.null(firds_compact) || !dir.exists(firds_compact)) {
+  cat(tr(paste("The config file names no Silver layer of the `firds` module,",
+               "or it holds no compact table, so this comparison is left",
+               "out. Build it with `firds.update_from_silver_main_to_silver_compact`",
+               "and render again to see how many issuers of shares admitted",
+               "to trading in the Union have no annual financial report in",
+               "the record."),
+         paste("Die Konfigurationsdatei nennt keinen Silver-Layer des Moduls",
+               "`firds`, oder dieser enthält keine compact-Tabelle, daher",
+               "entfällt dieser Vergleich. Erstellen Sie sie mit",
+               "`firds.update_from_silver_main_to_silver_compact` und",
+               "rendern Sie erneut, um zu sehen, wie viele Emittenten von",
+               "zum Handel in der Union zugelassenen Aktien keinen",
+               "Finanzbericht im Register haben.")))
+} else if (dir.exists(file.path(firds_compact, "_delta_log"))) {
+  cat(tr(paste("The compact table of the `firds` module is a Delta table,",
+               "which this template does not read. Write it as parquet, or",
+               "read it through Spark."),
+         paste("Die compact-Tabelle des Moduls `firds` ist eine",
+               "Delta-Tabelle, die diese Vorlage nicht liest. Schreiben Sie",
+               "sie als Parquet oder lesen Sie sie über Spark.")))
+} else {
+  shares <- open_dataset(firds_compact) %>%
+    select(ISIN, CFI, ISSUER) %>%
+    filter(!is.na(ISSUER)) %>%
+    collect() %>%
+    # The CFI of an ISIN joins what the trading venues state with a plus, so
+    # a share is one whose CFI begins with ES at any of them.
+    filter(grepl("(^|\\+)ES", CFI)) %>%
+    distinct(ISSUER)
+
+  filed <- leis_in_record
+  market <- shares$ISSUER
+  record_scope <- paste0(paste(countries_in_record, collapse = ", "), ", ",
+                         paste(unique(years_in_record), collapse = " to "))
+  cat(tr(
+    paste0("FIRDS holds a share with a record in force for ", fmt(length(market)),
+           " issuers. Of those, ", fmt(sum(market %in% filed)),
+           " are in the record of filings -- ",
+           fmt(mean(market %in% filed) * 100, 1), " per cent. The record ",
+           "also holds ", fmt(sum(!filed %in% market)),
+           " issuers that FIRDS holds no share for, which an issuer of ",
+           "listed debt alone, an issuer outside the Union, and an issuer ",
+           "whose shares have since been delisted all are. Both counts are ",
+           "taken over the whole record the lake holds -- ", record_scope,
+           " -- and not over the countries and years of this report, which ",
+           "would read as though the rest of the market had never filed. ",
+           "FIRDS covers the Union, so a lake built for some of its ",
+           "countries shows the issuers of the others as missing; the share ",
+           "above is a lower bound for the countries collected and says ",
+           "nothing about the rest."),
+    paste0("FIRDS hält für ", fmt(length(market)),
+           " Emittenten eine Aktie mit gültigem Datensatz. Davon stehen ",
+           fmt(sum(market %in% filed)), " im Einreichungsregister -- ",
+           fmt(mean(market %in% filed) * 100, 1),
+           " Prozent. Das Register führt außerdem ",
+           fmt(sum(!filed %in% market)),
+           " Emittenten, für die FIRDS keine Aktie hält, was auf einen ",
+           "Emittenten nur börsennotierter Schuldtitel, einen Emittenten ",
+           "außerhalb der Union und einen Emittenten zutrifft, dessen ",
+           "Aktien inzwischen nicht mehr notiert sind. Beide Zahlen sind ",
+           "über das gesamte im Lake vorhandene Register gezählt -- ",
+           record_scope, " -- und nicht über die Länder und Jahre dieses ",
+           "Berichts, was so zu lesen wäre, als hätte der übrige Markt nie ",
+           "eingereicht. FIRDS deckt die Union ab, daher zeigt ein Lake für ",
+           "einen Teil ihrer Länder die Emittenten der übrigen als fehlend; ",
+           "der Anteil oben ist eine Untergrenze für die eingesammelten ",
+           "Länder und sagt nichts über die übrigen.")))
+}
+```
+
+{{< pagebreak >}}
+
+## `r tr("2 What is tagged", "2 Was ausgezeichnet wird")`
+
+### `r tr("The facts of a report", "Die Fakten eines Berichts")`
+
+```{r facts-per-report}
+# What a report holds, per financial year and as a median over the reports
+# of the year. The text blocks of the notes are not in the table: they are
+# most of a report by size, and the Silver layer leaves them out, so a text
+# here is a short one -- the name of the entity, its domicile, the currency.
+facts_year <- per_filing %>%
+  group_by(fy) %>%
+  summarise(reports = n(),
+            facts = median(facts),
+            numeric_facts = median(numeric_facts),
+            dimensional = median(dimensional),
+            text_facts = median(text_facts),
+            concepts = median(concepts),
+            own = median(own_facts),
+            .groups = "drop")
+
+temp <- tibble(item = c(
+  tr("Reports read", "Gelesene Berichte"),
+  tr("Facts", "Fakten"),
+  tr("of which numeric", "davon numerisch"),
+  tr("of which with dimensions", "davon mit Dimensionen"),
+  tr("of which texts", "davon Texte"),
+  tr("Distinct concepts", "Verschiedene Konzepte"),
+  tr("Facts under the issuer's own concepts", "Fakten unter eigenen Konzepten")))
+for (y in report_years) {
+  row <- facts_year %>% filter(fy == y)
+  temp[[as.character(y)]] <- if (nrow(row) == 0) rep("–", 7) else
+    c(fmt(row$reports), fmt(row$facts), fmt(row$numeric_facts),
+      fmt(row$dimensional), fmt(row$text_facts), fmt(row$concepts),
+      fmt(row$own))
+}
+knitr::kable(temp, col.names = c(tr("Median per report", "Median je Bericht"),
+                                 year_labels),
+             align = paste0("l", strrep("r", length(report_years))))
+```
+
+### `r tr("The taxonomies the facts are tagged against", "Die Taxonomien, gegen die ausgezeichnet wird")`
+
+```{r prefixes}
+# Every prefix the facts carry, with the ones this report counts as the
+# taxonomy marked. The tail is the issuers' own prefixes, one per issuer,
+# and it is reported as a count rather than listed.
+standard <- prefix_census %>% filter(taxonomy)
+own <- prefix_census %>% filter(!taxonomy)
+
+temp <- standard %>%
+  transmute(prefix = paste0("`", prefix, "`"),
+            facts = fmt(n),
+            share = fmt(n / sum(prefix_census$n) * 100, 1),
+            kind = tr("the taxonomy", "die Taxonomie"))
+
+temp <- bind_rows(temp, tibble(
+  prefix = tr(paste0(fmt(nrow(own)), " prefixes of the issuers themselves"),
+              paste0(fmt(nrow(own)), " Präfixe der Emittenten selbst")),
+  facts = fmt(sum(own$n)),
+  share = fmt(sum(own$n) / sum(prefix_census$n) * 100, 1),
+  kind = tr("extensions", "Erweiterungen")))
+
+knitr::kable(temp, align = "lrrl", col.names = c(
+  tr("Prefix", "Präfix"),
+  tr("Numeric facts", "Numerische Fakten"),
+  tr("Share, %", "Anteil, %"),
+  tr("Counted as", "Gezählt als")))
+```
+
+### `r tr("How much a report tags under its own concepts", "Wie viel ein Bericht unter eigenen Konzepten auszeichnet")`
+
+```{r own-share-chart}
+#| fig-height: 2.3
+chart_by_year(per_filing %>%
+                group_by(COUNTRY, fy) %>%
+                summarise(own = median(own_share), .groups = "drop"),
+              own, COUNTRY,
+              subtitle = tr("Numeric facts under the issuer's own concepts, median of the reports, %",
+                            "Numerische Fakten unter eigenen Konzepten, Median der Berichte, %"),
+              digits = 1)
+```
+
+```{r own-share-bands}
+# The distribution across the reports of the latest year, because a median
+# hides the issuers an analysis would struggle with most.
+bands <- c(0, 2, 5, 10, 20, 100)
+band_labels <- c("0 – 2 %", "2 – 5 %", "5 – 10 %", "10 – 20 %", "> 20 %")
+
+temp <- per_filing %>%
+  filter(!is.na(own_share)) %>%
+  mutate(band = cut(own_share, breaks = bands, labels = band_labels,
+                    include.lowest = TRUE, right = FALSE)) %>%
+  count(fy, band, .drop = FALSE) %>%
+  group_by(fy) %>%
+  mutate(share = n / sum(n) * 100) %>%
+  ungroup() %>%
+  rename(label = band)
+
+render_years(temp, share, digits = 1,
+             header = tr("Reports by own concepts, %",
+                         "Berichte nach eigenen Konzepten, %"),
+             order = band_labels)
+```
+
+{{< pagebreak >}}
+
+### `r tr("The concepts most issuers tag", "Die Konzepte, die die meisten Emittenten auszeichnen")`
+
+```{r concept-reach, results='asis'}
+cat(tr(paste0("The common ground of the market in the financial year ",
+              year_labels[length(year_labels)], ": the concepts of the ",
+              "taxonomy that the most issuers tagged as a total of the year, ",
+              "out of the ", fmt(sum(selected$fy == latest_fy)),
+              " reports read for that year. A concept further down this ",
+              "ranking than a reader expects is a line that cannot carry a ",
+              "cross-section."),
+       paste0("Die gemeinsame Grundlage des Marktes im Geschäftsjahr ",
+              year_labels[length(year_labels)], ": die Konzepte der ",
+              "Taxonomie, die die meisten Emittenten als Jahressumme ",
+              "ausgezeichnet haben, von den ",
+              fmt(sum(selected$fy == latest_fy)),
+              " für dieses Jahr gelesenen Berichten. Ein Konzept, das in ",
+              "dieser Rangfolge weiter unten steht als erwartet, ist eine ",
+              "Zeile, die keinen Querschnitt tragen kann.")))
+```
+
+```{r concept-reach-table}
+reports_latest <- sum(selected$fy == latest_fy)
+temp <- concept_reach %>%
+  filter(fy == latest_fy, is_taxonomy(CONCEPT)) %>%
+  arrange(desc(issuers)) %>%
+  head(top_n) %>%
+  mutate(share = issuers / reports_latest * 100) %>%
+  transmute(concept = paste0("`", CONCEPT, "`"),
+            issuers = fmt(issuers),
+            share = fmt(share, 1))
+
+knitr::kable(temp, align = "lrr", col.names = c(
+  tr("Concept of the taxonomy", "Konzept der Taxonomie"),
+  tr("Issuers", "Emittenten"),
+  tr("Reports, %", "Berichte, %")))
+```
+
+### `r tr("The concepts the issuers invent", "Die Konzepte, die die Emittenten erfinden")`
+
+```{r own-names, results='asis'}
+cat(tr(paste("The local names most issuers created a concept of their own",
+             "for, over every year shown. Two issuers are counted as having",
+             "invented the same thing only where they spelt it the same way:",
+             "the label a report gives a concept is in the taxonomy of its",
+             "package, which the Silver layer does not hold, so a line two",
+             "issuers call by different names is counted twice here. A name",
+             "high in this list is a line the taxonomy has no concept for,",
+             "or has one the issuers do not use."),
+       paste("Die lokalen Namen, für die die meisten Emittenten ein eigenes",
+             "Konzept geschaffen haben, über alle gezeigten Jahre. Zwei",
+             "Emittenten gelten nur dann als Erfinder derselben Sache, wenn",
+             "sie sie gleich geschrieben haben: die Bezeichnung, die ein",
+             "Bericht einem Konzept gibt, steht in der Taxonomie seines",
+             "Pakets, die der Silver-Layer nicht hält, daher wird eine Zeile,",
+             "die zwei Emittenten unterschiedlich nennen, hier zweimal",
+             "gezählt. Ein Name weit oben in dieser Liste ist eine Zeile, für",
+             "die die Taxonomie kein Konzept hat oder eines, das die",
+             "Emittenten nicht verwenden.")))
+```
+
+```{r own-names-table}
+if (nrow(own_concepts) == 0) {
+  cat(tr("Every fact read was tagged against a concept of the taxonomy.",
+         "Jeder gelesene Fakt war gegen ein Konzept der Taxonomie ausgezeichnet."))
+} else {
+  temp <- own_concepts %>%
+    distinct(LEI, local) %>%
+    count(local, name = "issuers") %>%
+    arrange(desc(issuers), local) %>%
+    head(top_n) %>%
+    mutate(share = issuers / n_issuers * 100) %>%
+    transmute(local = paste0("`", local, "`"),
+              issuers = fmt(issuers),
+              share = fmt(share, 1))
+
+  knitr::kable(temp, align = "lrr", col.names = c(
+    tr("Local name", "Lokaler Name"),
+    tr("Issuers", "Emittenten"),
+    tr("Share of the issuers, %", "Anteil der Emittenten, %")))
+}
+```
+
+{{< pagebreak >}}
+
+## `r tr("3 What can be compared", "3 Was vergleichbar ist")`
+
+### `r tr("The lines of the statement of profit or loss", "Die Zeilen der Gesamtergebnisrechnung")`
+
+```{r coverage-pl}
+render_years(line_coverage %>% filter(statement == "pl"), share, digits = 1,
+             header = tr("Issuers tagging the line, %",
+                         "Emittenten mit dieser Zeile, %"),
+             order = lines_meta$label[lines_meta$statement == "pl"])
+```
+
+### `r tr("The lines of the statement of financial position", "Die Zeilen der Bilanz")`
+
+```{r coverage-sfp}
+render_years(line_coverage %>% filter(statement == "sfp"), share, digits = 1,
+             header = tr("Issuers tagging the line, %",
+                         "Emittenten mit dieser Zeile, %"),
+             order = lines_meta$label[lines_meta$statement == "sfp"])
+```
+
+{{< pagebreak >}}
+
+### `r tr("The lines of the statement of cash flows", "Die Zeilen der Kapitalflussrechnung")`
+
+```{r coverage-cf}
+render_years(line_coverage %>% filter(statement == "cf"), share, digits = 1,
+             header = tr("Issuers tagging the line, %",
+                         "Emittenten mit dieser Zeile, %"),
+             order = lines_meta$label[lines_meta$statement == "cf"])
+```
+
+### `r tr("The lines, ranked", "Die Zeilen, nach Rang")`
+
+```{r coverage-ranked}
+#| fig-height: 7.6
+chart_ranked(line_coverage %>% filter(fy == latest_fy),
+             share, label,
+             subtitle = tr(paste0("Issuers tagging the line in ",
+                                  year_labels[length(year_labels)], ", %"),
+                           paste0("Emittenten mit dieser Zeile in ",
+                                  year_labels[length(year_labels)], ", %")),
+             digits = 0)
+```
+
+{{< pagebreak >}}
+
+### `r tr("How many of the lines an issuer tags", "Wie viele der Zeilen ein Emittent auszeichnet")`
+
+```{r lines-per-issuer}
+quantiles <- per_issuer %>%
+  group_by(fy) %>%
+  summarise(reports = n(),
+            p10 = quantile(found, 0.1),
+            median = median(found),
+            p90 = quantile(found, 0.9), .groups = "drop")
+
+# Per statement, two measures of the same thing: how much of it a typical
+# report tags, and how many reports tag all of it. The second is the harder
+# test by far -- a statement here is every line of it, including the ones
+# few issuers tag at all -- and it is the one an analysis that cannot
+# tolerate a gap has to pass.
+by_statement <- presence %>%
+  left_join(lines_meta %>% select(key, statement), by = "key") %>%
+  group_by(fy, COUNTRY, LEI, PERIODEND, statement) %>%
+  summarise(share = mean(found) * 100, all_found = all(found),
+            .groups = "drop") %>%
+  group_by(fy, statement) %>%
+  summarise(median_share = median(share), complete = mean(all_found) * 100,
+            .groups = "drop")
+
+statement_labels <- c(pl = tr("income statement", "Ergebnisrechnung"),
+                      sfp = tr("balance sheet", "Bilanz"),
+                      cf = tr("cash flow statement", "Kapitalflussrechnung"))
+
+temp <- tibble(item = c(
+  tr("Reports read", "Gelesene Berichte"),
+  tr("Lines found, 10th percentile", "Gefundene Zeilen, 10. Perzentil"),
+  tr("Lines found, median", "Gefundene Zeilen, Median"),
+  tr("Lines found, 90th percentile", "Gefundene Zeilen, 90. Perzentil"),
+  tr(paste0("Of the ", statement_labels[["pl"]], ", tagged, median %"),
+     paste0("Von der ", statement_labels[["pl"]], " ausgezeichnet, Median %")),
+  tr(paste0("Of the ", statement_labels[["sfp"]], ", tagged, median %"),
+     paste0("Von der ", statement_labels[["sfp"]], " ausgezeichnet, Median %")),
+  tr(paste0("Of the ", statement_labels[["cf"]], ", tagged, median %"),
+     paste0("Von der ", statement_labels[["cf"]], " ausgezeichnet, Median %")),
+  tr("With every line of the income statement, %",
+     "Mit allen Zeilen der Ergebnisrechnung, %"),
+  tr("With every line of the balance sheet, %",
+     "Mit allen Zeilen der Bilanz, %"),
+  tr("With every line of the cash flow statement, %",
+     "Mit allen Zeilen der Kapitalflussrechnung, %")))
+for (y in report_years) {
+  q <- quantiles %>% filter(fy == y)
+  s <- by_statement %>% filter(fy == y)
+  value_of <- function(st, column) {
+    v <- s[[column]][s$statement == st]
+    if (length(v) == 0) NA_real_ else v
+  }
+  temp[[as.character(y)]] <- if (nrow(q) == 0) rep("–", 10) else c(
+    fmt(q$reports),
+    paste0(fmt(q$p10), " / ", n_lines),
+    paste0(fmt(q$median), " / ", n_lines),
+    paste0(fmt(q$p90), " / ", n_lines),
+    fmt(value_of("pl", "median_share"), 1),
+    fmt(value_of("sfp", "median_share"), 1),
+    fmt(value_of("cf", "median_share"), 1),
+    fmt(value_of("pl", "complete"), 1),
+    fmt(value_of("sfp", "complete"), 1),
+    fmt(value_of("cf", "complete"), 1))
+}
+knitr::kable(temp, col.names = c("", year_labels),
+             align = paste0("l", strrep("r", length(report_years))))
+```
+
+```{r lines-per-issuer-chart}
+#| fig-height: 2.4
+# The distribution over the reports of the latest year rather than its
+# median: an analysis that needs every line of a statement lives in the
+# right tail of this chart.
+ggplot(per_issuer %>% filter(fy == latest_fy),
+       aes(x = found)) +
+  geom_histogram(binwidth = 1, fill = palette_corporate_design("cat")[1]) +
+  geom_zeroline() +
+  scale_x_continuous(breaks = pretty(c(0, n_lines))) +
+  scale_y_continuous(labels = function(x) fmt(x)) +
+  labs(caption = wrap_caption(source_caption),
+       subtitle = tr(paste0("Reports of ", year_labels[length(year_labels)],
+                            " by the number of the ", n_lines,
+                            " lines they tag"),
+                     paste0("Berichte des Jahres ",
+                            year_labels[length(year_labels)],
+                            " nach der Anzahl der ausgezeichneten Zeilen von ",
+                            n_lines))) +
+  theme_corporate_design(base_size = chart_base_size,
+                         axis.title = element_blank())
+```
+
+### `r tr("By country", "Nach Land")`
+
+```{r lines-by-country}
+render_years(per_issuer %>%
+               group_by(COUNTRY, fy) %>%
+               summarise(median = median(found), .groups = "drop") %>%
+               rename(label = COUNTRY),
+             median, header = tr("Lines found, median", "Gefundene Zeilen, Median"))
+```
+
+{{< pagebreak >}}
+
+### `r tr("The indicators the record supports", "Die Kennzahlen, die das Register trägt")`
+
+```{r indicators, results='asis'}
+cat(tr(paste("An indicator is feasible for an issuer and a year where every",
+             "line it rests on was tagged, and, where it compares a year",
+             "with the one before it, where those lines were tagged in that",
+             "year too. The share is therefore the size of the panel a",
+             "cross-sectional analysis of that indicator could be built on,",
+             "before any question of whether the tags are right. The",
+             "recipes are those of the factsheet in this directory; a",
+             "different definition of an indicator gives a different share."),
+       paste("Eine Kennzahl ist für einen Emittenten und ein Jahr berechenbar,",
+             "wenn jede Zeile, auf der sie ruht, ausgezeichnet wurde, und,",
+             "wenn sie ein Jahr mit dem vorigen vergleicht, wenn diese Zeilen",
+             "auch in jenem Jahr ausgezeichnet wurden. Der Anteil ist also",
+             "die Größe des Panels, auf dem eine Querschnittsanalyse dieser",
+             "Kennzahl aufbauen könnte, noch vor jeder Frage, ob die",
+             "Auszeichnungen richtig sind. Die Definitionen sind die des",
+             "Factsheets in diesem Verzeichnis; eine andere Definition ergibt",
+             "einen anderen Anteil.")))
+```
+
+```{r indicators-table}
+order <- indicator_coverage %>%
+  filter(fy == latest_fy) %>%
+  arrange(desc(share)) %>%
+  pull(label)
+if (length(order) == 0) order <- unique(indicator_coverage$label)
+
+render_years(indicator_coverage, share, digits = 1,
+             header = tr("Issuers the indicator is feasible for, %",
+                         "Emittenten mit berechenbarer Kennzahl, %"),
+             order = order)
+```
+
+```{r indicators-chart}
+#| fig-height: 3.8
+chart_ranked(indicator_coverage %>% filter(fy == latest_fy),
+             share, label,
+             subtitle = tr(paste0("Issuers the indicator is feasible for in ",
+                                  year_labels[length(year_labels)], ", %"),
+                           paste0("Emittenten mit berechenbarer Kennzahl in ",
+                                  year_labels[length(year_labels)], ", %")),
+             digits = 0)
+```
+
+{{< pagebreak >}}
+
+## `r tr("4 What this report cannot say", "4 Was dieser Bericht nicht sagen kann")`
+
+```{r limits, results='asis'}
+limits <- c(
+  tr(paste("**Which statement a line stood in.** A fact in xBRL-JSON carries",
+           "its concept, its period, its unit and its dimensions, and",
+           "nothing that says where in the report it was presented. The",
+           "statements in section 3 are this report's grouping of the",
+           "concepts, not the issuers' own presentation, and a concept an",
+           "issuer tagged only in its notes counts the same as one it",
+           "presented on the face of a statement."),
+     paste("**In welchem Abschluss eine Zeile stand.** Ein Fakt in xBRL-JSON",
+           "trägt sein Konzept, seine Periode, seine Einheit und seine",
+           "Dimensionen und nichts, was sagt, wo im Bericht er dargestellt",
+           "war. Die Abschlüsse in Abschnitt 3 sind die Gruppierung dieses",
+           "Berichts, nicht die Darstellung der Emittenten, und ein Konzept,",
+           "das ein Emittent nur in den Erläuterungen ausgezeichnet hat,",
+           "zählt wie eines in einem Hauptabschluss.")),
+  tr(paste("**What an extension was anchored to.** ESMA requires an issuer",
+           "to anchor a concept of its own to a wider concept of the",
+           "taxonomy, which is what makes an extension readable at all. The",
+           "anchoring is a relationship in the taxonomy of the report",
+           "package; the Silver layer holds the facts, so this report counts",
+           "extensions and says nothing about where they were anchored. The",
+           "same goes for the calculation relationships, which is why this",
+           "report makes no check that a statement adds up."),
+     paste("**Woran eine Erweiterung verankert wurde.** Die ESMA verlangt,",
+           "ein eigenes Konzept an ein weiteres Konzept der Taxonomie zu",
+           "verankern, was eine Erweiterung überhaupt lesbar macht. Die",
+           "Verankerung ist eine Beziehung in der Taxonomie des",
+           "Berichtspakets; der Silver-Layer hält die Fakten, daher zählt",
+           "dieser Bericht Erweiterungen und sagt nichts darüber, wo sie",
+           "verankert wurden. Dasselbe gilt für die",
+           "Berechnungsbeziehungen, weshalb dieser Bericht nicht prüft, ob",
+           "ein Abschluss aufgeht.")),
+  tr(paste("**What an issuer called a concept.** A label is in the taxonomy",
+           "of the package as well. The ranking of the concepts the issuers",
+           "invent is therefore a ranking of local names, and two issuers",
+           "that tagged the same line under names spelt differently are two",
+           "rows of that table rather than one."),
+     paste("**Wie ein Emittent ein Konzept genannt hat.** Eine Bezeichnung",
+           "steht ebenfalls in der Taxonomie des Pakets. Die Rangfolge der",
+           "von den Emittenten erfundenen Konzepte ist daher eine Rangfolge",
+           "lokaler Namen, und zwei Emittenten, die dieselbe Zeile unter",
+           "unterschiedlich geschriebenen Namen ausgezeichnet haben, sind",
+           "zwei Zeilen jener Tabelle und nicht eine.")),
+  tr(paste("**The notes.** Most of a report by size is its notes, tagged",
+           "whole as text blocks, and the Silver layer leaves them out: a",
+           "single note on intangible assets can be half a megabyte of",
+           "HTML. The counts of texts in section 2 are therefore counts of",
+           "short texts, and nothing here measures the tagging of the",
+           "notes. The Bronze layer keeps the whole report."),
+     paste("**Die Erläuterungen.** Der größte Teil eines Berichts sind",
+           "seine Erläuterungen, die als Textblöcke ganz ausgezeichnet",
+           "werden, und der Silver-Layer lässt sie aus: eine einzige",
+           "Erläuterung zu immateriellen Vermögenswerten kann ein halbes",
+           "Megabyte HTML sein. Die Textzählungen in Abschnitt 2 sind daher",
+           "Zählungen kurzer Texte, und nichts hier misst die Auszeichnung",
+           "der Erläuterungen. Der Bronze-Layer hält den ganzen Bericht.")),
+  tr(paste("**Whether a tag is right.** A line counted as tagged is a line",
+           "the issuer tagged, not a line tagged correctly. A value with the",
+           "wrong sign, a balance dated at the start of the following period",
+           "and a figure tagged at the wrong scale all count here as",
+           "coverage. The counts the repository's own validation produced",
+           "are in section 1 and are the nearest thing in this report to a",
+           "judgement on quality."),
+     paste("**Ob eine Auszeichnung richtig ist.** Eine als ausgezeichnet",
+           "gezählte Zeile ist eine, die der Emittent ausgezeichnet hat,",
+           "nicht eine richtig ausgezeichnete. Ein Wert mit falschem",
+           "Vorzeichen, ein Bestand mit dem Datum des Folgetags und eine",
+           "Zahl in falscher Größenordnung zählen hier alle als Abdeckung.",
+           "Die Zählungen der Validierung des Repository stehen in",
+           "Abschnitt 1 und sind das Nächste zu einem Qualitätsurteil in",
+           "diesem Bericht.")),
+  tr(paste("**The market, as against the record.** The repository collects",
+           "what the officially appointed mechanisms publish, and it says",
+           "itself that it cannot be comprehensive: for most member states",
+           "there is no API to index from, and some countries' filings",
+           "cannot be downloaded from it at all. A share of issuers in",
+           "section 3 is a share of the reports in the record, and the",
+           "comparison with FIRDS in section 1 is the only measure here of",
+           "how far the record reaches the market."),
+     paste("**Der Markt, gegenüber dem Register.** Das Repository sammelt,",
+           "was die amtlich bestellten Mechanismen veröffentlichen, und sagt",
+           "selbst, dass es nicht vollständig sein kann: für die meisten",
+           "Mitgliedstaaten gibt es keine Schnittstelle zum Indexieren, und",
+           "die Einreichungen einiger Länder lassen sich überhaupt nicht",
+           "herunterladen. Ein Emittentenanteil in Abschnitt 3 ist ein",
+           "Anteil der Berichte im Register, und der Vergleich mit FIRDS in",
+           "Abschnitt 1 ist hier das einzige Maß dafür, wie weit das",
+           "Register den Markt erreicht.")))
+
+cat(paste(limits, collapse = "\n\n"))
+```
+
+{{< pagebreak >}}
+
+## `r tr("5 The record read", "5 Das gelesene Register")`
+
+### `r tr("The run", "Der Lauf")`
+
+```{r run}
+temp <- tibble(
+  item = c(tr("Silver layer", "Silver-Layer"),
+           tr("Countries", "Länder"),
+           tr("Financial years", "Geschäftsjahre"),
+           tr("Filings listed", "Gelistete Einreichungen"),
+           tr("Of those, without facts", "Davon ohne Fakten"),
+           tr("Of those, a second filing of a year",
+              "Davon zweite Einreichung eines Jahres"),
+           tr("Reports read", "Gelesene Berichte"),
+           tr("Issuers", "Emittenten"),
+           tr("Facts read", "Gelesene Fakten"),
+           tr("Of those, numeric", "Davon numerisch"),
+           tr("Lines looked for", "Gesuchte Zeilen"),
+           tr("Indicators tested", "Geprüfte Kennzahlen"),
+           tr("Rendered on", "Erstellt am")),
+  value = c(path_silver,
+            paste(report_countries, collapse = ", "),
+            period_range,
+            fmt(n_filings),
+            fmt(sum(!filings_all$has_facts)),
+            fmt(nrow(superseded)),
+            fmt(n_selected),
+            fmt(n_issuers),
+            fmt(n_facts),
+            fmt(n_numeric),
+            fmt(n_lines),
+            fmt(nrow(indicators)),
+            format(Sys.Date(), tr("%d %B %Y", "%d.%m.%Y"))))
+
+knitr::kable(temp, col.names = c("", ""), align = "lr")
+```
+
+### `r tr("The lines looked for, and the concepts of each", "Die gesuchten Zeilen und ihre Konzepte")`
+
+```{r lines-list}
+temp <- lines %>%
+  mutate(label = if (lang == "de") de else en) %>%
+  group_by(label, statement) %>%
+  summarise(concepts = paste0("`", paste(CONCEPT, collapse = "`, `"), "`"),
+            .groups = "drop") %>%
+  arrange(match(statement, c("pl", "sfp", "cf")), label) %>%
+  transmute(statement = recode(statement,
+                               pl = tr("Profit or loss", "Ergebnis"),
+                               sfp = tr("Financial position", "Bilanz"),
+                               cf = tr("Cash flows", "Cashflow")),
+            label, concepts)
+
+knitr::kable(temp, align = "lll", col.names = c(
+  tr("Statement", "Abschluss"),
+  tr("Line", "Zeile"),
+  tr("Concepts looked for", "Gesuchte Konzepte")))
+```
+
+{{< pagebreak >}}
+
+### `r tr("Sources", "Quellen")`
+
+```{r sources, results='asis'}
+sources <- c(
+  tr(paste("**The filings and the reports.** filings.xbrl.org, run by XBRL",
+           "International, which collects the reports filed with the",
+           "officially appointed mechanism of each member state, validates",
+           "them and publishes for each filing the report package as filed,",
+           "the report in a viewer and the tagged facts as xBRL-JSON. The",
+           "repository also holds the reports of the United Kingdom, filed",
+           "as UKSEF, and of Ukraine. It states no licence for its copies;",
+           "the reports are the issuers' own publications, which the",
+           "Transparency Directive requires them to make public."),
+     paste("**Die Einreichungen und die Berichte.** filings.xbrl.org,",
+           "betrieben von XBRL International, sammelt die bei den amtlich",
+           "bestellten Mechanismen der Mitgliedstaaten eingereichten",
+           "Berichte, validiert sie und veröffentlicht je Einreichung das",
+           "Berichtspaket wie eingereicht, den Bericht in einem Viewer und",
+           "die ausgezeichneten Fakten als xBRL-JSON. Das Repository hält",
+           "auch die Berichte des Vereinigten Königreichs, als UKSEF",
+           "eingereicht, und der Ukraine. Es nennt keine Lizenz für seine",
+           "Kopien; die Berichte sind die Veröffentlichungen der Emittenten,",
+           "zu denen die Transparenzrichtlinie sie verpflichtet.")),
+  tr(paste("**The format.** Commission Delegated Regulation (EU) 2019/815,",
+           "the ESEF Regulation, with ESMA's ESEF Reporting Manual, which",
+           "sets out the rules on extension concepts and their anchoring.",
+           "The taxonomy is the IFRS taxonomy with ESMA's additions."),
+     paste("**Das Format.** Delegierte Verordnung (EU) 2019/815 der",
+           "Kommission, die ESEF-Verordnung, mit dem ESEF Reporting Manual",
+           "der ESMA, das die Regeln zu Erweiterungskonzepten und ihrer",
+           "Verankerung festlegt. Die Taxonomie ist die IFRS-Taxonomie mit",
+           "den Ergänzungen der ESMA.")),
+  tr(paste("**The deadline.** Article 4 of Directive 2004/109/EC, the",
+           "Transparency Directive, under which an issuer makes its annual",
+           "financial report public at the latest four months after the end",
+           "of each financial year."),
+     paste("**Die Frist.** Artikel 4 der Richtlinie 2004/109/EG, der",
+           "Transparenzrichtlinie, nach dem ein Emittent seinen",
+           "Finanzbericht spätestens vier Monate nach Ende jedes",
+           "Geschäftsjahres veröffentlicht.")),
+  tr(paste("**The market.** ESMA's Financial Instruments Reference Data",
+           "System (FIRDS), through the `firds` module of fincommons, for",
+           "the shares admitted to trading in the Union and the issuer of",
+           "each."),
+     paste("**Der Markt.** Das Financial Instruments Reference Data System",
+           "(FIRDS) der ESMA, über das Modul `firds` von fincommons, für die",
+           "zum Handel in der Union zugelassenen Aktien und ihre",
+           "Emittenten.")),
+  tr(paste("**The pipeline.** The `esef` module of fincommons, which",
+           "collects the indexes and the reports and reads them into the",
+           "two Silver tables this report counts. The module's README",
+           "describes the tables, and the factsheet template beside this",
+           "one reads the same tables for a single issuer."),
+     paste("**Die Pipeline.** Das Modul `esef` von fincommons, das die",
+           "Verzeichnisse und Berichte einsammelt und in die beiden",
+           "Silver-Tabellen liest, die dieser Bericht zählt. Die README des",
+           "Moduls beschreibt die Tabellen, und die Factsheet-Vorlage",
+           "daneben liest dieselben Tabellen für einen einzelnen",
+           "Emittenten.")))
+
+cat(paste(sources, collapse = "\n\n"))
+```
+
+### `r tr("Disclaimer", "Haftungsausschluss")`
+
+```{r disclaimer, results='asis'}
+cat(tr(
+  paste("This document is produced by a template of the open-source project",
+        "fincommons and is an example of what the project's `esef` module",
+        "can be read for. It counts the filings and the tagged facts of a",
+        "public record and nothing else: no figure in it is an amount out",
+        "of a report, and nothing in it is a statement about the",
+        "accounting, the financial position or the conduct of any issuer",
+        "named or counted in it. Coverage is counted over the reports the",
+        "repository holds and could convert, which is not every report",
+        "filed in Europe, so a share here is a share of a record and not of",
+        "a market. The counts are given without warranty as to correctness",
+        "or completeness, carry no association with any issuer, with XBRL",
+        "International or with ESMA, and are not investment advice."),
+  paste("Dieses Dokument wird von einer Vorlage des Open-Source-Projekts",
+        "fincommons erzeugt und ist ein Beispiel dafür, worauf das Modul",
+        "`esef` des Projekts gelesen werden kann. Es zählt die",
+        "Einreichungen und die ausgezeichneten Fakten eines öffentlichen",
+        "Registers und nichts weiter: keine Zahl darin ist ein Betrag aus",
+        "einem Bericht, und nichts darin ist eine Aussage über die",
+        "Rechnungslegung, die Vermögenslage oder das Verhalten eines darin",
+        "genannten oder gezählten Emittenten. Die Abdeckung wird über die",
+        "Berichte gezählt, die das Repository hält und umwandeln konnte, und",
+        "das sind nicht alle in Europa eingereichten Berichte, daher ist ein",
+        "Anteil hier ein Anteil eines Registers und nicht eines Marktes. Die",
+        "Zählungen erfolgen ohne Gewähr für Richtigkeit und Vollständigkeit,",
+        "ohne jede Verbindung zu einem Emittenten, zu XBRL International",
+        "oder zur ESMA und sind keine Anlageberatung.")))
+```

@@ -132,7 +132,7 @@ The table is rebuilt country by country, and only for the countries whose report
 
 ## A factsheet on one issuer
 
-`factsheet/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto to a PDF of some twenty pages, with voestalpine AG as its example. It reads the two Silver tables as parquet and sets, from the facts of the issuer's own reports and from nothing else:
+`templates/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto to a PDF of some twenty pages, with voestalpine AG as its example. It reads the two Silver tables as parquet and sets, from the facts of the issuer's own reports and from nothing else:
 
 | Pages | Hold |
 |-------|------|
@@ -166,3 +166,31 @@ The corporate design is in `r-corporate-design-functions-ggplot2.R` beside the t
 The last page is a disclaimer, and the cover says in its first line and in its small print what the page states in full: the document is produced by a template and the issuer is an example, no warranty is given for the correctness or the completeness of a figure, nobody who made it is associated with the issuer or with any other body named on the pages, nothing in it is advice, and liability is disclaimed as far as the law allows, in the terms of Articles 7 and 8 of the EUPL the project is licensed under. Whoever renders the factsheet for a purpose of their own is responsible for what they publish: the disclaimer is written for a template published as an example, and the paragraph on the example, the line on the cover and the reference to the licence are to be replaced by terms that fit the use.
 
 A Delta Silver layer is refused rather than read: the table of facts replaces a country's partition whenever its reports change, and a Delta table keeps the files it replaced until it is vacuumed, which a reader of the files alone would count again.
+
+## A coverage report on the record
+
+`templates/esef-coverage-report.qmd` is the counterpart of the factsheet: one issuer in depth against the whole record at a glance. It reads the same two Silver tables as parquet and renders with Quarto to a PDF of some sixteen pages, which counts what the repository lists and what the issuers tagged, and nothing else. **No number in it is an amount out of a report**: every figure is a count of filings, facts, concepts or issuers.
+
+| Section | Holds |
+|---------|-------|
+| the record | what the indexes list per country -- filings, issuers, second filings of a year, filings without facts -- the reports read per financial year, the days from the period end to publication against the four months Article 4 of the Transparency Directive allows, what the repository's own validation found, and the record against the shares FIRDS holds |
+| what is tagged | the facts of a median report, numeric, dimensional and text, the taxonomies the facts are tagged against, how much of a report sits under concepts of the issuer's own making, the concepts of the taxonomy that the most issuers tag, and the local names the most issuers invent a concept for |
+| what can be compared | the share of issuers tagging each line of the three primary statements, the lines ranked, how many of the lines an issuer tags, and the share of issuers each indicator of the factsheet could be computed for |
+| what this report cannot say | the four things the facts do not carry, and what each puts out of reach |
+| the record read | the run, the lines looked for with the concepts of each, the sources and a disclaimer |
+
+```
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-coverage-report.qmd
+```
+
+The countries and the financial years are set in the first chunk and default to every country the lake holds and the last five years in it; `report_countries <- "AT"` and `report_years <- 2025L` narrow it to one country and one year, which renders in seconds. A country named there that the table of filings does not list is refused rather than shown as an empty column.
+
+An issuer that filed its report twice -- in two languages, or again with corrections -- is counted once per financial year, since a cross-section counts issuers: the report kept is the one with facts, then the one with fewer validation errors, then the one the repository processed last. The language is not part of that choice, as it is in the factsheet, because the two filings of a year state the same figures and this report reads no texts. A line counts as tagged in the year it was reported for, so the facts counted are those without dimensions whose period ends on the period end of the filing; the comparative figures of the year before, which every report carries as well, are left aside.
+
+The lines looked for are the lines the factsheet reads, which is what makes the two templates one pair: **the coverage of a line is the answer to how many issuers the factsheet could be built for**, and the share for an indicator is the size of the panel a cross-sectional analysis of that indicator could rest on. A fact under `ifrs-full`, `ifrs-smes`, `esef_cor`, `esef_all`, `ifrs` or `esma` counts as the taxonomy and anything else as a concept the issuer created for its own report; the list is `taxonomy_prefixes` in the first chunk, and a lake holding reports tagged against a taxonomy it does not name would count them as extensions.
+
+The comparison with FIRDS needs the `firds` module's Silver layer in the same configuration file and is left out with a note where there is none. It is counted over the whole record the lake holds rather than over the countries and years of the report, so that a report narrowed to one country does not read as though the rest of the market had never filed. Two things qualify it, and the page says both: the compact table of FIRDS carries no flag for admission to a regulated market at the issuer's request, so the count is of every issuer of a share FIRDS still holds a record for, which is the wider population; and FIRDS is a register of the Union, while the repository also collects the United Kingdom and Ukraine.
+
+Four absences of the Silver tables decide what the report is, and it states them on a page of its own rather than in a footnote. A fact in xBRL-JSON carries no **presentation role**, so the statements the report groups its lines into are its own grouping and not the issuers' presentation. **Anchoring and the calculation relationships** live in the extension taxonomy of the report package, which the module collects only when asked and never reads, so the report counts extensions without saying what they were anchored to, and makes no check that a statement adds up. A **label** is in that taxonomy too, so two issuers count as having invented the same thing only where they spelt the local name the same way. And the **text blocks** of the notes are not in the table at all, so nothing here measures the tagging of the notes.
+
+The template reads the facts through four queries that arrow answers over the parquet files, each returning a result of the size of the market rather than of the size of the lake; the table of facts is never collected. A Delta Silver layer is refused for the same reason as in the factsheet, and the more sharply: this report counts facts, and a Delta table keeps the files it has replaced until it is vacuumed.

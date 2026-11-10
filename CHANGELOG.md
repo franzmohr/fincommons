@@ -10,7 +10,7 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 - `esef`: a template for a factsheet on one issuer, in R and Quarto, with
   voestalpine AG as its example:
-  `src/fincommons/esef/factsheet/esef-analyst-factsheet.qmd`. It renders a
+  `src/fincommons/esef/templates/esef-analyst-factsheet.qmd`. It renders a
   PDF of some twenty pages from the facts of the issuer's own reports and
   from nothing else: the income statement, the statement of financial
   position and the cash flow statement as filed and as a share of revenue,
@@ -33,6 +33,41 @@ release may change the public API, which `tests/test_public_api.py` lists.
   associated with the issuer or with any other body named on the pages,
   nothing in it is advice, and liability is disclaimed as far as the law
   allows, in the terms of Articles 7 and 8 of the licence.
+- `esef`: a template for a coverage report on the record, the counterpart of
+  the factsheet, in R and Quarto:
+  `src/fincommons/esef/templates/esef-coverage-report.qmd`. It renders a PDF
+  of some sixteen pages that counts what the repository lists and what the
+  issuers tagged, and no amount out of a report: the filings, issuers,
+  second filings of a year and filings without facts per country, the days
+  from the period end to publication against the four months Article 4 of
+  the Transparency Directive allows, what the repository's own validation
+  found, the facts of a median report, the taxonomies the facts are tagged
+  against, how much of a report sits under concepts of the issuer's own
+  making, the concepts of the taxonomy that the most issuers tag, the local
+  names the most issuers invent a concept for, the share of issuers tagging
+  each line of the three primary statements, how many of those lines an
+  issuer tags, and the share of issuers each indicator of the factsheet
+  could be computed for. The lines looked for are the lines the factsheet
+  reads, so the coverage of a line is the answer to how many issuers the
+  factsheet could be built for, and the share for an indicator is the size
+  of the panel a cross-sectional analysis of it could rest on. Where the
+  configuration file names the `firds` module's Silver layer, the report
+  also puts the record against the issuers of the shares FIRDS holds a
+  record for, counted over the whole record the lake holds rather than over
+  the countries and years of the report, since a report narrowed to one
+  country would otherwise read as though the rest of the market had never
+  filed. A page of its own states what the facts do not carry and what each
+  absence puts out of reach: no presentation role, so the statements it
+  groups its lines into are its own grouping; no anchoring and no
+  calculation relationships, which live in the extension taxonomy of the
+  report package, so it counts extensions without saying what they were
+  anchored to and checks no statement for adding up; no labels, so two
+  issuers count as having invented the same thing only where they spelt the
+  local name the same way; and no text blocks, so nothing in it measures the
+  tagging of the notes. The countries and the years are set in the first
+  chunk and default to every country the lake holds and the last five years
+  in it; the facts are read through four queries that arrow answers over the
+  parquet files, so the table of facts is never collected.
 - `firds`: a history can start in 2018. The full and the delta files ESMA
   published up to 2019-09-21 under drafts of their message definitions,
   `DRAFT13auth.017.001.01` and `DRAFT6auth.036.001.01`, are imported into
