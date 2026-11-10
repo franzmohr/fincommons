@@ -99,6 +99,45 @@ The documentation explains rather than lists: it says why something is done
 the way it is, what a caller may rely on, and what was tried and rejected where
 that is not obvious. Follow the tone of the chapter or README you are editing.
 
+## Asking for a feature
+
+Asking for something the package does not do yet is a contribution of its own,
+and it puts you under no obligation to write it. Open an issue with the
+*Feature* template, which asks for the three things a maintainer would
+otherwise have to ask for:
+
+* **What you need**, as concretely as you can put it: a function, a column, an
+  option, an output. Where it is a figure, how it is defined -- a ratio that
+  two institutions both call net debt is rarely the same ratio, and the
+  definition is the part that has to be agreed before anything is written.
+* **What it is for**: the analysis, the report or the supervisory process it
+  serves, and who does it. What fincommons holds is decided by what the
+  institutions using it need, so the use case is the argument. A request
+  without one is hard to act on even where it would be easy to build, because
+  there is nothing to design against and nothing to test against.
+* **What you do today** without it -- the query you write, the step you do by
+  hand, the figure you take from elsewhere. It is optional, and it is often
+  what decides how the feature is built.
+
+Three of the other templates fit a request better than *Feature* does: *New
+data set* for a public data set the package does not collect yet, *Change at a
+data source* where a pipeline should read another publisher or another file of
+one it already reads, and *Documentation* where the package can already do
+what you need but nothing says so. Where you cannot tell, the *Feature*
+template is the right one; a maintainer will move it.
+
+A request is read, labelled and answered with what it would take and whether it
+fits the purpose of the package: infrastructure that several institutions
+share, rather than the model or the report of one of them. A request that fits
+and that nobody has time for yet stays open and labelled instead of being
+closed, so that the next person who needs the same thing finds it and can say
+so there. That -- a second institution saying it needs the same figure -- is
+the strongest argument a request can carry. Nothing here comes with a date:
+fincommons is maintained beside the work it serves.
+
+Take the same care with a request as with a bug: an issue is public, so
+describe the data you work with and never paste it.
+
 ## Proposing a change
 
 1. Open an issue first for anything larger than a fix, so that the approach

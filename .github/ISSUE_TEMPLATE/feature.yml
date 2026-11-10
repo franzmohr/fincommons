@@ -1,0 +1,52 @@
+name: Feature
+description: "Ask for something fincommons does not do yet: a function, a column, an option, an output."
+labels: [feature]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you need
+      description: The function, column, option or output that is missing, as concretely as you can put it. Where a figure is wanted, say how it is defined, since two institutions rarely define one the same way.
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: What it is for
+      description: The analysis, the report or the process it serves, and who does it. A request with a use case behind it can be designed and tested against something; one without is hard to act on.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today
+      description: How you get by without it -- the query you write, the step you do by hand, the figure you take from elsewhere -- and what that costs. Optional, and often the part that decides how a feature is built.
+    validations:
+      required: false
+  - type: input
+    id: where
+    attributes:
+      label: Where it belongs
+      description: The module it would go into, or the data set it would read. Optional; say so if you do not know.
+      placeholder: esef, or a module that does not exist yet
+    validations:
+      required: false
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you write it
+      description: Nothing is expected of you here. It says who is waiting for whom.
+      options:
+        - I would like to write it myself
+        - I could write it once the design is agreed
+        - I am asking for it, not offering to write it
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        An issue is public. Describe the data you work with, never paste it.
+        A whole data set fincommons does not hold yet goes in the *New data
+        set* template instead, and a vulnerability belongs nowhere public:
+        [SECURITY.md](https://github.com/franzmohr/fincommons/blob/main/SECURITY.md)
+        says how to report one.
