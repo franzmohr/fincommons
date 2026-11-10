@@ -130,14 +130,37 @@ xBRL-JSON writes the end of a period as the start of the following day, so that 
 
 The table is rebuilt country by country, and only for the countries whose reports changed. A country is one partition, and one whose Bronze layer holds a report its partition was not built from is read again and replaces its partition, leaving the others as they were. A report that cannot be read is logged and counted; its country is written without it and left unmarked, so that the next run tries it again.
 
-## An analyst factsheet
+## A factsheet on one issuer
 
-`factsheet/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto, with voestalpine AG as its example. It reads the two Silver tables as parquet and shows the profile of the issuer from the texts of its latest report, its key figures and ratios over the last six financial years, the composition of its balance sheet, what its revenue was spent on, its margins, its cash flow, its earnings and dividend per share, checks on the tags and the filings it was built from. It shows numbers and their development; the only prose on the page is the text of the filing itself, and what the reader of the template needs to know about the figures is in the comments of its chunks.
+`factsheet/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto to a PDF of some twenty pages, with voestalpine AG as its example. It reads the two Silver tables as parquet and sets, from the facts of the issuer's own reports and from nothing else:
+
+| Pages | Hold |
+|-------|------|
+| cover, contents | the issuer, the years covered, the figures of the latest year, and how the figures are put together |
+| at a glance | the latest financial year against the one before it, in sixteen lines |
+| the issuer | the identity of the issuer from the texts of its latest report, and the years in one table |
+| profit or loss | the income statement by function, the same statement as a share of revenue, the growth on the year before, what revenue was spent on, and the margins |
+| financial position | the assets, the equity and liabilities, the capital structure and the net debt, the leverage, the liquidity and what the debt costs, the working capital and the cash conversion cycle |
+| returns | the returns on equity, on total assets, on capital employed and on invested capital, and the decomposition of the return on equity into margin, turnover and leverage |
+| cash flows | the cash flow statement, the quality of the cash flow against the result, and the capital expenditure |
+| equity | the comprehensive income and the equity by component, which is the one place the factsheet reads the dimensions of the taxonomy |
+| per share | the earnings, the dividend and the book value per share, the number of shares behind them, and what was distributed |
+| screening | Piotroski's F-score, test by test, and Altman's Z''-score, term by term |
+| the tags | how much of each report could be read, the lines read from the issuer's own concepts, the lines looked for and not tagged, and checks that the statements add up |
+| the filings | every filing of the years shown, what a figure rests on, and the source |
+
+It shows numbers and their development; the prose on the page is the text of the filing itself, a note on how the figures are put together and the definitions of the indicators, and what the reader of the template needs to know about a figure is in the comments of its chunk.
 
 ```
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
 ```
 
-The issuer is set by its LEI in the first chunk, together with the number of years and the language; the country of the issuer has to have been collected by the pipeline. The figures of a year are the totals its own filing reports for it, from the filing in the language of the factsheet where an issuer files in two. Only concepts of the IFRS taxonomy are used, because an issuer's extension concepts change their names from one year to the next, and a key may list several concepts in order of preference for a line whose tag changed: voestalpine tags its property, plant and equipment under two names in six years. The figures are those of an industrial issuer that presents its income statement by function -- revenue, cost of sales, gross profit, EBIT -- and the figures it does not tag, such as its net debt, are derived from those it does. The derivation follows voestalpine's presentation and is the part to adapt for another issuer; a bank needs other figures altogether. A financial year that does not end in December is labelled by the two years it spans, as 2025/26. The corporate design is in `r-corporate-design-functions-ggplot2.R` beside the template.
+The issuer is set by its LEI in the first chunk, together with the number of years and the language; the country of the issuer has to have been collected by the pipeline. The figures of a year are the totals its own filing reports for it, from the filing in the language of the factsheet where an issuer files in two; the comparative figures of the previous year that every filing carries as well are left aside, so that a figure in the column of a year is the one that year was reported with. One year more than the factsheet shows is read behind it, because a return puts the result of a year against the average of the capital at its start and its end, and because the screening indicators compare a year with the one before it.
+
+Concepts of the IFRS taxonomy come first, because an issuer's extension concepts change their names from one year to the next, and a key may list several concepts in order of preference for a line whose tag changed: voestalpine tags its property, plant and equipment under two names in six years. The lines the taxonomy has no concept for -- voestalpine's capital expenditure and the movement in its working capital, both of which it presents in its cash flow statement -- are kept in a list of the issuer's own concepts beside it. A figure read from one of those carries a dagger wherever it is shown, and the page on the coverage of the tags names every one of them with the number of years it was found in, so that a reader can tell a figure of the taxonomy from a figure of the issuer's own making.
+
+The figures are those of an industrial issuer that presents its income statement by function -- revenue, cost of sales, gross profit, EBIT -- and the figures it does not tag, such as its net debt, its capital employed or the number of its shares, are derived from those it does. The derivation follows voestalpine's presentation and is the part to adapt for another issuer; a bank needs other figures altogether. **No EBITDA is derived**: depreciation and amortisation are not a line of the primary statements under a concept of the taxonomy, and an issuer that tags them nowhere else leaves every indicator that would rest on EBITDA out of reach, so the leverage and the cover ratios stand against the operating result and the operating cash flow instead. A financial year that does not end in December is labelled by the two years it spans, as 2025/26.
+
+The corporate design is in `r-corporate-design-functions-ggplot2.R` beside the template, and the charts use its categorical palette, the ten colours of Tableau, so that eight lines of a balance sheet in one chart can still be told apart.
 
 A Delta Silver layer is refused rather than read: the table of facts replaces a country's partition whenever its reports change, and a Delta table keeps the files it replaced until it is vacuumed, which a reader of the files alone would count again.
