@@ -427,6 +427,16 @@ financial firms alike, and so are corrections to the documentation, which for a
 README can be made in the browser on GitHub. [`CONTRIBUTING.md`](CONTRIBUTING.md)
 says how.
 
+Asking for something the package does not do yet is a contribution as well, and
+it puts you under no obligation to write it. Open an issue with the *Feature*
+template and say what you need, what it is for and what you do without it
+today; what fincommons holds is decided by what the institutions using it need,
+so the use behind a request is the argument for it. A public data set the
+package does not collect yet has a template of its own, *New data set*, and a
+publisher that changed a file or an address has *Change at a data source*.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) says what a request should carry and what
+happens to it.
+
 ## Security
 
 Report a vulnerability privately, never in a public issue; [`SECURITY.md`](SECURITY.md)

@@ -123,6 +123,19 @@ release may change the public API, which `tests/test_public_api.py` lists.
   lake built under the old name renames the section and moves the table, or
   builds it again with `full=True`.
 
+### Project
+
+- A feature can be asked for: the issue templates gain *Feature*, for
+  something the package does not do yet -- a function, a column, an option, an
+  output -- and `CONTRIBUTING.md` says what such a request should carry and
+  what happens to it. A request states what is needed, how a figure is defined
+  where it is one, what analysis or process it serves and how that is done
+  today without it; the use behind it is the argument for it, since what
+  fincommons holds is decided by what the institutions using it need. A
+  request that fits and that nobody has time for stays open and labelled
+  rather than being closed, so that the next person who needs the same thing
+  finds it. Asking obliges nobody to write it.
+
 ## 0.2.0
 
 Two modules are new, `esef` and `frenchdatalibrary`, and `entitymasterdata`
