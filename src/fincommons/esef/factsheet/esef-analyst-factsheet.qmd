@@ -1,32 +1,52 @@
 ---
-title: "Analyst Factsheet"
 format:
-  html:
-    self-contained: true
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
 brand:
   color:
     palette:
       paper: "#FFFFFF"
       ink: "#22282E"
+      ink-soft: "#5C666F"
       red: "#C10016"
       blue: "#0F4C81"
     background: paper
     foreground: ink
     primary: blue
 
-  # No font is named, so the page keeps Bootstrap's stack of the sans-serif
-  # fonts every system has, and nothing is fetched from a font service.
+  # No font is named beyond the one above, so nothing is fetched from a font
+  # service; a system without it falls back to the default of the renderer.
   typography:
     headings:
       weight: bold
       color: red
-toc: true
-toc-depth: 4
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
 execute:
   error: true
 ---
 
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for an issuer
+# --------------------------------------------------------------------------
+
 # The path to the config file, whose esef section names the Silver layer of
 # the module. A chunk runs with the directory of this template as its working
 # directory, which is inside the installed package, so the path is taken from
@@ -39,10 +59,17 @@ config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
 lei <- "529900ZAXBMQDIWPNB72"
 
 # The number of financial years shown, counted back from the latest filing.
+# One further year is read behind them, because a return puts a flow of a
+# year against the average of the balances at its start and its end, and
+# because the screening indicators compare a year with the one before it.
 n_years <- 6
 
 # Amounts are shown in millions of the currency of the report.
 scale <- 1e6
+
+# The point size of the text in a chart. A chart stands in a page of nine
+# point text, so it is set a little smaller than the page around it.
+chart_base_size <- 9
 
 # You can change the language of the figures here, but they must be
 # implemented for each figure separately by you. The language also picks the
@@ -57,51 +84,140 @@ lang <- "en"
 # from the language set above, so the locale for dates is set from lang.
 invisible(Sys.setlocale("LC_TIME", if (lang == "de") "German" else "C"))
 
-# The concepts the factsheet is built from. Only concepts of the IFRS
-# taxonomy are used. An issuer may tag a line of its statements with a
-# concept of its own instead, but an extension concept is the issuer's to
-# name and rename from one year to the next. A figure that is not in the
-# taxonomy is derived from those that are, in the next chunk, or left out.
-# The key is what the code below refers to, so a concept can be swapped for
-# another issuer's presentation without touching the figures.
+# --------------------------------------------------------------------------
+# The concepts the factsheet is built from
+# --------------------------------------------------------------------------
+
+# Only concepts of the IFRS taxonomy are used here. An issuer may tag a line
+# of its statements with a concept of its own instead, but an extension
+# concept is the issuer's to name and rename from one year to the next, so
+# the ones this factsheet needs are kept apart in `extension_concepts`
+# below. A figure that is in neither list is derived from those that are, in
+# the next chunk, or left out.
 #
-# A key may be given more than one concept, in order of preference, for an
-# issuer that changed the tag of a line: voestalpine tags its property, plant
-# and equipment as PropertyPlantAndEquipment up to 2024/25 and with the
-# right-of-use assets in the concept's name since, and its earnings per share
-# for 2020/21 as basic and diluted in one.
+# The key is what the code below refers to, so a concept can be swapped for
+# another issuer's presentation without touching the figures. A key may be
+# given more than one concept, in order of preference, for an issuer that
+# changed the tag of a line: voestalpine tags its property, plant and
+# equipment as PropertyPlantAndEquipment up to 2024/25 and with the
+# right-of-use assets in the concept's name since.
+#
+# Expenses, including tax, are tagged as positive amounts by the taxonomy
+# and stand in the tables as the deductions they are; see `sign` in the
+# lines of the statements further down.
 concepts <- c(
+  # Statement of financial position: assets
   assets = "ifrs-full:Assets",
   noncurrent_assets = "ifrs-full:NoncurrentAssets",
   ppe = "ifrs-full:PropertyPlantAndEquipmentIncludingRightofuseAssets",
   ppe = "ifrs-full:PropertyPlantAndEquipment",
   goodwill = "ifrs-full:Goodwill",
+  intangibles = "ifrs-full:IntangibleAssetsOtherThanGoodwill",
+  equity_method = "ifrs-full:InvestmentAccountedForUsingEquityMethod",
+  financial_assets_noncurrent = "ifrs-full:OtherNoncurrentFinancialAssets",
+  deferred_tax_assets = "ifrs-full:DeferredTaxAssets",
   current_assets = "ifrs-full:CurrentAssets",
   inventories = "ifrs-full:Inventories",
   receivables = "ifrs-full:TradeAndOtherCurrentReceivables",
+  financial_assets_current = "ifrs-full:OtherCurrentFinancialAssets",
   cash = "ifrs-full:CashAndCashEquivalents",
+
+  # Statement of financial position: equity and liabilities
+  equity_and_liabilities = "ifrs-full:EquityAndLiabilities",
   equity = "ifrs-full:Equity",
   equity_owners = "ifrs-full:EquityAttributableToOwnersOfParent",
+  issued_capital = "ifrs-full:IssuedCapital",
+  additional_paid_in = "ifrs-full:AdditionalPaidinCapital",
+  retained_earnings = "ifrs-full:RetainedEarnings",
+  other_reserves = "ifrs-full:OtherReserves",
+  treasury_shares = "ifrs-full:TreasuryShares",
+  nci = "ifrs-full:NoncontrollingInterests",
   noncurrent_liabilities = "ifrs-full:NoncurrentLiabilities",
-  current_liabilities = "ifrs-full:CurrentLiabilities",
   financial_liabilities_noncurrent = "ifrs-full:OtherNoncurrentFinancialLiabilities",
+  employee_provisions = "ifrs-full:NoncurrentProvisionsForEmployeeBenefits",
+  deferred_tax_liabilities = "ifrs-full:DeferredTaxLiabilities",
+  current_liabilities = "ifrs-full:CurrentLiabilities",
   financial_liabilities_current = "ifrs-full:OtherCurrentFinancialLiabilities",
-  equity_and_liabilities = "ifrs-full:EquityAndLiabilities",
+  payables = "ifrs-full:TradeAndOtherCurrentPayables",
+  current_provisions = "ifrs-full:CurrentProvisions",
+  current_tax_liabilities = "ifrs-full:CurrentTaxLiabilitiesCurrent",
+
+  # Statement of profit or loss
   revenue = "ifrs-full:Revenue",
   cost_of_sales = "ifrs-full:CostOfSales",
   gross_profit = "ifrs-full:GrossProfit",
   distribution_costs = "ifrs-full:DistributionCosts",
   admin_expense = "ifrs-full:AdministrativeExpense",
+  other_income = "ifrs-full:OtherIncome",
+  other_expense = "ifrs-full:OtherExpenseByFunction",
+  associates_result = "ifrs-full:ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod",
   ebit = "ifrs-full:ProfitLossFromOperatingActivities",
+  finance_income = "ifrs-full:FinanceIncome",
+  finance_costs = "ifrs-full:FinanceCosts",
   profit_before_tax = "ifrs-full:ProfitLossBeforeTax",
   income_tax = "ifrs-full:IncomeTaxExpenseContinuingOperations",
+  profit_continuing = "ifrs-full:ProfitLossFromContinuingOperations",
+  profit_discontinued = "ifrs-full:ProfitLossFromDiscontinuedOperations",
   profit = "ifrs-full:ProfitLoss",
   profit_owners = "ifrs-full:ProfitLossAttributableToOwnersOfParent",
+  profit_nci = "ifrs-full:ProfitLossAttributableToNoncontrollingInterests",
+
+  # Other comprehensive income
+  oci = "ifrs-full:OtherComprehensiveIncome",
+  oci_translation = "ifrs-full:OtherComprehensiveIncomeNetOfTaxExchangeDifferencesOnTranslation",
+  oci_hedges = "ifrs-full:OtherComprehensiveIncomeNetOfTaxCashFlowHedges",
+  oci_reclassified = "ifrs-full:OtherComprehensiveIncomeThatWillBeReclassifiedToProfitOrLossNetOfTax",
+  oci_not_reclassified = "ifrs-full:OtherComprehensiveIncomeThatWillNotBeReclassifiedToProfitOrLossNetOfTax",
+  comprehensive_income = "ifrs-full:ComprehensiveIncome",
+  comprehensive_income_owners = "ifrs-full:ComprehensiveIncomeAttributableToOwnersOfParent",
+
+  # Per share
   eps = "ifrs-full:BasicEarningsLossPerShare",
   eps = "ifrs-full:BasicAndDilutedEarningsLossPerShare",
+  eps_diluted = "ifrs-full:DilutedEarningsLossPerShare",
+  eps_diluted = "ifrs-full:BasicAndDilutedEarningsLossPerShare",
   dps = "ifrs-full:DividendsProposedOrDeclaredBeforeFinancialStatementsAuthorisedForIssueButNotRecognisedAsDistributionToOwnersPerShare",
+
+  # Statement of cash flows
   operating_cash_flow = "ifrs-full:CashFlowsFromUsedInOperatingActivities",
-  investing_cash_flow = "ifrs-full:CashFlowsFromUsedInInvestingActivities"
+  investing_cash_flow = "ifrs-full:CashFlowsFromUsedInInvestingActivities",
+  financing_cash_flow = "ifrs-full:CashFlowsFromUsedInFinancingActivities",
+  cash_change = "ifrs-full:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges",
+  fx_on_cash = "ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents",
+  interest_paid = "ifrs-full:InterestPaidClassifiedAsOperatingActivities",
+  interest_received = "ifrs-full:InterestReceivedClassifiedAsOperatingActivities",
+  taxes_paid = "ifrs-full:IncomeTaxesPaidRefundClassifiedAsOperatingActivities",
+  dividends_received = "ifrs-full:DividendsReceivedClassifiedAsOperatingActivities",
+  acquisitions = "ifrs-full:CashFlowsUsedInObtainingControlOfSubsidiariesOrOtherBusinessesClassifiedAsInvestingActivities",
+  disposals_of_businesses = "ifrs-full:CashFlowsFromLosingControlOfSubsidiariesOrOtherBusinessesClassifiedAsInvestingActivities",
+  proceeds_borrowings = "ifrs-full:ProceedsFromBorrowingsClassifiedAsFinancingActivities",
+  repayments_borrowings = "ifrs-full:RepaymentsOfBorrowingsClassifiedAsFinancingActivities",
+  lease_payments = "ifrs-full:PaymentsOfLeaseLiabilitiesClassifiedAsFinancingActivities",
+  buybacks = "ifrs-full:PaymentsToAcquireOrRedeemEntitysShares",
+  dividends_paid = "ifrs-full:DividendsPaid",
+  dividends_paid_nci = "ifrs-full:DividendsPaidToNoncontrollingInterestsClassifiedAsFinancingActivities"
+)
+
+# The concepts of the issuer's own taxonomy that the factsheet uses, with the
+# same keys as above. These are the lines an issuer presents that the IFRS
+# taxonomy has no concept for, and they are the first thing to look at when
+# the factsheet is pointed at another issuer: the names are the issuer's own,
+# in the issuer's own language, and it may rename them from one year to the
+# next. Every figure that rests on one carries a mark in the tables, and the
+# page on the coverage of the tags reports how many years each was found in.
+#
+# voestalpine presents its capital expenditure, its proceeds from disposals
+# and the movement in its working capital in its cash flow statement under
+# concepts of its own, and tagged its earnings per share for 2021/22 that
+# way as well.
+extension_concepts <- c(
+  capex = "voestalpineag:InvestitionenInAndereImmaterielleVermoegenswerteUndSachanlagen",
+  asset_disposals = "voestalpineag:EinnahmenAusDemAbgangVonAnlagevermoegen",
+  financial_investments = "voestalpineag:InvestitionenDevestitionenInAndereFinanzanlagen",
+  working_capital_change = "voestalpineag:VeraenderungWorkingCapital",
+  noncash_items = "voestalpineag:NichtZahlungswirksameAufwendungenUndErtraege",
+  eps = "voestalpineag:VerwaessertesUndUnverwaessertesErgebnisJeAktieEUR",
+  eps_diluted = "voestalpineag:VerwaessertesUndUnverwaessertesErgebnisJeAktieEUR"
 )
 
 # The texts of the report shown in the profile of the issuer.
@@ -109,14 +225,23 @@ text_concepts <- c(
   name = "ifrs-full:NameOfReportingEntityOrOtherMeansOfIdentification",
   legal_form = "ifrs-full:LegalFormOfEntity",
   domicile = "ifrs-full:DomicileOfEntity",
+  country_of_incorporation = "ifrs-full:CountryOfIncorporation",
   address = "ifrs-full:AddressOfRegisteredOfficeOfEntity",
+  principal_place = "ifrs-full:PrincipalPlaceOfBusiness",
   parent = "ifrs-full:NameOfUltimateParentOfGroup",
-  activities = "ifrs-full:DescriptionOfNatureOfEntitysOperationsAndPrincipalActivities"
+  activities = "ifrs-full:DescriptionOfNatureOfEntitysOperationsAndPrincipalActivities",
+  period_covered = "ifrs-full:PeriodCoveredByFinancialStatements",
+  statements_basis = "ifrs-full:DescriptionOfPresentationCurrency"
 )
 
 # You can adapt your corporate design in the sourced R-Skript
 library(ggplot2)
 source("r-corporate-design-functions-ggplot2.R")
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
 
 # The label of a financial year. A year that ends on 31 December is named by
 # its calendar year, and any other by the two it spans, as voestalpine's
@@ -127,10 +252,9 @@ fy_label <- function(date) {
          paste0(y - 1, "/", sprintf("%02d", y %% 100)))
 }
 
-library(dplyr)
-library(tidyr)
-library(yaml)
-library(arrow)
+# --------------------------------------------------------------------------
+# The Silver layer
+# --------------------------------------------------------------------------
 
 yaml_paths <- read_yaml(config_path)
 path_silver <- yaml_paths[["esef"]][["silver"]]
@@ -193,6 +317,10 @@ facts <- open_dataset(file.path(path_silver, "facts")) %>%
   filter(LEI == lei, FILING %in% filings$FILING) %>%
   collect()
 
+# --------------------------------------------------------------------------
+# The figures, one row per financial year
+# --------------------------------------------------------------------------
+
 # The figures of a year are the totals the year's own filing reports for the
 # year: no dimensions, a period that ends on the period end of the filing,
 # and, for a flow, a period that begins a year before it. The comparative
@@ -217,67 +345,271 @@ currency <- figures %>%
 if (length(currency) == 0) currency <- ""
 
 # One row per year, one column per key of the concepts above, from the first
-# of a key's concepts the year's filing tags. A concept the issuer did not
-# tag stays a column of missing values, so that the figures below show a gap
-# rather than fail.
-wide <- figures %>%
-  inner_join(tibble(key = names(concepts), CONCEPT = unname(concepts),
-                    preference = seq_along(concepts)),
-             by = "CONCEPT") %>%
+# of a key's concepts the year's filing tags. The concepts of the taxonomy
+# come first and the issuer's own after them, so that a line tagged both ways
+# is taken from the taxonomy. A concept the issuer did not tag at all stays a
+# column of missing values, so that the figures below show a gap rather than
+# fail.
+keys_all <- c(names(concepts), names(extension_concepts))
+lookup <- bind_rows(
+  tibble(key = names(concepts), CONCEPT = unname(concepts),
+         preference = seq_along(concepts), extension = FALSE),
+  tibble(key = names(extension_concepts), CONCEPT = unname(extension_concepts),
+         preference = length(concepts) + seq_along(extension_concepts),
+         extension = TRUE))
+
+tagged <- figures %>%
+  inner_join(lookup, by = "CONCEPT") %>%
   group_by(PERIODEND, key) %>%
-  slice_min(preference, n = 1) %>%
-  ungroup() %>%
+  slice_min(preference, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+wide <- tagged %>%
   select(PERIODEND, key, VALUE) %>%
   pivot_wider(names_from = "key", values_from = "VALUE") %>%
   arrange(PERIODEND)
-for (key in setdiff(unique(names(concepts)), names(wide))) {
+for (key in setdiff(unique(keys_all), names(wide))) {
   wide[[key]] <- NA_real_
 }
 
-# The figures the statements do not carry under a concept of the taxonomy.
+# Which keys were read from a concept of the issuer's own taxonomy, and in
+# how many of the years shown. The tables mark a line that rests on one, and
+# the page on the coverage of the tags lists them.
+extension_used <- tagged %>%
+  filter(extension) %>%
+  count(key, CONCEPT, name = "years")
+is_extension <- function(key) key %in% extension_used$key
+
+# --------------------------------------------------------------------------
+# The figures the statements do not carry under a concept of their own
+# --------------------------------------------------------------------------
+
 # voestalpine presents its income statement by function: revenue less cost
 # of sales is gross profit, and gross profit less distribution and
-# administrative costs, other operating expenses and plus other operating
-# income is the operating result, which it calls EBIT. Other operating
-# income and expenses are taken together as what is left between gross
-# profit and EBIT, so that the uses of revenue add up to revenue.
+# administrative costs, plus other operating income less other operating
+# expenses and the result of its associates, is the operating result, which
+# it calls EBIT. What is left between those lines and EBIT is shown as one
+# residual, so that the uses of revenue add up to revenue.
 #
 # Net debt is the financial liabilities less cash. voestalpine tags its
 # borrowings and lease liabilities as other financial liabilities, current
 # and non-current; another issuer may tag them as borrowings, and the
-# concepts above are then the ones to change.
+# concepts above are then the ones to change. No issuer tags a net debt of
+# its own: the figure a report states in its management report is usually
+# defined more widely, netting other financial assets against the debt as
+# well, and is not comparable with the one here.
+#
+# EBITDA is not derived. Depreciation and amortisation are not a line of the
+# statements under a concept of the IFRS taxonomy, and voestalpine does not
+# tag them anywhere in its reports, so every indicator that would rest on
+# EBITDA -- the margin, net debt to EBITDA, cash conversion -- is shown
+# against EBIT or against the operating cash flow instead.
 wide <- wide %>%
-  mutate(year = fy_label(PERIODEND),
-         other_operating = gross_profit - coalesce(distribution_costs, 0) -
-           coalesce(admin_expense, 0) - ebit,
-         assets_other_noncurrent = noncurrent_assets - coalesce(ppe, 0) -
-           coalesce(goodwill, 0),
-         assets_other_current = current_assets - coalesce(inventories, 0) -
-           coalesce(receivables, 0) - coalesce(cash, 0),
-         financial_liabilities = financial_liabilities_noncurrent +
-           financial_liabilities_current,
-         liabilities_other_noncurrent = noncurrent_liabilities -
-           coalesce(financial_liabilities_noncurrent, 0),
-         liabilities_other_current = current_liabilities -
-           coalesce(financial_liabilities_current, 0),
-         net_debt = financial_liabilities - cash,
-         free_cash_flow = operating_cash_flow + investing_cash_flow,
-         # The ratios. The return on equity puts a flow against the average
-         # of two balances, which the first year shown takes from the year
-         # before it; that year is read for this and then dropped.
-         gross_margin = gross_profit / revenue * 100,
-         ebit_margin = ebit / revenue * 100,
-         net_margin = profit / revenue * 100,
-         roe = profit_owners / ((equity_owners + lag(equity_owners)) / 2) * 100,
-         equity_ratio = equity / assets * 100,
-         gearing = net_debt / equity * 100,
-         tax_rate = income_tax / profit_before_tax * 100,
-         payout = dps / eps * 100)
+  mutate(
+    year = fy_label(PERIODEND),
+    days = as.numeric(PERIODEND - lag(PERIODEND)),
 
+    # Income statement
+    other_operating_net = gross_profit - coalesce(distribution_costs, 0) -
+      coalesce(admin_expense, 0) + coalesce(other_income, 0) -
+      coalesce(other_expense, 0) + coalesce(associates_result, 0) - ebit,
+    opex_and_other = gross_profit - ebit,
+    net_finance_result = coalesce(finance_income, 0) - coalesce(finance_costs, 0),
+
+    # Balance sheet
+    # Two residuals per side of the statement: the wider one is what is left
+    # of a total once the lines a chart shows are taken off it, and the
+    # narrower one what is left once the further lines of a table are taken
+    # off as well. Each table and each chart uses the residual of the lines
+    # it shows, so that nothing is counted twice.
+    assets_rest_noncurrent = noncurrent_assets - coalesce(ppe, 0) -
+      coalesce(goodwill, 0) - coalesce(intangibles, 0) -
+      coalesce(equity_method, 0),
+    assets_other_noncurrent = assets_rest_noncurrent -
+      coalesce(financial_assets_noncurrent, 0) -
+      coalesce(deferred_tax_assets, 0),
+    assets_rest_current = current_assets - coalesce(inventories, 0) -
+      coalesce(receivables, 0) - coalesce(cash, 0),
+    assets_other_current = assets_rest_current -
+      coalesce(financial_assets_current, 0),
+    liabilities = assets - equity,
+    financial_liabilities = coalesce(financial_liabilities_noncurrent, 0) +
+      coalesce(financial_liabilities_current, 0),
+    liabilities_rest_noncurrent = noncurrent_liabilities -
+      coalesce(financial_liabilities_noncurrent, 0),
+    liabilities_other_noncurrent = liabilities_rest_noncurrent -
+      coalesce(employee_provisions, 0) -
+      coalesce(deferred_tax_liabilities, 0),
+    liabilities_rest_current = current_liabilities -
+      coalesce(financial_liabilities_current, 0),
+    liabilities_other_current = liabilities_rest_current -
+      coalesce(payables, 0) - coalesce(current_provisions, 0) -
+      coalesce(current_tax_liabilities, 0),
+    net_debt = financial_liabilities - cash,
+    net_debt_wide = financial_liabilities - coalesce(cash, 0) -
+      coalesce(financial_assets_current, 0),
+    capital_employed = assets - current_liabilities,
+    invested_capital = equity + net_debt,
+    working_capital = coalesce(inventories, 0) + coalesce(receivables, 0) -
+      coalesce(payables, 0),
+    net_current_assets = current_assets - current_liabilities,
+    goodwill_and_intangibles = coalesce(goodwill, 0) + coalesce(intangibles, 0),
+
+    # Cash flow
+    free_cash_flow = operating_cash_flow + investing_cash_flow,
+    free_cash_flow_after_capex = operating_cash_flow - capex,
+    cash_tax_paid = taxes_paid,
+
+    # Tax
+    tax_rate = income_tax / profit_before_tax * 100,
+    cash_tax_rate = taxes_paid / profit_before_tax * 100)
+
+# The indicators. Those that put a flow of a year against a balance use the
+# average of the balance at the start and at the end of the year, which the
+# first year of the window takes from the year read behind it; that year is
+# dropped afterwards. A ratio of two figures of which one is missing is
+# missing, which leaves a gap in the tables rather than a wrong number.
+avg <- function(x) (x + lag(x)) / 2
+
+wide <- wide %>%
+  mutate(
+    # Growth
+    revenue_growth = revenue / lag(revenue) * 100 - 100,
+    gross_profit_growth = gross_profit / lag(gross_profit) * 100 - 100,
+    ebit_growth = ebit / lag(ebit) * 100 - 100,
+    profit_growth = profit_owners / lag(profit_owners) * 100 - 100,
+    eps_growth = eps / lag(eps) * 100 - 100,
+    assets_growth = assets / lag(assets) * 100 - 100,
+    equity_growth = equity_owners / lag(equity_owners) * 100 - 100,
+
+    # Margins
+    gross_margin = gross_profit / revenue * 100,
+    ebit_margin = ebit / revenue * 100,
+    pretax_margin = profit_before_tax / revenue * 100,
+    net_margin = profit / revenue * 100,
+    net_margin_owners = profit_owners / revenue * 100,
+    ocf_margin = operating_cash_flow / revenue * 100,
+    fcf_margin = free_cash_flow / revenue * 100,
+
+    # Cost structure, as a share of revenue
+    cost_of_sales_ratio = cost_of_sales / revenue * 100,
+    distribution_ratio = distribution_costs / revenue * 100,
+    admin_ratio = admin_expense / revenue * 100,
+
+    # Returns
+    nopat = ebit * (1 - pmin(pmax(coalesce(tax_rate, NA) / 100, 0), 1)),
+    roe = profit_owners / avg(equity_owners) * 100,
+    roa = profit / avg(assets) * 100,
+    roce = ebit / avg(capital_employed) * 100,
+    roic = nopat / avg(invested_capital) * 100,
+    rogic = ebit / avg(goodwill_and_intangibles + ppe + working_capital) * 100,
+
+    # DuPont, on the result and the equity attributable to the owners
+    asset_turnover = revenue / avg(assets),
+    equity_multiplier = avg(assets) / avg(equity_owners),
+    owners_share = profit_owners / profit,
+
+    # Capital structure
+    equity_ratio = equity / assets * 100,
+    gearing = net_debt / equity * 100,
+    debt_to_capital = net_debt / (net_debt + equity) * 100,
+    liabilities_to_equity = liabilities / equity * 100,
+    goodwill_to_equity = goodwill_and_intangibles / equity * 100,
+    noncurrent_funding = (equity + noncurrent_liabilities) /
+      noncurrent_assets * 100,
+
+    # Debt service and liquidity
+    interest_cover = ebit / finance_costs,
+    net_interest_cover = ebit / (finance_costs - coalesce(finance_income, 0)),
+    cash_interest_cover = operating_cash_flow / interest_paid,
+    net_debt_to_ocf = net_debt / operating_cash_flow,
+    net_debt_to_fcf = net_debt / free_cash_flow,
+    current_ratio = current_assets / current_liabilities,
+    quick_ratio = (current_assets - inventories) / current_liabilities,
+    cash_ratio = cash / current_liabilities,
+
+    # Working capital
+    days_inventory = avg(inventories) / cost_of_sales * 365,
+    days_receivables = avg(receivables) / revenue * 365,
+    days_payables = avg(payables) / cost_of_sales * 365,
+    cash_conversion_cycle = days_inventory + days_receivables - days_payables,
+    working_capital_ratio = working_capital / revenue * 100,
+
+    # Cash flow quality and capital expenditure
+    ocf_to_ebit = operating_cash_flow / ebit * 100,
+    fcf_to_profit = free_cash_flow / profit * 100,
+    accruals = (profit - operating_cash_flow - investing_cash_flow) /
+      avg(assets) * 100,
+    capex_ratio = capex / revenue * 100,
+    capex_to_ppe = capex / lag(ppe) * 100,
+    capex_cover = operating_cash_flow / capex,
+
+    # Per share. No issuer tags the number of its shares under a concept of
+    # the taxonomy, so it is the result attributable to the owners over the
+    # earnings per share: the weighted average number the issuer used itself.
+    shares = profit_owners / eps,
+    book_value_per_share = equity_owners / shares,
+    ocf_per_share = operating_cash_flow / shares,
+    fcf_per_share = free_cash_flow / shares,
+    payout = dps / eps * 100,
+    payout_cash = dividends_paid / profit_owners * 100,
+    dividend_cover_fcf = free_cash_flow / dividends_paid,
+
+    # Comprehensive income
+    oci_to_profit = oci / profit * 100)
+
+# Altman's Z''-score, the variant for an issuer whose shares are not valued
+# in the figures: it replaces the market value of the equity in the original
+# score with its book value, so that the score rests on the statements
+# alone. Above 2.6 the score reads as a safe zone, below 1.1 as a distressed
+# one; it was fitted on manufacturers and is read as a direction of travel
+# rather than as a probability.
+wide <- wide %>%
+  mutate(
+    z_wc = net_current_assets / assets,
+    z_re = retained_earnings / assets,
+    z_ebit = ebit / assets,
+    z_equity = equity / liabilities,
+    z_score = 3.25 + 6.56 * z_wc + 3.26 * z_re + 6.72 * z_ebit +
+      1.05 * z_equity)
+
+# Piotroski's F-score, nine tests of the statements of a year against those
+# of the year before it, each worth one point. It was built to sort value
+# portfolios and reads as a summary of the direction the statements point
+# in, not as a rating.
+wide <- wide %>%
+  mutate(
+    f_roa = as.integer(roa > 0),
+    f_ocf = as.integer(operating_cash_flow > 0),
+    f_roa_up = as.integer(roa > lag(roa)),
+    f_accrual = as.integer(operating_cash_flow > profit),
+    f_leverage = as.integer(financial_liabilities_noncurrent / assets <
+                              lag(financial_liabilities_noncurrent / assets)),
+    f_liquidity = as.integer(current_ratio > lag(current_ratio)),
+    f_shares = as.integer(coalesce(issued_capital, 0) <=
+                            coalesce(lag(issued_capital), 0)),
+    f_margin = as.integer(gross_margin > lag(gross_margin)),
+    f_turnover = as.integer(asset_turnover > lag(asset_turnover)))
+
+f_keys <- c("f_roa", "f_ocf", "f_roa_up", "f_accrual", "f_leverage",
+            "f_liquidity", "f_shares", "f_margin", "f_turnover")
+wide$f_score <- rowSums(wide[f_keys], na.rm = FALSE)
+
+# The year read behind the window is dropped now that the averages, the
+# growth rates and the tests against the year before are in place. Where the
+# repository holds no year behind the window, the first year shown has no
+# average to put a flow against and its returns stay empty.
 if (nrow(wide) > n_years) wide <- wide %>% slice_tail(n = n_years)
 
+years <- wide$year
 max_date <- max(wide$PERIODEND)
+first_date <- min(wide$PERIODEND)
+n_shown <- nrow(wide)
+cur <- wide %>% slice_tail(n = 1) %>% as.list()
+prv <- if (n_shown > 1) wide %>% slice(n_shown - 1) %>% as.list() else cur
+```
 
+```{r texts}
 texts <- facts %>%
   filter(FILING == latest$FILING, !is.na(TEXT), is.na(DIMENSIONS)) %>%
   inner_join(tibble(key = names(text_concepts),
@@ -286,463 +618,1413 @@ texts <- facts %>%
   group_by(key) %>%
   slice(1) %>%
   ungroup()
+
 text_of <- function(key) {
   value <- texts$TEXT[texts$key == key]
-  if (length(value) == 0) NA_character_ else value
+  if (length(value) == 0) NA_character_ else gsub("\\s+", " ", value)
 }
+```
+
+```{r formats}
+# --------------------------------------------------------------------------
+# Writing numbers and words
+# --------------------------------------------------------------------------
 
 # Numbers are written as the language of the factsheet writes them.
 big_mark <- if (lang == "de") "." else ","
 decimal_mark <- if (lang == "de") "," else "."
+
 fmt <- function(x, digits = 0) {
-  ifelse(is.na(x), "",
+  # A figure that rounds to nothing is written as nothing rather than as a
+  # signed nothing: an amount of minus four hundred thousand is 0 in a
+  # column of millions, not -0.
+  x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
+  ifelse(is.na(x), "–",
          formatC(x, format = "f", digits = digits, big.mark = big_mark,
                  decimal.mark = decimal_mark))
 }
 
+# A growth rate or a change carries its sign, so that a fall is visible
+# without reading the column beside it.
+fmt_signed <- function(x, digits = 1) {
+  ifelse(is.na(x), "–",
+         paste0(ifelse(x > 0, "+", ""),
+                formatC(x, format = "f", digits = digits, big.mark = big_mark,
+                        decimal.mark = decimal_mark)))
+}
+
+# Translate a label: `tr("Revenue", "Umsatzerlöse")`.
+tr <- function(en, de) if (lang == "de") de else en
+
 # A caption wider than the figure is clipped rather than wrapped, so it is
 # broken into lines once here.
-wrap_caption <- function(text, width = 95) {
+wrap_caption <- function(text, width = 125) {
   paste(strwrap(text, width = width), collapse = "\n")
 }
 
 # The source line in the wording of the corporate design.
 source_caption <- caption_corporate_design(
-  source = if (lang == "de") "ESEF-Finanzberichte, filings.xbrl.org." else
-    "ESEF annual financial reports, filings.xbrl.org.",
-  last = format(max_date, if (lang == "de") "%d.%m.%Y" else "%d %b. %Y"),
+  source = tr("ESEF annual financial reports, filings.xbrl.org.",
+             "ESEF-Finanzberichte, filings.xbrl.org."),
+  last = format(max_date, tr("%d %b %Y", "%d.%m.%Y")),
   lang = lang)
 
-amount_label <- if (lang == "de") paste0("Mio. ", currency) else
-  paste0(currency, " million")
+amount_label <- tr(paste0(currency, " million"), paste0("Mio. ", currency))
 
 # The x-axis of every chart has one break per financial year, named as the
 # tables name it.
 scale_x_years <- function(...) {
-  scale_x_date(expand = c(.01, 0), breaks = wide$PERIODEND, labels = fy_label,
+  scale_x_date(expand = c(.02, 0), breaks = wide$PERIODEND, labels = fy_label,
                ...)
+}
+
+# Escape what typst reads as its own syntax, for the text that goes into the
+# raw blocks of the cover and of the running head.
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", x)
+  gsub("\"", "\\\\\"", x)
 }
 ```
 
-Generated on `r format(Sys.Date(), if (lang == "de") "%d.%m.%Y" else "%d %b. %Y")`.
+```{r lines}
+# --------------------------------------------------------------------------
+# The tables: one function for every table of the factsheet
+# --------------------------------------------------------------------------
 
-## `r issuer_name`
+# Every table is one row per line of a statement or per indicator and one
+# column per financial year. `spec` describes the lines:
+#
+#   key      the column of `wide` the line reads, or "" for a heading
+#   en, de   the label
+#   digits   the decimals shown
+#   unit     "amount"  in millions of the currency, as the figures are held
+#            "raw"     as held, for a per-share amount or a multiple
+#            "pct"     a percentage, which the key already holds
+#            "signed"  a percentage or a change, written with its sign
+#            "days"    a number of days
+#   sign     -1 for a line the statements deduct, which the taxonomy tags as
+#            a positive amount: the table shows it as the deduction it is
+#   style    "" for an ordinary line, "total" for a sum, "head" for a
+#            heading, "sub" for a line indented below the one above it
+#
+# `mark` adds a dagger to a line whose figure was read from a concept of the
+# issuer's own taxonomy, so that a reader can tell the two apart.
+line_spec <- function(...) {
+  spec <- tribble(...)
+  if (!"sign" %in% names(spec)) spec$sign <- 1
+  if (!"style" %in% names(spec)) spec$style <- ""
+  spec
+}
 
-```{r, echo=FALSE, message=FALSE}
+mark_of <- function(key) ifelse(vapply(key, is_extension, logical(1)),
+                                "†", "")
+
+format_line <- function(values, unit, digits) {
+  switch(unit,
+         amount = fmt(values / scale, digits),
+         raw = fmt(values, digits),
+         pct = fmt(values, digits),
+         days = fmt(values, digits),
+         signed = fmt_signed(values, digits),
+         fmt(values, digits))
+}
+
+render_lines <- function(spec, data = wide, unit_header = NULL,
+                         cagr = FALSE, change = FALSE) {
+  label <- if (lang == "de") spec$de else spec$en
+  out <- tibble(item = label)
+  for (i in seq_len(nrow(data))) {
+    column <- character(nrow(spec))
+    for (j in seq_len(nrow(spec))) {
+      if (spec$style[j] == "head" || !nzchar(spec$key[j])) {
+        column[j] <- ""
+      } else {
+        value <- data[[spec$key[j]]][i] * spec$sign[j]
+        column[j] <- format_line(value, spec$unit[j], spec$digits[j])
+      }
+    }
+    out[[data$year[i]]] <- column
+  }
+
+  # The change on the year before and the growth over the window, which only
+  # an amount and a per-share figure are shown with: the change of a ratio is
+  # read off the ratios themselves.
+  if (change) {
+    out[[tr("Change, %", "Veränderung, %")]] <- vapply(seq_len(nrow(spec)), function(j) {
+      if (!nzchar(spec$key[j]) || !spec$unit[j] %in% c("amount", "raw")) return("")
+      v <- data[[spec$key[j]]]
+      if (length(v) < 2 || is.na(v[length(v)]) || is.na(v[length(v) - 1]) ||
+          v[length(v) - 1] == 0) return("–")
+      fmt_signed((v[length(v)] / v[length(v) - 1] - 1) * 100, 1)
+    }, character(1))
+  }
+  if (cagr) {
+    n <- nrow(data)
+    out[[tr("CAGR, %", "CAGR, %")]] <- vapply(seq_len(nrow(spec)), function(j) {
+      if (!nzchar(spec$key[j]) || !spec$unit[j] %in% c("amount", "raw")) return("")
+      v <- data[[spec$key[j]]]
+      if (is.na(v[1]) || is.na(v[n]) || v[1] <= 0 || v[n] <= 0) return("–")
+      fmt_signed(((v[n] / v[1])^(1 / (n - 1)) - 1) * 100, 1)
+    }, character(1))
+  }
+
+  # The marks and the styles, which markdown carries into the table.
+  marks <- mark_of(spec$key)
+  out$item <- paste0(out$item, marks)
+  out$item <- ifelse(spec$style == "sub", paste0(" ", out$item), out$item)
+  bold <- spec$style %in% c("total", "head")
+  for (column in names(out)) {
+    out[[column]] <- ifelse(bold & nzchar(out[[column]]),
+                            paste0("**", out[[column]], "**"), out[[column]])
+  }
+
+  header <- c(if (is.null(unit_header)) "" else unit_header, names(out)[-1])
+  knitr::kable(out, col.names = header,
+               align = paste0("l", strrep("r", ncol(out) - 1)))
+}
+```
+
+```{r charts}
+# --------------------------------------------------------------------------
+# The charts: one function for a stack, a group of bars and a set of lines
+# --------------------------------------------------------------------------
+
+# Each takes the keys of `wide` to show and their labels, in the order they
+# are to be read, and leaves the corporate design to the sourced script.
+chart_data <- function(keys, labels, scale_by = scale, data = wide) {
+  data %>%
+    select(all_of(c("PERIODEND", keys))) %>%
+    pivot_longer(-"PERIODEND", names_to = "var") %>%
+    mutate(value = value / scale_by,
+           var = factor(var, levels = keys, labels = wrap_labels(labels, 34)))
+}
+
+chart_stacked <- function(keys, labels, subtitle = amount_label,
+                          scale_by = scale, ncol = 2, data = wide) {
+  ggplot(chart_data(keys, labels, scale_by, data),
+         aes(x = PERIODEND, y = value, fill = var)) +
+    geom_col(width = 250) +
+    geom_zeroline() +
+    scale_x_years() +
+    scale_y_continuous(labels = function(x) fmt(x)) +
+    scale_fill_corporate_design() +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    guides(fill = guide_legend(ncol = ncol)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+}
+
+chart_bars <- function(keys, labels, subtitle = amount_label,
+                       scale_by = scale, digits = 0, ncol = 3, data = wide) {
+  ggplot(chart_data(keys, labels, scale_by, data),
+         aes(x = PERIODEND, y = value, fill = var)) +
+    geom_col(position = position_dodge(width = 260), width = 240) +
+    geom_zeroline() +
+    scale_x_years() +
+    scale_y_continuous(labels = function(x) fmt(x, digits)) +
+    scale_fill_corporate_design() +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    guides(fill = guide_legend(ncol = ncol)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+}
+
+chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
+                        digits = 0, zero = TRUE, ncol = 3, data = wide) {
+  g <- ggplot(chart_data(keys, labels, scale_by, data) %>% filter(!is.na(value)),
+              aes(x = PERIODEND, y = value, colour = var)) +
+    geom_line(linewidth = linewidth_corporate_design) +
+    geom_point(size = 1.4) +
+    scale_x_years() +
+    scale_y_continuous(labels = function(x) fmt(x, digits)) +
+    scale_colour_corporate_design() +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    guides(colour = guide_legend(ncol = ncol)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+  if (zero) g <- g + geom_zeroline()
+  g
+}
+```
+
+```{r cover, results='asis'}
+# --------------------------------------------------------------------------
+# The cover and the running head
+# --------------------------------------------------------------------------
+
+# The issuer and the period are read from the filings, so the cover is
+# written as typst rather than set in the front matter. A value goes in as a
+# typst string, which keeps a name with a hash or an underscore in it from
+# being read as typst's own syntax.
+ts <- function(x) {
+  if (length(x) == 0 || is.na(x)) x <- "–"
+  paste0("\"", typst_string(as.character(x)), "\"")
+}
+
+# A column of the cover: a label and a value per row.
+typst_kv <- function(items) {
+  rows <- vapply(seq_along(items), function(i) {
+    paste0("  text(size: 7.5pt, fill: soft, ", ts(names(items)[i]), "),\n",
+           "  text(size: 8.5pt, ", ts(items[[i]]), "),")
+  }, character(1))
+  paste0("#grid(columns: (3.3cm, 1fr), row-gutter: 5.5pt, column-gutter: 6pt,\n",
+         paste(rows, collapse = "\n"), "\n)")
+}
+
+period_range <- paste0(years[1], " – ", years[n_shown])
+
+identity_items <- list()
+identity_items[[tr("Legal entity identifier", "Rechtsträgerkennung")]] <- lei
+identity_items[[tr("Legal form", "Rechtsform")]] <- text_of("legal_form")
+identity_items[[tr("Domicile", "Sitz")]] <-
+  coalesce(text_of("domicile"), text_of("address"))
+identity_items[[tr("Reporting currency", "Berichtswährung")]] <- currency
+identity_items[[tr("Financial years", "Geschäftsjahre")]] <- period_range
+identity_items[[tr("Latest period end", "Letzter Stichtag")]] <-
+  format(max_date, tr("%d %B %Y", "%d.%m.%Y"))
+identity_items[[tr("Language of the report", "Sprache des Berichts")]] <-
+  coalesce(latest$LANG, "–")
+identity_items[[tr("Filings read", "Gelesene Einreichungen")]] <-
+  as.character(nrow(filings))
+
+summary_items <- list()
+summary_items[[tr("Revenue", "Umsatzerlöse")]] <-
+  paste(fmt(cur$revenue / scale), amount_label)
+summary_items[[tr("Operating result", "Betriebsergebnis")]] <-
+  paste(fmt(cur$ebit / scale), amount_label)
+summary_items[[tr("EBIT margin", "EBIT-Marge")]] <- paste0(fmt(cur$ebit_margin, 1), " %")
+summary_items[[tr("Profit for the year", "Jahresergebnis")]] <-
+  paste(fmt(cur$profit / scale), amount_label)
+summary_items[[tr("Earnings per share", "Ergebnis je Aktie")]] <-
+  paste(fmt(cur$eps, 2), currency)
+summary_items[[tr("Operating cash flow", "Operativer Cashflow")]] <-
+  paste(fmt(cur$operating_cash_flow / scale), amount_label)
+summary_items[[tr("Net debt", "Nettofinanzverschuldung")]] <-
+  paste(fmt(cur$net_debt / scale), amount_label)
+summary_items[[tr("Equity to total assets", "Eigenkapitalquote")]] <-
+  paste0(fmt(cur$equity_ratio, 1), " %")
+
+notice <- tr(
+  paste("Compiled from the issuer's own annual financial reports as tagged",
+        "in Inline XBRL and published by filings.xbrl.org. Every figure is",
+        "a fact of a report or is derived from facts of the same report; no",
+        "market data, estimate or forecast is used. The indicators are",
+        "computed by this factsheet and are not the issuer's own key",
+        "performance indicators, which a report defines in its management",
+        "report and often defines differently. This document is produced",
+        "by a template of the open-source project fincommons and the issuer",
+        "is an example: it is a summary of published accounts, given",
+        "without warranty as to correctness or completeness, without any",
+        "association with the issuer, and it is not investment advice. The",
+        "disclaimer on the last page applies."),
+  paste("Erstellt aus den Finanzberichten des Emittenten, wie sie in Inline",
+        "XBRL ausgezeichnet und von filings.xbrl.org veröffentlicht",
+        "wurden. Jede Zahl ist ein Fakt eines Berichts oder wird aus Fakten",
+        "desselben Berichts abgeleitet; es werden keine Marktdaten,",
+        "Schätzungen oder Prognosen verwendet. Die Kennzahlen werden",
+        "von diesem Factsheet berechnet und sind nicht die Kennzahlen des",
+        "Emittenten, die ein Bericht im Lagebericht definiert und oft",
+        "anders definiert. Dieses Dokument wird von einer Vorlage des",
+        "Open-Source-Projekts fincommons erzeugt und der Emittent ist ein",
+        "Beispiel: es ist eine Zusammenfassung veröffentlichter Abschlüsse,",
+        "ohne Gewähr für Richtigkeit und Vollständigkeit, ohne jede",
+        "Verbindung zum Emittenten und keine Anlageberatung. Es gilt der",
+        "Haftungsausschluss auf der letzten Seite."))
+
+cat("```{=typst}\n")
+cat("#set page(numbering: none)\n")
+cat("#let ink = rgb(\"#22282E\")\n")
+cat("#let soft = rgb(\"#5C666F\")\n")
+cat("#let rule = rgb(\"#DCE1E5\")\n")
+cat("#let accent = rgb(\"#C10016\")\n\n")
+
+cat("#v(1.4cm)\n")
+# The first line of the cover says that this is an example of the template,
+# so that the framing is not left to the small print at the foot of the page.
+cat("#text(size: 8pt, tracking: 1.6pt, fill: soft, ",
+    ts(toupper(tr("Company factsheet · Example",
+                  "Unternehmens-Factsheet · Beispiel"))), ")\n", sep = "")
+cat("#v(4pt)\n#line(length: 100%, stroke: 1.2pt + accent)\n#v(14pt)\n")
+cat("#text(size: 25pt, weight: \"bold\", ", ts(issuer_name), ")\n", sep = "")
+cat("#v(3pt)\n")
+cat("#text(size: 10.5pt, fill: soft, ",
+    ts(tr("Annual financial reports in the European Single Electronic Format",
+          "Finanzberichte im European Single Electronic Format")), ")\n", sep = "")
+cat("#v(28pt)\n")
+cat("#grid(columns: (1fr, 1fr), column-gutter: 16pt,\n")
+cat("  [#text(size: 8pt, weight: \"bold\", ",
+    ts(tr("The issuer", "Der Emittent")), ")\n  #v(6pt)\n  ",
+    typst_kv(identity_items), "],\n", sep = "")
+cat("  [#text(size: 8pt, weight: \"bold\", ",
+    ts(paste(tr("Financial year", "Geschäftsjahr"), years[n_shown])),
+    ")\n  #v(6pt)\n  ", typst_kv(summary_items), "]\n)\n", sep = "")
+cat("#v(1fr)\n#line(length: 100%, stroke: 0.5pt + rule)\n#v(6pt)\n")
+cat("#text(size: 7pt, fill: soft, ", ts(notice), ")\n", sep = "")
+cat("#v(8pt)\n")
+cat("#text(size: 7pt, fill: soft, ",
+    ts(paste0(tr("Compiled on ", "Erstellt am "),
+              format(Sys.Date(), tr("%d %B %Y", "%d.%m.%Y")), ". ",
+              tr("Source: filings.xbrl.org, XBRL International.",
+                 "Quelle: filings.xbrl.org, XBRL International."))),
+    ")\n", sep = "")
+
+# From here on every page carries the issuer and the period in its head and
+# its number in its foot.
+cat("\n#set page(\n")
+cat("  header: [#set text(size: 7pt, fill: soft)\n",
+    "    #grid(columns: (1fr, auto), ",
+    "[#text(weight: \"bold\", ", ts(issuer_name), ") #h(6pt) ",
+    "#text(", ts(paste(tr("Company factsheet", "Unternehmens-Factsheet"),
+                       "·", period_range)), ")], ",
+    "[#text(", ts(tr("ESEF annual report data", "ESEF-Berichtsdaten")), ")])\n",
+    "    #v(-4pt) #line(length: 100%, stroke: 0.5pt + rule)],\n", sep = "")
+cat("  footer: [#set text(size: 7pt, fill: soft)\n",
+    "    #line(length: 100%, stroke: 0.5pt + rule) #v(-2pt)\n",
+    "    #grid(columns: (1fr, auto), ",
+    "[#text(", ts(tr("Source: ESEF annual financial reports, filings.xbrl.org. Own calculations.",
+                     "Quelle: ESEF-Finanzberichte, filings.xbrl.org. Eigene Berechnungen.")),
+    ")], [#context counter(page).display()])],\n", sep = "")
+cat("  numbering: \"1\",\n)\n")
+cat("```\n")
+```
+
+## `r tr("Contents", "Inhalt")`
+
+```{=typst}
+#outline(title: none, depth: 2, indent: 1em)
+```
+
+{{< pagebreak >}}
+
+### `r tr("How the figures are put together", "Wie die Zahlen zustande kommen")`
+
+```{r basis, results='asis'}
+basis <- c(
+  tr(paste0("**What is in here.** Every figure comes from the annual ",
+            "financial reports of ", issuer_name, " as filed in the ",
+            "European Single Electronic Format and tagged in Inline XBRL. ",
+            "The factsheet reads ", nrow(filings), " filings, for the ",
+            "financial years ", period_range, ", and shows the last ",
+            n_shown, " of them; one further year is read behind them, ",
+            "because a return puts the result of a year against the ",
+            "average of the balances at its start and its end."),
+     paste0("**Was hier steht.** Jede Zahl stammt aus den Finanzberichten ",
+            "der ", issuer_name, ", wie sie im European Single Electronic ",
+            "Format eingereicht und in Inline XBRL ausgezeichnet wurden. ",
+            "Das Factsheet liest ", nrow(filings), " Einreichungen für ",
+            "die Geschäftsjahre ", period_range, " und zeigt die ",
+            "letzten ", n_shown, " davon; ein weiteres Jahr wird dahinter ",
+            "gelesen, weil eine Rendite das Ergebnis eines Jahres am ",
+            "Durchschnitt der Bestände zu seinem Anfang und seinem ",
+            "Ende misst.")),
+  tr(paste("**As first reported.** The figures of a year are the ones its",
+           "own report states for it. Every report also carries the",
+           "previous year as a comparative, restated where the issuer",
+           "restated it, and those are left aside: a figure in the column",
+           "of a year is the one the market saw when that year was",
+           "reported."),
+     paste("**Wie zuerst berichtet.** Die Zahlen eines Jahres sind jene,",
+           "die sein eigener Bericht für es nennt. Jeder Bericht",
+           "führt auch das Vorjahr als Vergleichszahl, angepasst wo",
+           "der Emittent angepasst hat; diese bleiben außen vor: eine",
+           "Zahl in der Spalte eines Jahres ist jene, die der Markt bei",
+           "der Veröffentlichung dieses Jahres sah.")),
+  tr(paste("**Signs.** The taxonomy tags an expense as a positive amount.",
+           "The statements here show it as the deduction it is, so that the",
+           "lines add up down the column; a figure in a chart keeps the",
+           "sign the statement gives it."),
+     paste("**Vorzeichen.** Die Taxonomie zeichnet einen Aufwand als",
+           "positiven Betrag aus. Die Abschlüsse hier zeigen ihn als",
+           "den Abzug, der er ist, damit sich die Zeilen in der Spalte",
+           "summieren; eine Zahl in einer Grafik trägt das Vorzeichen",
+           "der Aufstellung.")),
+  tr(paste0("**The issuer's own concepts.** A line the IFRS taxonomy has no ",
+            "concept for is tagged by the issuer under a concept of its ",
+            "own, which the issuer may rename from one year to the next. A ",
+            "figure read that way carries a dagger (†), and the page ",
+            "on the coverage of the tags lists every one of them. ",
+            "Everything else is a concept of the taxonomy."),
+     paste0("**Eigene Konzepte des Emittenten.** Eine Zeile, für die ",
+            "die IFRS-Taxonomie kein Konzept hat, zeichnet der Emittent ",
+            "unter einem eigenen Konzept aus, das er von Jahr zu Jahr ",
+            "umbenennen kann. Eine so gelesene Zahl trägt ein Kreuz ",
+            "(†), und die Seite zur Abdeckung der Auszeichnungen ",
+            "nennt jede davon. Alles andere ist ein Konzept der ",
+            "Taxonomie.")),
+  tr(paste("**No EBITDA.** Depreciation and amortisation are not a line of",
+           "the primary statements under a concept of the IFRS taxonomy,",
+           "and this issuer tags them nowhere else either. Every indicator",
+           "that would rest on EBITDA is therefore shown against the",
+           "operating result or against the operating cash flow, which are",
+           "tagged."),
+     paste("**Kein EBITDA.** Abschreibungen sind unter einem Konzept der",
+           "IFRS-Taxonomie keine Zeile der Abschlüsse, und dieser",
+           "Emittent zeichnet sie auch sonst nicht aus. Jede Kennzahl, die",
+           "auf EBITDA ruhen würde, steht daher am Betriebsergebnis",
+           "oder am operativen Cashflow, die ausgezeichnet sind.")),
+  tr(paste("**What is not here.** Nothing that a report does not tag: no",
+           "share price and so no valuation multiple, no number of",
+           "employees, no order book, and no breakdown by segment or by",
+           "market unless the issuer tagged the figures of its segment",
+           "note. The page on the coverage of the tags says what was",
+           "looked for and not found."),
+     paste("**Was nicht hier steht.** Nichts, was ein Bericht nicht",
+           "auszeichnet: kein Aktienkurs und damit keine",
+           "Bewertungskennzahl, keine Mitarbeiterzahl, kein",
+           "Auftragsbestand und keine Aufteilung nach Segment oder Markt,",
+           "sofern der Emittent die Zahlen seiner Segmentangabe nicht",
+           "ausgezeichnet hat. Die Seite zur Abdeckung der Auszeichnungen",
+           "nennt, wonach gesucht wurde und was nicht gefunden wurde.")))
+
+cat(paste(basis, collapse = "\n\n"))
+```
+
+{{< pagebreak >}}
+
+## `r tr("At a glance", "Auf einen Blick")`
+
+```{r glance}
+# The panel of the latest financial year against the one before it. A
+# percentage changes by percentage points, an amount and a per-share figure
+# by a percentage, and a multiple by its own difference, so each line says
+# which it is.
+panel <- tribble(
+  ~key,                  ~en,                        ~de,                            ~unit,    ~digits,
+  "revenue",             "Revenue",                  "Umsatzerlöse",            "amount", 0,
+  "gross_profit",        "Gross profit",             "Bruttoergebnis",               "amount", 0,
+  "ebit",                "Operating result (EBIT)",  "Betriebsergebnis (EBIT)",      "amount", 0,
+  "profit",              "Profit for the year",      "Jahresergebnis",               "amount", 0,
+  "profit_owners",       "Profit, owners of parent", "Ergebnis, Eigentümer",     "amount", 0,
+  "eps",                 "Earnings per share",       "Ergebnis je Aktie",            "raw",    2,
+  "operating_cash_flow", "Operating cash flow",      "Operativer Cashflow",          "amount", 0,
+  "free_cash_flow",      "Free cash flow",           "Free Cashflow",                "amount", 0,
+  "assets",              "Total assets",             "Bilanzsumme",                  "amount", 0,
+  "equity",              "Equity",                   "Eigenkapital",                 "amount", 0,
+  "net_debt",            "Net debt",                 "Nettofinanzverschuldung",      "amount", 0,
+  "ebit_margin",         "EBIT margin",              "EBIT-Marge",                   "pct",    1,
+  "roce",                "Return on capital employed", "Rendite eingesetztes Kapital", "pct", 1,
+  "roe",                 "Return on equity",         "Eigenkapitalrendite",          "pct",    1,
+  "equity_ratio",        "Equity to total assets",   "Eigenkapitalquote",            "pct",    1,
+  "gearing",             "Net debt to equity",       "Nettoverschuldung zu Eigenkapital", "pct", 1
+)
+
+change_of <- function(key, unit) {
+  now <- cur[[key]]
+  before <- prv[[key]]
+  if (is.na(now) || is.na(before)) return("–")
+  if (unit == "pct") return(paste0(fmt_signed(now - before, 1), " pp"))
+  if (before == 0) return("–")
+  paste0(fmt_signed((now / before - 1) * 100, 1), " %")
+}
+
+temp <- panel %>%
+  rowwise() %>%
+  mutate(
+    item = paste0(if (lang == "de") de else en, mark_of(key)),
+    unit_shown = case_when(unit == "amount" ~ amount_label,
+                           unit == "pct" ~ "%",
+                           unit == "raw" ~ currency,
+                           TRUE ~ ""),
+    before_value = format_line(prv[[key]], unit, digits),
+    latest_value = format_line(cur[[key]], unit, digits),
+    delta = change_of(key, unit)) %>%
+  ungroup() %>%
+  select("item", "unit_shown", "before_value", "latest_value", "delta")
+
+knitr::kable(
+  temp,
+  col.names = c("", tr("Unit", "Einheit"), years[n_shown - 1], years[n_shown],
+                tr("Change", "Veränderung")),
+  align = "llrrr")
+```
+
+### `r tr("Revenue, result and cash", "Umsatz, Ergebnis und Cash")`
+
+```{r glance-chart}
+chart_bars(c("revenue", "gross_profit", "ebit", "operating_cash_flow"),
+           c(tr("Revenue", "Umsatzerlöse"),
+             tr("Gross profit", "Bruttoergebnis"),
+             tr("Operating result (EBIT)", "Betriebsergebnis (EBIT)"),
+             tr("Operating cash flow", "Operativer Cashflow")),
+           ncol = 4)
+```
+
+{{< pagebreak >}}
+
+## `r tr("The issuer", "Der Emittent")`
+
+```{r profile}
 viewer <- if (is.na(latest$VIEWERURL)) "" else
-  paste0("[", if (lang == "de") "Bericht ansehen" else "View the report",
+  paste0("[", tr("View the report", "Bericht ansehen"),
          "](https://filings.xbrl.org", latest$VIEWERURL, ")")
 
 temp <- tibble(
-  item = c("LEI", "Legal form", "Domicile", "Registered office",
-           "Ultimate parent", "Latest report", "Language of the report",
-           "Validation errors and warnings", "Report"),
-  value = c(lei,
+  item = c(tr("Name in the report", "Name im Bericht"),
+           tr("Legal entity identifier", "Rechtsträgerkennung"),
+           tr("Legal form", "Rechtsform"),
+           tr("Domicile", "Sitz"),
+           tr("Country of incorporation", "Gründungsstaat"),
+           tr("Registered office", "Anschrift"),
+           tr("Principal place of business", "Hauptgeschäftssitz"),
+           tr("Ultimate parent", "Oberste Muttergesellschaft"),
+           tr("Filing system", "Einreichungssystem"),
+           tr("Country of the filing", "Land der Einreichung"),
+           tr("Latest period end", "Letzter Stichtag"),
+           tr("Language of the report", "Sprache des Berichts"),
+           tr("Validation errors and warnings", "Validierungsfehler und -warnungen"),
+           tr("Report", "Bericht")),
+  value = c(coalesce(text_of("name"), issuer_name),
+            lei,
             text_of("legal_form"),
             text_of("domicile"),
+            text_of("country_of_incorporation"),
             text_of("address"),
+            text_of("principal_place"),
             text_of("parent"),
-            format(latest$PERIODEND, "%d %b. %Y"),
+            coalesce(latest$SYSTEM, ""),
+            coalesce(latest$COUNTRY, ""),
+            format(latest$PERIODEND, tr("%d %B %Y", "%d.%m.%Y")),
             coalesce(latest$LANG, ""),
             paste0(coalesce(latest$ERRORS, 0L), " / ",
                    coalesce(latest$WARNINGS, 0L)),
             viewer))
 
-if (lang == "de") {
-  temp$item <- c("LEI", "Rechtsform", "Sitz", "Anschrift", "Oberste Muttergesellschaft",
-                 "Letzter Bericht", "Sprache des Berichts",
-                 "Validierungsfehler und -warnungen", "Bericht")
-  temp$value[6] <- format(latest$PERIODEND, "%d.%m.%Y")
-}
-
 knitr::kable(temp %>% filter(!is.na(value), value != ""),
              col.names = c("", ""), align = "ll")
 ```
 
-`r if (!is.na(text_of("activities"))) paste0("> ", gsub("\\s+", " ", text_of("activities")))`
+### `r tr("Principal activities, as the report describes them", "Geschäftstätigkeit, wie der Bericht sie beschreibt")`
 
-## Key figures
+`r if (!is.na(text_of("activities"))) paste0("> ", text_of("activities")) else tr("The report does not tag a description of its activities.", "Der Bericht zeichnet keine Beschreibung der Geschäftstätigkeit aus.")`
 
-```{r, echo=FALSE, message=FALSE}
-rows <- tribble(
-  ~key,                  ~en,                                ~de,                                        ~digits,
-  "revenue",             "Revenue",                          "Umsatzerlöse",                             0,
-  "gross_profit",        "Gross profit",                     "Bruttoergebnis",                           0,
-  "ebit",                "Operating result (EBIT)",          "Betriebsergebnis (EBIT)",                  0,
-  "profit_before_tax",   "Profit before tax",                "Ergebnis vor Steuern",                     0,
-  "profit",              "Profit after tax",                 "Ergebnis nach Steuern",                    0,
-  "profit_owners",       "Profit attributable to owners",    "Den Eigentümern zurechenbares Ergebnis",   0,
-  "assets",              "Total assets",                     "Bilanzsumme",                              0,
-  "equity",              "Equity",                           "Eigenkapital",                             0,
-  "equity_owners",       "Equity attributable to owners",    "Den Eigentümern zurechenbares Eigenkapital", 0,
-  "net_debt",            "Net debt",                         "Nettofinanzverschuldung",                  0,
-  "operating_cash_flow", "Cash flow from operating activities", "Cashflow aus der Betriebstätigkeit",    0,
-  "free_cash_flow",      "Free cash flow",                   "Free Cashflow",                            0
-)
+### `r tr("The years in one table", "Die Jahre in einer Tabelle")`
 
+```{r profile-summary}
+render_lines(line_spec(
+  ~key,                  ~en,                        ~de,                         ~unit,    ~digits,
+  "revenue",             "Revenue",                  "Umsatzerlöse",         "amount", 0,
+  "ebit",                "Operating result (EBIT)",  "Betriebsergebnis (EBIT)",   "amount", 0,
+  "profit_owners",       "Profit, owners of parent", "Ergebnis, Eigentümer", "amount", 0,
+  "operating_cash_flow", "Operating cash flow",      "Operativer Cashflow",       "amount", 0,
+  "assets",              "Total assets",             "Bilanzsumme",               "amount", 0,
+  "equity",              "Equity",                   "Eigenkapital",              "amount", 0,
+  "net_debt",            "Net debt",                 "Nettofinanzverschuldung",   "amount", 0
+), unit_header = amount_label, change = TRUE, cagr = TRUE)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Statement of profit or loss", "Gewinn- und Verlustrechnung")`
+
+```{r income-statement}
+# The income statement as the issuer presents it, by function. The lines the
+# statement deducts carry sign = -1, because the taxonomy tags an expense as
+# a positive amount; `other_operating_net` is what is left between the
+# functional expenses and the operating result, so that the column adds up
+# whatever else the issuer put there.
+render_lines(line_spec(
+  ~key,                  ~en,                               ~de,                                        ~unit,    ~digits, ~sign, ~style,
+  "revenue",             "Revenue",                         "Umsatzerlöse",                        "amount", 0,        1,    "total",
+  "cost_of_sales",       "Cost of sales",                   "Umsatzkosten",                             "amount", 0,       -1,    "",
+  "gross_profit",        "Gross profit",                    "Bruttoergebnis",                           "amount", 0,        1,    "total",
+  "distribution_costs",  "Distribution costs",              "Vertriebskosten",                          "amount", 0,       -1,    "",
+  "admin_expense",       "Administrative expenses",         "Verwaltungskosten",                        "amount", 0,       -1,    "",
+  "other_income",        "Other operating income",          "Sonstige betriebliche Erträge",       "amount", 0,        1,    "",
+  "other_expense",       "Other operating expenses",        "Sonstige betriebliche Aufwendungen",       "amount", 0,       -1,    "",
+  "associates_result",   "Share of profit of associates",   "Ergebnis aus assoziierten Unternehmen",    "amount", 0,        1,    "",
+  "other_operating_net", "Other, net",                      "Übriges, netto",                      "amount", 0,        1,    "",
+  "ebit",                "Operating result (EBIT)",         "Betriebsergebnis (EBIT)",                  "amount", 0,        1,    "total",
+  "finance_income",      "Finance income",                  "Finanzerträge",                       "amount", 0,        1,    "",
+  "finance_costs",       "Finance costs",                   "Finanzaufwendungen",                       "amount", 0,       -1,    "",
+  "profit_before_tax",   "Profit before tax",               "Ergebnis vor Steuern",                     "amount", 0,        1,    "total",
+  "income_tax",          "Income tax expense",              "Steuern vom Einkommen",                    "amount", 0,       -1,    "",
+  "profit_continuing",   "Profit, continuing operations",   "Ergebnis, fortgeführte Aktivitäten",  "amount", 0,        1,    "total",
+  "profit_discontinued", "Profit, discontinued operations", "Ergebnis, nicht fortgeführte Aktivitäten", "amount", 0,   1,    "",
+  "profit",              "Profit for the year",             "Jahresergebnis",                           "amount", 0,        1,    "total",
+  "profit_owners",       "Owners of the parent",            "Eigentümer des Mutterunternehmens",   "amount", 0,        1,    "sub",
+  "profit_nci",          "Non-controlling interests",       "Nicht beherrschende Anteile",              "amount", 0,        1,    "sub"
+), unit_header = amount_label, change = TRUE, cagr = TRUE)
+```
+
+### `r tr("The statement as a share of revenue", "Die Aufstellung in Prozent des Umsatzes")`
+
+```{r income-structure}
+# Every line of the statement over the revenue of the same year, which puts
+# a year of high prices beside a year of low ones.
 temp <- wide %>%
-  select("year", all_of(rows$key)) %>%
-  mutate(across(-"year", ~ fmt(.x / scale))) %>%
-  pivot_longer(-"year", names_to = "key") %>%
-  pivot_wider(names_from = "year", values_from = "value") %>%
-  left_join(rows, by = "key") %>%
-  mutate(item = if (lang == "de") de else en) %>%
-  select("item", matches("^[0-9]{4}"))
+  mutate(across(all_of(c("cost_of_sales", "gross_profit", "distribution_costs",
+                         "admin_expense", "other_income", "other_expense",
+                         "ebit", "net_finance_result", "profit_before_tax",
+                         "income_tax", "profit")),
+                ~ .x / revenue * 100, .names = "share_{.col}"))
 
-knitr::kable(temp, col.names = c(amount_label, names(temp)[-1]),
-             align = paste0("l", strrep("r", ncol(temp) - 1)))
+render_lines(line_spec(
+  ~key,                        ~en,                        ~de,                                     ~unit, ~digits, ~sign, ~style,
+  "share_cost_of_sales",       "Cost of sales",            "Umsatzkosten",                          "pct", 1,       -1,    "",
+  "share_gross_profit",        "Gross profit",             "Bruttoergebnis",                        "pct", 1,        1,    "total",
+  "share_distribution_costs",  "Distribution costs",       "Vertriebskosten",                       "pct", 1,       -1,    "",
+  "share_admin_expense",       "Administrative expenses",  "Verwaltungskosten",                     "pct", 1,       -1,    "",
+  "share_other_income",        "Other operating income",   "Sonstige betriebliche Erträge",    "pct", 1,        1,    "",
+  "share_other_expense",       "Other operating expenses", "Sonstige betriebliche Aufwendungen",    "pct", 1,       -1,    "",
+  "share_ebit",                "Operating result (EBIT)",  "Betriebsergebnis (EBIT)",               "pct", 1,        1,    "total",
+  "share_net_finance_result",  "Net finance result",       "Finanzergebnis",                        "pct", 1,        1,    "",
+  "share_profit_before_tax",   "Profit before tax",        "Ergebnis vor Steuern",                  "pct", 1,        1,    "total",
+  "share_income_tax",          "Income tax expense",       "Steuern vom Einkommen",                 "pct", 1,       -1,    "",
+  "share_profit",              "Profit for the year",      "Jahresergebnis",                        "pct", 1,        1,    "total"
+), data = temp, unit_header = tr("% of revenue", "% des Umsatzes"))
 ```
 
-### Ratios
+{{< pagebreak >}}
 
-```{r, echo=FALSE, message=FALSE}
-# The page shows numbers and the texts of the filing, and no prose of its
-# own, so what a reader of the template needs to know about a figure is said
-# in the comments of its chunk.
-#
-# The ratios are computed from the figures above and are not the issuer's own
-# key performance indicators, which a report states in its management report
-# and often defines differently. voestalpine's own gearing, for one, takes
-# net financial debt from its notes, which also nets other financial assets
-# against it. The return on equity puts the profit of a year against the
-# average of the equity at its start and its end.
-rows <- tribble(
-  ~key,           ~en,                                ~de,                                    ~digits,
-  "gross_margin", "Gross margin, %",                  "Bruttomarge, %",                       1,
-  "ebit_margin",  "EBIT margin, %",                   "EBIT-Marge, %",                        1,
-  "net_margin",   "Profit after tax to revenue, %",   "Ergebnis nach Steuern zu Umsatz, %",   1,
-  "roe",          "Return on equity, %",              "Eigenkapitalrendite, %",               1,
-  "equity_ratio", "Equity to total assets, %",        "Eigenkapitalquote, %",                 1,
-  "gearing",      "Net debt to equity, %",            "Nettofinanzverschuldung zu Eigenkapital, %", 1,
-  "tax_rate",     "Effective tax rate, %",            "Effektive Steuerquote, %",             1,
-  "eps",          paste0("Earnings per share, ", currency),
-                  paste0("Ergebnis je Aktie, ", currency), 2,
-  "dps",          paste0("Dividend per share proposed, ", currency),
-                  paste0("Vorgeschlagene Dividende je Aktie, ", currency), 2,
-  "payout",       "Payout ratio, %",                  "Ausschüttungsquote, %",                1
-)
+## `r tr("What revenue was spent on", "Wofür der Umsatz verwendet wurde")`
 
-temp <- wide %>% select("year", all_of(rows$key))
-for (i in seq_len(nrow(rows))) {
-  temp[[rows$key[i]]] <- fmt(temp[[rows$key[i]]], rows$digits[i])
-}
-temp <- temp %>%
-  pivot_longer(-"year", names_to = "key") %>%
-  pivot_wider(names_from = "year", values_from = "value") %>%
-  left_join(rows, by = "key") %>%
-  mutate(item = if (lang == "de") de else en) %>%
-  select("item", matches("^[0-9]{4}"))
-
-knitr::kable(temp, col.names = c("", names(temp)[-1]),
-             align = paste0("l", strrep("r", ncol(temp) - 1)))
-```
-
-## Balance sheet
-
-### By type of asset
-
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
-temp <- wide %>%
-  select("PERIODEND", "ppe", "goodwill", "assets_other_noncurrent",
-         "inventories", "receivables", "cash", "assets_other_current") %>%
-  pivot_longer(-"PERIODEND", names_to = "var") %>%
-  mutate(value = value / scale)
-
-var_levels <- c("ppe", "goodwill", "assets_other_noncurrent", "inventories",
-                "receivables", "cash", "assets_other_current")
-
-# Default is English
-var_labels <- c("Property, plant and equipment", "Goodwill",
-                "Other non-current assets", "Inventories",
-                "Trade and other receivables", "Cash and cash equivalents",
-                "Other current assets")
-y_label <- amount_label
-
-if (lang == "de") {
-  var_labels <- c("Sachanlagen", "Firmenwerte", "Sonstige langfristige Aktiva",
-                  "Vorräte", "Forderungen aus Lieferungen und Leistungen und sonstige Forderungen",
-                  "Zahlungsmittel", "Sonstige kurzfristige Aktiva")
-}
-
-temp <- temp %>%
-  mutate(var = factor(var, levels = var_levels, labels = var_labels))
-
-ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
-  geom_col() +
-  scale_x_years() +
-  scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_corporate_design() +
-  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  guides(fill = guide_legend(ncol = 2)) +
-  theme_corporate_design(axis.title = element_blank())
-```
-
-### By type of funding
-
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
-temp <- wide %>%
-  select("PERIODEND", "equity", "financial_liabilities_noncurrent",
-         "liabilities_other_noncurrent", "financial_liabilities_current",
-         "liabilities_other_current") %>%
-  pivot_longer(-"PERIODEND", names_to = "var") %>%
-  mutate(value = value / scale)
-
-var_levels <- c("equity", "financial_liabilities_noncurrent",
-                "liabilities_other_noncurrent", "financial_liabilities_current",
-                "liabilities_other_current")
-
-# Default is English
-var_labels <- c("Equity", "Non-current financial liabilities",
-                "Other non-current liabilities", "Current financial liabilities",
-                "Other current liabilities")
-y_label <- amount_label
-
-if (lang == "de") {
-  var_labels <- c("Eigenkapital", "Langfristige Finanzverbindlichkeiten",
-                  "Sonstige langfristige Passiva",
-                  "Kurzfristige Finanzverbindlichkeiten",
-                  "Sonstige kurzfristige Passiva")
-}
-
-temp <- temp %>%
-  mutate(var = factor(var, levels = var_levels, labels = var_labels))
-
-ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
-  geom_col() +
-  scale_x_years() +
-  scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_corporate_design() +
-  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  guides(fill = guide_legend(ncol = 2)) +
-  theme_corporate_design(axis.title = element_blank())
-```
-
-### Equity and net debt
-
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
-temp <- wide %>%
-  select("PERIODEND", "equity_ratio", "gearing") %>%
-  pivot_longer(-"PERIODEND", names_to = "var") %>%
-  filter(!is.na(value))
-
-var_levels <- c("equity_ratio", "gearing")
-
-# Default is English
-var_labels <- c("Equity to total assets", "Net debt to equity")
-y_label <- "%"
-
-if (lang == "de") {
-  var_labels <- c("Eigenkapitalquote", "Nettofinanzverschuldung zu Eigenkapital")
-}
-
-temp <- temp %>%
-  mutate(var = factor(var, levels = var_levels, labels = var_labels))
-
-ggplot(temp, aes(x = PERIODEND, y = value, colour = var)) +
-  geom_line(linewidth = linewidth_corporate_design) +
-  geom_point() +
-  geom_zeroline() +
-  scale_x_years() +
-  scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_colour_corporate_design() +
-  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  theme_corporate_design(axis.title = element_blank())
-```
-
-## Income statement
-
-### What revenue was spent on
-
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
+```{r uses-of-revenue}
 # The parts add up to revenue: cost of sales and gross profit are revenue,
-# and gross profit is spent on distribution and administration and on other
-# operating expenses net of other operating income, with EBIT left over. A
-# year in which other operating income exceeds the expenses has a negative
-# bar for them, below the axis.
+# and gross profit is spent on distribution and administration and on the
+# other operating items, with EBIT left over. A year in which the other
+# operating income exceeds the expenses has a negative bar for them, below
+# the axis.
 temp <- wide %>%
-  select("PERIODEND", "cost_of_sales", "distribution_costs", "admin_expense",
-         "other_operating", "ebit") %>%
-  pivot_longer(-"PERIODEND", names_to = "var") %>%
-  mutate(value = value / scale)
+  mutate(other_operating_total = gross_profit - coalesce(distribution_costs, 0) -
+           coalesce(admin_expense, 0) - ebit)
 
-var_levels <- c("cost_of_sales", "distribution_costs", "admin_expense",
-                "other_operating", "ebit")
-
-# Default is English
-var_labels <- c("Cost of sales", "Distribution costs",
-                "Administrative expenses", "Other operating expenses, net",
-                "Operating result (EBIT)")
-y_label <- amount_label
-
-if (lang == "de") {
-  var_labels <- c("Umsatzkosten", "Vertriebskosten", "Verwaltungskosten",
-                  "Sonstige betriebliche Aufwendungen, netto",
-                  "Betriebsergebnis (EBIT)")
-}
-
-temp <- temp %>%
-  mutate(var = factor(var, levels = var_levels, labels = var_labels))
-
-ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
-  geom_col() +
-  geom_zeroline() +
-  scale_x_years() +
-  scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_corporate_design() +
-  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  guides(fill = guide_legend(ncol = 2)) +
-  theme_corporate_design(axis.title = element_blank())
+chart_stacked(
+  c("cost_of_sales", "distribution_costs", "admin_expense",
+    "other_operating_total", "ebit"),
+  c(tr("Cost of sales", "Umsatzkosten"),
+    tr("Distribution costs", "Vertriebskosten"),
+    tr("Administrative expenses", "Verwaltungskosten"),
+    tr("Other operating items, net", "Sonstige betriebliche Posten, netto"),
+    tr("Operating result (EBIT)", "Betriebsergebnis (EBIT)")),
+  data = temp)
 ```
 
-### From EBIT to profit
+### `r tr("From the operating result to the profit", "Vom Betriebsergebnis zum Jahresergebnis")`
 
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
-temp <- wide %>%
-  select("PERIODEND", "ebit", "profit_before_tax", "profit_owners") %>%
-  pivot_longer(-"PERIODEND", names_to = "var") %>%
-  mutate(value = value / scale)
-
-var_levels <- c("ebit", "profit_before_tax", "profit_owners")
-
-# Default is English
-var_labels <- c("Operating result (EBIT)", "Profit before tax",
-                "Profit attributable to owners")
-y_label <- amount_label
-
-if (lang == "de") {
-  var_labels <- c("Betriebsergebnis (EBIT)", "Ergebnis vor Steuern",
-                  "Den Eigentümern zurechenbares Ergebnis")
-}
-
-temp <- temp %>%
-  mutate(var = factor(var, levels = var_levels, labels = var_labels))
-
-ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
-  geom_col(position = position_dodge(width = 300)) +
-  geom_zeroline() +
-  scale_x_years() +
-  scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_corporate_design() +
-  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  guides(fill = guide_legend(ncol = 2)) +
-  theme_corporate_design(axis.title = element_blank())
+```{r ebit-to-profit}
+chart_bars(c("ebit", "profit_before_tax", "profit", "profit_owners"),
+           c(tr("Operating result (EBIT)", "Betriebsergebnis (EBIT)"),
+             tr("Profit before tax", "Ergebnis vor Steuern"),
+             tr("Profit for the year", "Jahresergebnis"),
+             tr("Owners of the parent", "Eigentümer")),
+           ncol = 4)
 ```
 
-### Margins and returns
+### `r tr("Growth on the year before", "Wachstum gegen das Vorjahr")`
 
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
-temp <- wide %>%
-  select("PERIODEND", "ebit_margin", "net_margin", "roe") %>%
-  pivot_longer(-"PERIODEND", names_to = "var") %>%
-  filter(!is.na(value))
-
-var_levels <- c("ebit_margin", "net_margin", "roe")
-
-# Default is English
-var_labels <- c("EBIT margin", "Profit after tax to revenue",
-                "Return on equity")
-y_label <- "%"
-
-if (lang == "de") {
-  var_labels <- c("EBIT-Marge", "Ergebnis nach Steuern zu Umsatz",
-                  "Eigenkapitalrendite")
-}
-
-temp <- temp %>%
-  mutate(var = factor(var, levels = var_levels, labels = var_labels))
-
-ggplot(temp, aes(x = PERIODEND, y = value, colour = var)) +
-  geom_line(linewidth = linewidth_corporate_design) +
-  geom_point() +
-  geom_zeroline() +
-  scale_x_years() +
-  scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_colour_corporate_design() +
-  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  theme_corporate_design(axis.title = element_blank())
+```{r income-growth}
+render_lines(line_spec(
+  ~key,                  ~en,                       ~de,                          ~unit,    ~digits,
+  "revenue_growth",      "Revenue",                 "Umsatzerlöse",          "signed", 1,
+  "gross_profit_growth", "Gross profit",            "Bruttoergebnis",             "signed", 1,
+  "ebit_growth",         "Operating result (EBIT)", "Betriebsergebnis (EBIT)",    "signed", 1,
+  "profit_growth",       "Profit, owners of parent", "Ergebnis, Eigentümer", "signed", 1,
+  "eps_growth",          "Earnings per share",      "Ergebnis je Aktie",          "signed", 1,
+  "assets_growth",       "Total assets",            "Bilanzsumme",                "signed", 1,
+  "equity_growth",       "Equity, owners of parent", "Eigenkapital, Eigentümer", "signed", 1
+), unit_header = tr("% on the year before", "% gegen das Vorjahr"))
 ```
 
-## Cash flow
+{{< pagebreak >}}
 
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
-# Free cash flow is the cash flow from operating activities plus that from
-# investing activities, which is how voestalpine defines it. The investing
-# cash flow includes what is put into or taken out of financial investments
-# as well as the capital expenditure.
-temp <- wide %>%
-  select("PERIODEND", "operating_cash_flow", "investing_cash_flow",
-         "free_cash_flow") %>%
-  pivot_longer(-"PERIODEND", names_to = "var") %>%
-  mutate(value = value / scale)
+## `r tr("Margins", "Margen")`
 
-var_levels <- c("operating_cash_flow", "investing_cash_flow", "free_cash_flow")
-
-# Default is English
-var_labels <- c("From operating activities", "From investing activities",
-                "Free cash flow")
-y_label <- amount_label
-
-if (lang == "de") {
-  var_labels <- c("Aus der Betriebstätigkeit", "Aus der Investitionstätigkeit",
-                  "Free Cashflow")
-}
-
-temp <- temp %>%
-  mutate(var = factor(var, levels = var_levels, labels = var_labels))
-
-ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
-  geom_col(position = position_dodge(width = 300)) +
-  geom_zeroline() +
-  scale_x_years() +
-  scale_y_continuous(labels = function(x) fmt(x)) +
-  scale_fill_corporate_design() +
-  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  theme_corporate_design(axis.title = element_blank())
+```{r margins-table}
+render_lines(line_spec(
+  ~key,            ~en,                            ~de,                        ~unit, ~digits,
+  "gross_margin",  "Gross margin",                 "Bruttomarge",              "pct", 1,
+  "ebit_margin",   "EBIT margin",                  "EBIT-Marge",               "pct", 1,
+  "pretax_margin", "Pre-tax margin",               "Vorsteuermarge",           "pct", 1,
+  "net_margin",    "Net margin",                   "Nettomarge",               "pct", 1,
+  "ocf_margin",    "Operating cash flow to revenue", "Operativer Cashflow zu Umsatz", "pct", 1,
+  "fcf_margin",    "Free cash flow to revenue",    "Free Cashflow zu Umsatz",  "pct", 1,
+  "tax_rate",      "Effective tax rate",           "Effektive Steuerquote",    "pct", 1,
+  "cash_tax_rate", "Cash taxes to profit before tax", "Gezahlte Steuern zu Ergebnis vor Steuern", "pct", 1
+), unit_header = "%")
 ```
 
-## Per share
-
-```{r, echo=FALSE, results='hide', message=FALSE, fig.height=4}
-temp <- wide %>%
-  select("PERIODEND", "eps", "dps") %>%
-  pivot_longer(-"PERIODEND", names_to = "var") %>%
-  filter(!is.na(value))
-
-var_levels <- c("eps", "dps")
-
-# Default is English
-var_labels <- c("Earnings per share", "Dividend per share proposed")
-y_label <- currency
-
-if (lang == "de") {
-  var_labels <- c("Ergebnis je Aktie", "Vorgeschlagene Dividende je Aktie")
-}
-
-temp <- temp %>%
-  mutate(var = factor(var, levels = var_levels, labels = var_labels))
-
-ggplot(temp, aes(x = PERIODEND, y = value, fill = var)) +
-  geom_col(position = position_dodge(width = 250)) +
-  geom_zeroline() +
-  scale_x_years() +
-  scale_y_continuous(labels = function(x) fmt(x, 2)) +
-  scale_fill_corporate_design() +
-  labs(caption = wrap_caption(source_caption), subtitle = y_label) +
-  theme_corporate_design(axis.title = element_blank())
+```{r margins-chart}
+chart_lines(c("gross_margin", "ebit_margin", "net_margin", "ocf_margin"),
+            c(tr("Gross margin", "Bruttomarge"),
+              tr("EBIT margin", "EBIT-Marge"),
+              tr("Net margin", "Nettomarge"),
+              tr("Operating cash flow to revenue",
+                 "Operativer Cashflow zu Umsatz")),
+            digits = 1, ncol = 4)
 ```
 
-## Checks on the data
+{{< pagebreak >}}
 
-```{r, echo=FALSE, message=FALSE}
+## `r tr("Statement of financial position: assets", "Bilanz: Aktiva")`
+
+```{r assets-table}
+render_lines(line_spec(
+  ~key,                          ~en,                              ~de,                                       ~unit,    ~digits, ~sign, ~style,
+  "",                            "Non-current assets",             "Langfristige Vermögenswerte",        "amount", 0,        1,    "head",
+  "ppe",                         "Property, plant and equipment",  "Sachanlagen",                             "amount", 0,        1,    "sub",
+  "goodwill",                    "Goodwill",                       "Firmenwerte",                             "amount", 0,        1,    "sub",
+  "intangibles",                 "Other intangible assets",        "Sonstige immaterielle Vermögenswerte", "amount", 0,      1,    "sub",
+  "equity_method",               "Investments in associates",      "Anteile an assoziierten Unternehmen",     "amount", 0,        1,    "sub",
+  "financial_assets_noncurrent", "Other financial assets",         "Sonstige finanzielle Vermögenswerte", "amount", 0,        1,    "sub",
+  "deferred_tax_assets",         "Deferred tax assets",            "Aktive latente Steuern",                  "amount", 0,        1,    "sub",
+  "assets_other_noncurrent",     "Other non-current assets",       "Sonstige langfristige Vermögenswerte", "amount", 0,       1,    "sub",
+  "noncurrent_assets",           "Total non-current assets",       "Summe langfristige Vermögenswerte",   "amount", 0,        1,    "total",
+  "",                            "Current assets",                 "Kurzfristige Vermögenswerte",        "amount", 0,        1,    "head",
+  "inventories",                 "Inventories",                    "Vorräte",                            "amount", 0,        1,    "sub",
+  "receivables",                 "Trade and other receivables",    "Forderungen",                             "amount", 0,        1,    "sub",
+  "financial_assets_current",    "Other financial assets",         "Sonstige finanzielle Vermögenswerte", "amount", 0,        1,    "sub",
+  "cash",                        "Cash and cash equivalents",      "Zahlungsmittel",                          "amount", 0,        1,    "sub",
+  "assets_other_current",        "Other current assets",           "Sonstige kurzfristige Vermögenswerte", "amount", 0,       1,    "sub",
+  "current_assets",              "Total current assets",           "Summe kurzfristige Vermögenswerte",   "amount", 0,        1,    "total",
+  "assets",                      "Total assets",                   "Bilanzsumme",                             "amount", 0,        1,    "total"
+), unit_header = amount_label, change = TRUE)
+```
+
+```{r assets-chart}
+chart_stacked(
+  c("ppe", "goodwill", "intangibles", "equity_method",
+    "assets_rest_noncurrent", "inventories", "receivables", "cash",
+    "assets_rest_current"),
+  c(tr("Property, plant and equipment", "Sachanlagen"),
+    tr("Goodwill", "Firmenwerte"),
+    tr("Other intangible assets", "Sonstige immaterielle Vermögenswerte"),
+    tr("Investments in associates", "Assoziierte Unternehmen"),
+    tr("Other non-current assets", "Sonstige langfristige Aktiva"),
+    tr("Inventories", "Vorräte"),
+    tr("Trade and other receivables", "Forderungen"),
+    tr("Cash and cash equivalents", "Zahlungsmittel"),
+    tr("Other current assets", "Sonstige kurzfristige Aktiva")),
+  ncol = 3)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Statement of financial position: equity and liabilities", "Bilanz: Passiva")`
+
+```{r equity-liabilities-table}
+render_lines(line_spec(
+  ~key,                               ~en,                             ~de,                                    ~unit,    ~digits, ~sign, ~style,
+  "",                                 "Equity",                        "Eigenkapital",                         "amount", 0,        1,    "head",
+  "issued_capital",                   "Issued capital",                "Grundkapital",                         "amount", 0,        1,    "sub",
+  "additional_paid_in",               "Additional paid-in capital",    "Kapitalrücklagen",                 "amount", 0,        1,    "sub",
+  "retained_earnings",                "Retained earnings",             "Gewinnrücklagen",                  "amount", 0,        1,    "sub",
+  "other_reserves",                   "Other reserves",                "Sonstige Rücklagen",               "amount", 0,        1,    "sub",
+  "treasury_shares",                  "Treasury shares",               "Eigene Anteile",                       "amount", 0,       -1,    "sub",
+  "equity_owners",                    "Equity, owners of the parent",  "Eigenkapital der Eigentümer",      "amount", 0,        1,    "total",
+  "nci",                              "Non-controlling interests",     "Nicht beherrschende Anteile",          "amount", 0,        1,    "sub",
+  "equity",                           "Total equity",                  "Summe Eigenkapital",                   "amount", 0,        1,    "total",
+  "",                                 "Non-current liabilities",       "Langfristige Schulden",                "amount", 0,        1,    "head",
+  "financial_liabilities_noncurrent", "Financial liabilities",         "Finanzverbindlichkeiten",              "amount", 0,        1,    "sub",
+  "employee_provisions",              "Provisions for employee benefits", "Rückstellungen für Mitarbeiter", "amount", 0,  1,    "sub",
+  "deferred_tax_liabilities",         "Deferred tax liabilities",      "Passive latente Steuern",              "amount", 0,        1,    "sub",
+  "liabilities_other_noncurrent",     "Other non-current liabilities", "Sonstige langfristige Schulden",       "amount", 0,        1,    "sub",
+  "noncurrent_liabilities",           "Total non-current liabilities", "Summe langfristige Schulden",          "amount", 0,        1,    "total",
+  "",                                 "Current liabilities",           "Kurzfristige Schulden",                "amount", 0,        1,    "head",
+  "financial_liabilities_current",    "Financial liabilities",         "Finanzverbindlichkeiten",              "amount", 0,        1,    "sub",
+  "payables",                         "Trade and other payables",      "Verbindlichkeiten",                    "amount", 0,        1,    "sub",
+  "current_provisions",               "Provisions",                    "Rückstellungen",                   "amount", 0,        1,    "sub",
+  "current_tax_liabilities",          "Current tax liabilities",       "Steuerschulden",                       "amount", 0,        1,    "sub",
+  "liabilities_other_current",        "Other current liabilities",     "Sonstige kurzfristige Schulden",       "amount", 0,        1,    "sub",
+  "current_liabilities",              "Total current liabilities",     "Summe kurzfristige Schulden",          "amount", 0,        1,    "total",
+  "equity_and_liabilities",           "Total equity and liabilities",  "Summe Passiva",                        "amount", 0,        1,    "total"
+), unit_header = amount_label, change = TRUE)
+```
+
+```{r funding-chart}
+chart_stacked(
+  c("equity_owners", "nci", "financial_liabilities_noncurrent",
+    "liabilities_rest_noncurrent", "financial_liabilities_current",
+    "liabilities_rest_current"),
+  c(tr("Equity, owners of the parent", "Eigenkapital der Eigentümer"),
+    tr("Non-controlling interests", "Nicht beherrschende Anteile"),
+    tr("Non-current financial liabilities", "Langfristige Finanzverbindlichkeiten"),
+    tr("Other non-current liabilities", "Sonstige langfristige Schulden"),
+    tr("Current financial liabilities", "Kurzfristige Finanzverbindlichkeiten"),
+    tr("Other current liabilities", "Sonstige kurzfristige Schulden")),
+  ncol = 2)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Capital structure and net debt", "Kapitalstruktur und Nettofinanzverschuldung")`
+
+```{r net-debt-table}
+# Net debt is the financial liabilities the issuer tags, current and
+# non-current, less its cash. The wider figure nets the other current
+# financial assets against the debt as well, which is closer to what a
+# report usually calls net financial debt in its management report; neither
+# is the issuer's own definition, because no issuer tags one.
+render_lines(line_spec(
+  ~key,                               ~en,                                ~de,                                      ~unit,    ~digits, ~sign, ~style,
+  "financial_liabilities_noncurrent", "Non-current financial liabilities", "Langfristige Finanzverbindlichkeiten",   "amount", 0,        1,    "",
+  "financial_liabilities_current",    "Current financial liabilities",    "Kurzfristige Finanzverbindlichkeiten",   "amount", 0,        1,    "",
+  "financial_liabilities",            "Gross financial debt",             "Brutto-Finanzverbindlichkeiten",         "amount", 0,        1,    "total",
+  "cash",                             "Cash and cash equivalents",        "Zahlungsmittel",                         "amount", 0,       -1,    "",
+  "net_debt",                         "Net debt",                         "Nettofinanzverschuldung",                "amount", 0,        1,    "total",
+  "financial_assets_current",         "Other current financial assets",   "Sonstige kurzfristige Finanzaktiva",     "amount", 0,       -1,    "",
+  "net_debt_wide",                    "Net debt, financial assets netted", "Nettoverschuldung inkl. Finanzaktiva",  "amount", 0,        1,    "total",
+  "equity",                           "Total equity",                     "Summe Eigenkapital",                     "amount", 0,        1,    "",
+  "invested_capital",                 "Invested capital",                 "Investiertes Kapital",                   "amount", 0,        1,    "total",
+  "capital_employed",                 "Capital employed",                 "Eingesetztes Kapital",                   "amount", 0,        1,    "total"
+), unit_header = amount_label, change = TRUE)
+```
+
+### `r tr("Leverage", "Verschuldungsgrad")`
+
+```{r leverage-table}
+render_lines(line_spec(
+  ~key,                    ~en,                                 ~de,                                           ~unit, ~digits,
+  "equity_ratio",          "Equity to total assets",            "Eigenkapitalquote",                           "pct", 1,
+  "gearing",               "Net debt to equity",                "Nettoverschuldung zu Eigenkapital",           "pct", 1,
+  "debt_to_capital",       "Net debt to net debt and equity",   "Nettoverschuldung zu Gesamtkapital",          "pct", 1,
+  "liabilities_to_equity", "Liabilities to equity",             "Schulden zu Eigenkapital",                    "pct", 1,
+  "goodwill_to_equity",    "Goodwill and intangibles to equity", "Firmenwerte und Immaterielle zu Eigenkapital", "pct", 1,
+  "noncurrent_funding",    "Equity and non-current debt to non-current assets", "Langfristige Mittel zu langfristigem Vermögen", "pct", 1
+), unit_header = "%")
+```
+
+```{r leverage-chart}
+chart_lines(c("equity_ratio", "gearing", "debt_to_capital"),
+            c(tr("Equity to total assets", "Eigenkapitalquote"),
+              tr("Net debt to equity", "Nettoverschuldung zu Eigenkapital"),
+              tr("Net debt to total capital", "Nettoverschuldung zu Gesamtkapital")),
+            digits = 1, ncol = 3)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Liquidity and debt service", "Liquidität und Schuldendienst")`
+
+```{r liquidity-table}
+# What a creditor looks at. The cover ratios put the operating result and
+# the operating cash flow against the cost of the debt; the leverage ratio
+# puts the net debt against the cash the business threw off, because
+# depreciation is not tagged and an EBITDA cannot be derived.
+render_lines(line_spec(
+  ~key,                 ~en,                                      ~de,                                           ~unit, ~digits,
+  "current_ratio",      "Current assets to current liabilities",  "Kurzfristige Aktiva zu kurzfristigen Schulden", "raw", 2,
+  "quick_ratio",        "Current assets less inventories to current liabilities", "Kurzfristige Aktiva ohne Vorräte zu kurzfristigen Schulden", "raw", 2,
+  "cash_ratio",         "Cash to current liabilities",            "Zahlungsmittel zu kurzfristigen Schulden",    "raw", 2,
+  "interest_cover",     "EBIT to finance costs",                  "EBIT zu Finanzaufwendungen",                  "raw", 1,
+  "net_interest_cover", "EBIT to net finance costs",              "EBIT zum Finanzergebnis",                     "raw", 1,
+  "cash_interest_cover", "Operating cash flow to interest paid",  "Operativer Cashflow zu gezahlten Zinsen",     "raw", 1,
+  "net_debt_to_ocf",    "Net debt to operating cash flow",        "Nettoverschuldung zu operativem Cashflow",    "raw", 2,
+  "net_debt_to_fcf",    "Net debt to free cash flow",             "Nettoverschuldung zu Free Cashflow",          "raw", 2
+), unit_header = tr("Times", "Faktor"))
+```
+
+### `r tr("Liquidity", "Liquidität")`
+
+```{r liquidity-chart}
+chart_lines(c("current_ratio", "quick_ratio", "cash_ratio"),
+            c(tr("Current ratio", "Liquidität 3. Grades"),
+              tr("Quick ratio", "Liquidität 2. Grades"),
+              tr("Cash ratio", "Liquidität 1. Grades")),
+            subtitle = tr("Times", "Faktor"), digits = 2, ncol = 3)
+```
+
+### `r tr("What the debt costs", "Was die Verschuldung kostet")`
+
+```{r interest-table}
+render_lines(line_spec(
+  ~key,                ~en,                        ~de,                              ~unit,    ~digits, ~sign,
+  "finance_costs",     "Finance costs",            "Finanzaufwendungen",             "amount", 0,        1,
+  "finance_income",    "Finance income",           "Finanzerträge",             "amount", 0,        1,
+  "net_finance_result", "Net finance result",      "Finanzergebnis",                 "amount", 0,        1,
+  "interest_paid",     "Interest paid",            "Gezahlte Zinsen",                "amount", 0,        1,
+  "interest_received", "Interest received",        "Erhaltene Zinsen",               "amount", 0,        1,
+  "taxes_paid",        "Income taxes paid",        "Gezahlte Ertragsteuern",         "amount", 0,        1,
+  "lease_payments",    "Lease liabilities repaid", "Tilgung von Leasingverbindlichkeiten", "amount", 0,  1
+), unit_header = amount_label, change = TRUE)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Working capital and the cash conversion cycle", "Working Capital und Geldumschlagsdauer")`
+
+```{r working-capital-table}
+# The days are the average of the balance at the start and at the end of the
+# year over the flow of that year. The receivables and the payables the
+# taxonomy tags are trade and other, so the days are a little longer than
+# the days of trade alone; the inventory and the payable days stand against
+# the cost of sales, which is the closest the statements come to what was
+# bought and used.
+render_lines(line_spec(
+  ~key,                    ~en,                            ~de,                                 ~unit,    ~digits, ~sign, ~style,
+  "inventories",           "Inventories",                  "Vorräte",                      "amount", 0,        1,    "",
+  "receivables",           "Trade and other receivables",  "Forderungen",                       "amount", 0,        1,    "",
+  "payables",              "Trade and other payables",     "Verbindlichkeiten",                 "amount", 0,       -1,    "",
+  "working_capital",       "Working capital",              "Working Capital",                   "amount", 0,        1,    "total",
+  "net_current_assets",    "Net current assets",           "Netto-Umlaufvermögen",         "amount", 0,        1,    "total",
+  "working_capital_ratio", "Working capital to revenue, %", "Working Capital zu Umsatz, %",     "pct",    1,        1,    ""
+), unit_header = amount_label, change = TRUE)
+```
+
+### `r tr("Days", "Tage")`
+
+```{r days-table}
+render_lines(line_spec(
+  ~key,                    ~en,                      ~de,                        ~unit,  ~digits, ~sign, ~style,
+  "days_inventory",        "Days of inventory",      "Vorratsdauer",             "days", 0,        1,    "",
+  "days_receivables",      "Days of receivables",    "Forderungsdauer",          "days", 0,        1,    "",
+  "days_payables",         "Days of payables",       "Verbindlichkeitendauer",   "days", 0,       -1,    "",
+  "cash_conversion_cycle", "Cash conversion cycle",  "Geldumschlagsdauer",       "days", 0,        1,    "total"
+), unit_header = tr("Days", "Tage"))
+```
+
+```{r days-chart}
+chart_lines(c("days_inventory", "days_receivables", "days_payables",
+              "cash_conversion_cycle"),
+            c(tr("Days of inventory", "Vorratsdauer"),
+              tr("Days of receivables", "Forderungsdauer"),
+              tr("Days of payables", "Verbindlichkeitendauer"),
+              tr("Cash conversion cycle", "Geldumschlagsdauer")),
+            subtitle = tr("Days", "Tage"), digits = 0, ncol = 4)
+```
+
+```{r wc-chart}
+chart_bars(c("inventories", "receivables", "payables", "working_capital"),
+           c(tr("Inventories", "Vorräte"),
+             tr("Trade and other receivables", "Forderungen"),
+             tr("Trade and other payables", "Verbindlichkeiten"),
+             tr("Working capital", "Working Capital")),
+           ncol = 4)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Returns on capital", "Kapitalrenditen")`
+
+```{r returns-table}
+# A return puts the result of a year against the average of the capital at
+# its start and its end. The return on invested capital puts the operating
+# result after notional tax against the equity and the net debt; the
+# notional tax is the effective rate of the year, held between nil and the
+# whole result, so that a year with a tax credit does not lift the return
+# above the operating result itself.
+render_lines(line_spec(
+  ~key,              ~en,                                      ~de,                                      ~unit, ~digits,
+  "roe",             "Return on equity, owners of the parent", "Eigenkapitalrendite der Eigentümer", "pct", 1,
+  "roa",             "Return on total assets",                 "Gesamtkapitalrendite",                   "pct", 1,
+  "roce",            "Return on capital employed",             "Rendite auf das eingesetzte Kapital",    "pct", 1,
+  "roic",            "Return on invested capital, after notional tax", "Rendite auf das investierte Kapital, nach Steuern", "pct", 1,
+  "rogic",           "Operating result to operating assets",   "Betriebsergebnis zum operativen Vermögen", "pct", 1
+), unit_header = "%")
+```
+
+```{r returns-chart}
+chart_lines(c("roe", "roa", "roce", "roic"),
+            c(tr("Return on equity", "Eigenkapitalrendite"),
+              tr("Return on total assets", "Gesamtkapitalrendite"),
+              tr("Return on capital employed", "Rendite eingesetztes Kapital"),
+              tr("Return on invested capital", "Rendite investiertes Kapital")),
+            digits = 1, ncol = 4)
+```
+
+### `r tr("Where the return on equity comes from", "Woher die Eigenkapitalrendite kommt")`
+
+```{r dupont}
+# The return on equity is the net margin times the turnover of the assets
+# times the leverage of the balance sheet, each of which moves for reasons
+# of its own: a return held up by leverage is not the return of a business
+# that earns more on what it sells. The product uses the result
+# attributable to the owners, so the share of the result that is theirs
+# stands in the decomposition as well.
+render_lines(line_spec(
+  ~key,                ~en,                                         ~de,                                       ~unit, ~digits, ~sign, ~style,
+  "net_margin_owners", "Profit of the owners to revenue",           "Ergebnis der Eigentümer zu Umsatz",  "pct", 2,        1,    "",
+  "asset_turnover",    "Revenue to average total assets",           "Umsatz zur durchschnittlichen Bilanzsumme", "raw", 2,      1,    "",
+  "equity_multiplier", "Average assets to average equity of owners", "Bilanzsumme zu Eigenkapital der Eigentümer", "raw", 2, 1,  "",
+  "roe",               "Return on equity, owners of the parent",    "Eigenkapitalrendite der Eigentümer", "pct", 1,        1,    "total",
+  "owners_share",      "Share of the profit that is the owners'",   "Anteil der Eigentümer am Ergebnis",  "raw", 2,        1,    ""
+), unit_header = "")
+```
+
+```{r dupont-chart}
+chart_lines(c("net_margin_owners", "asset_turnover", "equity_multiplier"),
+            c(tr("Net margin of the owners, %", "Nettomarge der Eigentümer, %"),
+              tr("Asset turnover, times", "Kapitalumschlag, Faktor"),
+              tr("Equity multiplier, times", "Eigenkapitalmultiplikator, Faktor")),
+            subtitle = tr("% and times", "% und Faktor"), digits = 1, ncol = 3)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Statement of cash flows", "Geldflussrechnung")`
+
+```{r cash-flow-table}
+render_lines(line_spec(
+  ~key,                      ~en,                                   ~de,                                        ~unit,    ~digits, ~sign, ~style,
+  "operating_cash_flow",     "Cash flow from operating activities", "Cashflow aus der Betriebstätigkeit",  "amount", 0,        1,    "total",
+  "interest_paid",           "of which interest paid",              "davon gezahlte Zinsen",                    "amount", 0,       -1,    "sub",
+  "interest_received",       "of which interest received",          "davon erhaltene Zinsen",                   "amount", 0,        1,    "sub",
+  "taxes_paid",              "of which income taxes paid",          "davon gezahlte Ertragsteuern",             "amount", 0,       -1,    "sub",
+  "dividends_received",      "of which dividends received",         "davon erhaltene Dividenden",               "amount", 0,        1,    "sub",
+  "working_capital_change",  "of which movement in working capital", "davon Veränderung Working Capital",  "amount", 0,        1,    "sub",
+  "investing_cash_flow",     "Cash flow from investing activities", "Cashflow aus der Investitionstätigkeit", "amount", 0,     1,    "total",
+  "capex",                   "of which capital expenditure",        "davon Investitionen in Anlagevermögen", "amount", 0,     -1,    "sub",
+  "asset_disposals",         "of which proceeds from disposals",    "davon Einnahmen aus Abgängen",        "amount", 0,        1,    "sub",
+  "acquisitions",            "of which businesses acquired",        "davon Unternehmenserwerbe",                "amount", 0,       -1,    "sub",
+  "disposals_of_businesses", "of which businesses disposed of",     "davon Unternehmensverkäufe",          "amount", 0,        1,    "sub",
+  "free_cash_flow",          "Free cash flow",                      "Free Cashflow",                            "amount", 0,        1,    "total",
+  "financing_cash_flow",     "Cash flow from financing activities", "Cashflow aus der Finanzierungstätigkeit", "amount", 0,    1,    "total",
+  "proceeds_borrowings",     "of which borrowings raised",          "davon Aufnahme von Finanzverbindlichkeiten", "amount", 0,      1,    "sub",
+  "repayments_borrowings",   "of which borrowings repaid",          "davon Tilgung von Finanzverbindlichkeiten", "amount", 0,      -1,    "sub",
+  "lease_payments",          "of which lease liabilities repaid",   "davon Tilgung von Leasingverbindlichkeiten", "amount", 0,     -1,    "sub",
+  "dividends_paid",          "of which dividends paid",             "davon gezahlte Dividenden",                "amount", 0,       -1,    "sub",
+  "buybacks",                "of which own shares bought",          "davon Kauf eigener Anteile",               "amount", 0,       -1,    "sub",
+  "cash_change",             "Movement in cash before exchange rates", "Veränderung der Zahlungsmittel vor Währung", "amount", 0, 1, "total",
+  "fx_on_cash",              "Effect of exchange rates on cash",    "Währungseffekt auf Zahlungsmittel",   "amount", 0,        1,    "",
+  "cash",                    "Cash and cash equivalents at the end", "Zahlungsmittel am Ende",                  "amount", 0,        1,    "total"
+), unit_header = amount_label, change = TRUE)
+```
+
+```{r cash-flow-chart}
+chart_bars(c("operating_cash_flow", "investing_cash_flow",
+             "financing_cash_flow", "free_cash_flow"),
+           c(tr("Operating activities", "Betriebstätigkeit"),
+             tr("Investing activities", "Investitionstätigkeit"),
+             tr("Financing activities", "Finanzierungstätigkeit"),
+             tr("Free cash flow", "Free Cashflow")),
+           ncol = 4)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Cash flow quality and capital expenditure", "Qualität des Cashflows und Investitionen")`
+
+```{r cash-quality-table}
+# Whether the result was earned in cash. The accruals are the result less
+# the cash the business produced and invested, over the average total
+# assets: a result that keeps running ahead of the cash is a result built on
+# accruals, which tends to reverse. Free cash flow is the operating cash
+# flow and the investing cash flow together, which is how this issuer
+# defines it; the second measure deducts the capital expenditure alone and
+# leaves the financial investments out.
+render_lines(line_spec(
+  ~key,                         ~en,                                       ~de,                                           ~unit,    ~digits, ~sign, ~style,
+  "operating_cash_flow",        "Operating cash flow",                     "Operativer Cashflow",                         "amount", 0,        1,    "",
+  "free_cash_flow",             "Free cash flow",                          "Free Cashflow",                               "amount", 0,        1,    "",
+  "free_cash_flow_after_capex", "Operating cash flow less capital expenditure", "Operativer Cashflow abzüglich Investitionen", "amount", 0, 1, "",
+  "ocf_to_ebit",                "Operating cash flow to EBIT, %",          "Operativer Cashflow zu EBIT, %",              "pct",    1,        1,    "",
+  "ocf_margin",                 "Operating cash flow to revenue, %",       "Operativer Cashflow zu Umsatz, %",            "pct",    1,        1,    "",
+  "fcf_margin",                 "Free cash flow to revenue, %",            "Free Cashflow zu Umsatz, %",                  "pct",    1,        1,    "",
+  "fcf_to_profit",              "Free cash flow to profit, %",             "Free Cashflow zum Jahresergebnis, %",         "pct",    1,        1,    "",
+  "accruals",                   "Accruals to average total assets, %",     "Periodenabgrenzungen zur Bilanzsumme, %",     "pct",    1,        1,    ""
+), unit_header = amount_label, change = TRUE)
+```
+
+### `r tr("Capital expenditure", "Investitionen")`
+
+```{r capex-table}
+render_lines(line_spec(
+  ~key,          ~en,                                        ~de,                                          ~unit,    ~digits, ~sign, ~style,
+  "capex",       "Capital expenditure",                      "Investitionen in Anlagevermögen",       "amount", 0,        1,    "",
+  "capex_ratio", "Capital expenditure to revenue, %",         "Investitionen zu Umsatz, %",                 "pct",    1,        1,    "",
+  "capex_to_ppe", "Capital expenditure to opening property, plant and equipment, %", "Investitionen zum Anfangsbestand der Sachanlagen, %", "pct", 1, 1, "",
+  "capex_cover", "Operating cash flow to capital expenditure, times", "Operativer Cashflow zu Investitionen, Faktor", "raw", 2, 1,    "",
+  "ppe",         "Property, plant and equipment at the end",  "Sachanlagen am Ende",                        "amount", 0,        1,    ""
+), unit_header = amount_label, change = TRUE)
+```
+
+```{r cash-quality-chart}
+chart_bars(c("operating_cash_flow", "capex", "free_cash_flow"),
+           c(tr("Operating cash flow", "Operativer Cashflow"),
+             tr("Capital expenditure", "Investitionen"),
+             tr("Free cash flow", "Free Cashflow")),
+           ncol = 3)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Comprehensive income and equity", "Gesamtergebnis und Eigenkapital")`
+
+```{r comprehensive-income}
+# What the result of the year leaves out: the gains and losses that go
+# straight to equity. For an issuer with plants and customers abroad the
+# translation of its foreign subsidiaries and the hedges of its purchases
+# can move the equity by more than the result did.
+render_lines(line_spec(
+  ~key,                          ~en,                                     ~de,                                          ~unit,    ~digits, ~sign, ~style,
+  "profit",                      "Profit for the year",                   "Jahresergebnis",                             "amount", 0,        1,    "total",
+  "oci_not_reclassified",        "Items never reclassified to profit",    "Posten ohne Umgliederung in das Ergebnis",   "amount", 0,        1,    "",
+  "oci_reclassified",            "Items to be reclassified to profit",    "Posten mit Umgliederung in das Ergebnis",    "amount", 0,        1,    "",
+  "oci_translation",             "of which exchange differences on translation", "davon Währungsumrechnung",        "amount", 0,        1,    "sub",
+  "oci_hedges",                  "of which cash flow hedges",             "davon Cashflow-Hedges",                      "amount", 0,        1,    "sub",
+  "oci",                         "Other comprehensive income",            "Sonstiges Ergebnis",                         "amount", 0,        1,    "total",
+  "comprehensive_income",        "Total comprehensive income",            "Gesamtergebnis",                             "amount", 0,        1,    "total",
+  "comprehensive_income_owners", "of which owners of the parent",         "davon Eigentümer des Mutterunternehmens", "amount", 0,       1,    "sub",
+  "oci_to_profit",               "Other comprehensive income to profit, %", "Sonstiges Ergebnis zum Jahresergebnis, %", "pct",    1,        1,    ""
+), unit_header = amount_label, change = TRUE)
+```
+
+### `r tr("Equity by component", "Eigenkapital nach Bestandteilen")`
+
+```{r equity-components, results='asis'}
+# The one place where this factsheet reads the dimensions of the taxonomy.
+# The statement of changes in equity tags its columns against the axis of
+# the components of equity, so the equity at each year end can be split the
+# way the issuer presents it. The members are named as the taxonomy names
+# them, an issuer's own member included.
+members <- facts %>%
+  filter(CONCEPT == concepts[["equity"]], !is.na(VALUE), is.na(PRDSTART),
+         PRDEND == PERIODEND, !is.na(DIMENSIONS),
+         grepl("^ifrs-full:ComponentsOfEquityAxis=[^;]+$", DIMENSIONS)) %>%
+  mutate(member = sub("^[^=]+=", "", DIMENSIONS),
+         label = gsub("([a-z])([A-Z])", "\\1 \\2",
+                      sub("Member$", "", sub("^[^:]+:", "", member)))) %>%
+  distinct(PERIODEND, member, label, VALUE)
+
+if (nrow(members) == 0) {
+  cat(tr(paste("The statement of changes in equity of this issuer tags no",
+               "figure against the axis of the components of equity, so the",
+               "equity cannot be split here."),
+         paste("Die Eigenkapitalveränderungsrechnung dieses Emittenten",
+               "zeichnet keine Zahl gegen die Achse der",
+               "Eigenkapitalbestandteile aus, sodass das Eigenkapital hier",
+               "nicht aufgeteilt werden kann.")))
+} else {
+  order_of <- members %>%
+    group_by(member, label) %>%
+    summarise(size = max(abs(VALUE)), .groups = "drop") %>%
+    arrange(desc(size))
+  temp <- members %>%
+    mutate(year = fy_label(PERIODEND),
+           label = factor(label, levels = order_of$label)) %>%
+    filter(year %in% years) %>%
+    select("year", "label", "VALUE") %>%
+    mutate(VALUE = fmt(VALUE / scale)) %>%
+    pivot_wider(names_from = "year", values_from = "VALUE",
+                values_fill = "–") %>%
+    arrange(label) %>%
+    rename(item = "label")
+  knitr::kable(temp, col.names = c(amount_label, names(temp)[-1]),
+               align = paste0("l", strrep("r", ncol(temp) - 1)))
+}
+```
+
+```{r equity-chart}
+chart_bars(c("profit", "oci", "comprehensive_income", "dividends_paid"),
+           c(tr("Profit for the year", "Jahresergebnis"),
+             tr("Other comprehensive income", "Sonstiges Ergebnis"),
+             tr("Total comprehensive income", "Gesamtergebnis"),
+             tr("Dividends paid", "Gezahlte Dividenden")),
+           ncol = 4)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Per share and distributions", "Je Aktie und Ausschüttung")`
+
+```{r per-share-table}
+# No issuer tags the number of its shares under a concept of the taxonomy.
+# The number here is the result attributable to the owners over the earnings
+# per share the issuer states, which gives back the weighted average number
+# of shares the issuer used itself, and the book value per share rests on
+# it. A year in which the issuer tagged no earnings per share has no number
+# of shares either.
+render_lines(line_spec(
+  ~key,                   ~en,                                   ~de,                                      ~unit,    ~digits, ~sign, ~style,
+  "eps",                  "Earnings per share, basic",           "Ergebnis je Aktie, unverwässert",   "raw",    2,        1,    "total",
+  "eps_diluted",          "Earnings per share, diluted",         "Ergebnis je Aktie, verwässert",     "raw",    2,        1,    "",
+  "dps",                  "Dividend per share proposed",         "Vorgeschlagene Dividende je Aktie",      "raw",    2,        1,    "",
+  "book_value_per_share", "Book value per share",                "Buchwert je Aktie",                      "raw",    2,        1,    "",
+  "ocf_per_share",        "Operating cash flow per share",       "Operativer Cashflow je Aktie",           "raw",    2,        1,    "",
+  "fcf_per_share",        "Free cash flow per share",            "Free Cashflow je Aktie",                 "raw",    2,        1,    ""
+), unit_header = currency, change = TRUE, cagr = TRUE)
+```
+
+### `r tr("The shares behind the figures and what was distributed", "Die Aktien hinter den Zahlen und was ausgeschüttet wurde")`
+
+```{r distributions-table}
+render_lines(line_spec(
+  ~key,                 ~en,                                            ~de,                                          ~unit,    ~digits, ~sign, ~style,
+  "shares",             "Weighted average number of shares, millions",  "Gewichtete Anzahl der Aktien, Millionen",    "amount", 1,        1,    "",
+  "profit_owners",      "Profit, owners of the parent",                 "Ergebnis der Eigentümer",                "amount", 0,        1,    "",
+  "equity_owners",      "Equity, owners of the parent",                 "Eigenkapital der Eigentümer",            "amount", 0,        1,    "",
+  "dividends_paid",     "Dividends paid",                               "Gezahlte Dividenden",                        "amount", 0,        1,    "",
+  "dividends_paid_nci", "of which to non-controlling interests",        "davon an nicht beherrschende Anteile",       "amount", 0,        1,    "sub",
+  "buybacks",           "Own shares bought",                            "Kauf eigener Anteile",                       "amount", 0,        1,    "",
+  "payout",             "Dividend proposed to earnings per share, %",   "Vorgeschlagene Dividende zum Ergebnis je Aktie, %", "pct", 1,     1,    "",
+  "payout_cash",        "Dividends paid to profit of the owners, %",     "Gezahlte Dividenden zum Ergebnis der Eigentümer, %", "pct", 1, 1,  "",
+  "dividend_cover_fcf", "Free cash flow to dividends paid, times",      "Free Cashflow zu gezahlten Dividenden, Faktor", "raw",  2,        1,    ""
+), unit_header = amount_label, change = TRUE)
+```
+
+```{r per-share-chart}
+chart_bars(c("eps", "dps"),
+           c(tr("Earnings per share", "Ergebnis je Aktie"),
+             tr("Dividend per share proposed", "Vorgeschlagene Dividende je Aktie")),
+           subtitle = currency, scale_by = 1, digits = 2, ncol = 2)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Screening indicators", "Screening-Kennzahlen")`
+
+```{r f-score}
+# Piotroski's nine tests of the statements of a year against the year
+# before: each is worth one point and the score is their sum. It was built
+# to sort portfolios of cheap shares into the ones whose accounts were
+# improving and the ones whose accounts were not, so it reads as a direction
+# of travel rather than as a rating. A test whose figures are missing in
+# either year leaves the score of that year empty rather than counting the
+# test as failed.
+score_rows <- tribble(
+  ~key,          ~en,                                               ~de,
+  "f_roa",       "Return on total assets above nil",                "Gesamtkapitalrendite über null",
+  "f_ocf",       "Operating cash flow above nil",                   "Operativer Cashflow über null",
+  "f_roa_up",    "Return on total assets higher than last year",    "Gesamtkapitalrendite höher als im Vorjahr",
+  "f_accrual",   "Operating cash flow above the profit",            "Operativer Cashflow über dem Jahresergebnis",
+  "f_leverage",  "Non-current financial liabilities to assets lower", "Langfristige Finanzverbindlichkeiten zur Bilanzsumme niedriger",
+  "f_liquidity", "Current ratio higher than last year",             "Liquidität 3. Grades höher als im Vorjahr",
+  "f_shares",    "Issued capital not increased",                    "Grundkapital nicht erhöht",
+  "f_margin",    "Gross margin higher than last year",              "Bruttomarge höher als im Vorjahr",
+  "f_turnover",  "Asset turnover higher than last year",            "Kapitalumschlag höher als im Vorjahr"
+)
+
+temp <- tibble(item = if (lang == "de") score_rows$de else score_rows$en)
+for (i in seq_len(n_shown)) {
+  temp[[years[i]]] <- vapply(score_rows$key, function(k) {
+    v <- wide[[k]][i]
+    if (is.na(v)) "–" else if (v == 1) "✔" else "✕"
+  }, character(1))
+}
+total <- c(tr("**F-score, out of nine**", "**F-Score, von neun**"),
+           paste0("**", ifelse(is.na(wide$f_score), "–",
+                               as.character(wide$f_score)), "**"))
+temp <- bind_rows(temp, as_tibble(setNames(as.list(total), names(temp))))
+knitr::kable(temp, col.names = c("", years),
+             align = paste0("l", strrep("c", n_shown)))
+```
+
+### `r tr("Distance to distress", "Abstand zur Insolvenz")`
+
+```{r z-score}
+# Altman's Z''-score, the variant whose fourth term takes the book value of
+# the equity rather than its market value, so that the score rests on the
+# statements alone. Above 2.6 the score reads as a safe zone and below 1.1
+# as a distressed one, with the range between them undecided. It was fitted
+# on manufacturers decades ago and is read here as a direction of travel.
+render_lines(line_spec(
+  ~key,       ~en,                                          ~de,                                              ~unit, ~digits, ~sign, ~style,
+  "z_wc",     "Net current assets to total assets",         "Netto-Umlaufvermögen zur Bilanzsumme",      "raw", 3,        1,    "",
+  "z_re",     "Retained earnings to total assets",          "Gewinnrücklagen zur Bilanzsumme",            "raw", 3,        1,    "",
+  "z_ebit",   "Operating result to total assets",           "Betriebsergebnis zur Bilanzsumme",               "raw", 3,        1,    "",
+  "z_equity", "Equity to liabilities",                      "Eigenkapital zu Schulden",                       "raw", 3,        1,    "",
+  "z_score",  "Z''-score",                                  "Z''-Score",                                      "raw", 2,        1,    "total"
+), unit_header = "")
+```
+
+```{r score-chart}
+chart_lines(c("z_score", "f_score"),
+            c(tr("Z''-score", "Z''-Score"),
+              tr("F-score, out of nine", "F-Score, von neun")),
+            subtitle = tr("Score", "Punktwert"), digits = 1, ncol = 2)
+```
+
+{{< pagebreak >}}
+
+## `r tr("Coverage of the tags", "Abdeckung der Auszeichnungen")`
+
+```{r coverage}
+# How much of the report the factsheet could read. The share of the numeric
+# facts tagged under a concept of the issuer's own taxonomy says how far the
+# statements can be compared with another issuer's at all: a report that
+# tags most of its lines with concepts of its own is a report whose figures
+# only its own filings can be put beside.
+coverage <- facts %>%
+  filter(FILING %in% (filings %>%
+                        filter(PERIODEND %in% wide$PERIODEND))$FILING,
+         !is.na(VALUE)) %>%
+  group_by(PERIODEND) %>%
+  summarise(facts_numeric = n(),
+            facts_dimensional = sum(!is.na(DIMENSIONS)),
+            extension_share = mean(!startsWith(CONCEPT, "ifrs-full:")) * 100,
+            .groups = "drop") %>%
+  mutate(year = fy_label(PERIODEND))
+
+found <- tibble(year = years) %>%
+  left_join(coverage, by = "year") %>%
+  mutate(keys_found = vapply(years, function(y) {
+    row <- wide[wide$year == y, ]
+    sum(!vapply(unique(keys_all), function(k) is.na(row[[k]][1]), logical(1)))
+  }, integer(1)),
+  keys_total = length(unique(keys_all)))
+
+temp <- tibble(
+  item = c(tr("Numeric facts in the report", "Numerische Fakten im Bericht"),
+           tr("of which with dimensions", "davon mit Dimensionen"),
+           tr("Facts under the issuer's own concepts, %",
+              "Fakten unter eigenen Konzepten, %"),
+           tr("Lines this factsheet looked for and found",
+              "Von diesem Factsheet gesuchte und gefundene Zeilen")))
+for (i in seq_len(n_shown)) {
+  temp[[years[i]]] <- c(fmt(found$facts_numeric[i]),
+                        fmt(found$facts_dimensional[i]),
+                        fmt(found$extension_share[i], 1),
+                        paste0(found$keys_found[i], " / ", found$keys_total[i]))
+}
+knitr::kable(temp, col.names = c("", years),
+             align = paste0("l", strrep("r", n_shown)))
+```
+
+### `r tr("Lines read from the issuer's own concepts", "Zeilen aus eigenen Konzepten des Emittenten")`
+
+```{r extensions-used, results='asis'}
+if (nrow(extension_used) == 0) {
+  cat(tr(paste("Every figure in this factsheet was read from a concept of",
+               "the IFRS taxonomy."),
+         paste("Jede Zahl in diesem Factsheet wurde aus einem Konzept der",
+               "IFRS-Taxonomie gelesen.")))
+} else {
+  temp <- extension_used %>%
+    arrange(desc(years), key) %>%
+    transmute(key, CONCEPT, years = paste0(years, " / ", n_shown))
+  knitr::kable(temp, col.names = c(tr("Line", "Zeile"),
+                                   tr("Concept of the issuer", "Konzept des Emittenten"),
+                                   tr("Years found", "Jahre gefunden")),
+               align = "llr")
+}
+```
+
+### `r tr("Lines looked for and not tagged", "Gesuchte und nicht ausgezeichnete Zeilen")`
+
+```{r missing-lines, results='asis'}
+missing <- vapply(unique(keys_all), function(k) all(is.na(wide[[k]])),
+                  logical(1))
+missing <- names(missing)[missing]
+
+if (length(missing) == 0) {
+  cat(tr("Every line the factsheet looks for was tagged in every year shown.",
+         paste("Jede vom Factsheet gesuchte Zeile wurde in jedem gezeigten",
+               "Jahr ausgezeichnet.")))
+} else {
+  temp <- lookup %>%
+    filter(key %in% missing) %>%
+    group_by(key) %>%
+    summarise(concepts = paste(CONCEPT, collapse = ", "), .groups = "drop") %>%
+    arrange(key)
+  knitr::kable(temp, col.names = c(tr("Line", "Zeile"),
+                                   tr("Concepts looked for", "Gesuchte Konzepte")),
+               align = "ll")
+}
+```
+
+### `r tr("Checks on the figures", "Prüfungen der Zahlen")`
+
+```{r checks}
 # The figures are the issuer's tags, as filed, and a tag can be wrong while
 # the report a reader sees is right: the scale of a number is an attribute of
 # the tag, invisible on the page. The checks put figures of the same report
 # against one another, each of which the statements state as the sum of the
 # others: total assets as the non-current and current assets, total equity
 # and liabilities as the equity and the non-current and current liabilities,
-# the two totals as one another, and revenue as the cost of sales and the
-# gross profit. A difference points at a tag to look at in the report before
-# the figure is used.
+# the two totals as one another, revenue as the cost of sales and the gross
+# profit, the profit as the result before tax less the tax, and the
+# comprehensive income as the profit and the other comprehensive income. A
+# difference points at a tag to look at in the report before the figure is
+# used.
 #
 # The flag is set before the figures are formatted, since it compares them.
 # It is meant for a tag with the wrong scale or the wrong sign, and not for
@@ -753,65 +2035,276 @@ checks <- wide %>%
          diff_liabilities = equity_and_liabilities - equity -
            noncurrent_liabilities - current_liabilities,
          diff_balance = assets - equity_and_liabilities,
-         diff_revenue = revenue - cost_of_sales - gross_profit) %>%
-  transmute(year,
-            flag = ifelse(pmax(abs(diff_assets), abs(diff_liabilities),
-                               abs(diff_balance), abs(diff_revenue),
-                               na.rm = TRUE) > assets / 1000,
-                          if (lang == "de") "prüfen" else "check", ""),
-            flag = coalesce(flag, ""),
-            across(starts_with("diff_"), ~ fmt(.x / scale, 1)))
+         diff_revenue = revenue - cost_of_sales - gross_profit,
+         profit_continuing_shown = coalesce(profit_continuing, profit),
+         diff_profit = profit_continuing_shown - profit_before_tax + income_tax,
+         diff_discontinued = profit - profit_continuing_shown -
+           coalesce(profit_discontinued, 0),
+         diff_owners = profit - profit_owners - profit_nci,
+         diff_ci = comprehensive_income - profit - oci,
+         diff_cash = cash_change - operating_cash_flow -
+           investing_cash_flow - financing_cash_flow)
 
-extension <- facts %>%
-  filter(FILING %in% (filings %>% filter(PERIODEND %in% wide$PERIODEND))$FILING,
-         !is.na(VALUE)) %>%
-  group_by(year = fy_label(PERIODEND)) %>%
-  summarise(facts = n(),
-            extension = fmt(mean(!startsWith(CONCEPT, "ifrs-full:")) * 100, 1),
-            .groups = "drop")
+diff_keys <- c("diff_assets", "diff_liabilities", "diff_balance",
+               "diff_revenue", "diff_profit", "diff_discontinued",
+               "diff_owners", "diff_ci", "diff_cash")
+checks$flag <- ifelse(
+  apply(abs(as.matrix(checks[diff_keys])), 1, max, na.rm = TRUE) >
+    checks$assets / 1000,
+  tr("check", "prüfen"), "")
 
-temp <- checks %>%
-  left_join(extension, by = "year") %>%
-  select("year", "facts", "extension", "diff_assets", "diff_liabilities",
-         "diff_balance", "diff_revenue", "flag")
+check_rows <- tribble(
+  ~key,               ~en,                                                        ~de,
+  "diff_assets",      "Total assets less non-current and current assets",          "Bilanzsumme abzüglich lang- und kurzfristiger Aktiva",
+  "diff_liabilities", "Equity and liabilities less equity and the liabilities",    "Passiva abzüglich Eigenkapital und Schulden",
+  "diff_balance",     "Total assets less total equity and liabilities",            "Aktiva abzüglich Passiva",
+  "diff_revenue",     "Revenue less cost of sales and gross profit",               "Umsatz abzüglich Umsatzkosten und Bruttoergebnis",
+  "diff_profit",      "Profit of the continuing operations less profit before tax plus the tax", "Ergebnis der fortgeführten Aktivitäten abzüglich Vorsteuerergebnis plus Steuern",
+  "diff_discontinued", "Profit less the continuing and the discontinued operations", "Jahresergebnis abzüglich fortgeführter und nicht fortgeführter Aktivitäten",
+  "diff_owners",      "Profit less the owners' and the non-controlling share",     "Jahresergebnis abzüglich Anteile",
+  "diff_ci",          "Comprehensive income less profit and other comprehensive income", "Gesamtergebnis abzüglich Jahresergebnis und sonstiges Ergebnis",
+  "diff_cash",        "Movement in cash less the three cash flows",                "Veränderung der Zahlungsmittel abzüglich der drei Cashflows"
+)
 
-col_names <- c("Year", "Numeric facts", "Extension concepts, %",
-               paste0("Assets less non-current and current assets, ", amount_label),
-               paste0("Equity and liabilities less their parts, ", amount_label),
-               paste0("Assets less equity and liabilities, ", amount_label),
-               paste0("Revenue less cost of sales and gross profit, ", amount_label),
-               "")
-if (lang == "de") {
-  col_names <- c("Jahr", "Numerische Fakten", "Erweiterungskonzepte, %",
-                 paste0("Aktiva abzüglich lang- und kurzfristiger Aktiva, ", amount_label),
-                 paste0("Passiva abzüglich ihrer Teile, ", amount_label),
-                 paste0("Aktiva abzüglich Passiva, ", amount_label),
-                 paste0("Umsatz abzüglich Umsatzkosten und Bruttoergebnis, ", amount_label),
-                 "")
+temp <- tibble(item = if (lang == "de") check_rows$de else check_rows$en)
+for (i in seq_len(n_shown)) {
+  value <- unlist(checks[i, check_rows$key])
+  # A difference of less than a hundredth of a million is a rounding of the
+  # tag itself and is written as nil rather than as a signed nothing.
+  value[!is.na(value) & abs(value) < scale / 100] <- 0
+  temp[[years[i]]] <- fmt(value / scale, 1)
 }
-
-knitr::kable(temp, col.names = col_names, align = "lrrrrrrl")
+temp <- bind_rows(temp, as_tibble(setNames(
+  as.list(c(tr("**Tag to look at**", "**Auszeichnung prüfen**"),
+            ifelse(nzchar(checks$flag), paste0("**", checks$flag, "**"), ""))),
+  names(temp))))
+knitr::kable(temp, col.names = c(amount_label, years),
+             align = paste0("l", strrep("r", n_shown)))
 ```
 
-## The filings
+{{< pagebreak >}}
 
-```{r, echo=FALSE, message=FALSE}
+## `r tr("The filings behind the figures", "Die Einreichungen hinter den Zahlen")`
+
+```{r filings-table}
+# Every filing of the years shown, whether the figures were taken from it or
+# not. An issuer may file the same report twice -- in two languages, or
+# corrected -- and each filing is a row with facts of its own.
 temp <- filings_all %>%
   filter(PERIODEND %in% wide$PERIODEND) %>%
   arrange(desc(PERIODEND), FILING) %>%
   transmute(FILING,
             PERIODEND = format(PERIODEND, "%Y-%m-%d"),
             LANG = coalesce(LANG, ""),
-            used = ifelse(FILING %in% filings$FILING, "x", ""),
-            ERRORS, WARNINGS,
+            used = ifelse(FILING %in% filings$FILING, "✔", ""),
+            ERRORS = coalesce(ERRORS, 0L),
+            WARNINGS = coalesce(WARNINGS, 0L),
+            INCONSISTENCIES = coalesce(INCONSISTENCIES, 0L),
             PROCESSED = format(PROCESSED, "%Y-%m-%d"))
 
-col_names <- c("Filing", "Period end", "Language", "Used", "Errors",
-               "Warnings", "Processed")
-if (lang == "de") {
-  col_names <- c("Einreichung", "Stichtag", "Sprache", "Verwendet", "Fehler",
-                 "Warnungen", "Verarbeitet")
-}
+col_names <- c(tr("Filing", "Einreichung"), tr("Period end", "Stichtag"),
+               tr("Language", "Sprache"), tr("Used", "Verwendet"),
+               tr("Errors", "Fehler"), tr("Warnings", "Warnungen"),
+               tr("Inconsistencies", "Inkonsistenzen"),
+               tr("Processed", "Verarbeitet"))
+knitr::kable(temp, col.names = col_names, align = "lllcrrrl")
+```
 
-knitr::kable(temp, col.names = col_names, align = "lllcrrl")
+### `r tr("What a figure rests on", "Worauf eine Zahl ruht")`
+
+```{r definitions, results='asis'}
+# The definitions of the indicators this factsheet computes. They are the
+# ones used here and are not the issuer's own, which a report defines in its
+# management report: an issuer's net financial debt, its gearing and its
+# earnings before interest, tax, depreciation and amortisation are usually
+# defined more widely than the statements alone allow.
+definitions <- tribble(
+  ~en,                                                                                                                           ~de,
+  "**Net debt** -- the current and non-current financial liabilities the issuer tags, less its cash and cash equivalents.",       "**Nettofinanzverschuldung** -- die kurz- und langfristigen Finanzverbindlichkeiten des Emittenten abzüglich der Zahlungsmittel.",
+  "**Capital employed** -- total assets less current liabilities. **Invested capital** -- total equity plus net debt.",           "**Eingesetztes Kapital** -- Bilanzsumme abzüglich kurzfristiger Schulden. **Investiertes Kapital** -- Eigenkapital plus Nettofinanzverschuldung.",
+  "**Return on equity** -- the profit attributable to the owners of the parent over the average of the equity attributable to them at the start and at the end of the year.", "**Eigenkapitalrendite** -- Ergebnis der Eigentümer über dem Durchschnitt ihres Eigenkapitals zu Jahresbeginn und Jahresende.",
+  "**Return on capital employed** -- the operating result over the average capital employed. **Return on invested capital** -- the operating result less notional tax at the effective rate of the year, over the average invested capital.", "**Rendite auf das eingesetzte Kapital** -- Betriebsergebnis über dem durchschnittlich eingesetzten Kapital. **Rendite auf das investierte Kapital** -- Betriebsergebnis nach kalkulatorischer Steuer über dem durchschnittlich investierten Kapital.",
+  "**Working capital** -- inventories plus trade and other receivables less trade and other payables. The days of each put the average balance over the flow of the year, the inventory and the payable days over the cost of sales.", "**Working Capital** -- Vorräte plus Forderungen abzüglich Verbindlichkeiten. Die Tage setzen den durchschnittlichen Bestand zum Fluss des Jahres, Vorrats- und Verbindlichkeitendauer zu den Umsatzkosten.",
+  "**Free cash flow** -- the cash flow from operating activities plus the cash flow from investing activities, which is how this issuer defines it: the investing flow carries the financial investments as well as the capital expenditure.", "**Free Cashflow** -- Cashflow aus der Betriebstätigkeit plus Cashflow aus der Investitionstätigkeit, wie dieser Emittent ihn definiert: der Investitionscashflow umfasst auch Finanzinvestitionen.",
+  "**Accruals** -- the profit for the year less the operating and the investing cash flow, over the average total assets. The measure follows Sloan (1996): a result that runs ahead of the cash tends to reverse.", "**Periodenabgrenzungen** -- Jahresergebnis abzüglich operativem und Investitions-Cashflow, über der durchschnittlichen Bilanzsumme, nach Sloan (1996).",
+  "**Weighted average number of shares** -- the profit attributable to the owners over the earnings per share the issuer states, since no issuer tags the number itself. **Book value per share** -- the equity attributable to the owners over that number.", "**Gewichtete Anzahl der Aktien** -- Ergebnis der Eigentümer über dem ausgewiesenen Ergebnis je Aktie, da kein Emittent die Anzahl selbst auszeichnet. **Buchwert je Aktie** -- Eigenkapital der Eigentümer über dieser Anzahl.",
+  "**F-score** -- Piotroski (2000): nine tests of the statements of a year against the year before, each worth one point.",        "**F-Score** -- Piotroski (2000): neun Tests des Abschlusses gegen das Vorjahr, je ein Punkt.",
+  "**Z''-score** -- Altman's variant for an issuer whose shares are not valued in the figures: 3.25 + 6.56 times net current assets, 3.26 times retained earnings and 6.72 times the operating result, each over total assets, plus 1.05 times equity over liabilities.", "**Z''-Score** -- Altmans Variante mit dem Buchwert des Eigenkapitals: 3,25 + 6,56 mal Netto-Umlaufvermögen, 3,26 mal Gewinnrücklagen und 6,72 mal Betriebsergebnis, je über der Bilanzsumme, plus 1,05 mal Eigenkapital zu Schulden.",
+  "**A dagger (†)** -- the figure was read from a concept of the issuer's own taxonomy rather than from the IFRS taxonomy. **A dash (–)** -- the issuer did not tag the figure in that year, or a figure the indicator needs is missing.", "**Ein Kreuz (†)** -- die Zahl wurde aus einem eigenen Konzept des Emittenten gelesen. **Ein Strich (–)** -- der Emittent hat die Zahl in diesem Jahr nicht ausgezeichnet.")
+
+cat(paste0("- ", if (lang == "de") definitions$de else definitions$en,
+           collapse = "\n"))
+```
+
+### `r tr("Source and terms", "Quelle und Bedingungen")`
+
+```{r sources, results='asis'}
+cat(tr(
+  paste0("The reports are the issuer's own publications, which the ",
+         "Transparency Directive requires it to make public. They were ",
+         "collected from filings.xbrl.org, the repository XBRL ",
+         "International runs, which gathers the filings of the officially ",
+         "appointed mechanisms of the member states, validates them and ",
+         "publishes each filing as the package filed, in a viewer and as ",
+         "xBRL-JSON. The repository states no licence for its copies. It ",
+         "is not complete: a filing with technical errors may have no ",
+         "facts, and a filing whose identifier or date it cannot determine ",
+         "is missing altogether. The table of filings above lists what was ",
+         "found for this issuer, and the validation counts are the ",
+         "repository's own.\n\nThe figures were read into the data lake by ",
+         "the `esef` module of fincommons and this factsheet reads them ",
+         "from its Silver layer. Nothing on these pages is an estimate, a ",
+         "forecast or a recommendation."),
+  paste0("Die Berichte sind eigene Veröffentlichungen des Emittenten, ",
+         "zu denen die Transparenzrichtlinie ihn verpflichtet. Sie wurden ",
+         "von filings.xbrl.org bezogen, dem von XBRL International ",
+         "betriebenen Repositorium, das die Einreichungen der amtlich ",
+         "bestellten Systeme der Mitgliedstaaten sammelt, validiert und ",
+         "je Einreichung als eingereichtes Paket, im Viewer und als ",
+         "xBRL-JSON veröffentlicht. Das Repositorium nennt für ",
+         "seine Kopien keine Lizenz und ist nicht vollständig: eine ",
+         "Einreichung mit technischen Fehlern kann ohne Fakten bleiben, ",
+         "und eine Einreichung, deren Kennung oder Datum nicht bestimmt ",
+         "werden kann, fehlt ganz. Die Tabelle der Einreichungen oben ",
+         "nennt, was für diesen Emittenten gefunden wurde; die ",
+         "Validierungszähler sind die des Repositoriums.\n\nDie ",
+         "Zahlen wurden mit dem Modul `esef` von fincommons in den Data ",
+         "Lake geladen und von dessen Silver-Schicht gelesen. Nichts auf ",
+         "diesen Seiten ist eine Schätzung, eine Prognose oder eine ",
+         "Empfehlung.")))
+```
+
+{{< pagebreak >}}
+
+## `r tr("Disclaimer", "Haftungsausschluss")`
+
+```{=typst}
+#set text(size: 8pt)
+```
+
+```{r disclaimer, results='asis'}
+# The last word on the last page. The cover carries the first two sentences
+# of it, so that a page torn off on its own still says what it is worth. The
+# wording follows Articles 7 and 8 of the EUPL, under which the template is
+# distributed; it is not a substitute for terms of the renderer's own.
+cat(tr(
+  paste0(
+    "**An example, not a service.** This document is produced by a template ",
+    "of the open-source project fincommons, which is published to show what ",
+    "the annual financial reports filed in the European Single Electronic ",
+    "Format contain and how they can be read. The issuer is an example, ",
+    "chosen because its filings are public; the figures illustrate what the ",
+    "tagged facts of those filings yield. The document is not a financial ",
+    "product, not a research publication, not an investor communication and ",
+    "not a service rendered to anyone. It is produced automatically, no one ",
+    "reviews it before it is produced, and whoever renders or passes it on ",
+    "is responsible for what they do with it.\n\n",
+    "**No warranty as to correctness.** The template and this document are ",
+    "provided as is and without warranty of any kind, express or implied, ",
+    "including as to accuracy, absence of errors, merchantability or ",
+    "fitness for any purpose. No guarantee is given that a figure on these ",
+    "pages is correct. A figure can be wrong because the report it was read ",
+    "from tagged it wrongly, because a concept of the taxonomy was used for ",
+    "something other than what is assumed here, because the repository's ",
+    "copy of a filing is faulty, or because a figure derived on these pages ",
+    "is derived differently from the way the issuer derives the figure it ",
+    "calls by that name. The audited financial statements of the issuer are ",
+    "the authoritative source and prevail wherever they differ from ",
+    "anything shown here. A figure is shown as it was reported for its own ",
+    "year and is not restated, so a column need not agree with the ",
+    "comparative figure a later report gives for the same year.\n\n",
+    "**No warranty as to completeness.** These pages hold what the reports ",
+    "tag and nothing beyond it. A line of the statements the issuer did not ",
+    "tag, the notes, the management report, the auditor's report, the ",
+    "events after the reporting period and every non-financial disclosure ",
+    "are not in here; the page on the coverage of the tags names what was ",
+    "looked for and not found, and makes no claim about what else may be ",
+    "missing. Nothing may be inferred from the absence of a figure.\n\n",
+    "**No association.** Neither this document, nor the template, nor ",
+    "whoever compiled either is associated with, affiliated to, endorsed, ",
+    "authorised, sponsored, commissioned or reviewed by the issuer, by XBRL ",
+    "International, by the officially appointed mechanism of any member ",
+    "state or by any other body named on these pages. The name of the ",
+    "issuer and the names of its reports are used only to identify ",
+    "publicly available documents, and any trade mark named belongs to its ",
+    "owner.\n\n",
+    "**No advice and no reliance.** Nothing here is investment, legal, tax ",
+    "or accounting advice, an offer, a solicitation or a recommendation to ",
+    "buy, to hold or to sell any financial instrument, and nothing here ",
+    "should be relied upon for such a decision or for any other purpose. ",
+    "Whoever uses these figures does so at their own risk and is referred ",
+    "to the reports themselves, which the issuer publishes.\n\n",
+    "**No liability.** To the extent the applicable law permits, the ",
+    "authors and contributors of the template and whoever made this ",
+    "document available accept no liability for any direct or indirect ",
+    "damage of any kind arising out of the template, out of this document ",
+    "or out of the use of either, including lost profit, loss of data or ",
+    "any decision taken on the strength of a figure shown here. The ",
+    "template is distributed under the European Union Public Licence, ",
+    "version 1.2, whose Articles 7 and 8 disclaim warranty and liability, ",
+    "and this notice is to be read with them; where such a disclaimer is ",
+    "void under the applicable law, it applies as far as that law allows."),
+  paste0(
+    "**Ein Beispiel, keine Dienstleistung.** Dieses Dokument wird von einer ",
+    "Vorlage des Open-Source-Projekts fincommons erzeugt, die zeigen soll, ",
+    "was die im European Single Electronic Format eingereichten ",
+    "Finanzberichte enthalten und wie sie gelesen werden können. Der ",
+    "Emittent ist ein Beispiel, gewählt weil seine Einreichungen öffentlich ",
+    "sind; die Zahlen veranschaulichen, was die ausgezeichneten Fakten ",
+    "dieser Einreichungen hergeben. Das Dokument ist kein Finanzprodukt, ",
+    "keine Finanzanalyse, keine Mitteilung an Anleger und keine für ",
+    "jemanden erbrachte Dienstleistung. Es wird automatisch erzeugt, ",
+    "niemand prüft es davor, und wer es erzeugt oder weitergibt, ist ",
+    "selbst dafür verantwortlich, was er damit tut.\n\n",
+    "**Keine Gewähr für die Richtigkeit.** Die Vorlage und dieses Dokument ",
+    "werden ohne jede Gewähr bereitgestellt, weder ausdrücklich noch ",
+    "stillschweigend, auch nicht für Richtigkeit, Fehlerfreiheit, ",
+    "Marktgängigkeit oder Eignung für einen bestimmten Zweck. Es wird ",
+    "nicht dafür garantiert, dass eine Zahl auf diesen Seiten richtig ist. ",
+    "Eine Zahl kann falsch sein, weil der Bericht, aus dem sie gelesen ",
+    "wurde, sie falsch ausgezeichnet hat, weil ein Konzept der Taxonomie ",
+    "für etwas anderes verwendet wurde als hier angenommen, weil die Kopie ",
+    "einer Einreichung im Repositorium fehlerhaft ist, oder weil eine hier ",
+    "abgeleitete Zahl anders abgeleitet wird als die Zahl, die der ",
+    "Emittent so nennt. Maßgeblich sind die geprüften Abschlüsse des ",
+    "Emittenten; sie gehen allem vor, was hier gezeigt wird. Eine Zahl ",
+    "wird so gezeigt, wie sie für ihr eigenes Jahr berichtet wurde, und ",
+    "nicht angepasst, sodass eine Spalte nicht mit der Vergleichszahl ",
+    "übereinstimmen muss, die ein späterer Bericht für dasselbe Jahr ",
+    "nennt.\n\n",
+    "**Keine Gewähr für die Vollständigkeit.** Diese Seiten enthalten, was ",
+    "die Berichte auszeichnen, und nichts darüber hinaus. Eine Zeile der ",
+    "Abschlüsse, die der Emittent nicht ausgezeichnet hat, die ",
+    "Anhangangaben, der Lagebericht, der Bestätigungsvermerk, die ",
+    "Ereignisse nach dem Bilanzstichtag und jede nichtfinanzielle Angabe ",
+    "fehlen hier; die Seite zur Abdeckung der Auszeichnungen nennt, was ",
+    "gesucht und nicht gefunden wurde, und sagt nichts darüber, was sonst ",
+    "fehlen mag. Aus dem Fehlen einer Zahl ist nichts zu schließen.\n\n",
+    "**Keine Verbindung.** Weder dieses Dokument noch die Vorlage noch wer ",
+    "eines von beiden erstellt hat steht in einer Verbindung zum ",
+    "Emittenten, zu XBRL International, zu einem amtlich bestellten System ",
+    "eines Mitgliedstaats oder zu einer anderen auf diesen Seiten ",
+    "genannten Stelle, und ist von ihnen weder beauftragt noch gebilligt, ",
+    "genehmigt, unterstützt oder geprüft. Der Name des Emittenten und die ",
+    "Namen seiner Berichte dienen allein der Bezeichnung öffentlich ",
+    "zugänglicher Dokumente; eine genannte Marke gehört ihrem Inhaber.\n\n",
+    "**Keine Beratung, kein Vertrauensschutz.** Nichts hiervon ist eine ",
+    "Anlage-, Rechts-, Steuer- oder Bilanzierungsberatung, ein Angebot, ",
+    "eine Aufforderung oder eine Empfehlung zum Kauf, zum Halten oder zum ",
+    "Verkauf eines Finanzinstruments, und nichts hiervon sollte einer ",
+    "solchen oder einer anderen Entscheidung zugrunde gelegt werden. Wer ",
+    "diese Zahlen verwendet, tut dies auf eigenes Risiko und ist auf die ",
+    "Berichte selbst verwiesen, die der Emittent veröffentlicht.\n\n",
+    "**Keine Haftung.** Soweit das anwendbare Recht es zulässt, haften die ",
+    "Urheber und Beitragenden der Vorlage und wer dieses Dokument ",
+    "bereitgestellt hat nicht für unmittelbare oder mittelbare Schäden ",
+    "jeder Art, die aus der Vorlage, aus diesem Dokument oder aus der ",
+    "Verwendung von einem von beiden entstehen, einschließlich entgangenen ",
+    "Gewinns, des Verlusts von Daten oder einer Entscheidung, die im ",
+    "Vertrauen auf eine hier gezeigte Zahl getroffen wurde. Die Vorlage ",
+    "wird unter der European Union Public Licence, Version 1.2, verbreitet, ",
+    "deren Artikel 7 und 8 Gewährleistung und Haftung ausschließen; dieser ",
+    "Hinweis ist mit ihnen zu lesen. Wo ein solcher Ausschluss nach dem ",
+    "anwendbaren Recht unwirksam ist, gilt er, soweit dieses Recht es ",
+    "zulässt.")))
 ```

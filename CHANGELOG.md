@@ -8,9 +8,31 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
-- `esef`: a template for an analyst factsheet on one issuer, in R and
-  Quarto, with voestalpine AG as its example:
-  `src/fincommons/esef/factsheet/esef-analyst-factsheet.qmd`.
+- `esef`: a template for a factsheet on one issuer, in R and Quarto, with
+  voestalpine AG as its example:
+  `src/fincommons/esef/factsheet/esef-analyst-factsheet.qmd`. It renders a
+  PDF of some twenty pages from the facts of the issuer's own reports and
+  from nothing else: the income statement, the statement of financial
+  position and the cash flow statement as filed and as a share of revenue,
+  the margins, the growth, the capital structure and the net debt, the
+  liquidity and the cover of the debt, the working capital and the cash
+  conversion cycle, the returns on equity, assets, capital employed and
+  invested capital with the decomposition of the return on equity, the
+  quality of the cash flow against the result, the comprehensive income and
+  the equity by component, the per-share figures, Piotroski's F-score and
+  Altman's Z''-score, the coverage of the tags with checks that the
+  statements add up, and the filings it was built from. A figure read from
+  a concept of the issuer's own taxonomy, such as its capital expenditure,
+  carries a dagger and is listed with the years it was found in; no EBITDA
+  is derived, because depreciation is not a line of the statements under a
+  concept of the IFRS taxonomy. The charts use the ten colours of Tableau,
+  so that the lines of a balance sheet in one chart can be told apart. The
+  last page is a disclaimer, which the cover points at: the document is
+  produced by a template and the issuer is an example, no warranty is given
+  for the correctness or the completeness of a figure, nobody who made it is
+  associated with the issuer or with any other body named on the pages,
+  nothing in it is advice, and liability is disclaimed as far as the law
+  allows, in the terms of Articles 7 and 8 of the licence.
 - `firds`: a history can start in 2018. The full and the delta files ESMA
   published up to 2019-09-21 under drafts of their message definitions,
   `DRAFT13auth.017.001.01` and `DRAFT6auth.036.001.01`, are imported into

@@ -14,6 +14,7 @@
 # Provides
 #   corporate_design                 the configuration (colours, font, sizes)
 #   colours_corporate_design         categorical colours, light mode (vector)
+#   corporate_design$categorical     the default series palette (Tableau 10)
 #   font_corporate_design            the font family in use ("" = default)
 #   linewidth_corporate_design       default line width for line charts
 #   formats_corporate_design         export sizes in pixels
@@ -85,10 +86,27 @@ corporate_design <- list(
     )
   ),
 
-  # Order of the categorical palette. The first four are the most
+  # Order of the categorical palette, for a chart whose series are to be
+  # told apart by the colours of the brand. The first four are the most
   # distinguishable, including under red-green colour blindness.
   series = c("red", "blue", "amber", "teal", "violet",
              "rose", "olive", "rust", "slate"),
+
+  # The categorical palette a chart uses by default: the ten colours of
+  # Tableau, which were built to be told apart from one another and are what
+  # a reader of financial charts is used to. They are not the colours of the
+  # brand -- the brand's own series are in `series` above, and
+  # `palette_corporate_design("cat", brand = TRUE)` uses them -- but a chart
+  # of eight or nine lines of a balance sheet needs colours that cannot be
+  # confused, and the ones here are. The roles of the theme, the diverging
+  # and the sequential palettes stay with the brand.
+  categorical = list(
+    light = c("#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F",
+              "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F", "#BAB0AC"),
+    # Lifted so they keep their contrast on the dark canvas.
+    dark = c("#7BA7D7", "#F6A04D", "#EE7B7D", "#8FCFCA", "#74BE69",
+             "#F2D765", "#C495B6", "#FFB7BF", "#B9907A", "#CFC6C2")
+  ),
 
   base_size = 13,
   linewidth = .9,
@@ -131,7 +149,7 @@ if (.Platform$OS.type == "windows" && nzchar(font_corporate_design) &&
                           font_corporate_design))
 }
 
-colours_corporate_design   <- unname(corporate_design$colours$light[corporate_design$series])
+colours_corporate_design   <- unname(corporate_design$categorical$light)
 linewidth_corporate_design <- corporate_design$linewidth
 formats_corporate_design   <- corporate_design$formats
 
@@ -149,15 +167,17 @@ design_mode <- function() {
 
 design_colours <- function(mode = design_mode()) corporate_design$colours[[mode]]
 
-#   "cat"       categorical, in the order of corporate_design$series
+#   "cat"       categorical, the ten colours of corporate_design$categorical,
+#               or those of corporate_design$series where brand = TRUE
 #   "diverging" negative -> neutral -> positive
 #   "seq"       single-hue ramp, light to dark
 palette_corporate_design <- function(type = "cat", n = NULL, hue = "blue",
-                                     mode = design_mode()) {
+                                     mode = design_mode(), brand = FALSE) {
   cols <- design_colours(mode)
   out <- switch(
     type,
-    cat       = cols[corporate_design$series],
+    cat       = if (brand) cols[corporate_design$series] else
+      corporate_design$categorical[[mode]],
     diverging = cols[c("red", "neutral", "blue")],
     seq       = grDevices::colorRampPalette(
       c(cols[["seq_low"]], cols[[hue]]))(if (is.null(n)) 6 else n),
@@ -170,11 +190,13 @@ palette_corporate_design <- function(type = "cat", n = NULL, hue = "blue",
   out
 }
 
-scale_colour_corporate_design <- function(...) {
-  ggplot2::scale_colour_manual(..., values = palette_corporate_design("cat"))
+scale_colour_corporate_design <- function(..., brand = FALSE) {
+  ggplot2::scale_colour_manual(
+    ..., values = palette_corporate_design("cat", brand = brand))
 }
-scale_fill_corporate_design <- function(...) {
-  ggplot2::scale_fill_manual(..., values = palette_corporate_design("cat"))
+scale_fill_corporate_design <- function(..., brand = FALSE) {
+  ggplot2::scale_fill_manual(
+    ..., values = palette_corporate_design("cat", brand = brand))
 }
 scale_color_corporate_design <- scale_colour_corporate_design
 
