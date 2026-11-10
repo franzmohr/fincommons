@@ -911,8 +911,12 @@ notice <- tr(
         "market data, estimate or forecast is used. The indicators are",
         "computed by this factsheet and are not the issuer's own key",
         "performance indicators, which a report defines in its management",
-        "report and often defines differently. This is a summary of",
-        "published accounts, not investment advice."),
+        "report and often defines differently. This document is produced",
+        "by a template of the open-source project fincommons and the issuer",
+        "is an example: it is a summary of published accounts, given",
+        "without warranty as to correctness or completeness, without any",
+        "association with the issuer, and it is not investment advice. The",
+        "disclaimer on the last page applies."),
   paste("Erstellt aus den Finanzberichten des Emittenten, wie sie in Inline",
         "XBRL ausgezeichnet und von filings.xbrl.org veröffentlicht",
         "wurden. Jede Zahl ist ein Fakt eines Berichts oder wird aus Fakten",
@@ -920,8 +924,12 @@ notice <- tr(
         "Schätzungen oder Prognosen verwendet. Die Kennzahlen werden",
         "von diesem Factsheet berechnet und sind nicht die Kennzahlen des",
         "Emittenten, die ein Bericht im Lagebericht definiert und oft",
-        "anders definiert. Dies ist eine Zusammenfassung",
-        "veröffentlichter Abschlüsse und keine Anlageberatung."))
+        "anders definiert. Dieses Dokument wird von einer Vorlage des",
+        "Open-Source-Projekts fincommons erzeugt und der Emittent ist ein",
+        "Beispiel: es ist eine Zusammenfassung veröffentlichter Abschlüsse,",
+        "ohne Gewähr für Richtigkeit und Vollständigkeit, ohne jede",
+        "Verbindung zum Emittenten und keine Anlageberatung. Es gilt der",
+        "Haftungsausschluss auf der letzten Seite."))
 
 cat("```{=typst}\n")
 cat("#set page(numbering: none)\n")
@@ -931,8 +939,11 @@ cat("#let rule = rgb(\"#DCE1E5\")\n")
 cat("#let accent = rgb(\"#C10016\")\n\n")
 
 cat("#v(1.4cm)\n")
+# The first line of the cover says that this is an example of the template,
+# so that the framing is not left to the small print at the foot of the page.
 cat("#text(size: 8pt, tracking: 1.6pt, fill: soft, ",
-    ts(toupper(tr("Company factsheet", "Unternehmens-Factsheet"))), ")\n", sep = "")
+    ts(toupper(tr("Company factsheet · Example",
+                  "Unternehmens-Factsheet · Beispiel"))), ")\n", sep = "")
 cat("#v(4pt)\n#line(length: 100%, stroke: 1.2pt + accent)\n#v(14pt)\n")
 cat("#text(size: 25pt, weight: \"bold\", ", ts(issuer_name), ")\n", sep = "")
 cat("#v(3pt)\n")
@@ -2161,4 +2172,139 @@ cat(tr(
          "Lake geladen und von dessen Silver-Schicht gelesen. Nichts auf ",
          "diesen Seiten ist eine Schätzung, eine Prognose oder eine ",
          "Empfehlung.")))
+```
+
+{{< pagebreak >}}
+
+## `r tr("Disclaimer", "Haftungsausschluss")`
+
+```{=typst}
+#set text(size: 8pt)
+```
+
+```{r disclaimer, results='asis'}
+# The last word on the last page. The cover carries the first two sentences
+# of it, so that a page torn off on its own still says what it is worth. The
+# wording follows Articles 7 and 8 of the EUPL, under which the template is
+# distributed; it is not a substitute for terms of the renderer's own.
+cat(tr(
+  paste0(
+    "**An example, not a service.** This document is produced by a template ",
+    "of the open-source project fincommons, which is published to show what ",
+    "the annual financial reports filed in the European Single Electronic ",
+    "Format contain and how they can be read. The issuer is an example, ",
+    "chosen because its filings are public; the figures illustrate what the ",
+    "tagged facts of those filings yield. The document is not a financial ",
+    "product, not a research publication, not an investor communication and ",
+    "not a service rendered to anyone. It is produced automatically, no one ",
+    "reviews it before it is produced, and whoever renders or passes it on ",
+    "is responsible for what they do with it.\n\n",
+    "**No warranty as to correctness.** The template and this document are ",
+    "provided as is and without warranty of any kind, express or implied, ",
+    "including as to accuracy, absence of errors, merchantability or ",
+    "fitness for any purpose. No guarantee is given that a figure on these ",
+    "pages is correct. A figure can be wrong because the report it was read ",
+    "from tagged it wrongly, because a concept of the taxonomy was used for ",
+    "something other than what is assumed here, because the repository's ",
+    "copy of a filing is faulty, or because a figure derived on these pages ",
+    "is derived differently from the way the issuer derives the figure it ",
+    "calls by that name. The audited financial statements of the issuer are ",
+    "the authoritative source and prevail wherever they differ from ",
+    "anything shown here. A figure is shown as it was reported for its own ",
+    "year and is not restated, so a column need not agree with the ",
+    "comparative figure a later report gives for the same year.\n\n",
+    "**No warranty as to completeness.** These pages hold what the reports ",
+    "tag and nothing beyond it. A line of the statements the issuer did not ",
+    "tag, the notes, the management report, the auditor's report, the ",
+    "events after the reporting period and every non-financial disclosure ",
+    "are not in here; the page on the coverage of the tags names what was ",
+    "looked for and not found, and makes no claim about what else may be ",
+    "missing. Nothing may be inferred from the absence of a figure.\n\n",
+    "**No association.** Neither this document, nor the template, nor ",
+    "whoever compiled either is associated with, affiliated to, endorsed, ",
+    "authorised, sponsored, commissioned or reviewed by the issuer, by XBRL ",
+    "International, by the officially appointed mechanism of any member ",
+    "state or by any other body named on these pages. The name of the ",
+    "issuer and the names of its reports are used only to identify ",
+    "publicly available documents, and any trade mark named belongs to its ",
+    "owner.\n\n",
+    "**No advice and no reliance.** Nothing here is investment, legal, tax ",
+    "or accounting advice, an offer, a solicitation or a recommendation to ",
+    "buy, to hold or to sell any financial instrument, and nothing here ",
+    "should be relied upon for such a decision or for any other purpose. ",
+    "Whoever uses these figures does so at their own risk and is referred ",
+    "to the reports themselves, which the issuer publishes.\n\n",
+    "**No liability.** To the extent the applicable law permits, the ",
+    "authors and contributors of the template and whoever made this ",
+    "document available accept no liability for any direct or indirect ",
+    "damage of any kind arising out of the template, out of this document ",
+    "or out of the use of either, including lost profit, loss of data or ",
+    "any decision taken on the strength of a figure shown here. The ",
+    "template is distributed under the European Union Public Licence, ",
+    "version 1.2, whose Articles 7 and 8 disclaim warranty and liability, ",
+    "and this notice is to be read with them; where such a disclaimer is ",
+    "void under the applicable law, it applies as far as that law allows."),
+  paste0(
+    "**Ein Beispiel, keine Dienstleistung.** Dieses Dokument wird von einer ",
+    "Vorlage des Open-Source-Projekts fincommons erzeugt, die zeigen soll, ",
+    "was die im European Single Electronic Format eingereichten ",
+    "Finanzberichte enthalten und wie sie gelesen werden können. Der ",
+    "Emittent ist ein Beispiel, gewählt weil seine Einreichungen öffentlich ",
+    "sind; die Zahlen veranschaulichen, was die ausgezeichneten Fakten ",
+    "dieser Einreichungen hergeben. Das Dokument ist kein Finanzprodukt, ",
+    "keine Finanzanalyse, keine Mitteilung an Anleger und keine für ",
+    "jemanden erbrachte Dienstleistung. Es wird automatisch erzeugt, ",
+    "niemand prüft es davor, und wer es erzeugt oder weitergibt, ist ",
+    "selbst dafür verantwortlich, was er damit tut.\n\n",
+    "**Keine Gewähr für die Richtigkeit.** Die Vorlage und dieses Dokument ",
+    "werden ohne jede Gewähr bereitgestellt, weder ausdrücklich noch ",
+    "stillschweigend, auch nicht für Richtigkeit, Fehlerfreiheit, ",
+    "Marktgängigkeit oder Eignung für einen bestimmten Zweck. Es wird ",
+    "nicht dafür garantiert, dass eine Zahl auf diesen Seiten richtig ist. ",
+    "Eine Zahl kann falsch sein, weil der Bericht, aus dem sie gelesen ",
+    "wurde, sie falsch ausgezeichnet hat, weil ein Konzept der Taxonomie ",
+    "für etwas anderes verwendet wurde als hier angenommen, weil die Kopie ",
+    "einer Einreichung im Repositorium fehlerhaft ist, oder weil eine hier ",
+    "abgeleitete Zahl anders abgeleitet wird als die Zahl, die der ",
+    "Emittent so nennt. Maßgeblich sind die geprüften Abschlüsse des ",
+    "Emittenten; sie gehen allem vor, was hier gezeigt wird. Eine Zahl ",
+    "wird so gezeigt, wie sie für ihr eigenes Jahr berichtet wurde, und ",
+    "nicht angepasst, sodass eine Spalte nicht mit der Vergleichszahl ",
+    "übereinstimmen muss, die ein späterer Bericht für dasselbe Jahr ",
+    "nennt.\n\n",
+    "**Keine Gewähr für die Vollständigkeit.** Diese Seiten enthalten, was ",
+    "die Berichte auszeichnen, und nichts darüber hinaus. Eine Zeile der ",
+    "Abschlüsse, die der Emittent nicht ausgezeichnet hat, die ",
+    "Anhangangaben, der Lagebericht, der Bestätigungsvermerk, die ",
+    "Ereignisse nach dem Bilanzstichtag und jede nichtfinanzielle Angabe ",
+    "fehlen hier; die Seite zur Abdeckung der Auszeichnungen nennt, was ",
+    "gesucht und nicht gefunden wurde, und sagt nichts darüber, was sonst ",
+    "fehlen mag. Aus dem Fehlen einer Zahl ist nichts zu schließen.\n\n",
+    "**Keine Verbindung.** Weder dieses Dokument noch die Vorlage noch wer ",
+    "eines von beiden erstellt hat steht in einer Verbindung zum ",
+    "Emittenten, zu XBRL International, zu einem amtlich bestellten System ",
+    "eines Mitgliedstaats oder zu einer anderen auf diesen Seiten ",
+    "genannten Stelle, und ist von ihnen weder beauftragt noch gebilligt, ",
+    "genehmigt, unterstützt oder geprüft. Der Name des Emittenten und die ",
+    "Namen seiner Berichte dienen allein der Bezeichnung öffentlich ",
+    "zugänglicher Dokumente; eine genannte Marke gehört ihrem Inhaber.\n\n",
+    "**Keine Beratung, kein Vertrauensschutz.** Nichts hiervon ist eine ",
+    "Anlage-, Rechts-, Steuer- oder Bilanzierungsberatung, ein Angebot, ",
+    "eine Aufforderung oder eine Empfehlung zum Kauf, zum Halten oder zum ",
+    "Verkauf eines Finanzinstruments, und nichts hiervon sollte einer ",
+    "solchen oder einer anderen Entscheidung zugrunde gelegt werden. Wer ",
+    "diese Zahlen verwendet, tut dies auf eigenes Risiko und ist auf die ",
+    "Berichte selbst verwiesen, die der Emittent veröffentlicht.\n\n",
+    "**Keine Haftung.** Soweit das anwendbare Recht es zulässt, haften die ",
+    "Urheber und Beitragenden der Vorlage und wer dieses Dokument ",
+    "bereitgestellt hat nicht für unmittelbare oder mittelbare Schäden ",
+    "jeder Art, die aus der Vorlage, aus diesem Dokument oder aus der ",
+    "Verwendung von einem von beiden entstehen, einschließlich entgangenen ",
+    "Gewinns, des Verlusts von Daten oder einer Entscheidung, die im ",
+    "Vertrauen auf eine hier gezeigte Zahl getroffen wurde. Die Vorlage ",
+    "wird unter der European Union Public Licence, Version 1.2, verbreitet, ",
+    "deren Artikel 7 und 8 Gewährleistung und Haftung ausschließen; dieser ",
+    "Hinweis ist mit ihnen zu lesen. Wo ein solcher Ausschluss nach dem ",
+    "anwendbaren Recht unwirksam ist, gilt er, soweit dieses Recht es ",
+    "zulässt.")))
 ```

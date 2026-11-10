@@ -26,7 +26,13 @@ release may change the public API, which `tests/test_public_api.py` lists.
   carries a dagger and is listed with the years it was found in; no EBITDA
   is derived, because depreciation is not a line of the statements under a
   concept of the IFRS taxonomy. The charts use the ten colours of Tableau,
-  so that the lines of a balance sheet in one chart can be told apart.
+  so that the lines of a balance sheet in one chart can be told apart. The
+  last page is a disclaimer, which the cover points at: the document is
+  produced by a template and the issuer is an example, no warranty is given
+  for the correctness or the completeness of a figure, nobody who made it is
+  associated with the issuer or with any other body named on the pages,
+  nothing in it is advice, and liability is disclaimed as far as the law
+  allows, in the terms of Articles 7 and 8 of the licence.
 - `firds`: a history can start in 2018. The full and the delta files ESMA
   published up to 2019-09-21 under drafts of their message definitions,
   `DRAFT13auth.017.001.01` and `DRAFT6auth.036.001.01`, are imported into
