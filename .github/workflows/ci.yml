@@ -91,6 +91,8 @@ jobs:
             tests: tests/test_marketpricedata*.py
           - name: esef
             tests: tests/test_esef_*.py
+          - name: secfiling
+            tests: tests/test_secfiling_*.py
           - name: famafrenchdata
             tests: tests/test_famafrenchdata*.py
           # The layer the data sets share: how a Silver table is read and
