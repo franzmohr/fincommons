@@ -835,6 +835,21 @@ def test_an_internal_row_the_combination_would_misread_is_refused(spark, data_la
         ex.update_silver_exchangerate(spark, data_lake)
 
 
+def test_the_base_the_internal_rows_are_checked_against_can_be_named(spark):
+    """The euro is the base the combination is built on and the default of the
+    check, but a file kept against another base can be checked against that one
+    instead."""
+    internal = spark.createDataFrame(
+        [("2020-01-02", "USD", "GBP", 0.80, "ref", "internal")], ex.internal_schema)
+
+    ex.check_internal_rates(internal, "an internal file", base="USD")
+
+    with pytest.raises(ValueError, match="BASE other than EUR"):
+        ex.check_internal_rates(internal, "an internal file")
+    with pytest.raises(ValueError, match="BASE other than JPY"):
+        ex.check_internal_rates(internal, "an internal file", base="JPY")
+
+
 def test_one_day_and_pair_quoted_twice_internally_is_refused(spark, data_lake):
     """The combination would keep either of the two, and nothing says which."""
     write_ecb(data_lake, ["2020-01-01", "2020-01-02"], USD=[1.10, 1.11])

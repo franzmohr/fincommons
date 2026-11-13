@@ -80,6 +80,12 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `exchangerate`: `check_internal_rates` takes the base currency the rows of
+  the internal file are held against as a `base` argument, so that a file
+  kept against another base can be checked against that one. It defaults to
+  `'EUR'`, the base `update_silver_exchangerate` combines the sources on, so
+  the check refuses the same rows as before where it is left out.
+
 - `firds`: `update_landing_import` with a `start_date` before the full file
   already held moves the history back to an earlier full file, where ESMA
   published one, and fetches every delta file after it. It used to keep the

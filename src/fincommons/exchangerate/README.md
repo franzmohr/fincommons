@@ -1,10 +1,8 @@
-# Update the exchange rate repository
+# Processing exchange rate data
 
-Under EMIR and SFTR, some fields are reported in a non-domestic currency units and, thus, need to be converted to a single currency to make monetary units comparable. There are multiple sources for exchange rate data with different coverage. For the generation of the ASR on European derivatives markets, ESMA uses reference rates provided by the ECB as a main data source, which is augmented using data from further sources.
+Exchange rate data is a basic building block of a serious financial analytics framework. From a European supervisory data engineering perspective, it is also required to convert data that was reported in a non-domestic currency unit to a single currency in order to make monetary units comparable.
 
-## Introduction
-
-This document gives an overview of the functionality of module `exchangerate`.
+This document gives an overview on the data pipeline implemented int the `exchangerate` module.
 
 
 ```python
@@ -18,16 +16,16 @@ from fincommons import exchangerate as ex
 ex.create_directory_tree(config_path = config_path)
 ```
 
-Start the Spark session
+## Start the Spark session
 
-
-The Silver layer is written as parquet unless `file_format = 'delta'` asks for
-Delta or the configuration file addresses it by catalogue name (see below).
-Where it is Delta, the session has to be built with the Delta extensions
-off-cluster, which needs the `delta-spark` package that comes with the `local`
-extra; on Databricks Delta is built in and the extra configuration is
-unnecessary. A session built this way reads a parquet table just as well, so it
+The Silver layer is written as parquet unless the user asks for
+Delta using `file_format = 'delta'`. Where this happens, the session has
+to be built with the Delta extensions off-cluster, which needs the
+`delta-spark` package that comes with the `local` extra; on Databricks Delta
+is built in and the extra configuration is unnecessary.
+A session built this way reads a parquet table just as well, so it
 is the safe thing to start from either way.
+
 
 ```python
 # Start Spark
@@ -35,7 +33,7 @@ from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
 
 builder = SparkSession.builder \
-                    .appName("fincommons") \
+                    .appName("finsupverse") \
                     .config("spark.cores.max", "4") \
                     .config("spark.driver.memory", "15g") \
                     .config('spark.sql.parquet.int96RebaseModeInWrite', 'CORRECTED') \
@@ -68,24 +66,18 @@ ex.update_bronze_ecb_exchangerate(config_path)
 
 ### Proprietary data
 
-Due to the heterogeneity of the data source, the module does not provide any functionality to download data from proprietary sources. It picks such data up from
-
-```
-{path to Bronze Layer of exchangerate as specified in config_path}/internal/exchangerate.csv
-```
-
-if that file exists, and expects a comma-separated file with a header row and the following columns:
+Due to the heterogeneity of the data source, the module does not provide any functionality to download data from proprietary sources. It picks such data up from the file `exchangerate.csv`, which sits in the folder specified in the `paths.yaml` file under `exchangerate/internal`. If that file exists, it expects a comma-separated file with a header row and the following columns:
 
 | Column | Type | Content |
 | --- | --- | --- |
 | `REFDATE` | string | The reference date of the quote, as `YYYY-MM-DD`. |
-| `BASE` | string | The ISO-3 code of the base currency. This should be `EUR`, because the rest of the pipeline is built around euro quotes. |
+| `BASE` | string | The ISO-3 code of the base currency. |
 | `QUOTE` | string | The ISO-3 code of the quoted currency. |
 | `VALUE` | double | Units of `QUOTE` per one unit of `BASE`. |
 | `TYPE` | string | The kind of rate, for instance `ref` for a reference rate. |
 | `SOURCE` | string | A label stating where the quote came from. It is carried through to the Silver layer. |
 
-The file is checked before it is combined, and refused as a whole where a row would be misread: a `REFDATE` not written as `YYYY-MM-DD`, a `BASE` other than `EUR`, a `VALUE` that is missing or not positive, or one day and pair quoted twice. The first matters most, because the combination compares dates as text: a date written `2020-10-5` is not the same day as the ECB's `2020-10-05` to it, and one such row could cut the whole table short.
+The file is checked before it is combined, and refused as a whole where a row would be misread: a `REFDATE` not written as `YYYY-MM-DD`, a `VALUE` that is missing or not positive, or one day and pair quoted twice. The first matters most, because the combination compares dates as text: a date written `2020-10-5` is not the same day as the ECB's `2020-10-05` to it, and one such row could cut the whole table short.
 
 ## From bronze to silver layer
 
@@ -93,13 +85,18 @@ Function `update_silver_exchangerate` updates the exchange rate data set. It tak
 * `spark`: The open Spark session.
 * `config_path`: The path to the configuration file, where the paths of the data lake are specified.
 * `use_bis`: A boolean indicating if exchange rate data from the website of the Bank for International Settlements should be used. The default specification of this argument is `False` since the data is not updated daily.
-* `rebase`: An ISO-3 currency code indicating into which FX rate the exchange rate data set should be converted, for organisations where the euro is not the domestic currency. The SFTR, EMIR and MiFIR stages and `convert2ccy` read the rates quoted against the currency they convert into, so any target other than the euro needs the table rebased to it. SFTR, EMIR and `convert2ccy` refuse to run against a table that is not; MiFIR warns and leaves the volumes it cannot convert empty. A `rebase` to a currency the ECB reference rates do not quote, or to `EUR` itself, is refused before anything is written, and the existing table is left as it was.
+* `rebase`: An ISO-3 currency code indicating into which FX rate the exchange rate data set should be converted, for organisations where the euro is not the domestic currency. The SFTR, EMIR and MiFIR stages and `convert2ccy` read the rates quoted against the currency they convert into, so any target other than the euro needs the table rebased to it. SFTR, EMIR and `convert2ccy` refuse to run against a table that is not; MiFIR warns and leaves the volumes it cannot convert empty.
+* `file_format`: The format the table is stored in, `'parquet'` or `'delta'`. The default is `'parquet'`, because it is the format every engine reads without a further dependency.
 
-During the update process, the function logs the latest date in each data set for which observations are available. Every source counts up to its own last date: where a source has fallen behind, the others describe the days it does not reach, as they do on any day it is silent, and the log shows which source is behind.
 
-* `file_format`: The format the table is stored in, `'parquet'` or `'delta'`. Where it is left out, the configuration file decides: a Silver layer addressed by path is written as parquet, because it is the format every engine reads without a further dependency, and a table that exists already keeps the format it is stored in.
+```python
+# Application for users in the euro area
+ex.update_silver_exchangerate(spark, config_path, use_bis = False, file_format = 'parquet')
+```
 
-The resulting data set will be stored in `{path to Silver Layer of exchangerate as specified in config_path}/exchangerate`. Each update replaces the table rather than adding to it.
+During the update process, the function logs the latest date in each data set for which observations are available. The final data set will only contain observations until the smallest of them, which is logged beside them as the cutoff.
+
+The resulting data set will be stored in the folder specified in the `paths.yaml` file under `exchangerate/silver`. Each update replaces the table rather than adding to it.
 
 The Silver layer may instead be addressed by catalogue name, which puts the table within reach of Unity Catalog's grants and lineage. The configuration file alone says so; no argument of the update has to change:
 
@@ -112,9 +109,8 @@ exchangerate:
 
 The table is then `fincommons.exchangerate.exchangerate`, and it is always a Delta table, because that is what a Unity Catalog managed table is. Asking for `file_format = 'parquet'` there is refused before anything is read.
 
-Delta is worth asking for where the table may be queried while it is rebuilt: a Delta update replaces the table in a single transaction, so a reader sees either the previous version in full or the new one, never a half-written file, and the previous versions remain readable. A parquet update deletes the table before it writes the new one, which leaves a window in which a reader finds it missing or half-written.
+Note that a Delta update replaces the table in a single transaction, so a reader sees either the previous version in full or the new one, never a half-written file, and the previous versions remain readable. A parquet update deletes the table before it writes the new one, which leaves a window in which a reader finds it missing or half-written. This might be interesting to some users.
 
-`connect_to_exchangerate` and `convert2ccy` read the table in whichever form it is addressed and stored in, so the choice does not have to be repeated when the table is queried. A table that exists already keeps its format: an update that asks for the other one is refused before anything is written, because Delta will not adopt parquet files it has no transaction log for, and parquet written over a Delta table would throw its history away. Delete the directory before the first update in the new format to change it. The storage itself is shared with the other modules and described in `fincommons.storage`.
 
 ### How the sources are combined
 
@@ -127,16 +123,6 @@ The sources quote on business days, but an amount agreed on a Saturday still has
 The fill stops at the last quote of a pair: the last quoted day is present once and is not carried forward beyond itself. A currency that stops being quoted therefore ends with its last observation, and an amount dated after that gets no rate. Days before the first quote of a pair are not filled either.
 
 The column `IMPUTED` says which rows are filled: it is `True` on a day whose rate was carried from the last quote before it, and `False` on a day a source quoted. Wherever the ECB is the source, those are the weekends and the TARGET closing days, on which it does not publish; any other day without a quote is marked as well, whatever the reason for it. A rebased cross rate is imputed where either of the two euro rates it is computed from is.
-
-### Application for euro area countries
-
-For countries with the euro as their domestic currency, the command `update_silver_exchangerate` can be executed without any further specification:
-
-
-```python
-ex.update_silver_exchangerate(spark, config_path, use_bis = False)
-```
-                                                                                
 
 ### Application for non-EA countries
 
@@ -164,7 +150,20 @@ It passes `rebase`, `use_bis` and `file_format` on to `update_silver_exchangerat
 ```python
 ex.update_exchangerate(spark, config_path, file_format = "delta")
 ```
-                                                                                  
+
+
+## Accessing the data
+
+Function `connect_to_exchangerate` can be used to open the final exchange rate table.
+
+
+```python
+fxrate = ex.connect_to_exchangerate(spark, config_path)
+fxrate
+```
+
+`connect_to_exchangerate` and `convert2ccy` read the table in whichever form it is addressed and stored in, so the choice does not have to be repeated when the table is queried. A table that exists already keeps its format: an update that asks for the other one is refused before anything is written, because Delta will not adopt parquet files it has no transaction log for, and parquet written over a Delta table would throw its history away. Delete the directory before the first update in the new format to change it. The storage itself is shared with the other modules and described in `fincommons.storage`.
+                                                                      
 
 ## The `convert2ccy` function
 

@@ -198,7 +198,7 @@ def _convert2ccy_spark(data, config_path, date, amount, currency, target):
                 fxrate_column_name, new_amount_column_name)
 
 
-def check_internal_rates(internal, source):
+def check_internal_rates(internal, source, base = "EUR"):
     """Refuse an internal file whose rows the combination would misread.
 
     The combination compares reference dates as text -- to decide which source
@@ -207,10 +207,11 @@ def check_internal_rates(internal, source):
     for ``2024-06-03``, is not the same day to it. Such a row would be kept
     beside the ECB's quote of the same day as a second rate for it, or be
     misplaced among the quotes of its pair. The other checks are
-    of the same kind: a base other than the euro, which the rest of the
-    pipeline is not built for and which a rebase drops; one day and pair
-    quoted twice, of which the combination would keep either; and a rate that
-    is missing or not positive, which would win its day over a real one.
+    of the same kind: a base other than the one the file is expected to quote
+    against, which the rest of the pipeline is not built for and which a
+    rebase drops; one day and pair quoted twice, of which the combination
+    would keep either; and a rate that is missing or not positive, which would
+    win its day over a real one.
 
     Parameters
     ----------
@@ -218,6 +219,11 @@ def check_internal_rates(internal, source):
         The internal file, read with :data:`internal_schema`.
     source: str
         Where it was read from, for the message.
+    base: str, optional
+        ISO currency code every row is expected to quote against. The euro by
+        default, which is the base :func:`update_silver_exchangerate` combines
+        the sources on; name another one to check a file that is kept against
+        a different base, outside that combination.
 
     Raises
     ------
@@ -228,7 +234,7 @@ def check_internal_rates(internal, source):
         "a REFDATE that is not a date written as YYYY-MM-DD":
             ~func.col("REFDATE").rlike("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
             | func.to_date(func.col("REFDATE"), "yyyy-MM-dd").isNull(),
-        "a BASE other than EUR": func.col("BASE") != "EUR",
+        f"a BASE other than {base}": func.col("BASE") != base,
         "a VALUE that is missing or not positive":
             func.col("VALUE").isNull() | (func.col("VALUE") <= 0),
     }
