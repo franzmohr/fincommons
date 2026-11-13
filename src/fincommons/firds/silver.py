@@ -1712,20 +1712,30 @@ ANALYTICS_COLUMNS = [
 def _period_start(df):
     """The places a record's publication period may begin, in order.
 
-    ``TechAttrbts/PblctnPrd`` is a choice and ESMA uses more than one of its
-    branches in the same file: the records reported in ``<ModfdRcrd>`` and
-    ``<NewRcrd>`` state ``<FrDt>``, while a termination states the closed
-    range ``<FrDtToDt>`` -- the instrument's publication period has ended, so
-    the file gives both of its ends.
+    ``TechAttrbts/PblctnPrd`` is a choice, ESMA uses more than one of its
+    branches in the same file, and which branch a kind of record uses has
+    changed between vintages, so the kind of record does not say which one to
+    expect. Two files, measured:
 
-    A termination may also state no period at all. In one delta file of
-    January 2020, 4,477 of 24,107 terminations carried nothing in
-    ``TechAttrbts`` but the competent authority and the trading venue. The
-    reference date of the file stands in for those: it is the day the
-    termination was published, which is what the period states for the
-    records that have one, and it is the same substitution
-    :func:`read_cancellations` makes for ``<CancRcrd>``, which carries no
-    period either.
+    * the delta file of 5 January 2020 states ``<FrDt>`` for the 32,875
+      records reported as new or modified, and of its 24,107 terminations
+      states the closed range ``<FrDtToDt>`` for 19,630 -- the publication
+      period has ended, so the file gives both of its ends -- and no period
+      at all for the remaining 4,477, which carry nothing in ``TechAttrbts``
+      but the competent authority and the trading venue;
+    * the delta file of 18 October 2026 states ``<FrDt>`` for every one of
+      its 242,654 terminations, uses ``<FrDtToDt>`` for none of them, and
+      leaves none of them without a period.
+
+    Every branch is therefore read and the first one that is filled is taken,
+    rather than the branch being chosen by the element the record was
+    reported in.
+
+    A termination that states no period at all falls back on the reference
+    date of the file: it is the day the termination was published, which is
+    what the period states for the records that have one, and it is the same
+    substitution :func:`read_cancellations` makes for ``<CancRcrd>``, which
+    carries no period either.
 
     The reference date is only offered where the frame carries it, so that a
     caller reading records outside a Bronze partition gets no silent default.
