@@ -72,11 +72,15 @@ column, so that a question scoped to one regime passes over the other.
 ``LEI`` and ``CIK`` are both carried and neither is derived from the other.
 ESEF prescribes the legal entity identifier, which is the key of
 :mod:`fincommons.entitymasterdata` as well; a filing with the Commission
-states a central index key, and no authoritative mapping between the two is
-published by either body. A row therefore has one of the two filled and the
-other empty, and joining the regimes by entity is not possible here. It is
-the one thing a lake holding both would most like to do, and saying so is
-better than filling the column with a guess.
+states a central index key, and neither body publishes a mapping between the
+two. GLEIF publishes where an entity is registered, and for some tens of
+thousands of records that register is EDGAR -- but nearly all of those are
+funds, named by a series identifier rather than by a central index key, and
+an operating company's record points at its state register instead. A row
+therefore has one of the two filled and the other empty, and joining the
+regimes by entity is not possible here. It is the one thing a lake holding
+both would most like to do, and saying so is better than filling the column
+with a guess.
 
 ``FRAMEWORK`` is IFRS or US-GAAP, taken from the taxonomies the filing tagged
 against rather than from the regime it was filed under. That is what makes the

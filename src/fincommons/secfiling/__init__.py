@@ -34,10 +34,16 @@ of the notes. A quarterly report of 2026 stating 941 facts is carried as 321.
 The tables say so by having no column for a dimension or for text, rather
 than by having columns that are always empty.
 
-The tables are keyed by the central index key of the registrant. There is no
-authoritative mapping from it to the legal entity identifier
-:mod:`fincommons.esef` and :mod:`fincommons.entitymasterdata` are keyed by,
-published by either body, and this module invents none.
+The tables are keyed by the central index key of the registrant. Neither the
+Commission nor GLEIF publishes a mapping from it to the legal entity
+identifier :mod:`fincommons.esef` and :mod:`fincommons.entitymasterdata` are
+keyed by. The closest thing is a by-product of the LEI records themselves,
+which name the register an entity is registered in: some tens of thousands
+name EDGAR, and a few of those carry a central index key. Nearly all of them
+are funds, by their series identifier, and the record of an operating company
+points at its state register instead -- NVIDIA's at Delaware, by a file
+number that is not its central index key. There is nothing there for the
+registrants these tables hold, and this module invents nothing.
 
 The files are downloaded when the pipeline runs and are never shipped with
 the package. They are publications of the Commission, a work of the United

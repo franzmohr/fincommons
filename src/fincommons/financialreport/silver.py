@@ -6,7 +6,8 @@ one after the other, which is what the two source modules carrying the same
 spelling for the columns they share makes possible. Nothing is joined between
 the regimes, and nothing could be: the one key that would join them, the
 entity, is a legal entity identifier on one side and a central index key on
-the other, with no authoritative mapping between them.
+the other, and no mapping published by either body reaches the issuers these
+tables hold.
 
 A source that has no tables is passed over rather than failing the run. A lake
 that has collected only ESEF filings gets a combined table of ESEF filings,
