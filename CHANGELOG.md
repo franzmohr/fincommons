@@ -45,6 +45,16 @@ release may change the public API, which `tests/test_public_api.py` lists.
   `src/fincommons/secfiling/README.md`. It sets out what a company file
   carries and what it leaves out, the terms the Commission publishes under,
   the two Silver tables, and the factsheet.
+- `financialreport`: a README for the module, which it did not have:
+  `src/fincommons/financialreport/README.md`. It sets out the three things
+  the module deliberately does not do -- take anything away from the two
+  source modules, join the regimes by entity, or reconcile the vocabularies
+  in the tables -- what each source covers and cannot, the two combined
+  tables column by column, and the catalogue of measures: what its columns
+  mean, that nothing in it is authoritative since the two boards published
+  no correspondence, how a deployment keeps its own judgements beside it,
+  and that the catalogue resolves a measure over either source table on its
+  own, so an ESEF-only lake can use it without building anything here.
 - `esef`: a template for a factsheet on one issuer, in R and Quarto, with
   voestalpine AG as its example:
   `src/fincommons/esef/templates/esef-analyst-factsheet.qmd`. It renders a
