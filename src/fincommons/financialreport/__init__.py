@@ -27,10 +27,14 @@ dependency runs one way.
 
 It does not join the regimes by entity, because it cannot. ESEF prescribes the
 legal entity identifier, a filing with the Commission states a central index
-key, and no authoritative mapping between the two is published by either body.
-Both columns are carried and one of them is empty in every row. It is the one
-thing a lake holding both regimes would most like to do, and the honest shape
-of the table says so.
+key, and neither body publishes a mapping between the two. What GLEIF does
+publish is where an entity is registered, which for some tens of thousands of
+records is EDGAR -- but nearly all of those are funds, named by a series
+identifier, and the record of an operating company points at its state
+register. The issuers these tables hold are the ones it does not reach. Both
+columns are carried and one of them is empty in every row. It is the one thing
+a lake holding both regimes would most like to do, and the honest shape of the
+table says so.
 
 It does not reconcile the vocabularies in the tables. ``ifrs-full:Revenue``
 and ``us-gaap:Revenues`` stand as they were filed. What the two have in

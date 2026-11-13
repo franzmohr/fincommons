@@ -124,3 +124,5 @@ The last page is a disclaimer, and the cover says in its first line and in its s
 ## Reading the two regimes together
 
 Module `financialreport` combines the output of this module with that of `esef` into one table of facts and one of filings, keyed by source. It reads both and neither reads it, so the tables of this module stand on their own and can be analysed without it.
+
+What it cannot do is join the two by entity. Neither the Commission nor GLEIF publishes a mapping from a central index key to a legal entity identifier. The closest thing is a by-product of the LEI records themselves, which name the register an entity is registered in: some tens of thousands name EDGAR, and a few of those carry a central index key rather than a fund series identifier. It is a register of funds, in effect. An operating company's record points at its state register instead -- NVIDIA's at Delaware's Division of Corporations, by file number `2862596`, which is not its central index key `0001045810`. Both columns are therefore carried in the combined tables and neither is derived from the other.

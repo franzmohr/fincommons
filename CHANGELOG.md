@@ -127,6 +127,18 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- The claim that no mapping exists between a central index key and a legal
+  entity identifier is stated more carefully, in the docstrings of
+  `secfiling` and `financialreport`, in their READMEs and in the two rows of
+  the column catalogue. Neither the Commission nor GLEIF publishes such a
+  mapping, which is what the decision to carry both columns and join neither
+  rests on; but GLEIF's records do name the register an entity is registered
+  in, and for some tens of thousands of them that register is EDGAR. Nearly
+  all of those are funds, named by a series identifier rather than by a
+  central index key, and an operating company's record points at its state
+  register instead -- NVIDIA's at Delaware, by a file number that is not its
+  central index key. The decision is unchanged; the reason for it is now
+  stated as what it is.
 - The corporate design the Quarto templates draw with is one file for the
   whole package, `src/fincommons/templates/r-corporate-design-functions-ggplot2.R`,
   rather than a copy beside the templates of each module. The three templates

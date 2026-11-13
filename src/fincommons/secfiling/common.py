@@ -34,10 +34,14 @@ The Silver layer holds two tables. ``filings`` lists every filing the company
 files name, one row per filing, and ``facts`` holds their facts, one row per
 fact, partitioned by the year the filing was made and rebuilt year by year.
 
-The two tables are keyed by the central index key of the registrant. There is
-no authoritative mapping from it to the legal entity identifier that
-:mod:`fincommons.esef` and :mod:`fincommons.entitymasterdata` are keyed by,
-published by either body, and this module invents none.
+The two tables are keyed by the central index key of the registrant. Neither
+the Commission nor GLEIF publishes a mapping from it to the legal entity
+identifier that :mod:`fincommons.esef` and :mod:`fincommons.entitymasterdata`
+are keyed by. An LEI record names the register the entity is registered in,
+and some tens of thousands name EDGAR; but those are nearly all funds, by
+their series identifier rather than by a central index key, and the record of
+an operating company points at its state register instead. This module
+invents nothing.
 """
 
 import json
