@@ -8,6 +8,43 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
+- `secfiling`: a template for a factsheet on one registrant, in R and Quarto,
+  with NVIDIA Corporation as its example:
+  `src/fincommons/secfiling/templates/secfiling-analyst-factsheet.qmd`. It is
+  the counterpart of the esef factsheet and renders a PDF of some twenty
+  pages from the facts of the registrant's own annual reports and from
+  nothing else: the statement of operations, the balance sheet and the cash
+  flow statement as filed and as a share of revenue, the margins and the cost
+  structure, the growth, the net debt and the leverage, the liquidity and the
+  cover of the debt, the working capital and the cash conversion cycle, the
+  returns on assets, equity, capital employed and invested capital with the
+  decomposition of the return on equity, the quality of the cash flow against
+  the result, the comprehensive income, the per-share figures and what was
+  returned to the holders of the shares, Piotroski's F-score and Altman's
+  Z''-score, the coverage of the tags with checks that the statements add up,
+  and the reports it was built from. Four things differ from the esef
+  factsheet, and each follows from what the Commission publishes. `basis`
+  decides which filing a figure is taken from where several report the same
+  year: the year's own report, as the esef factsheet does, or the most
+  recently filed one, which shows a restatement restated and fills a line the
+  year's own report did not tag under a concept of the taxonomy -- a choice
+  the company files allow because they carry every filing's account of every
+  period. The per-share figures are brought onto the share basis of the
+  latest year by a factor read out of the filings themselves, since a
+  registrant that splits its stock restates its share count and NVIDIA's
+  earnings per share as each report states them run 4.52, 6.90, 3.85, 1.74,
+  11.93, 2.94, 4.90. A financial year is found by a window of 340 to 380 days
+  rather than a fixed 364 or 365, because a registrant on a 52/53-week
+  calendar does not close on the same date every year. EBITDA is derived,
+  which the esef factsheet cannot do, depreciation being a line of the US
+  GAAP cash flow statement under a concept of the taxonomy. There is no mark
+  for a figure read from a concept of the registrant's own making and no page
+  of the issuer's own prose, both being absent from the company files
+  altogether. The last page is a disclaimer, which the cover points at.
+- `secfiling`: a README for the module, which it did not have:
+  `src/fincommons/secfiling/README.md`. It sets out what a company file
+  carries and what it leaves out, the terms the Commission publishes under,
+  the two Silver tables, and the factsheet.
 - `esef`: a template for a factsheet on one issuer, in R and Quarto, with
   voestalpine AG as its example:
   `src/fincommons/esef/templates/esef-analyst-factsheet.qmd`. It renders a
@@ -80,6 +117,13 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- The corporate design the Quarto templates draw with is one file for the
+  whole package, `src/fincommons/templates/r-corporate-design-functions-ggplot2.R`,
+  rather than a copy beside the templates of each module. The three templates
+  that draw with it resolve it themselves, preferring a copy beside the
+  template where there is one, so that a template taken out of the package
+  can carry a design of its own; where neither is there they stop and say so.
+  A change to the design is now made once.
 - `exchangerate`: `check_internal_rates` takes the base currency the rows of
   the internal file are held against as a `base` argument, so that a file
   kept against another base can be checked against that one. It defaults to
