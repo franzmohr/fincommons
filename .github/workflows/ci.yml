@@ -60,8 +60,11 @@ jobs:
   # them run at once. A failure then names its module in the checks list
   # rather than sitting somewhere in half an hour of log.
   #
-  # The rows are written out rather than discovered. A new data module needs
-  # a row of its own here; a new test file of a module already listed is
+  # The rows are written out rather than discovered, so they describe the
+  # modules this branch has. A module arrives with the row that tests it, in
+  # the same change; a row for a module that is not here fails the job, since
+  # the shell leaves a pattern it cannot expand alone and pytest is asked for
+  # a file that does not exist. A new test file of a module already listed is
   # picked up by its pattern. Forgetting a row costs that module its Spark
   # tests and nothing else, since the job above runs every test that does not
   # need the session.
@@ -88,8 +91,6 @@ jobs:
             tests: tests/test_marketpricedata*.py
           - name: esef
             tests: tests/test_esef_*.py
-          - name: secfiling
-            tests: tests/test_secfiling_*.py
           - name: famafrenchdata
             tests: tests/test_famafrenchdata*.py
           # The layer the data sets share: how a Silver table is read and
