@@ -195,9 +195,21 @@ indicators <- tibble::tribble(
   "Piotroski F-score",            "Piotroski-F-Score",              "profit,ocf,assets,debt_noncurrent,current_assets,current_liab,issued_capital,gross_profit,revenue", TRUE,
   "Altman Z''-score",             "Altman-Z''-Score",               "current_assets,current_liab,retained_earnings,assets,ebit,equity,liabilities", FALSE)
 
-# You can adapt your corporate design in the sourced R-Skript
+# You can adapt your corporate design in the sourced R-Skript. It is one file
+# for the whole package, in the templates directory beside the modules, so
+# that a factsheet of either regime looks like the other and a change to the
+# design is made once rather than once per module. A copy beside this
+# template wins over it, which is what lets a template taken out of the
+# package carry a design of its own.
 library(ggplot2)
-source("r-corporate-design-functions-ggplot2.R")
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
 
 library(dplyr)
 library(tidyr)
