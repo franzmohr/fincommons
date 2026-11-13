@@ -1,6 +1,14 @@
 # Every change pushed or proposed to main is tested, built and checked for
 # licensing on a neutral machine before it is merged; see the handbook's
-# section on continuous integration and delivery.
+# section on continuous integration and delivery. The handbook itself is
+# built by a workflow of its own.
+#
+# The jobs answer in the order a reader of a pull request wants them. The
+# tests that need no Spark session come back in a minute and catch most
+# mistakes; the Spark tier takes the better part of half an hour and is split
+# so that a failure names the module it is in; the remaining jobs hold the
+# package to the promises it makes about what it depends on and how it is
+# licensed.
 
 name: CI
 
@@ -46,32 +54,67 @@ jobs:
       - name: Test
         run: python -m pytest -m "not spark"
 
-  test:
-    name: Tests (Python ${{ matrix.python }})
+  # The Spark tier, one module per job. The session the tests share is
+  # session-scoped, so a single process shares one JVM and one heap across
+  # every module it runs; a job each gives every module a fresh one and lets
+  # them run at once. A failure then names its module in the checks list
+  # rather than sitting somewhere in half an hour of log.
+  #
+  # The rows are written out rather than discovered. A new data module needs
+  # a row of its own here; a new test file of a module already listed is
+  # picked up by its pattern. Forgetting a row costs that module its Spark
+  # tests and nothing else, since the job above runs every test that does not
+  # need the session.
+  spark:
+    name: Tests with Spark (${{ matrix.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     strategy:
+      # One module failing must not cancel the others: which of them fail
+      # together is the first thing worth knowing about a broken change.
       fail-fast: false
       matrix:
-        # The oldest and the newest Python the package declares.
-        python: ["3.11", "3.12"]
+        include:
+          # The largest of them by some way, and the slowest: it builds the
+          # historical database. Split further if it becomes the job every
+          # other job waits for.
+          - name: firds
+            tests: tests/test_firds_*.py
+          - name: entitymasterdata
+            tests: tests/test_entitymasterdata.py
+          - name: exchangerate
+            tests: tests/test_exchangerate.py
+          - name: marketpricedata
+            tests: tests/test_marketpricedata*.py
+          - name: esef
+            tests: tests/test_esef_*.py
+          - name: secfiling
+            tests: tests/test_secfiling_*.py
+          - name: famafrenchdata
+            tests: tests/test_famafrenchdata*.py
+          # The layer the data sets share: how a Silver table is read and
+          # written, and the file layout of a partitioned table.
+          - name: infrastructure
+            tests: tests/test_layout.py tests/test_storage.py
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      # Spark 4 and Delta 4 run on Java 17.
+      # Spark 4 and Delta 4 run on Java 17 and 21; the older of the two is
+      # what the package promises, so it is what is tested.
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
 
-      # The session the tests share fetches the Delta jars from Maven when it
-      # starts; keeping Ivy's cache saves fetching them on every run.
+      # Every job of the matrix fetches the Delta jars from Maven as its
+      # session starts, so the cache earns its keep more here than it would
+      # with one job.
       - uses: actions/cache@v6
         with:
           path: ~/.ivy2
@@ -80,22 +123,29 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[local,dev,marketprice]"
 
-      # Every test is named as it runs, so that a slow one is visible as
-      # such, and the slowest are listed at the end. Coverage is measured on
-      # the newest Python and sent to Codecov, which draws the README badge.
+      # The pattern is deliberately unquoted: the shell expands it, which is
+      # what lets one row stand for the seven test files of a module. Every
+      # test is named as it runs, so that a slow one is visible as such.
       - name: Test
-        run: python -m pytest -v --durations=25 ${{ matrix.python == '3.12' && '--cov=fincommons --cov-report=xml' || '' }}
+        run: >
+          python -m pytest ${{ matrix.tests }} -m spark -v --durations=25
+          --cov=fincommons --cov-report=xml
 
+      # Codecov merges the reports of one commit, so each module sends its
+      # own and the flag says which it was.
       - uses: codecov/codecov-action@v7
-        if: matrix.python == '3.12'
         with:
           files: coverage.xml
+          flags: ${{ matrix.name }}
           token: ${{ secrets.CODECOV_TOKEN }}
 
   # The lower bounds in pyproject.toml are a promise to a Databricks Runtime
-  # that ships older packages than PyPI does. This job holds the package to
-  # that promise by installing the oldest version of every direct dependency
-  # it declares, and running the whole suite against them.
+  # that ships older packages than PyPI does, and the comment above them says
+  # they are the oldest versions the suite passes on. This job is what makes
+  # that a claim rather than a hope: it installs the oldest version of every
+  # direct dependency and runs the whole suite against them, in one process,
+  # since what is being tested is the versions and not the layout of the
+  # tests.
   minimum-versions:
     name: Tests on the oldest declared dependencies
     runs-on: ubuntu-latest
@@ -129,20 +179,64 @@ jobs:
       - name: Test
         run: .venv/bin/python -m pytest -v --durations=25
 
-  build:
-    name: Build and check the distributions
+  # What is actually shipped. The package deliberately does not depend on
+  # PySpark: a Databricks Runtime provides Spark, and a wheel that required
+  # it from PyPI would shadow that installation. The promise behind that
+  # decision is written at the top of fincommons/__init__.py -- the column
+  # catalogue needs neither Spark nor a data lake -- and this job is where it
+  # is kept honest. A module imported at the top of the package that reaches
+  # for PySpark would pass every test above, where PySpark is installed, and
+  # break the first notebook on a cluster that imports fincommons before its
+  # session exists.
+  wheel:
+    name: Build the distributions and import them without Spark
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
       - name: Build
         run: |
           python -m pip install build twine
           python -m build
           python -m twine check --strict dist/*
 
+      - name: The wheel installs and imports with no extras
+        run: |
+          python -m venv /tmp/bare
+          /tmp/bare/bin/pip install --quiet dist/*.whl
+          /tmp/bare/bin/python - <<'PY'
+          import importlib.util
+
+          assert importlib.util.find_spec("pyspark") is None, (
+              "installing the wheel brought PySpark with it; the package is "
+              "meant to take the Spark a Databricks Runtime provides"
+          )
+
+          import fincommons
+
+          # The promise at the top of fincommons/__init__.py.
+          print(fincommons.__version__)
+          print(fincommons.describe_column("TRADGVN"))
+          PY
+
+      # Kept so that a release can be inspected as it was built, and so that
+      # a failure of twine check can be read against the files it checked.
+      - uses: actions/upload-artifact@v5
+        with:
+          name: distributions
+          path: dist/
+
+  # fincommons is licensed as a whole under the EUPL 1.2, and every file says
+  # so through REUSE.toml. The test suite checks that the package imports
+  # nothing but open dependencies it declares; this checks that what is
+  # shipped states its licence in the form the specification asks for.
   licensing:
     name: REUSE compliance
     runs-on: ubuntu-latest
