@@ -1,0 +1,41 @@
+{
+ "cik": 1114448,
+ "entityName": "Demo Foreign Issuer AG",
+ "facts": {
+  "dei": {
+   "EntityCommonStockSharesOutstanding": {
+    "units": {
+     "shares": [
+      {
+       "end": "2026-02-10",
+       "val": 5,
+       "accn": "0001114448-26-000001",
+       "fy": 2025,
+       "fp": "FY",
+       "form": "20-F",
+       "filed": "2026-02-14"
+      }
+     ]
+    }
+   }
+  },
+  "ifrs-full": {
+   "Revenue": {
+    "units": {
+     "USD": [
+      {
+       "start": "2025-01-01",
+       "end": "2025-12-31",
+       "val": 500,
+       "accn": "0001114448-26-000001",
+       "fy": 2025,
+       "fp": "FY",
+       "form": "20-F",
+       "filed": "2026-02-14"
+      }
+     ]
+    }
+   }
+  }
+ }
+}

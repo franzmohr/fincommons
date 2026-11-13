@@ -1,0 +1,94 @@
+{
+ "cik": 1177394,
+ "entityName": "Demo Registrant Inc.",
+ "facts": {
+  "dei": {
+   "EntityCommonStockSharesOutstanding": {
+    "label": "Shares outstanding",
+    "units": {
+     "shares": [
+      {
+       "end": "2026-09-23",
+       "val": 79777511,
+       "accn": "0001628280-26-000002",
+       "fy": 2026,
+       "fp": "Q3",
+       "form": "10-Q",
+       "filed": "2026-10-01"
+      }
+     ]
+    }
+   }
+  },
+  "us-gaap": {
+   "Assets": {
+    "label": "Assets",
+    "units": {
+     "USD": [
+      {
+       "end": "2025-11-30",
+       "val": 100,
+       "accn": "0001628280-26-000001",
+       "fy": 2025,
+       "fp": "FY",
+       "form": "10-K",
+       "filed": "2026-01-20"
+      },
+      {
+       "end": "2025-11-30",
+       "val": 101,
+       "accn": "0001628280-26-000002",
+       "fy": 2026,
+       "fp": "Q3",
+       "form": "10-Q",
+       "filed": "2026-10-01"
+      },
+      {
+       "end": "2026-08-31",
+       "val": 120,
+       "accn": "0001628280-26-000002",
+       "fy": 2026,
+       "fp": "Q3",
+       "form": "10-Q",
+       "filed": "2026-10-01",
+       "frame": "CY2026Q3I"
+      }
+     ]
+    }
+   },
+   "Revenues": {
+    "label": "Revenues",
+    "units": {
+     "USD": [
+      {
+       "start": "2024-12-01",
+       "end": "2025-11-30",
+       "val": 900,
+       "accn": "0001628280-26-000001",
+       "fy": 2025,
+       "fp": "FY",
+       "form": "10-K",
+       "filed": "2026-01-20"
+      }
+     ]
+    }
+   },
+   "AnnouncedResult": {
+    "label": "An 8-K figure",
+    "units": {
+     "USD": [
+      {
+       "end": "2026-05-31",
+       "val": 7,
+       "accn": "0001628280-26-000003",
+       "fy": 2026,
+       "fp": "Q2",
+       "form": "8-K",
+       "filed": "2026-06-10"
+      }
+     ]
+    }
+   }
+  }
+ }
+}
