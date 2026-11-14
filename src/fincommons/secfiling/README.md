@@ -83,6 +83,34 @@ One row per filing the company file names, reconstructed from the facts. `FILING
 
 One row per fact of a filing, partitioned by `FILEDYEAR`, the year the filing was made -- which is monotonic, as a fiscal year is not, since one filing states several of them. The columns a fact shares with `esef` are spelled as that module spells them, so that a module combining the two is combining two tables of the same shape rather than translating one into the other. There is no `DIMENSIONS`, no `TEXT`, no `DECIMALS` and no `LANG`, each absent because the company files do not carry it.
 
+## Data quality
+
+`quality` holds the checks the figures are held to, and `update_silver_secfiling_quality` writes what they found into a third Silver table, `issues`, beside the two the module collects. The machinery is shared with the ESEF module in [`fincommons.dataquality`](../dataquality.py); what lives here are the sixteen checks themselves, because a check knows the data set it is made of.
+
+```python
+from fincommons import secfiling
+from fincommons.dataquality import describe_check, issue_counts, with_issues
+
+secfiling.update_silver_secfiling_quality(spark, "paths.yaml")
+
+issues = secfiling.connect_to_secfiling(spark, "paths.yaml", "issues")
+issue_counts(issues, dataset="secfiling").show()      # one row per check
+print(describe_check("RESTATED_MATERIALLY"))          # what a code means
+
+facts = secfiling.connect_to_secfiling(spark, "paths.yaml", "facts")
+with_issues(facts, issues, ["CIK", "FILING", "FACT"]) # label the records
+```
+
+**Nothing is dropped and nothing is corrected.** A check writes a row and leaves the figure where it is: the tables are what the Commission published, and a reader who wants to know what is wrong with a figure before using it joins the issues on. A filing with nothing wrong with it has no row at all -- the absence of a code is what says a record passed.
+
+The valuable checks are the arithmetic ones, and they are the relations a statement states on both sides: total assets against the liabilities and the equity, revenue against the cost of revenue and the gross profit, the income before tax against the tax and the net income, the three cash flows against the movement in cash. A difference there is a tagging fault rather than a difference of opinion, because the scale of a number is an attribute of the tag and invisible on the page. The rest are structural: a period that ends before it begins, a figure tagged twice with two values, a concept in two units, a line the comparison looked for and did not find.
+
+One check has no counterpart in the ESEF module, and it is the one the company files make possible. `RESTATED_MATERIALLY` sets what a year's own report said beside what a later report says about that same year, which a company file allows because it carries every filing's account of every period. On NVIDIA's 69 filings it finds 149 restatements. Share counts and per-share amounts are passed over: a split restates those by arithmetic rather than by judgement, and NVIDIA's two splits accounted for 69 further rows that said nothing about the accounts.
+
+What each code means, how severe it is and what to do about it are rows of `data/dataquality_checks.csv` rather than branches in the code, so that the people most able to find a check wrong can read it. Nothing in it is authoritative; `describe_check` prints a row, and a deployment that keeps checks of its own ships a catalogue of the same shape and names it.
+
+Two things found by running the checks over NVIDIA's own filings are worth repeating, because both looked like faults and only one was. A US balance sheet presents mezzanine equity between the liabilities and the equity, so leaving `TemporaryEquity...` out of the identity reported NVIDIA's 2016 and 2017 reports as unbalanced by exactly the 87 and 31 million they hold. And three of its filings are reported as made before the period they report on had ended: the period end of a filing is the latest period any of its facts reports on, so a fact looking forward -- in these three, an accelerated share repurchase settling the next quarter -- carries it past the day the filing was made. That is a property of how `PERIODEND` is derived and not of the filings.
+
 ## A factsheet on one registrant
 
 `templates/secfiling-analyst-factsheet.qmd` is a template for a factsheet on one registrant, written in R and rendered with Quarto to a PDF of some twenty pages, with **NVIDIA Corporation** as its example. It is the counterpart of the esef module's factsheet and is built the same way: it reads the two Silver tables as parquet and sets, from the facts of the registrant's own reports and from nothing else:

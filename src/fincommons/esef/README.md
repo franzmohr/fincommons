@@ -130,6 +130,35 @@ xBRL-JSON writes the end of a period as the start of the following day, so that 
 
 The table is rebuilt country by country, and only for the countries whose reports changed. A country is one partition, and one whose Bronze layer holds a report its partition was not built from is read again and replaces its partition, leaving the others as they were. A report that cannot be read is logged and counted; its country is written without it and left unmarked, so that the next run tries it again.
 
+## Data quality
+
+`quality` holds the checks the figures are held to, and `update_silver_esef_quality` writes what they found into a third Silver table, `issues`, beside the two the pipeline builds. The machinery is shared with the SEC module in [`fincommons.dataquality`](../dataquality.py); what lives here are the eighteen checks themselves, read from the concepts of the IFRS taxonomy.
+
+```python
+from fincommons import esef
+from fincommons.dataquality import describe_check, issue_counts
+
+esef.update_silver_esef_quality(spark, "paths.yaml", countries=["AT"])
+
+issues = esef.connect_to_esef_issues(spark, "paths.yaml")
+issue_counts(issues, by=["COUNTRY"], dataset="esef").show()
+print(describe_check("HIGH_EXTENSION_SHARE"))
+```
+
+A run told to check part of the population replaces those countries and carries the rest forward, which is how the pipeline collects: one country at a time.
+
+**Nothing is dropped and nothing is corrected.** A check writes a row and leaves the figure where it is. A filing with nothing wrong with it has no row at all.
+
+The valuable checks are the arithmetic ones, and they are the relations a statement states on both sides: total assets against the current and the non-current assets and again against the equity and the liabilities, revenue against the cost of sales and the gross profit, the result before tax against the tax and the result, the three cash flows against the movement in cash. They are run over the undimensioned facts only -- a figure broken down by segment is a part of a total and not a total.
+
+Two checks have no counterpart in the SEC module, because the repository publishes something the Commission does not: it validates every filing and publishes the counts, which `VALIDATION_ERRORS` carries into the table rather than leaving on its site, and it lists filings whose xBRL-JSON it could not produce, which `NO_FACTS` counts. Both read the table of filings, which covers the whole index rather than the reports a lake has collected, so their rows name filings whose facts are not in the lake -- which is right, since both questions are answered by the index and a filing nobody downloaded is not thereby sound. On one index of 24,180 filings, 983 carry validation errors and 192 have no facts to publish. Against that, the restatement check of the SEC module has no counterpart here: the repository publishes each filing on its own.
+
+`HIGH_EXTENSION_SHARE` is the one check that says nothing is wrong. A report that tags more than half its figures with concepts of the issuer's own making is not faulty, it is hard to compare, and the code says so where the coverage report says it at the level of the market.
+
+What each code means, how severe it is and what to do about it are rows of `data/dataquality_checks.csv` rather than branches in the code. Nothing in it is authoritative; `describe_check` prints a row, and a deployment that keeps checks of its own ships a catalogue of the same shape and names it.
+
+The checks were run over six real voestalpine reports, for the financial years to March 2021 through 2026, and they found nothing in the figures: the balance sheets balance, the income statements reconcile and the cash flows sum. Getting there corrected one check. The identity of the result before tax, the tax and the result does not hold without the discontinued operations, which fall between those lines; voestalpine tags them, and its reports for 2021/22 and 2022/23 were reported as faulty by exactly the discontinued result -- 257.9 and 93.4 million -- until the check read it.
+
 ## A factsheet on one issuer
 
 `templates/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto to a PDF of some twenty pages, with voestalpine AG as its example. It reads the two Silver tables as parquet and sets, from the facts of the issuer's own reports and from nothing else:

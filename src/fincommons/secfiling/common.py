@@ -253,6 +253,23 @@ def create_directory_tree(config_path):
         os.makedirs(folder, exist_ok=True)
 
 
+def path_silver_issues(config_path):
+    """Path of the table of issues, or ``None`` where it is named."""
+    return ref_silver_issues(config_path).path
+
+
+def ref_silver_issues(config_path):
+    """Where the table of data quality issues lives.
+
+    It sits in the Silver layer beside the tables it is derived from, which is
+    where a table derived from a Silver table belongs: it is read from the two
+    tables of this module and from nothing else, and a lake that never runs
+    the checks simply has no such table. No section of the configuration file
+    has to be added for it.
+    """
+    return resolve(config_path, "secfiling", "silver", "issues")
+
+
 def connect_to_secfiling(spark, config_path, table="facts"):
     """Open a table of the Silver layer.
 
@@ -263,13 +280,18 @@ def connect_to_secfiling(spark, config_path, table="facts"):
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     table: str
-        Name of the table, ``'facts'`` or ``'filings'``.
+        Name of the table, ``'facts'``, ``'filings'`` or ``'issues'`` --
+        the last being what the checks of
+        :mod:`fincommons.secfiling.quality` found.
     """
     if table == "facts":
         return read_silver(spark, ref_silver_facts(config_path))
     if table == "filings":
         return read_silver(spark, ref_silver_filings(config_path))
-    raise ValueError(f"Table {table!r} not recognised. Use 'facts' or 'filings'.")
+    if table == "issues":
+        return read_silver(spark, ref_silver_issues(config_path))
+    raise ValueError(
+        f"Table {table!r} not recognised. Use 'facts', 'filings' or 'issues'.")
 
 
 #: What this module offers. The layout of the data lake, and the tables read
@@ -293,8 +315,10 @@ __all__ = [
     "path_silver_base",
     "path_silver_facts",
     "path_silver_filings",
+    "path_silver_issues",
     "ref_silver_facts",
     "ref_silver_filings",
+    "ref_silver_issues",
     "write_bytes",
     "write_json",
 ]

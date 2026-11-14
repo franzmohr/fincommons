@@ -18,6 +18,8 @@ inline XBRL, and neither needs a parser installed.
 ``silver``
     the table of filings and the table of facts, rebuilt from the company
     files collected,
+``quality``
+    the checks the figures are held to, and the table of issues they find,
 ``pipeline``
     the whole pipeline in one call, :func:`update_secfiling`.
 
@@ -54,4 +56,5 @@ from .common import *
 from .parse import *
 from .bronze import *
 from .silver import *
+from .quality import *
 from .pipeline import *

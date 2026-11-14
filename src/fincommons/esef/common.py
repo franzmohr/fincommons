@@ -264,6 +264,41 @@ def write_watermark(config_path, country, signature, reports):
     )
 
 
+def ref_silver_issues(config_path):
+    """Where the table of data quality issues lives.
+
+    It sits in the Silver layer beside the tables it is derived from, which is
+    where a table derived from a Silver table belongs: it is read from the two
+    tables of this module and from nothing else, and a lake that never runs
+    the checks simply has no such table. No section of the configuration file
+    has to be added for it.
+    """
+    return resolve(config_path, "esef", "silver", "issues")
+
+
+def path_silver_issues(config_path):
+    """Path of the table of issues, or ``None`` where it is named."""
+    return ref_silver_issues(config_path).path
+
+
+def connect_to_esef_issues(spark, config_path):
+    """Opens the table of data quality issues in the Silver layer.
+
+    One row per issue the checks of :mod:`fincommons.esef.quality` found: the
+    filing, the fact where the issue is about one, and the code, which
+    :func:`fincommons.dataquality.describe_check` turns into a sentence.
+    Filter on ``COUNTRY`` first: the table is partitioned by it.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An active Spark session.
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be a yaml-file.
+    """
+    return read_silver(spark, ref_silver_issues(config_path))
+
+
 def connect_to_esef(spark, config_path):
     """Opens the table of facts in the Silver layer.
 
@@ -339,6 +374,7 @@ __all__ = [
     "SOURCE",
     "connect_to_esef",
     "connect_to_esef_filings",
+    "connect_to_esef_issues",
     "create_directory_tree",
     "facts_schema",
     "filings_schema",
@@ -352,12 +388,14 @@ __all__ = [
     "path_index_record",
     "path_report_record",
     "path_silver_base",
+    "path_silver_issues",
     "path_silver_watermarks",
     "read_json",
     "read_report_records",
     "read_watermark",
     "ref_silver_facts",
     "ref_silver_filings",
+    "ref_silver_issues",
     "write_bytes",
     "write_json",
     "write_watermark",

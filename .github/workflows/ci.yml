@@ -100,9 +100,11 @@ jobs:
           - name: famafrenchdata
             tests: tests/test_famafrenchdata*.py
           # The layer the data sets share: how a Silver table is read and
-          # written, and the file layout of a partitioned table.
+          # written, the file layout of a partitioned table, and the machinery
+          # every data quality run uses. The checks themselves belong to their
+          # data sets and run with them, in the esef and secfiling rows.
           - name: infrastructure
-            tests: tests/test_layout.py tests/test_storage.py
+            tests: tests/test_layout.py tests/test_storage.py tests/test_dataquality.py
     steps:
       - uses: actions/checkout@v7
 
