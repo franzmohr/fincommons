@@ -88,6 +88,8 @@ def facts_from_esef(spark, config_path):
         facts
         .withColumn("SOURCE", func.lit("esef"))
         .withColumn("CIK", func.lit(None).cast("string"))
+        .withColumn("EDINETCODE", func.lit(None).cast("string"))
+        .withColumn("JCN", func.lit(None).cast("string"))
         .withColumn("FRAMEWORK", _framework_of(func.col("CONCEPT")))
         .withColumn("PERIODYEAR", func.year("PERIODEND"))
         .select(*fact_schema.names)
@@ -113,6 +115,8 @@ def facts_from_sec(spark, config_path):
         facts.join(filings, "FILING", "left")
         .withColumn("SOURCE", func.lit("sec"))
         .withColumn("LEI", func.lit(None).cast("string"))
+        .withColumn("EDINETCODE", func.lit(None).cast("string"))
+        .withColumn("JCN", func.lit(None).cast("string"))
         .withColumn("FRAMEWORK", _framework_of(func.col("CONCEPT")))
         .withColumn("PERIODYEAR", func.year("PERIODEND"))
         .withColumn("TEXT", func.lit(None).cast("string"))
@@ -141,6 +145,8 @@ def filings_from_esef(spark, config_path):
         filings.join(about, "FILING", "left")
         .withColumn("SOURCE", func.lit("esef"))
         .withColumn("CIK", func.lit(None).cast("string"))
+        .withColumn("EDINETCODE", func.lit(None).cast("string"))
+        .withColumn("JCN", func.lit(None).cast("string"))
         .withColumn("FORM", func.lit(None).cast("string"))
         .withColumn("PERIODYEAR", func.year("PERIODEND"))
         .withColumn("FACTS", func.coalesce("FACTS", func.lit(0)))
@@ -157,8 +163,125 @@ def filings_from_sec(spark, config_path):
         read_silver(spark, ref_silver_filings(config_path))
         .withColumn("SOURCE", func.lit("sec"))
         .withColumn("LEI", func.lit(None).cast("string"))
+        .withColumn("EDINETCODE", func.lit(None).cast("string"))
+        .withColumn("JCN", func.lit(None).cast("string"))
         .withColumn("COUNTRY", func.lit(None).cast("string"))
         .withColumn("PERIODYEAR", func.year("PERIODEND"))
+        .select(*filing_schema.names)
+    )
+
+
+#: What a Japanese filing states it reports under, and the name the combined
+#: table records it as. A Japanese report says so in its own document and
+#: entity information rather than leaving it to be read off a prefix, which
+#: is as well: a group reporting under IFRS tags its statements against the
+#: Japanese IFRS taxonomy and its front matter against the same disclosure
+#: taxonomy every other filer uses, so the prefix of a fact does not settle
+#: it. ``JP-GAAP`` has no counterpart in the other two regimes.
+JAPANESE_STANDARDS = {"IFRS": "IFRS", "US GAAP": "US-GAAP",
+                      "Japan GAAP": "JP-GAAP"}
+
+#: The element a Japanese filing states its accounting standard under.
+STANDARDS_ELEMENT = "jpdei_cor:AccountingStandardsDEI"
+
+
+def _japanese_framework(facts):
+    """One row per filing: what it says it reports under.
+
+    Read from the filing rather than from the prefixes of its facts, and
+    mapped through :data:`JAPANESE_STANDARDS`; a filing stating a standard
+    this module has no name for keeps it as filed rather than being called
+    something it is not.
+    """
+    stated = func.trim(func.col("TEXT"))
+    named = func.lit(None).cast("string")
+    for japanese, name in JAPANESE_STANDARDS.items():
+        named = func.when(stated == japanese, func.lit(name)).otherwise(named)
+    return (facts
+            .where(func.col("CONCEPT") == STANDARDS_ELEMENT)
+            .groupBy("FILING")
+            .agg(func.max(func.coalesce(named, stated)).alias("FRAMEWORK")))
+
+
+def facts_from_edinet(spark, config_path):
+    """The EDINET facts, in the columns of the combined table.
+
+    The period the filing reports on is on that module's table of filings and
+    not on its facts, as with the Commission, so the two are joined on the
+    document number. ``TEXT`` and ``DIMENSIONS`` are carried as they stand:
+    the agency's conversion gives the whole of a report, and both the
+    narrative facts and the breakdowns are in it.
+
+    What travels in ``DIMENSIONS`` is worth knowing before the rows are used.
+    A report that prepares consolidated statements states every figure twice,
+    the group's with no dimension and the parent company's own under
+    ``NonConsolidatedMember``, and both are here because both are in the
+    source table.
+
+    One kind of fact is left out, and it is the only thing this module drops.
+    The agency's conversion carries no dates, so the edinet module resolves
+    the period of a fact from what the filing says about itself and leaves
+    both dates empty for a context whose shape it does not recognise rather
+    than inventing them. ``PRDEND`` is the one column of the combined table
+    of facts that is not allowed to be empty -- a fact that sits in no period
+    can be compared with nothing, which is what this table is for -- so such
+    a fact is not carried here. It is not lost: it is in the edinet table of
+    facts, and the ``PERIOD_UNRESOLVED`` check of that module's quality
+    module counts them.
+    """
+    from ...storage import read_silver
+    from ..edinet.common import ref_silver_facts, ref_silver_filings
+
+    facts = read_silver(spark, ref_silver_facts(config_path))
+    filings = read_silver(spark, ref_silver_filings(config_path)) \
+        .select("FILING", "PERIODEND", "JCN")
+
+    return (
+        facts.where(func.col("PRDEND").isNotNull())
+        .join(filings, "FILING", "left")
+        .join(_japanese_framework(facts), "FILING", "left")
+        .withColumn("SOURCE", func.lit("edinet"))
+        .withColumn("LEI", func.lit(None).cast("string"))
+        .withColumn("CIK", func.lit(None).cast("string"))
+        .withColumn("PERIODYEAR", func.year("PERIODEND"))
+        .select(*fact_schema.names)
+    )
+
+
+def filings_from_edinet(spark, config_path):
+    """The EDINET filings, in the columns of the combined table.
+
+    ``FORM`` is the document type as the agency codes it -- ``'120'`` is the
+    annual securities report -- and not an English name this module made up
+    for it; see
+    :data:`fincommons.financialreport.edinet.common.REPORT_TYPES`. ``COUNTRY``
+    is empty because the agency states none, as the Commission does not.
+
+    The count of facts comes from the facts table, as it does for ESEF: the
+    index says how many documents were filed on a day and nothing about how
+    many facts are in one. A filing the agency never converted has no facts
+    here and is carried with a count of nothing, which is what says the
+    difference between a filing that is empty and one that was never read.
+    """
+    from ...storage import read_silver
+    from ..edinet.common import ref_silver_facts, ref_silver_filings
+
+    filings = read_silver(spark, ref_silver_filings(config_path))
+    facts = read_silver(spark, ref_silver_facts(config_path))
+
+    about = (facts.groupBy("FILING")
+             .agg(func.count(func.lit(1)).alias("FACTS")))
+
+    return (
+        filings.join(about, "FILING", "left")
+        .join(_japanese_framework(facts), "FILING", "left")
+        .withColumn("SOURCE", func.lit("edinet"))
+        .withColumn("LEI", func.lit(None).cast("string"))
+        .withColumn("CIK", func.lit(None).cast("string"))
+        .withColumn("COUNTRY", func.lit(None).cast("string"))
+        .withColumn("FORM", func.col("DOCTYPE"))
+        .withColumn("PERIODYEAR", func.year("PERIODEND"))
+        .withColumn("FACTS", func.coalesce("FACTS", func.lit(0)))
         .select(*filing_schema.names)
     )
 
@@ -167,6 +290,7 @@ def filings_from_sec(spark, config_path):
 READERS = {
     "esef": (facts_from_esef, filings_from_esef),
     "sec": (facts_from_sec, filings_from_sec),
+    "edinet": (facts_from_edinet, filings_from_edinet),
 }
 
 
@@ -255,11 +379,15 @@ def update_silver_financialreport(spark, config_path, sources=None,
 #: What this module offers. Building the combined tables.
 __all__ = [
     "FRAMEWORK_PREFIXES",
+    "JAPANESE_STANDARDS",
     "READERS",
+    "STANDARDS_ELEMENT",
     "available_sources",
     "combine",
+    "facts_from_edinet",
     "facts_from_esef",
     "facts_from_sec",
+    "filings_from_edinet",
     "filings_from_esef",
     "filings_from_sec",
     "update_silver_financialreport",

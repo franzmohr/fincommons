@@ -45,7 +45,9 @@ from ...storage import read_silver
 #: The sources the combined tables are built from, and the module each is
 #: read from. They are named here rather than imported, so that this module
 #: can be read, and its tables described, in a lake that has neither.
-SOURCES = {"esef": "fincommons.financialreport.esef", "sec": "fincommons.financialreport.sec"}
+SOURCES = {"esef": "fincommons.financialreport.esef",
+           "sec": "fincommons.financialreport.sec",
+           "edinet": "fincommons.financialreport.edinet"}
 
 
 fact_schema = StructType() \
@@ -54,6 +56,8 @@ fact_schema = StructType() \
     .add("FACT", StringType(), False) \
     .add("LEI", StringType(), True) \
     .add("CIK", StringType(), True) \
+    .add("EDINETCODE", StringType(), True) \
+    .add("JCN", StringType(), True) \
     .add("FRAMEWORK", StringType(), True) \
     .add("PERIODEND", DateType(), True) \
     .add("PERIODYEAR", IntegerType(), True) \
@@ -69,25 +73,41 @@ fact_schema = StructType() \
 ``SOURCE`` says which module the row came from and is the first partition
 column, so that a question scoped to one regime passes over the other.
 
-``LEI`` and ``CIK`` are both carried and neither is derived from the other.
-ESEF prescribes the legal entity identifier, which is the key of
+Four identifier columns are carried, one regime's own in each, and a row has
+the column of its source filled and the others empty. ESEF prescribes the
+legal entity identifier, which is the key of
 :mod:`fincommons.entitymasterdata` as well; a filing with the Commission
-states a central index key, and neither body publishes a mapping between the
-two. GLEIF publishes where an entity is registered, and for some tens of
-thousands of records that register is EDGAR -- but nearly all of those are
-funds, named by a series identifier rather than by a central index key, and
-an operating company's record points at its state register instead. A row
-therefore has one of the two filled and the other empty, and joining the
-regimes by entity is not possible here. It is the one thing a lake holding
-both would most like to do, and saying so is better than filling the column
-with a guess.
+states a central index key; a filing with Japan's agency states an EDINET
+code, and ``JCN`` beside it is the corporate number of the National Tax
+Agency.
 
-``FRAMEWORK`` is IFRS or US-GAAP, taken from the taxonomies the filing tagged
-against rather than from the regime it was filed under. That is what makes the
-population where the two genuinely meet usable: a foreign private issuer
+Nothing here is derived from anything else here, and for two of the three
+regimes nothing could be. Neither the Commission nor GLEIF publishes a
+mapping from a central index key to an LEI: GLEIF publishes where an entity
+is registered, and for some tens of thousands of records that register is
+EDGAR, but nearly all of those are funds named by a series identifier, while
+an operating company's record points at its state register instead.
+
+``JCN`` is the exception and is the reason it is carried. The corporate
+number is a check digit followed by the twelve-digit register number of the
+commercial register, and GLEIF records that same register number against an
+LEI issued to a Japanese company, so the two can be joined by arithmetic
+rather than by a lookup table or a comparison of names. It reaches about one
+listed Japanese filer in seven, the rest having no LEI at all. That join is
+not made here: it needs GLEIF, which this module does not read, and the
+column is carried so that whoever has GLEIF can make it. See the edinet
+module's README for the check and what it found.
+
+``FRAMEWORK`` is IFRS, US-GAAP or JP-GAAP, taken from what the filing reports
+under rather than from the regime it was filed under. That is what makes the
+population where the regimes genuinely meet usable: a foreign private issuer
 reporting under IFRS files with the Commission and tags against the IFRS
 taxonomy, and is comparable with the European reports rather than with the
-American ones beside it.
+American ones beside it -- and so is a Japanese group that has adopted IFRS,
+which files in Tokyo and tags against the Japanese IFRS taxonomy. JP-GAAP has
+no counterpart in either of the other two regimes and is not comparable with
+them line by line; a Japanese profit and loss account has two results where
+an IFRS one has a single operating line.
 
 ``CONCEPT`` is the concept as the filing tagged it, prefix and name, and is
 not resolved across frameworks. ``ifrs-full:Revenue`` and
@@ -95,11 +115,19 @@ not resolved across frameworks. ``ifrs-full:Revenue`` and
 a judgement, and :mod:`fincommons.financialreport.combined.mapping` is where it is
 made.
 
-``TEXT`` and ``DIMENSIONS`` are filled only for rows that came from ESEF, and
-not because this module drops them for the other: the company files of the
-Commission carry no narrative facts and no breakdowns at all. An empty
-``DIMENSIONS`` means the fact is for the entity as a whole, which is true of
-every row the Commission contributes.
+``TEXT`` and ``DIMENSIONS`` are filled for the rows that came from ESEF and
+from EDINET, and empty for every row the Commission contributes -- not
+because this module drops them, but because the company files carry no
+narrative facts and no breakdowns at all. An empty ``DIMENSIONS`` means the
+fact is for the entity as a whole, which is true of every row from the
+Commission and of only some of the rows from the other two.
+
+A Japanese row needs one thing read before it is compared with anything: a
+report that prepares consolidated statements states every figure twice, the
+group's with no dimension and the parent company's own under
+``NonConsolidatedMember``. Both are in this table, as both are in the source
+table, so a question that does not say which it wants is asking for two sets
+of accounts at once.
 """
 
 filing_schema = StructType() \
@@ -107,6 +135,8 @@ filing_schema = StructType() \
     .add("FILING", StringType(), False) \
     .add("LEI", StringType(), True) \
     .add("CIK", StringType(), True) \
+    .add("EDINETCODE", StringType(), True) \
+    .add("JCN", StringType(), True) \
     .add("NAME", StringType(), True) \
     .add("FRAMEWORK", StringType(), True) \
     .add("COUNTRY", StringType(), True) \
@@ -117,11 +147,15 @@ filing_schema = StructType() \
 """The shape of the combined table of filings: one row per filing.
 
 ``COUNTRY`` is filled for an ESEF filing, which is filed with the mechanism of
-one member state, and empty for a filing with the Commission, which is not.
-``FORM`` is the other way round: the Commission names the form a filing was
-made on, and the ESEF regime has one kind of report and names none. Each is
-empty where its regime states nothing, rather than being given a value this
-module invented.
+one member state, and empty for a filing with the Commission or with Japan's
+agency, neither of which states one. ``FORM`` is the other way round: the
+Commission names the form a filing was made on and the agency gives it a
+numeric document type, while the ESEF regime has one kind of report and names
+none. Each is empty where its regime states nothing, rather than being given
+a value this module invented -- which is why an EDINET row carries ``'120'``
+and not an English name for it; see
+:data:`fincommons.financialreport.edinet.common.REPORT_TYPES` for what the
+codes mean.
 """
 
 #: The columns the combined table of facts is partitioned by. The source
@@ -222,6 +256,23 @@ def coverage():
             "note": "A quarterly report stating 941 facts is carried as 321: "
                     "the breakdowns by segment and by class are absent, and "
                     "the narrative with them.",
+        },
+        {
+            "source": "edinet",
+            "publisher": "disclosure2.edinet-fsa.go.jp",
+            "facts": "every fact of the report, as the agency's own CSV",
+            "dimensions": True,
+            "text": True,
+            "entity": "EDINETCODE",
+            "note": "A report that consolidates states every figure twice, "
+                    "the group's without a dimension and the parent "
+                    "company's under NonConsolidatedMember; and the period "
+                    "of a fact older than the comparative is shifted by "
+                    "whole years rather than reported. A fact the module "
+                    "could place in no period at all is not carried here, "
+                    "PRDEND being the one column that may not be empty; the "
+                    "edinet table of facts has it and that module's "
+                    "PERIOD_UNRESOLVED check counts them.",
         },
     ]
 

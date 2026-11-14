@@ -17,13 +17,14 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
 from fincommons.financialreport.esef import common as esef
 from fincommons.financialreport.combined import common, mapping, silver
 from fincommons.financialreport.sec import common as sec
+from fincommons.financialreport.edinet import common as edinet
 from fincommons.storage import write_silver
 
 
@@ -39,6 +40,8 @@ def config(tmp_path):
                  "silver": str(base / "esef" / "silver")},
         "sec": {"bronze": str(base / "sec" / "bronze"),
                       "silver": str(base / "sec" / "silver")},
+        "edinet": {"bronze": str(base / "edinet" / "bronze"),
+                   "silver": str(base / "edinet" / "silver")},
         "financialreport": {"silver": str(base / "financialreport" / "silver")},
     }))
     config_path = str(config_path)
@@ -48,6 +51,8 @@ def config(tmp_path):
 
 LEI = "529900T8BM49AURSDO55"
 CIK = "0001177394"
+EDINETCODE = "E03270"
+JCN = "2060001001667"
 
 
 def write_esef(spark, config_path, framework="ifrs-full"):
@@ -93,6 +98,46 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
                  partition_by=("FILEDYEAR",))
 
 
+def write_edinet(spark, config_path, standard="Japan GAAP"):
+    """An annual securities report of one Japanese filer.
+
+    Three facts and a fourth that sits in no period: the module leaves both
+    dates empty for a context whose shape it does not recognise, and the
+    combined table of facts does not carry such a row.
+    """
+    filings = spark.createDataFrame([(
+        "S100ZH4D", EDINETCODE, "75130", JCN, "株式会社コジマ", None,
+        "010", "030000", "120", date(2025, 9, 1), date(2026, 8, 31),
+        datetime(2026, 11, 13, 14, 31), 2026, date(2026, 11, 13),
+        "有価証券報告書", None, "0", "0", "0", "1", "1", "1", "0",
+    )], schema=edinet.filings_schema)
+
+    def fact(name, concept, member, start, end, unit, value, text):
+        context = ("CurrentYearDuration" if start else "CurrentYearInstant")
+        if member:
+            context = f"{context}_{member}"
+        return (EDINETCODE, "S100ZH4D", 2026, name, concept, "label",
+                context, "当期", "個別" if member else "その他",
+                "期間" if start else "時点", start, end, member, unit,
+                value, text, "jpcrp030000-asr")
+
+    facts = spark.createDataFrame([
+        fact("f1", "jppfs_cor:NetSales", "NonConsolidatedMember",
+             date(2025, 9, 1), date(2026, 8, 31), "JPY", 297632.0, None),
+        fact("f2", "jppfs_cor:Assets", "NonConsolidatedMember",
+             None, date(2026, 8, 31), "JPY", 128669.0, None),
+        fact("f3", "jpdei_cor:AccountingStandardsDEI", None,
+             None, date(2026, 11, 13), None, None, standard),
+        (EDINETCODE, "S100ZH4D", 2026, "f4", "jppfs_cor:NetSales", "label",
+         "SomethingElse", None, "その他", None, None, None, None, "JPY",
+         1.0, None, "jpcrp030000-asr"),
+    ], schema=edinet.facts_schema)
+    write_silver(filings, edinet.ref_silver_filings(config_path),
+                 partition_by=("FILEDYEAR",))
+    write_silver(facts, edinet.ref_silver_facts(config_path),
+                 partition_by=("FILEDYEAR",))
+
+
 # What each source contributes
 # --------------------------------------------------------------------------
 
@@ -104,8 +149,10 @@ def test_the_coverage_of_each_source_is_stated():
 
     assert by_source["esef"]["dimensions"] is True
     assert by_source["sec"]["dimensions"] is False
+    assert by_source["edinet"]["dimensions"] is True
     assert by_source["esef"]["entity"] == "LEI"
     assert by_source["sec"]["entity"] == "CIK"
+    assert by_source["edinet"]["entity"] == "EDINETCODE"
 
 
 def _source_files(package):
@@ -212,6 +259,85 @@ def test_a_lake_with_only_sec_filings_combines_only_those(spark, config):
     facts = common.connect_to_financialreport(spark, config)
 
     assert {row["SOURCE"] for row in facts.collect()} == {"sec"}
+
+
+def test_all_three_sources_are_found_where_all_three_have_tables(spark, config):
+    write_esef(spark, config)
+    write_sec(spark, config)
+    write_edinet(spark, config)
+
+    assert sorted(silver.available_sources(spark, config)) \
+        == ["edinet", "esef", "sec"]
+
+
+def test_a_lake_with_only_edinet_combines_only_those(spark, config):
+    write_edinet(spark, config)
+
+    facts = silver.combine(spark, config, "fact")
+    assert {row["SOURCE"] for row in facts.collect()} == {"edinet"}
+
+
+def test_a_japanese_row_carries_its_own_identifiers_and_no_others(spark,
+                                                                  config):
+    """Four identifier columns, one regime's own in each, and a row has the
+    column of its source filled and the others empty."""
+    write_edinet(spark, config)
+    row = silver.combine(spark, config, "filing").collect()[0]
+
+    assert row["EDINETCODE"] == EDINETCODE
+    assert row["JCN"] == JCN
+    assert row["LEI"] is None and row["CIK"] is None
+
+
+def test_the_japanese_framework_is_read_from_the_filing(spark, config):
+    """A Japanese report states its accounting standard in its own document
+    and entity information, and the prefix of a fact does not settle it: a
+    group reporting under IFRS tags its front matter against the same
+    disclosure taxonomy every other filer uses."""
+    write_edinet(spark, config, standard="Japan GAAP")
+    assert {row["FRAMEWORK"] for row in
+            silver.combine(spark, config, "fact").collect()} == {"JP-GAAP"}
+
+
+def test_a_japanese_group_reporting_under_ifrs_is_told_from_one_that_is_not(
+        spark, config):
+    write_edinet(spark, config, standard="IFRS")
+    assert {row["FRAMEWORK"] for row in
+            silver.combine(spark, config, "fact").collect()} == {"IFRS"}
+
+
+def test_a_fact_that_sits_in_no_period_is_not_carried(spark, config):
+    """PRDEND is the one column of the combined table of facts that may not
+    be empty, a fact in no period being comparable with nothing. It is not
+    lost: it is in the edinet table of facts, and that module's
+    PERIOD_UNRESOLVED check counts them."""
+    write_edinet(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+
+    assert all(row["PRDEND"] is not None for row in facts)
+    assert {row["FACT"] for row in facts} == {"f1", "f2", "f3"}
+
+
+def test_the_japanese_dimensions_and_text_survive(spark, config):
+    """Unlike the company files of the Commission, the agency's conversion
+    carries the whole of a report."""
+    write_edinet(spark, config)
+    facts = {row["FACT"]: row for row in
+             silver.combine(spark, config, "fact").collect()}
+
+    assert facts["f1"]["DIMENSIONS"] == "NonConsolidatedMember"
+    assert facts["f3"]["TEXT"] == "Japan GAAP"
+
+
+def test_the_three_regimes_stand_in_one_table(spark, config):
+    write_esef(spark, config)
+    write_sec(spark, config)
+    write_edinet(spark, config)
+
+    facts = silver.combine(spark, config, "fact")
+    assert {row["SOURCE"] for row in facts.collect()} \
+        == {"esef", "sec", "edinet"}
+    assert facts.columns == list(common.fact_schema.names)
 
 
 def test_a_lake_with_neither_is_told_so(spark, config):
