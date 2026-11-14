@@ -161,6 +161,112 @@ One row per filer the agency lists, from the zip it publishes on the disclosure 
 
 `SECCODE` is the securities code: the four-digit ticker of a listed filer with a check digit appended, so `'75130'` is ticker 7513. In that snapshot it is non-blank for exactly the 3,816 filers the list marks as listed. `JCN` is the corporate number of the National Tax Agency, thirteen digits, non-blank for 7,289 of the rows -- an individual filer has none.
 
+## Data quality
+
+`quality` holds the checks the figures are held to, and
+`update_silver_edinet_quality` writes what they found into a fourth Silver
+table, `issues`, beside the three the module collects. The machinery is
+shared with the other two regimes in
+[`fincommons.dataquality`](../../dataquality.py); what lives here are the
+twenty-six checks themselves, because a check knows the data set it is made
+of.
+
+```python
+from fincommons.financialreport import edinet
+from fincommons.dataquality import describe_check, issue_counts, with_issues
+
+edinet.update_silver_edinet_quality(spark, "paths.yaml")
+
+issues = edinet.connect_to_edinet(spark, "paths.yaml", "issues")
+issue_counts(issues, dataset="edinet").show()     # one row per check
+print(describe_check("UNIT_NOT_A_RATIO"))         # what a code means
+
+facts = edinet.connect_to_edinet(spark, "paths.yaml", "facts")
+with_issues(facts, issues, ["EDINETCODE", "FILING", "FACT"])
+```
+
+**Nothing is dropped and nothing is corrected.** A check writes a row and
+leaves the figure where it is: the tables are what the agency published, and
+a reader who wants to know what is wrong with a figure before using it joins
+the issues on. A filing with nothing wrong with it has no row at all -- the
+absence of a code is what says a record passed.
+
+The arithmetic checks are the valuable ones, as in the other two regimes,
+and they are the relations a statement states on both sides. **Two of them
+exist only here**, and they are the two lines that make a Japanese profit and
+loss account what it is: the ordinary result, 経常利益, is the operating
+result and the recurring items outside it, and the result before tax is the
+ordinary result and the extraordinary items, 特別損益. Neither relation can
+be written for an IFRS or a US GAAP filer, because neither has the lines.
+
+Four more checks have no counterpart anywhere in this package, and each
+falls out of something said further up this README.
+
+**The filer states its own year twice.** The five-year summary of the front
+matter and the financial statements both carry the revenue and the total
+assets of the year the report is about, in different elements of different
+taxonomies, so they have to agree. `SUMMARY_DISAGREES` is the only check in
+the package that tests a filing against another part of itself; a company
+file of the Commission holds one account of a period per filing, and an ESEF
+report states no summary at all.
+
+**The period is resolved and not reported.** Anything older than the
+comparative is shifted by whole years, which is exact only where the filer's
+years are of equal length -- and the filing states the first and last day of
+both of its two most recent years, so whether the shift can be trusted is a
+question the filing itself answers. `PERIOD_SHIFT_INEXACT` asks it, with
+three days of slack so that a leap year is not mistaken for a 52-week
+calendar.
+
+**The conversion says twice whether a figure is the group's.** 連結・個別 is
+a column and `NonConsolidatedMember` is a dimension of the context, and the
+two cannot disagree. Over the reports read while the module was written the
+correspondence held for every one of 6,752 facts;
+`BASIS_CONTRADICTS_DIMENSION` is what notices if it ever stops.
+
+**An element named for a ratio has to be a pure number.** `UNIT_NOT_A_RATIO`
+is the only check of the four that has found anything in a real report, and
+it found it in Fujitsu's: `EquityToAssetRatioIFRSSummaryOfBusinessResults`
+tagged with 1,167.25 and the unit `JPYPerShares`, which is the equity
+attributable to the owners of the parent per share under the name of a ratio.
+A reader trusting the name prints an equity ratio of 1,167 per cent. The
+ratio itself is in the same report under
+`RatioOfOwnersEquityToGrossAssetsIFRSSummaryOfBusinessResults` as 0.60.
+
+Two things decide what every check sees, and both are settled once rather
+than by each check.
+
+**The basis.** The figures of a filing are the ones it states for its own
+period end on the basis the filing itself says it reports on: the
+consolidated accounts where 連結決算の有無 is set, the parent company's own
+where it is not. A member on top of the consolidation one is a breakdown and
+not a statement line, so a fact carrying one is left out -- the statement of
+changes in equity tags the net assets once per component of equity, and a
+check that took the first match would be testing a figure against part of
+itself.
+
+**A missing line is not a zero.** A component of a sum being tested has to be
+stated, and a difference that cannot be computed is not a difference.
+Treating an absent line as nothing is what turns a filing that presents its
+statements differently into a filing that fails arithmetic: an IFRS statement
+of financial position subtotals its current liabilities and leaves the
+non-current side to be read as the remainder, and the first draft of these
+checks reported Fujitsu's liabilities as short by 244,695 million because of
+it. Only a genuinely optional line is coalesced to nothing -- the
+extraordinary items a filer may not have had, the result of operations it
+discontinued -- and each one is named where it is added.
+
+Run over four real annual securities reports -- Kojima, which does not
+consolidate; Kanagawa Chuo Kotsu twice, consolidated under Japan GAAP;
+Fujitsu, consolidated under IFRS -- the twenty-six checks report five issues,
+all five being Fujitsu's mis-tagged ratio.
+
+What each code means, how severe it is and what to do about it are rows of
+`data/dataquality_checks.csv` rather than branches in the code, so that the
+people most able to find a check wrong can read it. Nothing in it is
+authoritative; `describe_check` prints a row, and a deployment that keeps
+checks of its own ships a catalogue of the same shape and names it.
+
 ## A factsheet on one filer
 
 `templates/edinet-analyst-factsheet.qmd` is a template for a factsheet on one filer, written in R and rendered with Quarto to a PDF of some twenty pages, with **Kojima Co., Ltd.** as its example. It reads the Silver tables as parquet and sets, from the facts of the filer's own annual securities reports and from nothing else:
@@ -206,8 +312,6 @@ The last page is a disclaimer, and the cover says in its first line and in its s
 
 ## What is not here yet
 
-Two things the other two regimes have and this one does not.
+One thing the other two regimes have and this one does not.
 
-There is no `quality` module and no table of issues. The machinery in [`fincommons.dataquality`](../../dataquality.py) is shared and the checks are what would have to be written; this regime has one the others cannot have, which is to set the period a context was resolved to against the dates the filing states about itself.
-
-And this module is not yet in `financialreport`'s `SOURCES`, so its facts are not in the combined tables. The question that has to be settled first is the entity one: the ESEF tables are keyed by legal entity identifier, the Commission's by central index key, and these by EDINET code. `JCN`, the corporate number of the National Tax Agency, is the first identifier in this family of modules that a public register might map to an LEI -- GLEIF's list of registration authorities names the Japanese register -- and whether it reaches these filers is a question for the data rather than for this README.
+This module is not yet in `financialreport`'s `SOURCES`, so its facts are not in the combined tables. The question that has to be settled first is the entity one: the ESEF tables are keyed by legal entity identifier, the Commission's by central index key, and these by EDINET code. `JCN`, the corporate number of the National Tax Agency, is the first identifier in this family of modules that a public register might map to an LEI -- GLEIF's list of registration authorities names the Japanese register -- and whether it reaches these filers is a question for the data rather than for this README.
