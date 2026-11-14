@@ -1,0 +1,1319 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+
+  # No font is named beyond the one above, so nothing is fetched from a font
+  # service; a system without it falls back to the default of the renderer.
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  error: true
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a report
+# --------------------------------------------------------------------------
+
+# The path to the config file, whose esef section names the Silver layer of
+# the module. A chunk runs with the directory of this template as its working
+# directory, which is inside the installed package, so the path is taken from
+# the environment variable FINCOMMONS_CONFIG where it is set and is otherwise
+# a paths.yaml beside the template.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# The countries the report covers, as the repository codes them, or NULL for
+# every country the lake holds.
+report_countries <- NULL
+
+# The financial years shown, by the calendar year the period ends in, or
+# NULL for the last `n_years` the lake holds. A financial year to 31 March
+# 2026 counts as 2026 here, and is labelled 2025/26 wherever it is named.
+report_years <- NULL
+n_years <- 5
+
+# How many rows the rankings of filings show.
+top_n <- 15
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# --------------------------------------------------------------------------
+# What each check is asked of
+# --------------------------------------------------------------------------
+
+# The catalogue of checks says what a code means; it does not say which
+# filings the check could have fired on, and a share is only readable
+# against the right denominator. A check that reads the figures of a report
+# can only fire on a filing the repository published facts for, and a filing
+# listed without facts is not a filing that passed those checks.
+#
+#   "listed" -- every filing in the index, facts or not.
+#   "read"   -- the filings the table of facts holds facts for, which is
+#               what the pipeline has collected and not what the repository
+#               could have given it.
+#
+# Every code of the catalogue has to appear here, or the report stops: a
+# check added to the module and not to this list would otherwise be counted
+# against whichever denominator happened to be lying around.
+populations <- tibble::tribble(
+  ~code,                   ~population,
+  "IMBAL_BALANCE_SHEET",   "read",
+  "IMBAL_ASSETS",          "read",
+  "IMBAL_INCOME",          "read",
+  "IMBAL_PROFIT",          "read",
+  "IMBAL_CASHFLOW",        "read",
+  "IMPL_NEGATIVE_ASSETS",  "read",
+  "IMPL_PERIOD",           "read",
+  "MISS_FACT_VALUE",       "read",
+  "MISS_ASSETS",           "read",
+  "MISS_REVENUE",          "read",
+  "MISS_PROFIT",           "read",
+  "DUPL_FACT_VALUE",       "read",
+  "MIXED_UNIT",            "read",
+  "IMPL_PRDEND_FUTURE",    "read",
+  "DUPL_FILING_PERIOD",    "read",
+  "HIGH_EXTENSION_SHARE",  "read",
+  "VALIDATION_ERRORS",     "listed",
+  "NO_FACTS",              "listed")
+
+# The order the severities are read in, from the one that stops an analysis
+# to the one that only describes it.
+severities <- c("error", "warning", "info")
+
+# What a row of the table of issues is about, which is what makes the two
+# counts of this report different things. A check names the records that
+# failed it: a filing, where the fault is a fault of the report as a whole,
+# and a fact, where one figure of it is at fault. So a code that names facts
+# has as many rows for one filing as that filing has bad facts.
+#
+#   findings -- rows of the table of issues.
+#   affected -- distinct filings named by those rows.
+#
+# No table in this report adds a count of findings to a count of filings.
+
+# You can adapt your corporate design in the sourced R-Skript. It is one file
+# for the whole package, in the templates directory beside the modules, so
+# that a report of either regime looks like the other and a change to the
+# design is made once rather than once per module. A copy beside this
+# template wins over it, which is what lets a template taken out of the
+# package carry a design of its own.
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+# The label of a financial year. A year that ends on 31 December is named by
+# its calendar year, and any other by the two it spans: a financial year to
+# 31 March 2026 is 2025/26.
+fy_label <- function(date) {
+  y <- as.integer(format(date, "%Y"))
+  ifelse(format(date, "%m-%d") == "12-31", as.character(y),
+         paste0(y - 1, "/", sprintf("%02d", y %% 100)))
+}
+
+# --------------------------------------------------------------------------
+# The catalogue of checks
+# --------------------------------------------------------------------------
+
+# The same file the module reads, so that the report describes the checks
+# that ran rather than a copy of their descriptions that has drifted. It
+# lives in the data directory of the package; a copy beside this template
+# wins over it, as the design script does.
+catalogue_file <- "dataquality_checks.csv"
+catalogue_path <- c(catalogue_file,
+                    file.path("..", "..", "data", catalogue_file))
+catalogue_path <- catalogue_path[file.exists(catalogue_path)]
+if (length(catalogue_path) == 0) {
+  stop("The catalogue of checks ", catalogue_file, " is neither beside this ",
+       "template nor in the data directory of the package.")
+}
+
+catalogue <- read.csv(catalogue_path[1], stringsAsFactors = FALSE) %>%
+  filter(dataset == "esef") %>%
+  as_tibble()
+
+if (nrow(catalogue) == 0) {
+  stop("The catalogue of checks names no check of the esef module.")
+}
+
+undeclared <- setdiff(catalogue$code, populations$code)
+if (length(undeclared) > 0) {
+  stop("The catalogue names checks this template does not know the ",
+       "population of: ", paste(undeclared, collapse = ", "),
+       ". Add them to `populations` in the settings of this template.")
+}
+
+unknown_severity <- setdiff(catalogue$severity, severities)
+if (length(unknown_severity) > 0) {
+  stop("The catalogue uses severities this template does not order: ",
+       paste(unknown_severity, collapse = ", "), ".")
+}
+
+catalogue <- catalogue %>%
+  left_join(populations, by = "code") %>%
+  mutate(severity = factor(severity, levels = severities)) %>%
+  arrange(severity, code)
+
+n_checks <- nrow(catalogue)
+
+# --------------------------------------------------------------------------
+# The Silver layer
+# --------------------------------------------------------------------------
+
+yaml_paths <- read_yaml(config_path)
+path_silver <- yaml_paths[["esef"]][["silver"]]
+
+# The Silver layer may name a schema in a catalogue rather than a directory,
+# with the directory the tables are written to beside it. R reads files, so
+# it takes the directory.
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+
+# arrow reads every parquet file under a directory. A Delta table keeps the
+# files it has replaced until it is vacuumed, and both of these tables are
+# written a partition at a time, so a Delta table read this way counts a row
+# once for every time it was written. This report counts rows, so it refuses
+# one rather than show those counts.
+for (table in c("filings", "facts", "issues")) {
+  if (dir.exists(file.path(path_silver, table, "_delta_log"))) {
+    stop("The ", table, " table of the esef module is a Delta table, which ",
+         "this template does not read. Write the Silver layer as parquet, ",
+         "or read the table through Spark.")
+  }
+}
+
+if (!dir.exists(file.path(path_silver, "issues"))) {
+  stop("The esef module has no table of issues in ", path_silver, ". Run the ",
+       "checks first: python -c \"from pyspark.sql import SparkSession; ",
+       "from fincommons.esef.quality import update_silver_esef_quality; ",
+       "update_silver_esef_quality(SparkSession.builder.getOrCreate(), ",
+       "'<paths.yaml>')\"")
+}
+
+filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
+  select(COUNTRY, LEI, FILING, NAME, PERIODEND, LANG, JSONURL,
+         ERRORS, WARNINGS, INCONSISTENCIES, PROCESSED) %>%
+  collect()
+
+if (nrow(filings_all) == 0) {
+  stop("The table of filings of the esef module is empty. Run the pipeline ",
+       "first: python -m fincommons.esef --config <paths.yaml> --country AT ",
+       "--contact <you@example.org>")
+}
+
+# Which filings the table of facts holds facts for. A filing the repository
+# published xBRL-JSON for is a filing the pipeline *could* have collected;
+# only the table of facts says which it did, and a check that reads a figure
+# could only have fired on those. One row per filing and not the facts
+# themselves: arrow answers this over the parquet files and hands back a
+# result of the size of the record rather than of the size of the lake.
+facts_filings <- open_dataset(file.path(path_silver, "facts")) %>%
+  count(COUNTRY, LEI, FILING) %>%
+  collect() %>%
+  rename(facts = n)
+
+issues_all <- open_dataset(file.path(path_silver, "issues")) %>% collect()
+
+if (nrow(issues_all) == 0) {
+  stop("The table of issues of the esef module is empty. Either the checks ",
+       "have not run over any country yet, or the Silver layer holds no ",
+       "filing at all.")
+}
+
+# The partition column comes from the directory name when the table is
+# written partitioned and from the file when it is not, and arrow reads the
+# two as different types. One type here, so the joins below hold either way.
+issues_all <- issues_all %>%
+  mutate(across(c(COUNTRY, LEI, FILING, ISSUE), as.character),
+         CHECKED = as.Date(CHECKED))
+
+# A code in the table that the catalogue does not describe is a check that
+# was removed or renamed and whose rows were left behind. The report cannot
+# say what it means, so it stops rather than print a bare code.
+uncatalogued <- setdiff(unique(issues_all$ISSUE), catalogue$code)
+if (length(uncatalogued) > 0) {
+  stop("The table of issues holds codes the catalogue does not describe: ",
+       paste(uncatalogued, collapse = ", "), ". Run the checks again, which ",
+       "rewrites the partitions it checks as a whole.")
+}
+
+filings_all <- filings_all %>%
+  mutate(year = as.integer(format(PERIODEND, "%Y")),
+         fy = year,
+         fy_name = fy_label(PERIODEND),
+         published = !is.na(JSONURL) & JSONURL != "") %>%
+  left_join(facts_filings %>% select(COUNTRY, LEI, FILING, facts),
+            by = c("COUNTRY", "LEI", "FILING")) %>%
+  mutate(read = !is.na(facts) & facts > 0,
+         facts = coalesce(facts, 0L))
+
+# The countries and the years the report covers. A country named in the
+# settings that the table does not list is an error rather than an empty
+# column, because a report that silently covers less than it says is worse
+# than one that does not render.
+countries_held <- sort(unique(filings_all$COUNTRY))
+if (is.null(report_countries)) {
+  report_countries <- countries_held
+} else {
+  unknown <- setdiff(report_countries, countries_held)
+  if (length(unknown) > 0) {
+    stop("The table of filings lists no filing of ",
+         paste(unknown, collapse = ", "), ". It lists ",
+         paste(countries_held, collapse = ", "), ".")
+  }
+}
+
+years_held <- sort(unique(filings_all$fy[!is.na(filings_all$fy)]))
+if (is.null(report_years)) {
+  report_years <- tail(years_held, n_years)
+} else {
+  unknown <- setdiff(report_years, years_held)
+  if (length(unknown) > 0) {
+    stop("The table of filings lists no filing for ",
+         paste(unknown, collapse = ", "), ".")
+  }
+}
+report_years <- sort(report_years)
+
+# --------------------------------------------------------------------------
+# The record the checks were asked about
+# --------------------------------------------------------------------------
+
+# Every filing of the selection, not one per issuer and year. A quality
+# report counts what was checked, and a second filing of a year was checked
+# like the first; the coverage report in this directory is the one that
+# picks a filing per issuer and year.
+filings <- filings_all %>%
+  filter(COUNTRY %in% report_countries, fy %in% report_years)
+
+if (nrow(filings) == 0) {
+  stop("No filing of the table falls in the countries and years of this ",
+       "report.")
+}
+
+year_labels <- filings %>%
+  distinct(fy, fy_name) %>%
+  arrange(fy) %>%
+  group_by(fy) %>%
+  summarise(label = paste(sort(unique(fy_name)), collapse = ", "),
+            .groups = "drop")
+year_labels <- vapply(report_years, function(y) {
+  hit <- year_labels$label[year_labels$fy == y]
+  if (length(hit) == 1 && !grepl(",", hit)) hit else as.character(y)
+}, character(1))
+
+# A partition of the table of filings with no row in the table of issues is
+# either a partition every check passed or a partition no check has run
+# over. Nothing in the two tables tells the two apart, so the report names
+# the countries it cannot speak for rather than count them as sound.
+checked_countries <- sort(unique(issues_all$COUNTRY))
+silent_countries <- setdiff(report_countries, checked_countries)
+
+issues <- issues_all %>%
+  inner_join(filings %>% select(COUNTRY, LEI, FILING, NAME, fy, PERIODEND,
+                                read),
+             by = c("COUNTRY", "LEI", "FILING")) %>%
+  left_join(catalogue %>% select(ISSUE = code, severity, title, population),
+            by = "ISSUE")
+
+# An issue row whose filing the table of filings does not list is a row left
+# over from a filing the repository withdrew. It cannot be placed in a year
+# or a country, so it is counted and set aside.
+orphans <- issues_all %>%
+  anti_join(filings_all %>% select(COUNTRY, LEI, FILING),
+            by = c("COUNTRY", "LEI", "FILING"))
+
+# --------------------------------------------------------------------------
+# What the checks found
+# --------------------------------------------------------------------------
+
+# The two populations, and which of them the rates of this report are
+# taken over.
+#
+# A check asked of every filing was also asked of every filing with facts,
+# the one population being inside the other, so the filings with facts are
+# the only population every check of the module was asked about. The rates
+# of this report -- the share free of errors, the shares by year and by
+# country, the bands of findings per filing -- are therefore taken over
+# those, and a filing listed without facts is counted only in the two
+# checks that read the index. Taken over the whole index instead, a record
+# of which a thousandth has been collected would read as sound because
+# nothing had looked at the rest of it.
+n_listed <- nrow(filings)
+n_read <- sum(filings$read)
+
+# One row per code: the rows it wrote, the filings those rows name, and that
+# count against the filings the check could have fired on at all.
+by_code <- issues %>%
+  group_by(ISSUE) %>%
+  summarise(findings = n(),
+            affected = n_distinct(FILING),
+            .groups = "drop") %>%
+  right_join(catalogue %>% select(ISSUE = code, severity, title, population),
+             by = "ISSUE") %>%
+  mutate(findings = coalesce(findings, 0L),
+         affected = coalesce(affected, 0L),
+         denominator = ifelse(population == "listed", n_listed, n_read),
+         share = ifelse(denominator > 0, affected / denominator * 100,
+                        NA_real_)) %>%
+  arrange(severity, desc(affected), ISSUE)
+
+# One row per filing the checks named, with the severity of the worst thing
+# found in it. A filing with no row here is one every check passed -- which,
+# for a country no check has run over, is a statement this report does not
+# make.
+per_filing <- issues %>%
+  group_by(COUNTRY, LEI, FILING, NAME, fy, PERIODEND) %>%
+  summarise(findings = n(),
+            codes = n_distinct(ISSUE),
+            errors = sum(severity == "error"),
+            warnings = sum(severity == "warning"),
+            infos = sum(severity == "info"),
+            worst = severities[min(as.integer(severity))],
+            which = paste(sort(unique(ISSUE)), collapse = ", "),
+            .groups = "drop")
+
+# Every filing of the selection, with a zero where no check named it.
+filing_state <- filings %>%
+  select(COUNTRY, LEI, FILING, NAME, fy, PERIODEND, read, facts) %>%
+  left_join(per_filing %>% select(COUNTRY, LEI, FILING, findings, codes,
+                                  errors, warnings, infos, worst, which),
+            by = c("COUNTRY", "LEI", "FILING")) %>%
+  mutate(across(c(findings, codes, errors, warnings, infos),
+                ~ coalesce(.x, 0L)),
+         worst = coalesce(worst, "none"),
+         which = coalesce(which, ""),
+         clean = errors == 0,
+         spotless = findings == 0)
+
+# The filings every check was asked of, which is what every rate below is
+# taken over.
+rated <- filing_state %>% filter(read)
+
+if (nrow(rated) == 0) {
+  stop("The table of facts holds no fact for any filing of this selection, ",
+       "so no check that reads a figure could have run. Collect the reports ",
+       "first: python -m fincommons.esef --config <paths.yaml> --country AT ",
+       "--contact <you@example.org>")
+}
+
+# Per year: the record checked, and how much of the part of it with facts
+# carries an error or carries nothing at all.
+by_year <- filing_state %>%
+  group_by(fy) %>%
+  summarise(listed = n(),
+            read = sum(read),
+            findings = sum(findings),
+            .groups = "drop") %>%
+  left_join(rated %>%
+              group_by(fy) %>%
+              summarise(with_error = sum(errors > 0),
+                        clean = sum(clean) / n() * 100,
+                        spotless = sum(spotless) / n() * 100,
+                        error_share = sum(errors > 0) / n() * 100,
+                        warning_share = sum(warnings > 0) / n() * 100,
+                        info_share = sum(infos > 0) / n() * 100,
+                        .groups = "drop"),
+            by = "fy")
+
+by_country <- filing_state %>%
+  group_by(COUNTRY) %>%
+  summarise(listed = n(),
+            read = sum(read),
+            findings = sum(findings),
+            .groups = "drop") %>%
+  left_join(rated %>%
+              group_by(COUNTRY) %>%
+              summarise(with_error = sum(errors > 0),
+                        error_share = sum(errors > 0) / n() * 100,
+                        clean = sum(clean) / n() * 100,
+                        per_filing = sum(findings) / n(),
+                        .groups = "drop"),
+            by = "COUNTRY") %>%
+  arrange(desc(error_share), COUNTRY)
+
+# The five identities, which are the checks that say the figures of a report
+# are consistent with one another. They are grouped because an analysis that
+# reads a statement out of a filing rests on all five at once.
+identity_codes <- catalogue$code[grepl("^IMBAL_", catalogue$code)]
+identity_state <- rated %>%
+  left_join(issues %>%
+              filter(ISSUE %in% identity_codes) %>%
+              distinct(COUNTRY, LEI, FILING) %>%
+              mutate(fails_identity = TRUE),
+            by = c("COUNTRY", "LEI", "FILING")) %>%
+  mutate(fails_identity = coalesce(fails_identity, FALSE))
+
+checked_on <- range(issues_all$CHECKED)
+```
+
+```{r formats}
+# --------------------------------------------------------------------------
+# Writing numbers and words
+# --------------------------------------------------------------------------
+
+fmt <- function(x, digits = 0) {
+  x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
+  ifelse(is.na(x), "–",
+         formatC(x, format = "f", digits = digits, big.mark = ",",
+                 decimal.mark = "."))
+}
+
+wrap_caption <- function(text, width = 125) {
+  paste(strwrap(text, width = width), collapse = "\n")
+}
+
+max_date <- max(filings$PERIODEND, na.rm = TRUE)
+period_range <- paste0(min(report_years), " – ", max(report_years))
+
+source_caption <- caption_corporate_design(
+  source = paste("ESEF annual financial reports, filings.xbrl.org;",
+                 "checks of the fincommons esef module."),
+  last = format(max(checked_on), "%d %b %Y"),
+  lang = "en")
+
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", x)
+  gsub("\"", "\\\\\"", x)
+}
+
+severity_label <- function(x) {
+  recode(as.character(x), error = "Error", warning = "Warning",
+         info = "Note", none = "Nothing found")
+}
+
+# A table of one row per item and one column per financial year.
+render_years <- function(data, value, digits = 0, label_column = "label",
+                         header = "", order = NULL) {
+  wide <- data %>%
+    mutate(.v = {{ value }}) %>%
+    select(all_of(label_column), fy, .v) %>%
+    pivot_wider(names_from = "fy", values_from = ".v")
+  if (!is.null(order)) {
+    wide <- wide[match(order, wide[[label_column]]), ]
+    wide[[label_column]] <- order
+  }
+  out <- tibble(item = wide[[label_column]])
+  for (y in report_years) {
+    column <- as.character(y)
+    out[[column]] <- if (column %in% names(wide)) fmt(wide[[column]], digits)
+                     else "–"
+  }
+  knitr::kable(out, col.names = c(header, year_labels),
+               align = paste0("l", strrep("r", length(report_years))))
+}
+
+# A chart of one line per group over the financial years.
+chart_by_year <- function(data, value, group, subtitle = "%", digits = 0,
+                          ncol = 5, zero = TRUE) {
+  d <- data %>% mutate(.v = {{ value }}, .g = {{ group }}) %>% filter(!is.na(.v))
+  g <- ggplot(d, aes(x = fy, y = .v, colour = .g)) +
+    geom_line(linewidth = linewidth_corporate_design) +
+    geom_point(size = 1.4) +
+    scale_x_continuous(breaks = report_years, labels = year_labels,
+                       expand = c(.02, 0)) +
+    scale_y_continuous(labels = function(x) fmt(x, digits)) +
+    scale_colour_corporate_design() +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    guides(colour = guide_legend(ncol = ncol)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+  if (zero) g <- g + geom_zeroline()
+  g
+}
+
+# A chart of bars, one per category, read from top to bottom.
+chart_ranked <- function(data, value, label, subtitle = "%", digits = 0,
+                         wrap = 44, fill = NULL) {
+  d <- data %>%
+    mutate(.v = {{ value }}, .l = wrap_labels({{ label }}, wrap)) %>%
+    arrange(.v) %>%
+    mutate(.l = factor(.l, levels = .l))
+  # `missing` and not `is.null`, because the argument is given as an
+  # expression over the columns of the data and evaluating it here, outside
+  # the data, is what `is.null` would do.
+  g <- if (missing(fill)) {
+    ggplot(d, aes(x = .v, y = .l)) +
+      geom_col(fill = palette_corporate_design("cat")[1], width = 0.72)
+  } else {
+    d <- d %>% mutate(.f = {{ fill }})
+    ggplot(d, aes(x = .v, y = .l, fill = .f)) +
+      geom_col(width = 0.72) +
+      scale_fill_corporate_design() +
+      guides(fill = guide_legend(ncol = 3))
+  }
+  g +
+    geom_zeroline(x = 0) +
+    scale_x_continuous(labels = function(x) fmt(x, digits),
+                       expand = expansion(mult = c(0, .06))) +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    theme_corporate_design(base_size = chart_base_size, grid = "x",
+                           axis.title = element_blank())
+}
+```
+
+```{r cover, results='asis'}
+# --------------------------------------------------------------------------
+# The cover and the running head
+# --------------------------------------------------------------------------
+
+ts <- function(x) {
+  if (length(x) == 0 || is.na(x)) x <- "–"
+  paste0("\"", typst_string(as.character(x)), "\"")
+}
+
+typst_kv <- function(items) {
+  rows <- vapply(seq_along(items), function(i) {
+    paste0("  text(size: 7.5pt, fill: soft, ", ts(names(items)[i]), "),\n",
+           "  text(size: 8.5pt, ", ts(items[[i]]), "),")
+  }, character(1))
+  paste0("#grid(columns: (3.5cm, 1fr), row-gutter: 5.5pt, column-gutter: 6pt,\n",
+         paste(rows, collapse = "\n"), "\n)")
+}
+
+n_findings <- sum(filing_state$findings)
+n_errors <- sum(by_code$findings[by_code$severity == "error"])
+n_warnings <- sum(by_code$findings[by_code$severity == "warning"])
+n_infos <- sum(by_code$findings[by_code$severity == "info"])
+share_clean <- mean(rated$clean) * 100
+share_spotless <- mean(rated$spotless) * 100
+share_identity <- mean(!identity_state$fails_identity) * 100
+
+record_items <- list()
+record_items[["Countries"]] <- paste(report_countries, collapse = ", ")
+record_items[["Financial years"]] <- period_range
+record_items[["Filings listed"]] <- fmt(n_listed)
+record_items[["Of those, with facts"]] <- fmt(n_read)
+record_items[["Checks run"]] <- fmt(n_checks)
+record_items[["Checked on"]] <-
+  if (checked_on[1] == checked_on[2]) format(checked_on[1], "%d %B %Y") else
+    paste(format(checked_on[1], "%d %b %Y"), "–",
+          format(checked_on[2], "%d %b %Y"))
+
+found_items <- list()
+found_items[["Findings"]] <- fmt(n_findings)
+found_items[["Of those, errors"]] <- fmt(n_errors)
+found_items[["Filings with an error"]] <-
+  paste0(fmt(sum(rated$errors > 0)), " (", fmt(100 - share_clean, 1), " %)")
+found_items[["Free of errors, %"]] <- fmt(share_clean, 1)
+found_items[["Nothing found at all, %"]] <- fmt(share_spotless, 1)
+found_items[["Identities hold, %"]] <- fmt(share_identity, 1)
+
+# Every rate above is over the filings with facts, which the cover says in
+# the line that gives their number and the prose repeats.
+
+
+notice <- paste(
+  "The checks of the `esef` module of fincommons, run over the filings the",
+  "module holds and read against the catalogue of checks the module ships.",
+  "A finding is a record that failed a check of this project, not a finding",
+  "of a regulator and not a statement that a figure is wrong: several of the",
+  "checks fire on filings that are entirely sound, and the catalogue in",
+  "section 5 says of each what it does and does not mean. No figure is",
+  "corrected and no filing is set aside anywhere in the module -- a check",
+  "writes a row and leaves the figure alone. This document is produced by a",
+  "template of the open-source project fincommons: it reads a public record,",
+  "is given without warranty as to correctness or completeness and carries",
+  "no association with the issuers, with XBRL International or with ESMA.",
+  "The notes on what this report cannot say, and the disclaimer on the last",
+  "page, apply.")
+
+title <- "The quality of the ESEF record"
+subtitle <- "What the checks found, and what a finding does and does not mean"
+
+cat("```{=typst}\n")
+cat("#set page(numbering: none)\n")
+cat("#let ink = rgb(\"#22282E\")\n")
+cat("#let soft = rgb(\"#5C666F\")\n")
+cat("#let rule = rgb(\"#DCE1E5\")\n")
+cat("#let accent = rgb(\"#C10016\")\n\n")
+
+cat("#v(1.4cm)\n")
+cat("#text(size: 8pt, tracking: 1.6pt, fill: soft, ",
+    ts(toupper("Data quality report · Example")), ")\n", sep = "")
+cat("#v(4pt)\n#line(length: 100%, stroke: 1.2pt + accent)\n#v(14pt)\n")
+cat("#text(size: 25pt, weight: \"bold\", ", ts(title), ")\n", sep = "")
+cat("#v(3pt)\n")
+cat("#text(size: 10.5pt, fill: soft, ", ts(subtitle), ")\n", sep = "")
+cat("#v(28pt)\n")
+cat("#grid(columns: (1fr, 1fr), column-gutter: 16pt,\n")
+cat("  [#text(size: 8pt, weight: \"bold\", ", ts("The record checked"),
+    ")\n  #v(6pt)\n  ", typst_kv(record_items), "],\n", sep = "")
+cat("  [#text(size: 8pt, weight: \"bold\", ", ts("What the checks found"),
+    ")\n  #v(6pt)\n  ", typst_kv(found_items), "]\n)\n", sep = "")
+cat("#v(1fr)\n#line(length: 100%, stroke: 0.5pt + rule)\n#v(6pt)\n")
+cat("#text(size: 7pt, fill: soft, ", ts(notice), ")\n", sep = "")
+cat("#v(8pt)\n")
+cat("#text(size: 7pt, fill: soft, ",
+    ts(paste0("Compiled on ", format(Sys.Date(), "%d %B %Y"),
+              ". Source: filings.xbrl.org, XBRL International.")),
+    ")\n", sep = "")
+
+cat("\n#set page(\n")
+cat("  header: [#set text(size: 7pt, fill: soft)\n",
+    "    #grid(columns: (1fr, auto), ",
+    "[#text(weight: \"bold\", ", ts(title), ") #h(6pt) ",
+    "#text(", ts(paste("Data quality report ·", period_range)), ")], ",
+    "[#text(", ts("ESEF annual report data"), ")])\n",
+    "    #v(-4pt) #line(length: 100%, stroke: 0.5pt + rule)],\n", sep = "")
+cat("  footer: [#set text(size: 7pt, fill: soft)\n",
+    "    #line(length: 100%, stroke: 0.5pt + rule) #v(-2pt)\n",
+    "    #grid(columns: (1fr, auto), ",
+    "[#text(", ts(paste("Source: ESEF annual financial reports,",
+                        "filings.xbrl.org. Checks of the fincommons esef",
+                        "module.")),
+    ")], [#context counter(page).display()])],\n", sep = "")
+cat("  numbering: \"1\",\n)\n")
+cat("```\n")
+```
+
+## Contents
+
+```{=typst}
+#outline(title: none, depth: 2, indent: 1em)
+```
+
+{{< pagebreak >}}
+
+### How this report is built
+
+```{r basis, results='asis'}
+basis <- c(
+  paste0("**What it reads.** Two Silver tables of the `esef` module of ",
+         "fincommons: the table of filings, one row per filing listed in ",
+         "the indexes of filings.xbrl.org, and the table of issues, one row ",
+         "per record that failed a check. The table of issues is written by ",
+         "`fincommons.esef.quality`, which runs the ", fmt(n_checks),
+         " checks of the module over the facts and the filings and writes ",
+         "what they found; this report does not re-run them. The catalogue ",
+         "of checks in section 5 is read from the same file the module ",
+         "reads, so what a code means here is what it means there."),
+  paste0("**What a finding is.** A row of the table of issues: one record ",
+         "that failed one check. Where the fault belongs to the report as a ",
+         "whole -- a balance sheet that does not balance -- the record is ",
+         "the filing, and there is one row. Where one figure is at fault -- ",
+         "a fact with no value -- the record is the fact, and a filing has ",
+         "as many rows as it has such facts. The two counts are therefore ",
+         "different things, and this report names them apart throughout: ",
+         "**findings** are rows, **filings** are the distinct filings those ",
+         "rows name. No table adds one to the other."),
+  paste0("**What it is counted against.** A check that reads the figures of ",
+         "a report can only fire on a filing the table of facts holds facts ",
+         "for. Of the ", fmt(n_listed), " filings listed in this selection, ",
+         fmt(n_read), " carry facts. The share for each check in section 2 ",
+         "is taken against whichever of the two populations the check is ",
+         "asked of, and the population of each is in the table of checks ",
+         "below; every other rate in this report -- the share free of ",
+         "errors, the shares by year and by country, the bands of findings ",
+         "per filing -- is taken over the ", fmt(n_read), " filings with ",
+         "facts, which is the one population every check of the module was ",
+         "asked about. A filing listed without facts is counted only in the ",
+         "two checks that read the index. Over the whole index instead, a ",
+         "record of which a part has been collected would read as sound ",
+         "because nothing had looked at the rest of it."),
+  paste0("**What a severity means.** An **error** is a finding that an ",
+         "analysis cannot read past: the figures of the filing contradict ",
+         "one another, or a period is impossible. A **warning** is a ",
+         "finding that needs a human to look at the filing before its ",
+         "figures are used. A **note** describes the filing without ",
+         "faulting it. The three are this project's judgement of how much a ",
+         "finding costs a reader, not a classification any regulator ",
+         "publishes."),
+  paste0("**What it does not do.** Nothing in the module corrects a figure ",
+         "or drops a filing. A check writes a row and leaves the data as it ",
+         "is, which is what lets the table of issues be read beside the ",
+         "figures rather than instead of them. A filing with findings is ",
+         "still in the table of facts, and whether to use it is the ",
+         "reader's decision to make."))
+
+cat(paste(basis, collapse = "\n\n"))
+```
+
+### The checks, and what each is asked of
+
+```{r checks-list}
+temp <- catalogue %>%
+  transmute(code = paste0("`", code, "`"),
+            severity = severity_label(severity),
+            title,
+            population = recode(population,
+                                listed = "Every filing",
+                                read = "Filings with facts"))
+
+knitr::kable(temp, align = "llll", col.names = c(
+  "Code", "Severity", "What it finds", "Asked of"))
+```
+
+{{< pagebreak >}}
+
+## 1 The record checked
+
+### What was checked, by country
+
+```{r record-country}
+# One row per country: what the indexes list, how much of it carries facts,
+# and whether the checks have run over it at all. A country with no row in
+# the table of issues is either a country every check passed or one the
+# checks were never asked about, and the two cannot be told apart from the
+# tables.
+temp <- filing_state %>%
+  group_by(COUNTRY) %>%
+  summarise(listed = n(),
+            read = sum(read),
+            issuers = n_distinct(LEI),
+            checked = ifelse(COUNTRY[1] %in% checked_countries, "yes", "–"),
+            .groups = "drop") %>%
+  arrange(desc(listed), COUNTRY) %>%
+  mutate(read_share = read / listed * 100)
+
+knitr::kable(temp %>% transmute(COUNTRY, Issuers = fmt(issuers),
+                                Listed = fmt(listed), Read = fmt(read),
+                                `Read, %` = fmt(read_share, 1),
+                                Checked = checked),
+             align = "lrrrrl",
+             col.names = c("Country", "Issuers", "Filings listed",
+                           "With facts", "With facts, %", "Checks ran"))
+```
+
+```{r record-silence, results='asis'}
+if (length(silent_countries) > 0) {
+  cat("\nThe table of issues holds no row for ",
+      paste(silent_countries, collapse = ", "),
+      ". That is not a statement that those filings passed the checks: a ",
+      "country the checks have not run over and a country in which every ",
+      "check passed look the same in these two tables. Where such a country ",
+      "has filings with facts, its filings are counted among the sound ones ",
+      "in every rate below, and the record reads sounder than it has been ",
+      "shown to be.\n", sep = "")
+} else {
+  cat("\nThe checks have run over every country of this selection, so a ",
+      "filing with no finding is a filing every check passed.\n", sep = "")
+}
+```
+
+### What was checked, by financial year
+
+```{r record-year}
+temp <- by_year %>%
+  select(fy, listed, read, findings) %>%
+  pivot_longer(c(listed, read, findings), names_to = "label") %>%
+  mutate(label = recode(label, listed = "Filings listed",
+                        read = "With facts", findings = "Findings"))
+
+render_years(temp, value, header = "The record checked",
+             order = c("Filings listed", "With facts", "Findings"))
+```
+
+{{< pagebreak >}}
+
+## 2 What the checks found
+
+### The findings, by severity
+
+```{r found-severity, results='asis'}
+n_rated_findings <- sum(rated$findings)
+
+cat("The ", fmt(n_checks), " checks wrote ", fmt(n_findings),
+    " findings over the ", fmt(n_listed), " filings listed: ", fmt(n_errors),
+    " errors, ", fmt(n_warnings), " warnings and ", fmt(n_infos),
+    " notes. Of those, ", fmt(n_rated_findings), " fall on the ",
+    fmt(n_read), " filings with facts, which is the population every check ",
+    "was asked of and the one the table and the shares below are taken ",
+    "over; the remaining ", fmt(n_findings - n_rated_findings),
+    " fall on filings the table of facts holds no fact for, where only the ",
+    "two checks that read the index could fire at all. A filing can carry ",
+    "findings of several severities, so the shares do not add to a ",
+    "hundred.\n\n", sep = "")
+
+if (nrow(orphans) > 0) {
+  cat("\n", fmt(nrow(orphans)), " further rows of the table of issues name ",
+      "filings the table of filings no longer lists, which is what a ",
+      "withdrawn filing leaves behind. They are counted nowhere else in ",
+      "this report.\n\n", sep = "")
+}
+```
+
+```{r severity-table}
+# Both counts over the filings with facts, which is what keeps a row of
+# this table from putting findings of one population beside filings of
+# another.
+temp <- rated %>%
+  summarise(across(c(errors, warnings, infos), ~ sum(.x > 0)),
+            none = sum(spotless)) %>%
+  pivot_longer(everything(), names_to = "severity", values_to = "filings") %>%
+  mutate(label = recode(severity, errors = "An error",
+                        warnings = "A warning", infos = "A note",
+                        none = "Nothing at all"),
+         findings = c(sum(rated$errors), sum(rated$warnings),
+                      sum(rated$infos), 0),
+         share = filings / n_read * 100)
+
+knitr::kable(temp %>% transmute(label, Findings = fmt(findings),
+                                Filings = fmt(filings),
+                                Share = fmt(share, 1)),
+             align = "lrrr",
+             col.names = c("Filings carrying", "Findings",
+                           "Filings with facts", "Of those, %"))
+```
+
+### The checks that fire
+
+```{r found-code-chart}
+#| fig-height: 4.2
+chart_ranked(by_code %>% filter(affected > 0),
+             share, title,
+             subtitle = paste("Filings the check named, % of the filings it",
+                              "is asked of"),
+             digits = 1, wrap = 52, fill = severity_label(severity))
+```
+
+{{< pagebreak >}}
+
+```{r found-code-table}
+temp <- by_code %>%
+  transmute(code = paste0("`", ISSUE, "`"),
+            severity = severity_label(severity),
+            Findings = fmt(findings),
+            Filings = fmt(affected),
+            Asked = fmt(denominator),
+            Share = fmt(share, 1))
+
+knitr::kable(temp, align = "llrrrr", col.names = c(
+  "Code", "Severity", "Findings", "Filings", "Asked of", "Share, %"))
+```
+
+### How the findings fall across the record
+
+```{r found-concentration}
+# A record in which every filing carries one finding and one in which a
+# tenth of the filings carry ten are the same count and are not the same
+# problem. These are the bands of findings per filing.
+bands <- c(0, 1, 2, 3, 6, 11, Inf)
+band_labels <- c("None", "1", "2", "3 – 5", "6 – 10", "> 10")
+
+temp <- rated %>%
+  mutate(band = cut(findings, breaks = bands, labels = band_labels,
+                    include.lowest = TRUE, right = FALSE)) %>%
+  count(fy, band, .drop = FALSE) %>%
+  group_by(fy) %>%
+  mutate(share = n / sum(n) * 100) %>%
+  ungroup() %>%
+  rename(label = band)
+
+render_years(temp, share, digits = 1,
+             header = "Findings per filing with facts, %",
+             order = band_labels)
+```
+
+```{r found-concentration-note, results='asis'}
+top_share <- rated %>%
+  arrange(desc(findings)) %>%
+  slice_head(n = max(1, round(nrow(rated) / 100)))
+cat("\nThe loudest one per cent of the filings with facts -- ",
+    fmt(nrow(top_share)), " of them -- carry ",
+    fmt(sum(top_share$findings) / max(n_findings, 1) * 100, 1),
+    " % of all findings. A count of findings is therefore not a measure of ",
+    "how much of the record is usable; the share of filings free of errors ",
+    "in section 3 is.\n", sep = "")
+```
+
+{{< pagebreak >}}
+
+### By country
+
+```{r found-country}
+# The last three columns are over the filings with facts, the first two
+# over every filing listed, which is why a country with none of the former
+# has a dash rather than a hundred per cent.
+knitr::kable(by_country %>%
+               transmute(COUNTRY,
+                         Listed = fmt(listed),
+                         Read = fmt(read),
+                         Findings = fmt(findings),
+                         Per = fmt(per_filing, 1),
+                         Errors = fmt(with_error),
+                         `Free of errors` = fmt(clean, 1)),
+             align = "lrrrrrr",
+             col.names = c("Country", "Filings listed", "With facts",
+                           "Findings", "Findings per filing with facts",
+                           "With an error", "Free of errors, %"))
+```
+
+### By financial year
+
+```{r found-year-chart}
+#| fig-height: 2.6
+temp <- by_year %>%
+  select(fy, error_share, warning_share, info_share) %>%
+  pivot_longer(-fy, names_to = "severity", values_to = "share") %>%
+  mutate(severity = recode(severity, error_share = "An error",
+                           warning_share = "A warning",
+                           info_share = "A note"))
+
+chart_by_year(temp, share, severity,
+              subtitle = paste("Filings with facts carrying a finding of",
+                               "the severity, %"),
+              digits = 1, ncol = 3)
+```
+
+{{< pagebreak >}}
+
+## 3 The record that holds up
+
+### How much of it is free of errors
+
+```{r clean-chart}
+#| fig-height: 2.6
+temp <- by_year %>%
+  select(fy, clean, spotless) %>%
+  pivot_longer(-fy, names_to = "measure", values_to = "share") %>%
+  mutate(measure = recode(measure, clean = "No error",
+                          spotless = "No finding of any severity"))
+
+chart_by_year(temp, share, measure,
+              subtitle = "Filings with facts of the year, %", digits = 1,
+              ncol = 2)
+```
+
+```{r clean-note, results='asis'}
+cat("No error was found in ", fmt(sum(rated$clean)), " of the ",
+    fmt(n_read), " filings with facts, and nothing at all in ",
+    fmt(sum(rated$spotless)), ". ",
+    "The first is the share an analysis that reads figures out of these ",
+    "filings can work with; the second is the share about which nothing at ",
+    "all was found, which is a stricter test than most uses need -- a note ",
+    "that a report tags most of its figures under its own concepts is a ",
+    "fact about the report and not a fault in it.\n", sep = "")
+```
+
+### The five identities
+
+```{r identities, results='asis'}
+cat("Five of the checks test a report against itself: that the balance ",
+    "sheet balances, that the two halves of the asset side add to the ",
+    "total, that revenue less the cost of sales is the gross profit, that ",
+    "the result before tax less the tax is the result, and that the three ",
+    "cash flows sum to the movement in cash. They are the checks an ",
+    "analysis that reads a statement out of a filing rests on, and they are ",
+    "read together here because a filing that fails any one of them cannot ",
+    "be read as a set of statements.\n\n", sep = "")
+
+cat("All five hold in ", fmt(sum(!identity_state$fails_identity)),
+    " of the ", fmt(n_read), " filings with facts, ",
+    fmt(share_identity, 1), " % of them.\n", sep = "")
+```
+
+```{r identities-table}
+temp <- by_code %>%
+  filter(ISSUE %in% identity_codes) %>%
+  transmute(title,
+            Filings = fmt(affected),
+            Share = fmt(share, 1))
+
+knitr::kable(temp, align = "lrr",
+             col.names = c("The identity", "Filings failing it",
+                           "Of the filings with facts, %"))
+```
+
+```{r identities-silent, results='asis'}
+# An identity can only be tested where the filing tags both sides of it. A
+# filing that tags neither passes by silence, which is a different thing
+# from passing, and the MISS_ checks are what makes that visible.
+miss <- by_code %>% filter(grepl("^MISS_", ISSUE), ISSUE != "MISS_FACT_VALUE")
+cat("\nAn identity is only tested where the filing tags the lines it rests ",
+    "on. A filing that tags neither side of one passes it by silence, which ",
+    "is not the same as passing it: ",
+    paste(sprintf("%s in %s %% of the filings with facts",
+                  tolower(miss$title), fmt(miss$share, 1)),
+          collapse = "; "),
+    ". Those are the ", nrow(miss), " `MISS_` checks, and they are what ",
+    "keeps a silent pass from reading as a sound report.\n", sep = "")
+```
+
+{{< pagebreak >}}
+
+### The filings with the most found in them
+
+```{r worst-filings}
+# Named so that a reader can go and look at them. The order is by findings,
+# which puts a filing with many bad facts above one with a single broken
+# identity; the codes are given so the two can be told apart.
+temp <- filing_state %>%
+  filter(findings > 0) %>%
+  arrange(desc(errors), desc(findings)) %>%
+  slice_head(n = top_n) %>%
+  transmute(NAME = substr(NAME, 1, 34),
+            COUNTRY,
+            Year = fy,
+            Findings = fmt(findings),
+            Errors = fmt(errors),
+            Codes = gsub(", ", ", ", which))
+
+knitr::kable(temp, align = "llrrrl",
+             col.names = c("Issuer", "Country", "Year", "Findings", "Errors",
+                           "What was found"))
+```
+
+### What the repository's own validation found
+
+```{r repo-validation, results='asis'}
+# The repository validates every filing it takes in. Its counts are not this
+# report's checks and are not re-run here; one of the checks carries them
+# into the table of issues so that they sit beside the rest.
+temp <- filings %>%
+  summarise(with_errors = sum(ERRORS > 0, na.rm = TRUE),
+            with_warnings = sum(WARNINGS > 0, na.rm = TRUE),
+            with_inconsistencies = sum(INCONSISTENCIES > 0, na.rm = TRUE),
+            errors = sum(ERRORS, na.rm = TRUE))
+
+cat("filings.xbrl.org validates every filing it takes in and records what ",
+    "its rules found. Those counts are the repository's, not this ",
+    "report's: the `VALIDATION_ERRORS` check carries them into the table of ",
+    "issues so that they sit beside the rest, and nothing here re-ran a ",
+    "rule. Of the ", fmt(n_listed), " filings checked, ",
+    fmt(temp$with_errors), " carry at least one validation error, ",
+    fmt(temp$with_warnings), " at least one warning and ",
+    fmt(temp$with_inconsistencies),
+    " at least one calculation inconsistency. A validation error does not ",
+    "mean a figure is wrong -- it means the filing does not meet the ",
+    "format -- and the repository publishes the filing either way.\n",
+    sep = "")
+```
+
+{{< pagebreak >}}
+
+## 4 What this report cannot say
+
+```{r limits, results='asis'}
+limits <- c(
+  paste("**Whether a finding is a fault.** A check names a record that did",
+        "not hold to a rule of this project. Several of the rules are held",
+        "to by sound filings only most of the time: an issuer presenting",
+        "assets in order of liquidity has no current and non-current",
+        "subtotals to add up, one presenting expenses by nature has no cost",
+        "of sales, and a bank's revenue is interest income tagged",
+        "elsewhere. The catalogue in section 5 says for each check what a",
+        "legitimate cause looks like, and no count in this report has one",
+        "subtracted from it."),
+  paste("**Whether a silence is a pass.** A check tests what a filing",
+        "tagged. A filing that tagged neither side of an identity is not",
+        "named by the identity check, and a filing the repository published",
+        "no facts for is not named by any check that reads a figure. Both",
+        "are counted here as filings with no finding of that check, which",
+        "is why the `MISS_` checks and the `NO_FACTS` note are in the same",
+        "table as the identities: they are the record of where the other",
+        "checks had nothing to look at."),
+  paste("**Whether the checks have run.** The table of issues holds the",
+        "rows of the partitions the checks were last asked about. A country",
+        "or a year the checks have not run over has no rows and is counted",
+        "here as a part of the record with no findings. Section 1 names the",
+        "countries this applies to; a report whose first table shows a",
+        "country with no run cannot be read as a report on that country."),
+  paste("**Whether a figure is right.** Nothing in the module reads a",
+        "report. An identity that holds says the figures a filing tagged",
+        "are consistent with one another, not that they are the figures the",
+        "accounts show, and a filing can tag a wrong number consistently",
+        "in every statement. Only the filing itself, which the repository",
+        "publishes in its viewer, settles that."),
+  paste("**What the severities are worth.** The three severities are this",
+        "project's judgement of what a finding costs a reader of the data.",
+        "They are not a classification ESMA publishes, they are not the",
+        "repository's, and an analysis with different needs should read the",
+        "codes rather than the severities: a note that most of a report is",
+        "tagged under the issuer's own concepts stops a cross-sectional",
+        "comparison dead, and an error in a cash flow identity does not",
+        "touch a reader who only wants the balance sheet."),
+  paste("**What happens next.** The module writes findings and changes",
+        "nothing. No figure in the table of facts is corrected, no filing",
+        "is set aside, and a filing that fails every check is read by the",
+        "rest of the module exactly as one that passes. A pipeline that",
+        "wants to act on a finding has to do so itself, which is what the",
+        "table of issues is for."))
+
+cat(paste(limits, collapse = "\n\n"))
+```
+
+{{< pagebreak >}}
+
+## 5 The checks in full
+
+```{r catalogue-intro, results='asis'}
+cat("The catalogue the module ships, read from the same file the checks ",
+    "read it from. Each entry says what the check finds, what a finding ",
+    "means and what to do about it. The order is by severity.\n", sep = "")
+```
+
+```{r catalogue-full, results='asis'}
+for (level in severities) {
+  rows <- catalogue %>% filter(severity == level)
+  if (nrow(rows) == 0) next
+  heading <- switch(level,
+                    error = "Errors",
+                    warning = "Warnings",
+                    info = "Notes")
+  cat("\n### ", heading, "\n\n", sep = "")
+  for (i in seq_len(nrow(rows))) {
+    found <- by_code %>% filter(ISSUE == rows$code[i])
+    cat("**`", rows$code[i], "` — ", rows$title[i], ".** ",
+        rows$meaning[i], " ",
+        "*Found in ", fmt(found$affected), " of the ",
+        fmt(found$denominator), " filings it is asked of",
+        if (found$affected > 0)
+          paste0(", ", fmt(found$findings), " findings") else "",
+        ".* ",
+        "*What to do:* ", rows$remedy[i], "\n\n", sep = "")
+  }
+}
+```
+
+{{< pagebreak >}}
+
+## 6 The run
+
+### What was read
+
+```{r run}
+temp <- tibble(
+  item = c("Silver layer",
+           "Countries",
+           "Financial years",
+           "Filings listed",
+           "Of those, with facts",
+           "Issuers",
+           "Checks run",
+           "Checks that fired",
+           "Findings",
+           "Of those, errors",
+           "Of those, warnings",
+           "Of those, notes",
+           "Filings with a finding",
+           "Filings with facts free of errors",
+           "Rows naming a withdrawn filing",
+           "Checks last run",
+           "Rendered on"),
+  value = c(path_silver,
+            paste(report_countries, collapse = ", "),
+            period_range,
+            fmt(n_listed),
+            fmt(n_read),
+            fmt(n_distinct(filing_state$LEI)),
+            fmt(n_checks),
+            fmt(sum(by_code$affected > 0)),
+            fmt(n_findings),
+            fmt(n_errors),
+            fmt(n_warnings),
+            fmt(n_infos),
+            fmt(sum(filing_state$findings > 0)),
+            fmt(sum(rated$clean)),
+            fmt(nrow(orphans)),
+            if (checked_on[1] == checked_on[2])
+              format(checked_on[1], "%d %B %Y") else
+              paste(format(checked_on[1], "%d %b %Y"), "–",
+                    format(checked_on[2], "%d %b %Y")),
+            format(Sys.Date(), "%d %B %Y")))
+
+knitr::kable(temp, col.names = c("", ""), align = "lr")
+```
+
+### How to run the checks again
+
+```{r rerun, results='asis'}
+cat("The table of issues is rebuilt a partition at a time, and a partition ",
+    "is rewritten as a whole when it is checked again, so a finding that ",
+    "was fixed in the data leaves no row behind. From Python:\n\n",
+    "```python\n",
+    "from pyspark.sql import SparkSession\n",
+    "from fincommons.esef.quality import update_silver_esef_quality\n\n",
+    "spark = SparkSession.builder.getOrCreate()\n",
+    "update_silver_esef_quality(spark, \"paths.yaml\", countries=[\"AT\"])\n",
+    "```\n\n",
+    "`fincommons.dataquality.describe_check` turns a code into the ",
+    "sentences printed in section 5, `issue_counts` counts the table by ",
+    "code, and `with_issues` and `suppressed` join the findings onto the ",
+    "figures so that a pipeline can act on them.\n", sep = "")
+```
+
+### Sources
+
+```{r sources, results='asis'}
+sources <- c(
+  paste("**The filings and the reports.** filings.xbrl.org, run by XBRL",
+        "International, which collects the reports filed with the officially",
+        "appointed mechanism of each member state, validates them and",
+        "publishes for each filing the report package as filed, the report",
+        "as xBRL-JSON where it could convert it, and the counts of what its",
+        "validation found. The `esef` module reads its yearly indexes and",
+        "the xBRL-JSON."),
+  paste("**The checks.** `fincommons.esef.quality`, with the machinery",
+        "common to the regimes in `fincommons.dataquality` and the",
+        "descriptions in `fincommons/data/dataquality_checks.csv`. All three",
+        "are part of the open-source project fincommons and are the only",
+        "source of the rules counted here."),
+  paste("**The taxonomy.** The IFRS taxonomy and ESMA's additions to it name",
+        "the concepts the checks look for. A concept an issuer created for",
+        "its own report is not one the checks can read, which is what the",
+        "`MISS_` checks and the note on extension-heavy reports record."))
+
+cat(paste(sources, collapse = "\n\n"))
+```
+
+### Disclaimer
+
+```{r disclaimer, results='asis'}
+cat(paste("This document is produced by a template of the open-source",
+          "project fincommons and is an example of what the project's",
+          "`esef` module can be read for. It counts the findings of this",
+          "project's own checks over a public record and nothing else: no",
+          "figure in it is an amount out of a report, no finding in it is a",
+          "finding of a regulator or of the repository, and nothing in it is",
+          "a statement about the accounting, the financial position or the",
+          "conduct of any issuer named or counted in it. A named filing is",
+          "named because a rule of this project did not hold over the data",
+          "the repository published for it, which a sound filing can cause;",
+          "the catalogue in section 5 says for each check what that looks",
+          "like. The counts are given without warranty as to correctness or",
+          "completeness, carry no association with any issuer, with XBRL",
+          "International or with ESMA, and are not investment advice."))
+```
