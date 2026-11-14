@@ -34,4 +34,5 @@ from .common import *
 from .parse import *
 from .bronze import *
 from .silver import *
+from .quality import *
 from .pipeline import *

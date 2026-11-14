@@ -8,6 +8,44 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
+- `dataquality`, `esef.quality` and `secfiling.quality`: the checks the two
+  regimes' figures are held to, and a table of the issues they find.
+  `fincommons/dataquality.py` holds what does not depend on the data set --
+  how a check is described, how its rows are gathered, which partitions a run
+  still has to look at, what is written where it looked at part of the table
+  only, and how the issues are counted and joined back onto the records --
+  and each module holds its own checks and declares its own issue table,
+  because the record a check points at is identified differently in each.
+  `update_silver_esef_quality` and `update_silver_secfiling_quality` write a
+  third Silver table, `issues`, beside the tables they are derived from; no
+  section of the configuration file has to be added for it, and a lake that
+  never runs the checks has no such table. Nothing is dropped and nothing is
+  corrected: a check writes a row and leaves the figure where it is, and a
+  filing with nothing wrong with it has no row at all.
+  Thirty-four checks, eighteen for ESEF and sixteen for the Commission. The
+  valuable ones are the relations a statement states on both sides -- the
+  balance sheet, revenue against the cost and the gross profit, the result
+  before tax against the tax and the result, the three cash flows against the
+  movement in cash -- because the scale of a number is an attribute of the tag
+  and invisible on the page. The rest are structural. One check belongs to the
+  Commission alone: a company file carries every filing's account of every
+  period, so `RESTATED_MATERIALLY` can set what a year's own report said
+  beside what a later report says, which found 149 restatements across
+  NVIDIA's 69 filings; share counts and per-share amounts are passed over,
+  a split restating those by arithmetic. Two belong to the repository alone,
+  which validates what it publishes and lists what it could not convert.
+  What a code means, how severe it is and what to do about it are rows of
+  `data/dataquality_checks.csv` rather than branches in the code, as the
+  measures of `financialreport` are, so that the people most able to find a
+  check wrong can read it; `describe_check` prints one, and a deployment that
+  keeps checks of its own ships a catalogue of the same shape and names it.
+  The checks were run over NVIDIA's 69 filings and six real voestalpine
+  reports, which corrected three of them: mezzanine equity belongs to the
+  balance sheet identity, the discontinued operations belong between the
+  result before tax and the result, and whether the repository published any
+  facts is a question for the index rather than for the table of facts -- the
+  last reporting 24,174 filings nobody had downloaded instead of the 192 the
+  repository could not convert.
 - `secfiling`: a template for a factsheet on one registrant, in R and Quarto,
   with NVIDIA Corporation as its example:
   `src/fincommons/secfiling/templates/secfiling-analyst-factsheet.qmd`. It is
