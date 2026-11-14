@@ -46,6 +46,34 @@ release may change the public API, which `tests/test_public_api.py` lists.
   facts is a question for the index rather than for the table of facts -- the
   last reporting 24,174 filings nobody had downloaded instead of the 192 the
   repository could not convert.
+- `esef` and `secfiling`: a template for a data quality report, one per
+  regime, in R and Quarto, which reads the table of issues over the whole
+  record rather than filing by filing. Sixteen pages for ESEF and fifteen for
+  the Commission, built as a pair in the same way the factsheets are: what
+  was checked and what the checks have not run over, every check ranked by
+  the share of filings it named, the bands of findings per filing, the share
+  of the record free of errors, the five identities read together, and every
+  entry of the catalogue with what it found here. No number in either is an
+  amount out of a filing.
+  Two distinctions carry both reports and neither is left to be inferred. A
+  share is only readable against the right denominator, so each report takes
+  every rate over the one population every check was asked of -- the filings
+  the table of facts holds facts for, the annual reports -- and the per-check
+  table keeps each check's own. And a check names the records that failed it,
+  the filing where the fault is the report's and the fact where one figure is
+  at fault, so findings are rows and filings are the filings those rows name;
+  no table adds one to the other, and the headline of each report is the share
+  of the record free of errors rather than a count of findings. A partition
+  the checks have never run over and one in which every check passed look the
+  same in the two tables, and both reports name the former rather than count
+  it as sound.
+  The catalogue of checks is read from `data/dataquality_checks.csv`, the same
+  file the module reads, so a check added to a module appears in the report
+  without the template being touched; a code in the table of issues the
+  catalogue does not describe is refused rather than printed bare, as is a
+  Delta Silver layer. The secfiling report gives `RESTATED_MATERIALLY` a
+  section of its own, it being the one check without a counterpart in the
+  other regime and the one that needs reading rather than counting.
 - `secfiling`: a template for a factsheet on one registrant, in R and Quarto,
   with NVIDIA Corporation as its example:
   `src/fincommons/secfiling/templates/secfiling-analyst-factsheet.qmd`. It is

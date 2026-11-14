@@ -196,6 +196,33 @@ The last page is a disclaimer, and the cover says in its first line and in its s
 
 A Delta Silver layer is refused rather than read: the table of facts replaces a country's partition whenever its reports change, and a Delta table keeps the files it replaced until it is vacuumed, which a reader of the files alone would count again.
 
+## A data quality report on the findings
+
+`templates/esef-quality-report.qmd` is the third template of the module and the counterpart of the table of issues: what the checks found, read over the whole record rather than filing by filing. It reads the three Silver tables as parquet and renders with Quarto to a PDF of some sixteen pages. **No number in it is an amount out of a report**; every figure is a count of filings, findings or checks.
+
+| Section | Holds |
+|---------|-------|
+| the record checked | what was checked per country and per financial year, which countries the checks have run over at all, and the table of the checks with the population each is asked of |
+| what the checks found | the findings by severity, every check ranked by the share of filings it named, the bands of findings per filing, and the same by country and by financial year |
+| the record that holds up | the share of filings free of errors and the share with no finding at all, the five identities read together, what a silent pass is, the filings with the most found in them, and what the repository's own validation found |
+| what this report cannot say | the six things a count of findings does not settle |
+| the checks in full | every entry of the catalogue -- what it finds, what a finding means, what to do about it -- with the count it found in this record |
+| the run | what was read, how to run the checks again, the sources and a disclaimer |
+
+```
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-quality-report.qmd
+```
+
+The countries and the financial years are set in the first chunk and default to every country the lake holds and the last five years in it. The catalogue of checks is read from `data/dataquality_checks.csv`, the same file the module reads, so a check added to the module appears in section 5 without the template being touched; a code in the table of issues that the catalogue does not describe is refused rather than printed bare.
+
+Two things decide what the report says, and it states both rather than leaving them to be inferred.
+
+**The population.** A share is only readable against the right denominator. A check that reads the figures of a report could only fire on a filing the *table of facts* holds facts for, which is what the pipeline collected and not what the repository could have given it; `VALIDATION_ERRORS` and `NO_FACTS` read the index and could fire on every filing listed. Since the one population sits inside the other, the filings with facts are the only population every check was asked of, and every rate in the report -- the share free of errors, the shares by country and by year, the bands of findings per filing -- is taken over those. Over the whole index instead, a record of which a part has been collected would read as sound because nothing had looked at the rest of it. The per-check table keeps each check's own denominator and names it.
+
+**Findings against filings.** A check names the records that failed it: the filing, where the fault is a fault of the report as a whole, and the fact, where one figure is at fault. A filing therefore has as many rows as it has bad facts, and the two counts are different things. The report names them apart throughout -- findings are rows, filings are the distinct filings those rows name -- and no table adds one to the other. The loudest one per cent of the filings carrying a third of the findings is the ordinary case, which is why the share of filings free of errors and not the count of findings is the report's headline.
+
+A country with no row in the table of issues is either a country every check passed or one the checks have never run over, and nothing in the tables tells the two apart. The report names those countries rather than counting them as sound. A Delta Silver layer is refused for the same reason as in the other two templates.
+
 ## A coverage report on the record
 
 `templates/esef-coverage-report.qmd` is the counterpart of the factsheet: one issuer in depth against the whole record at a glance. It reads the same two Silver tables as parquet and renders with Quarto to a PDF of some sixteen pages, which counts what the repository lists and what the issuers tagged, and nothing else. **No number in it is an amount out of a report**: every figure is a count of filings, facts, concepts or issuers.

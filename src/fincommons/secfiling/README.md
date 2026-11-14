@@ -149,6 +149,37 @@ Two things the esef factsheet has are missing here, and both because the company
 
 The last page is a disclaimer, and the cover says in its first line and in its small print what that page states in full: the document is produced by a template and the registrant is an example, no warranty is given for the correctness or the completeness of a figure, nobody who made it is associated with the registrant or with the Commission, nothing in it is advice, and liability is disclaimed as far as the law allows, in the terms of Articles 7 and 8 of the EUPL the project is licensed under. Whoever renders the factsheet for a purpose of their own is responsible for what they publish: the disclaimer is written for a template published as an example, and the paragraph on the example, the line on the cover and the reference to the licence are to be replaced by terms that fit the use.
 
+## A data quality report on the findings
+
+`templates/secfiling-quality-report.qmd` is the counterpart of the table of issues: what the checks found, read over the whole record rather than filing by filing. It is the counterpart of the esef module's quality report and is built the same way -- it reads the three Silver tables as parquet and renders with Quarto to a PDF of some fifteen pages. **No number in it is an amount out of a filing**; every figure is a count of filings, findings or checks.
+
+| Section | Holds |
+|---------|-------|
+| the record checked | what was checked per form and per year filed, which years the checks have run over at all, the frameworks the filings tag against, and the table of the checks with the population each is asked of |
+| what the checks found | the findings by severity, every check ranked by the share of filings it named, the bands of findings per filing, and the same by year filed and by registrant |
+| the record that holds up | the share of annual reports free of errors and the share with no finding at all, the five identities read together, what a silent pass is, what a later report says about an earlier one, and the filings with the most found in them |
+| what this report cannot say | the seven things a count of findings does not settle |
+| the checks in full | every entry of the catalogue -- what it finds, what a finding means, what to do about it -- with the count it found in this record |
+| the run | what was read, how to run the checks again, the sources and a disclaimer |
+
+```bash
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render secfiling-quality-report.qmd
+```
+
+The registrants and the years are set in the first chunk and default to every registrant the lake holds and the last six years in it. The catalogue of checks is read from `data/dataquality_checks.csv`, the same file the module reads, so a check added to the module appears in section 5 without the template being touched; a code in the table of issues that the catalogue does not describe is refused rather than printed bare.
+
+Three things decide what the report says, and it states all three rather than leaving them to be inferred.
+
+**The population.** A share is only readable against the right denominator. A check that reads a balance sheet could only fire on a filing that carries one, which is a filing made on `10-K`, `20-F` or `40-F`, amendment or not; the checks that read a date or a unit could fire on every filing. Since the one population sits inside the other, the annual reports are the only population every check was asked of, and every rate in the report -- the share free of errors, the shares by year and by registrant, the bands of findings per filing -- is taken over those. Over every filing instead, a record of which the quarterly reports are the bulk would read as sound because the checks that read a balance sheet had never looked at them. The per-check table keeps each check's own denominator and names it.
+
+**Findings against filings.** A check names the records that failed it: the filing, where the fault is a fault of the filing as a whole, and the fact, where one figure is at fault. A filing therefore has as many rows as it has bad facts, and the two counts are different things. The report names them apart throughout -- findings are rows, filings are the distinct filings those rows name -- and no table adds one to the other. A single noisy filing carrying a third of the findings is the ordinary case, which is why the share of annual reports free of errors and not the count of findings is the report's headline.
+
+**Why the years are the years filed.** A company file is organised by concept and carries every filing's account of every period, and the year a filing was made is the one column of it that only ever moves forward. A registrant that changes its year end reports two fiscal years or none, so a report counted by fiscal year would gain and lose filings for a reason that has nothing to do with their quality. The years are therefore the years the filings were made, which is also what the tables of facts and of issues are partitioned by. The table of filings carries no such column and the template derives it from `FILED`, exactly as the module does.
+
+The report gives the restatement check a section of its own, because it is the one check with no counterpart in the esef module and the one that most needs reading rather than counting: it names the facts a later annual report states differently for a period an earlier one already reported, and a restatement, a reclassification and a correction all look the same in the figures. The section ranks the concepts restated most often, which for NVIDIA's own filings is dominated by the accrued liabilities and the sundry non-current lines.
+
+A year with no row in the table of issues is either a year every check passed or one the checks have never run over, and nothing in the tables tells the two apart. The report names those years rather than counting them as sound. A Delta Silver layer is refused for the same reason as in the factsheet.
+
 ## Reading the two regimes together
 
 Module `financialreport` combines the output of this module with that of `esef` into one table of facts and one of filings, keyed by source. It reads both and neither reads it, so the tables of this module stand on their own and can be analysed without it.
