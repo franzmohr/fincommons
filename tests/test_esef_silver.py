@@ -21,8 +21,8 @@ import pandas
 import pytest
 import requests
 
-import fincommons.esef as esef
-from fincommons.esef import bronze as esef_bronze
+import fincommons.financialreport.esef as esef
+from fincommons.financialreport.esef import bronze as esef_bronze
 
 FIXTURES = Path(__file__).resolve().parent / "data" / "esef"
 LEI_AT = "5299000000000000AT01"
@@ -221,7 +221,7 @@ def test_the_signature_of_a_country_does_not_depend_on_the_order():
 
 
 def test_a_report_comes_back_in_chunks(tmp_path):
-    from fincommons.esef import silver
+    from fincommons.financialreport.esef import silver
     path = tmp_path / "report.json"
     shutil.copy(FIXTURES / report_name(AT), path)
 

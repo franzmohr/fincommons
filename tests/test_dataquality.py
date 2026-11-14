@@ -37,12 +37,12 @@ def test_every_check_says_what_it_means():
 
 def test_both_data_sets_define_checks():
     assert dq.checks_of("esef")
-    assert dq.checks_of("secfiling")
+    assert dq.checks_of("sec")
 
 
 def test_a_code_is_described_by_its_row():
     described = dq.describe_check("RESTATED_MATERIALLY")
-    assert described.dataset == "secfiling"
+    assert described.dataset == "sec"
     assert described.severity == "warning"
     assert "later" in described.meaning
     assert "RESTATED_MATERIALLY" in str(described)

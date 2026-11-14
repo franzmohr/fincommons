@@ -42,21 +42,37 @@ from importlib import resources
 import pandas as pd
 
 __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
-           "defined_columns", "CATALOGUED_MODULES", "CATALOGUES"]
+           "defined_columns", "CATALOGUED_MODULES", "CATALOGUES",
+           "MODULE_FOLDERS"]
 
 #: The modules whose data sets the catalogue of this package covers.
 #: marketpricedata is not among them: its one table has three columns, and
 #: what matters there is the identifier in it, see
 #: ``marketpricedata.describe_instrument``.
 CATALOGUED_MODULES = ("firds", "entitymasterdata", "exchangerate",
-                      "famafrenchdata", "esef", "secfiling",
+                      "famafrenchdata", "esef", "sec",
                       "financialreport")
 
 #: The modules that declare their schemas with ``StructType().add`` rather
 #: than building their columns with ``withColumn``; see :func:`defined_columns`.
 SCHEMA_DECLARING_MODULES = ("exchangerate", "entitymasterdata",
-                            "famafrenchdata", "esef", "secfiling",
+                            "famafrenchdata", "esef", "sec",
                             "financialreport")
+
+#: Where a catalogued data set's code lives, for the data sets whose folder
+#: is not simply their name. The regimes that require a financial report
+#: tagged, and the layer that combines them, sit under one namespace package,
+#: while the name of the data set stays what the tables and the configuration
+#: file call it: ``esef`` is addressed as ``esef`` and its code is in
+#: ``financialreport/esef``. A data set absent from this mapping lives in a
+#: folder of its own name.
+MODULE_FOLDERS = {
+    "esef": "financialreport/esef",
+    "sec": "financialreport/sec",
+    "edinet": "financialreport/edinet",
+    "dart": "financialreport/dart",
+    "financialreport": "financialreport/combined",
+}
 
 #: The catalogues read by default: the package that ships a catalogue, and
 #: the modules it covers.
@@ -95,8 +111,15 @@ def _modules(catalogues):
 
 
 def _root(package):
-    """The importable name of ``package``; this one as it was imported."""
-    return (__package__ or "fincommons") if package == "fincommons" else package
+    """The importable name of ``package``; this one as it was imported.
+
+    The first segment of ``__package__`` and not the whole of it, nor its
+    parent: the data directory belongs to the distribution, while the module
+    asking for it may sit at any depth below the top -- ``mapping`` is three
+    levels down -- and counting levels is how a file that moves stops finding
+    its own data.
+    """
+    return __package__.split(".")[0] if package == "fincommons" else package
 
 
 def column_catalogue(dataset=None, catalogues=None):
@@ -198,14 +221,18 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES):
 
     ``catalogues`` names the packages and modules to read, as for
     :func:`column_catalogue`; ``schema_declaring`` the modules whose
-    ``StructType().add`` calls count as defining a column.
+    ``StructType().add`` calls count as defining a column. Where a data set's
+    code does not live in a folder of its own name, :data:`MODULE_FOLDERS`
+    says where it does, and the table is named by the path rather than by the
+    data set: a column of ``esef`` is written in ``financialreport.esef.common``.
     """
     catalogues = CATALOGUES if catalogues is None else catalogues
     found = {}
     for owner, module in [(p, m) for p, ms in catalogues.items() for m in ms]:
         package = os.path.dirname(os.path.abspath(
             importlib.import_module(_root(owner)).__file__))
-        folder = os.path.join(package, module)
+        folder = os.path.join(package, *MODULE_FOLDERS.get(module, module)
+                              .split("/"))
         for directory, _, files in os.walk(folder):
             for file in sorted(files):
                 if not file.endswith(".py"):

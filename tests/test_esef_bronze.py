@@ -22,8 +22,8 @@ from pathlib import Path
 import pytest
 import requests
 
-import fincommons.esef as esef
-from fincommons.esef import bronze as esef_bronze
+import fincommons.financialreport.esef as esef
+from fincommons.financialreport.esef import bronze as esef_bronze
 
 FIXTURES = Path(__file__).resolve().parent / "data" / "esef"
 LAST_MODIFIED = "Mon, 26 Oct 2026 17:06:56 GMT"

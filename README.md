@@ -24,7 +24,7 @@ approaches for handling basic data pipelines.
 | `firds` | ESMA's FIRDS reference data: download, import and the historical database ESMA's instructions describe |
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
 | `famafrenchdata` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
-| `esef` | the annual financial reports listed issuers file in the European Single Electronic Format, from filings.xbrl.org: a table of filings and every tagged fact in one table, keyed by LEI |
+| `financialreport` | the regimes that require the periodic reports of listed issuers tagged in XBRL, one sub-module each -- `esef` for the European Single Electronic Format, `sec` for the inline XBRL mandate of the Securities and Exchange Commission, `edinet` for Japan, `dart` for Korea -- and `combined`, which puts them side by side. Each stands on its own; the namespace imports none of them |
 | `addressing`, `storage`, `log`, `layout`, `schemas`, `columns` | the infrastructure the modules share: locations from `paths.yaml`, how a Silver table rebuilt in full is read and written as parquet or Delta, logging, the file layout of tables, declared schemas, and the catalogue of what a column holds |
 
 fincommons is open source and complete on its own. Pipelines on supervisory
@@ -169,7 +169,7 @@ message rather than inside it, so that the sentence stays constant across runs:
 someone watching the console are the output of the program and stay on
 standard output; the log goes to standard error. `python -m
 fincommons.marketpricedata`, `python -m fincommons.famafrenchdata` and
-`python -m fincommons.esef` take `--log-level`.
+`python -m fincommons.financialreport.esef` take `--log-level`.
 
 ## Looking up what a column or a series is
 
@@ -333,7 +333,7 @@ cites the library. The details, the vocabulary of tables and a vignette that
 rebuilds HML and SMB from the six portfolios are documented in
 [`src/fincommons/famafrenchdata/README.md`](src/fincommons/famafrenchdata/README.md).
 
-### `fincommons.esef`
+### `fincommons.financialreport.esef`
 
 The annual financial reports that issuers on European regulated markets file
 in the European Single Electronic Format (ESEF), as collected by
@@ -349,7 +349,7 @@ into two tables:
 | `facts` | fact of a report collected: `FILING`, `LEI`, `CONCEPT` (e.g. `ifrs-full:Revenue`), `PRDSTART`, `PRDEND`, `UNIT`, `DIMENSIONS`, `VALUE` or `TEXT` |
 
 ```python
-from fincommons import esef
+from fincommons.financialreport import esef
 
 esef.update_esef(spark, "paths.yaml", ["AT"], contact="me@example.org")
 facts = esef.connect_to_esef(spark, "paths.yaml")
@@ -361,7 +361,10 @@ filing anew, and the table of facts is rebuilt country by country. Text
 blocks -- the notes, with their markup -- are left out of the table and kept
 in the Bronze layer. The facts are keyed by LEI, as the entity master data
 is. The details are documented in
-[`src/fincommons/esef/README.md`](src/fincommons/esef/README.md).
+[`src/fincommons/financialreport/esef/README.md`](src/fincommons/financialreport/esef/README.md).
+The other regimes and the combining layer have READMEs of their own beside
+it, under
+[`src/fincommons/financialreport/`](src/fincommons/financialreport/).
 
 ### `fincommons.firds` and `fincommons.marketpricedata`
 
