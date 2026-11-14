@@ -51,6 +51,18 @@ logger = logging.getLogger(__name__)
 #: The file the catalogue is shipped as, in the data directory of a package.
 CATALOGUE_FILE = "financialreport_measures.csv"
 
+#: Dimension members that name a basis of preparation rather than a part of
+#: an entity, and which a measure is therefore resolved over.
+#:
+#: There is one, and it belongs to the Japanese regime. A report that
+#: prepares consolidated statements states every figure twice, the group's
+#: with no dimension and the parent company's own under this member, and a
+#: filer that prepares no consolidated statements states only the second.
+#: Treating it as a breakdown -- which is what every other member of every
+#: regime is -- would return nothing for every filer that does not
+#: consolidate.
+BASIS_MEMBERS = ("NonConsolidatedMember",)
+
 #: The columns of the catalogue.
 #:
 #: ``measure``
@@ -299,8 +311,20 @@ def measure_values(facts, measure, packages=("fincommons",)):
     the entity as a whole, and a figure broken down by segment, by class of
     instrument or by any other axis is a part of it; summing the parts beside
     the whole is the arithmetic this exclusion exists to prevent. It also
-    makes the two sources comparable on this one point, since the company
-    files of the Commission carry no dimensional facts at all.
+    makes the sources comparable on this one point, since the company files
+    of the Commission carry no dimensional facts at all.
+
+    :data:`BASIS_MEMBERS` is the exception, and a Japanese filing is why. A
+    report that prepares consolidated statements states the group's figures
+    with no dimension and the parent company's own under
+    ``NonConsolidatedMember``, and a filer that prepares none states only the
+    second. That member does not name a part of an entity -- it names which
+    of two sets of accounts the figure belongs to -- so excluding it would
+    return nothing at all for every filer that does not consolidate, which is
+    a large share of them. A fact carrying it is therefore kept, and where a
+    filing states both, the consolidated figure wins: that is the basis the
+    filing itself reports on, and it is the one comparable with a group
+    reporting under either of the other frameworks.
 
     Parameters
     ----------
@@ -327,11 +351,18 @@ def measure_values(facts, measure, packages=("fincommons",)):
 
     labelled = with_measures(facts, packages=packages) \
         .where(func.col("MEASURE") == wanted)
+    consolidated = func.lit(0)
     if "DIMENSIONS" in facts.columns:
-        labelled = labelled.where(func.col("DIMENSIONS").isNull())
+        labelled = labelled.where(
+            func.col("DIMENSIONS").isNull()
+            | func.col("DIMENSIONS").isin(list(BASIS_MEMBERS)))
+        # The group's figure before the parent company's, where a filing
+        # states both; see BASIS_MEMBERS.
+        consolidated = func.when(func.col("DIMENSIONS").isNull(),
+                                 func.lit(0)).otherwise(func.lit(1))
 
     best = Window.partitionBy("FILING", "PRDSTART", "PRDEND") \
-        .orderBy("MEASURE_PRIORITY")
+        .orderBy(consolidated, "MEASURE_PRIORITY")
     return (
         labelled
         .withColumn("_rank", func.row_number().over(best))
@@ -343,6 +374,7 @@ def measure_values(facts, measure, packages=("fincommons",)):
 #: What this module offers. The judgement about what a figure of one regime is
 #: taken to mean in the other, and nothing above it.
 __all__ = [
+    "BASIS_MEMBERS",
     "CATALOGUE_COLUMNS",
     "CATALOGUE_FILE",
     "MeasureDefinition",

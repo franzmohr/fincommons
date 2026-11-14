@@ -128,9 +128,17 @@ One row per filing.
 
 `mapping` is the only module in the package that knows IFRS from US GAAP, and the only one that may. Whether `us-gaap:Revenues` and `ifrs-full:Revenue` are the same figure is a judgement about accounting rather than about storage, and it is made here so that it is made once, in one place, where it can be read and disagreed with.
 
-The judgement is data and not code: a CSV shipped in the data directory of the package, `financialreport_measures.csv`, beside the column catalogue and the FIRDS schemas. It currently defines **8 measures in 22 rows**, of which **13 carry a caveat**.
+The judgement is data and not code: a CSV shipped in the data directory of the package, `financialreport_measures.csv`, beside the column catalogue and the FIRDS schemas. It currently defines **8 measures in 38 rows**, of which **29 carry a caveat**.
 
-**The catalogue reaches IFRS and US GAAP and does not yet reach Japan.** `concepts_for('revenue', framework='JP-GAAP')` returns nothing, and `measure_values` over the Japanese rows therefore returns nothing rather than something wrong — which is the right failure, but it is a gap and not a judgement. Writing the Japanese rows is a judgement about accounting of the same kind the existing rows record, and a harder one: 経常利益 has no counterpart in either framework, and a Japanese report states every figure of a consolidating filer twice, so a measure row for Japan has to say which of the two sets of accounts it means. The Japanese facts are in the combined tables and are queryable by concept today; what is missing is the vocabulary that would let one question be put to all three regimes at once.
+**It reaches all three regimes.** The Japanese rows were added last and are the reason the `framework` and `taxonomy` columns are separate: a Japanese group that has adopted IFRS reports under IFRS and tags against `jpigp_cor`, Japan's own taxonomy for it, so its revenue resolves under `framework = 'IFRS'` beside `ifrs-full:Revenue` without being the same element. A filer under Japan GAAP tags `jppfs_cor` and carries `framework = 'JP-GAAP'`.
+
+Two of the Japanese judgements are worth reading before the figures are used, and both are recorded as caveats on the rows themselves.
+
+**Japan GAAP has no element for the equity attributable to the parent**, so no `JP-GAAP` row defines `equity_attributable_to_parent` and `concepts_for('equity_attributable_to_parent', 'JP-GAAP')` returns nothing. 自己資本 is 株主資本 plus 評価・換算差額等 — a sum rather than a line. Taking `jppfs_cor:ShareholdersEquity` for it is short by the valuation and translation adjustments, which for one report checked here is 9,191 million of a correct 63,326 million, so the row is absent rather than wrong.
+
+**A Japanese balance sheet does not present cash and cash equivalents.** It presents 現金及び預金, cash together with deposits, time deposits of more than three months among them. The figure that means what `ifrs-full:CashAndCashEquivalents` means is the closing balance of the cash flow statement, so that is the first row and the balance sheet line is the second, carried only so that a filer stating no cash flow statement is reached at all.
+
+One gap is known and is a gap rather than a judgement: a filer whose revenue is 営業収益 rather than 売上高 — a railway, a utility, an insurer — states it under an element no row here reaches. None of the reports this catalogue was written against uses one, and an element nobody has seen in a conversion is not put in an accounting catalogue.
 
 | Column | Meaning |
 | --- | --- |

@@ -185,11 +185,18 @@ JAPANESE_STANDARDS = {"IFRS": "IFRS", "US GAAP": "US-GAAP",
 STANDARDS_ELEMENT = "jpdei_cor:AccountingStandardsDEI"
 
 
-def _japanese_framework(facts):
+#: The two Japanese taxonomies that settle the framework by themselves,
+#: whatever the filing says it reports under. ``jpigp_cor`` is the taxonomy
+#: of the consolidated statements of a filer that has adopted IFRS and
+#: ``jppfs_cor`` the one of the statements the Ordinance on Financial
+#: Statements prescribes, which are Japan GAAP by construction.
+TAXONOMY_FRAMEWORKS = {"jpigp_cor": "IFRS", "jppfs_cor": "JP-GAAP"}
+
+
+def _stated_framework(facts):
     """One row per filing: what it says it reports under.
 
-    Read from the filing rather than from the prefixes of its facts, and
-    mapped through :data:`JAPANESE_STANDARDS`; a filing stating a standard
+    Mapped through :data:`JAPANESE_STANDARDS`; a filing stating a standard
     this module has no name for keeps it as filed rather than being called
     something it is not.
     """
@@ -200,7 +207,33 @@ def _japanese_framework(facts):
     return (facts
             .where(func.col("CONCEPT") == STANDARDS_ELEMENT)
             .groupBy("FILING")
-            .agg(func.max(func.coalesce(named, stated)).alias("FRAMEWORK")))
+            .agg(func.max(func.coalesce(named, stated)).alias("_STATED")))
+
+
+def _japanese_framework(concept, stated):
+    """What one Japanese fact was prepared under, as a Spark expression.
+
+    The taxonomy decides it where the taxonomy is decisive, and the filing
+    decides it otherwise. That order matters, and a Japanese IFRS filer is
+    why: its consolidated statements are IFRS and its parent company's own
+    statements are Japan GAAP, both in one report, and a framework taken
+    from the filing alone would call the parent's revenue IFRS. Fujitsu
+    states 3,502,971 million of revenue under ``jpigp_cor`` for the group
+    and 1,692,618 million under ``jppfs_cor`` for the company, and they are
+    not figures of one framework.
+
+    What the taxonomy does not settle -- the disclosure ordinance's own
+    elements, the document and entity information, a concept the filer
+    created -- takes the filing's answer. One residue stays wrong and is
+    worth naming: the five-year summary of an IFRS filer states the parent's
+    Japan GAAP series under the same disclosure taxonomy as the group's IFRS
+    one, and those rows carry the filing's framework.
+    """
+    expression = stated
+    for prefix, framework in TAXONOMY_FRAMEWORKS.items():
+        expression = func.when(concept.startswith(f"{prefix}:"),
+                               func.lit(framework)).otherwise(expression)
+    return expression
 
 
 def facts_from_edinet(spark, config_path):
@@ -239,10 +272,13 @@ def facts_from_edinet(spark, config_path):
     return (
         facts.where(func.col("PRDEND").isNotNull())
         .join(filings, "FILING", "left")
-        .join(_japanese_framework(facts), "FILING", "left")
+        .join(_stated_framework(facts), "FILING", "left")
         .withColumn("SOURCE", func.lit("edinet"))
         .withColumn("LEI", func.lit(None).cast("string"))
         .withColumn("CIK", func.lit(None).cast("string"))
+        .withColumn("FRAMEWORK",
+                    _japanese_framework(func.col("CONCEPT"),
+                                        func.col("_STATED")))
         .withColumn("PERIODYEAR", func.year("PERIODEND"))
         .select(*fact_schema.names)
     )
@@ -274,8 +310,9 @@ def filings_from_edinet(spark, config_path):
 
     return (
         filings.join(about, "FILING", "left")
-        .join(_japanese_framework(facts), "FILING", "left")
+        .join(_stated_framework(facts), "FILING", "left")
         .withColumn("SOURCE", func.lit("edinet"))
+        .withColumn("FRAMEWORK", func.col("_STATED"))
         .withColumn("LEI", func.lit(None).cast("string"))
         .withColumn("CIK", func.lit(None).cast("string"))
         .withColumn("COUNTRY", func.lit(None).cast("string"))
@@ -382,6 +419,7 @@ __all__ = [
     "JAPANESE_STANDARDS",
     "READERS",
     "STANDARDS_ELEMENT",
+    "TAXONOMY_FRAMEWORKS",
     "available_sources",
     "combine",
     "facts_from_edinet",
