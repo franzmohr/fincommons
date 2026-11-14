@@ -310,8 +310,70 @@ Fourteen checks close the document, among them one that tests the reading of bot
 
 The last page is a disclaimer, and the cover says in its first line and in its small print what that page states in full: the document is produced by a template and the filer is an example, no warranty is given for the correctness or the completeness of a figure, nobody who made it is associated with the filer or with the agency, nothing in it is advice, and liability is disclaimed as far as the law allows, in the terms of Articles 7 and 8 of the EUPL the project is licensed under. Whoever renders the factsheet for a purpose of their own is responsible for what they publish.
 
+## The corporate number reaches the LEI
+
+**It does, and this is the only identifier in this family of modules that
+does.** Neither the Commission nor GLEIF publishes a mapping from a central
+index key to a legal entity identifier, and ESMA publishes none from an LEI
+to anything the Commission uses; `financialreport` carries both columns and
+fills exactly one of them in any row for that reason. Japan is different,
+and the reason is that the corporate number is not an identifier of its own:
+
+> The corporate number of the National Tax Agency is a check digit followed
+> by the twelve-digit 会社法人等番号 of the commercial register, and GLEIF
+> records that register number as the registration authority entity id of an
+> LEI issued to a Japanese company.
+
+So the join is arithmetic rather than a lookup table. Drop the leading check
+digit, hyphenate the rest as the register writes it, and ask GLEIF:
+
+```python
+jcn = "1020001071491"                     # JCN of 富士通株式会社
+body = jcn[1:]                            # 020001071491
+registered_as = f"{body[:4]}-{body[4:6]}-{body[6:]}"   # 0200-01-071491
+# GLEIF: entity.registeredAs == "0200-01-071491" under RA000412
+# -> LEI 3538000246DHJLRTUZ24, 富士通株式会社
+```
+
+`RA000412` is the 登記 register of the Legal Affairs Bureau. Every match
+found while this was checked named that one register and no other, which is
+what makes the join exact: it is two spellings of one register number and
+not a name comparison.
+
+### How far it reaches
+
+Of a random sample of 200 of the 3,810 listed filers the agency's list gives
+a thirteen-digit corporate number for, **27 reached an LEI -- 13.5 per
+cent**. Ten of the misses were then looked up by name in GLEIF and not one of
+them had an LEI under any spelling, so the join is not failing on them: most
+Japanese listed companies simply are not in the LEI system, which is a
+population fact and not a defect of the mapping.
+
+Of the 27 matches, 26 carry a legal name that agrees with the filer's. The
+twenty-seventh is the point of joining on a number rather than on a name:
+EDINET has E24558 as 株式会社ミライト・ワン and GLEIF still has the LEI under
+株式会社ミライト・ホールディングス, the name before the group renamed itself.
+A number survives a rename and a name match does not.
+
+### What it is good for, and what it is not
+
+It is enough to put a Japanese filer beside a European one **where both
+exist**, which is the thing the combined tables cannot otherwise do at all.
+It is not enough to key the combined tables by: seven of eight listed
+Japanese filers would carry no LEI, and an identifier that is null for most
+of a population is not the identifier that population is keyed by. The
+corporate number stays the key for Japan, as the central index key does for
+the Commission, and the LEI is a column that is filled where it can be.
+
+Nothing in this module derives it. The join needs GLEIF, which is
+[`entitymasterdata`](../../entitymasterdata/README.md), and belongs wherever
+the regimes are put side by side rather than in the module that reads one of
+them.
+
 ## What is not here yet
 
-One thing the other two regimes have and this one does not.
-
-This module is not yet in `financialreport`'s `SOURCES`, so its facts are not in the combined tables. The question that has to be settled first is the entity one: the ESEF tables are keyed by legal entity identifier, the Commission's by central index key, and these by EDINET code. `JCN`, the corporate number of the National Tax Agency, is the first identifier in this family of modules that a public register might map to an LEI -- GLEIF's list of registration authorities names the Japanese register -- and whether it reaches these filers is a question for the data rather than for this README.
+This module is not yet in `financialreport`'s `SOURCES`, so its facts are not
+in the combined tables. The entity question above is settled; what remains is
+the mapping of the Japanese elements onto the measures of
+`financialreport_measures.csv`, which carries IFRS and US GAAP rows and no
+Japanese ones.

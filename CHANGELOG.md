@@ -8,6 +8,34 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
+- `edinet` and `financialreport`: the entity question is settled, and the
+  answer is yes. The corporate number of the National Tax Agency, which the
+  table of filings carries as `JCN`, is not an identifier of its own: it is a
+  check digit followed by the twelve-digit 会社法人等番号 of the commercial
+  register, and GLEIF records that register number as the registration
+  authority entity id of an LEI issued to a Japanese company. Dropping the
+  check digit and hyphenating the rest -- `1020001071491` to `0200-01-071491`
+  -- reaches Fujitsu's LEI `3538000246DHJLRTUZ24` exactly. The join is
+  arithmetic rather than a lookup table and rests on a number rather than a
+  name, which is what makes it survive a rename: EDINET has E24558 as
+  株式会社ミライト・ワン and GLEIF still has the LEI under the name before the
+  group renamed itself.
+  How far it reaches was measured rather than assumed. Of a random sample of
+  200 of the 3,810 listed filers the agency's list gives a thirteen-digit
+  corporate number for, 27 reached an LEI -- 13.5 per cent -- and every match
+  named the same register, `RA000412`, the 登記 register of the Legal Affairs
+  Bureau. Ten of the misses were then looked up by name in GLEIF and not one
+  had an LEI under any spelling, so the join is not failing on them: most
+  Japanese listed companies are not in the LEI system at all. That is enough
+  to put a Japanese filer beside a European one where both exist and not
+  enough to key the combined tables by, so the corporate number stays the key
+  for Japan and the LEI is a column filled where it can be.
+  This is the only identifier in the family of modules that reaches the LEI.
+  The Commission's central index key does not: an operating company's LEI
+  record points at its state register, NVIDIA's at Delaware by a file number
+  that is not its central index key. Both READMEs now say which of the three
+  regimes can be joined by entity and which cannot.
+
 - `edinet`: the checks the figures are held to, and a table of the issues
   they find: `src/fincommons/financialreport/edinet/quality.py`.
   `update_silver_edinet_quality` writes a fourth Silver table, `issues`,
