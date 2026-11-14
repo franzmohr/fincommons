@@ -8,6 +8,83 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
+- `edinet`: a template for a factsheet on one Japanese filer, in R and
+  Quarto, with Kojima Co., Ltd. as its example:
+  `src/fincommons/financialreport/edinet/templates/edinet-analyst-factsheet.qmd`.
+  It renders a PDF of some twenty pages from the facts of the filer's own
+  annual securities reports and from nothing else. Six things in it have no
+  counterpart in the esef or the sec factsheet, and each follows from what
+  the Japanese ordinance asks a filer for.
+  The five-year summary of the front matter, 主要な経営指標等の推移, carries
+  revenue, the ordinary result, the net result, total assets, equity, the
+  three cash flows, the employee count and the filer's own equity ratio,
+  return on equity, payout ratio and price-earnings ratio for five years in
+  one report. A lake holding a single annual report therefore shows a
+  five-year series, which neither of the other two regimes can do; the
+  statements of that same report cover the year and its comparative, so the
+  factsheet keeps two year axes and says which covers what rather than
+  padding the short one out with dashes.
+  The consolidation basis is the first thing a Japanese report asks to have
+  decided, and it is not a formality. A filer that consolidates states every
+  figure twice -- the group with no dimension and the parent company under
+  `NonConsolidatedMember` -- and Kanagawa Chuo Kotsu reports earnings per
+  share of 294.99 for the group and 236.58 for the parent in the same table
+  of the same report. A filer that does not consolidate states its accounts
+  under the member alone, so requiring an empty dimension would empty the
+  factsheet. `consolidation` is `"auto"` by default and the filing's own
+  連結決算の有無 decides; the agency's list of filers disagrees with the
+  filing for Kojima, and the profile page says so rather than preferring one
+  silently. Only ten lines may be taken from the other basis -- the stated
+  capital, the shares issued, the dividend and its payout, the shareholder
+  return, the workforce figures -- because those are properties of the
+  company however it reports, and they are marked ‡ where they are. Nothing
+  else falls back: Fujitsu reports its group under IFRS and its parent under
+  Japan GAAP, and an unrestricted fallback put 275,236 million of
+  parent-company 経常利益 on the cover of a group factsheet whose revenue is
+  3,502,971 million.
+  A concept is matched on its local name and never on the prefix, because
+  three of the four prefixes of a conversion are fixed and the fourth is
+  built from the form and the filer's own EDINET code. Fujitsu's operating
+  profit is
+  `jpcrp030000-asr_E01766-000:OperatingProfitIFRSSummaryOfBusinessResults`:
+  an element of the five-year summary under the filer's own prefix, the core
+  taxonomy having no operating profit for an IFRS filer. Matching on the
+  prefix as well would lose it silently.
+  Every line declares the unit class it accepts and a fact of another class
+  is refused and reported. In Fujitsu's own summary the element
+  `EquityToAssetRatioIFRSSummaryOfBusinessResults` carries 1,167.25 with the
+  unit `JPYPerShares`: the equity per share, under the name of a ratio. A
+  factsheet trusting the name would print an equity ratio of 1,167 per cent,
+  and the ratio is in the same report under
+  `RatioOfOwnersEquityToGrossAssetsIFRSSummaryOfBusinessResults` as 0.60. So
+  the same element serves two keys and the unit decides which.
+  No per-share figure is adjusted for a share split. A Japanese filer
+  restates the earlier years of its own five-year summary at its discretion
+  and not always for every year of it: Fujitsu's report states 207.0, 207.0,
+  207.1, 2,071.1 and 1,739.8 million shares against earnings per share of
+  924.21, 110.76, 135.59, 120.93 and 254.83, which is four years restated
+  onto the shares after the ten-for-one split of October 2024 and the fifth
+  left on the shares before it. A factor derived from the share counts would
+  divide the four that are already restated, so the year the count moved is
+  named instead and the reader is told the series spans it.
+  Three sections exist only here. The workforce -- the employee count over
+  five years, the average age, the length of service and the annual pay --
+  which the ordinance asks of the filer and neither other regime requires.
+  The holders of the shares: the ten largest by name with their holdings, and
+  the register by class of investor. And the total shareholder return over
+  five years against the index the filer names, which with the
+  price-earnings ratio is the only market figure in a document that fetches
+  no market data, both being the filer's own statements.
+  Fourteen checks close the document, among them one that tests the reading
+  of both year axes at once: the summary and the statements must agree about
+  the year they share. Thirteen of the fourteen hold for Kojima, fourteen for
+  Kanagawa Chuo Kotsu and thirteen for Fujitsu, whose remaining difference is
+  an operating income it presents between its gross profit and its operating
+  result. `labels` sets the tables in English, in the filer's own Japanese or
+  in both; `cjk_fonts` names the fallback typst reaches for the Japanese
+  characters, without which it sets them as empty boxes and says nothing.
+  The last page is a disclaimer, which the cover points at.
+
 - `dataquality`, `esef.quality` and `sec.quality`: the checks the two
   regimes' figures are held to, and a table of the issues they find.
   `fincommons/dataquality.py` holds what does not depend on the data set --
