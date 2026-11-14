@@ -375,6 +375,46 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `financialreport`: `edinet` is a third source of the combined tables.
+  `SOURCES` names it, `facts_from_edinet` and `filings_from_edinet` reduce it
+  to the columns the other two reduce to, and a lake that has collected only
+  Japanese filings now gets a combined table of Japanese filings, as a lake
+  with only one of the other two already did.
+  Both combined schemas gain two columns, `EDINETCODE` and `JCN`. There are
+  now four identifier columns, one regime's own in each, and a row has the
+  column of its source filled and the others empty -- which is what the
+  table said about two of them already. `JCN` is carried for a reason the
+  other three are not: it is the one identifier in these tables that reaches
+  an identifier another regime uses, being a check digit followed by the
+  twelve-digit commercial register number that GLEIF records against a
+  Japanese company's LEI. That join is not made here, needing GLEIF, which
+  this module does not read.
+  `FRAMEWORK` gains the value `JP-GAAP` and is read, for a Japanese filing,
+  from what the filing says it reports under rather than from the prefix of a
+  fact. The prefix does not settle it: a Japanese group that has adopted IFRS
+  tags its statements against the Japanese IFRS taxonomy and its front matter
+  against the same disclosure taxonomy every other filer uses, so the two
+  kinds of fact of one filing would answer differently. `JP-GAAP` has no
+  counterpart in the other two regimes and is not comparable with them line
+  by line.
+  One kind of fact is not carried, and it is the only thing this module
+  drops. `PRDEND` may not be empty in the combined table of facts, a fact in
+  no period being comparable with nothing; the edinet module leaves both
+  dates empty for a context whose shape it does not recognise rather than
+  inventing them, and such a fact stays in that module's table of facts,
+  where its `PERIOD_UNRESOLVED` check counts them.
+  Built over a lake of four real annual securities reports the combined
+  tables hold 6,752 facts and 10,899 filings, 2,320 of the facts marked IFRS
+  and 4,432 JP-GAAP, with the dimensions and the narrative carried as the
+  agency gives them.
+  What this does not yet do is let one question be put to all three regimes
+  at once. `financialreport_measures.csv` defines its measures over IFRS and
+  US GAAP and over no Japanese element, so `concepts_for(..., framework=
+  'JP-GAAP')` returns nothing. The Japanese facts are queryable by concept
+  today; the vocabulary that would reconcile them is a judgement about
+  accounting of the same kind the existing rows record, and a harder one.
+  Both READMEs say so.
+
 - **Breaking.** The regimes that require a financial report tagged are now
   sub-modules of one namespace package, and `secfiling` is `sec`:
 

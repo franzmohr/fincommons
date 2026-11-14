@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Module `financialreport` puts the filings of both tagging regimes side by side. Two of them require the periodic reports of listed issuers to be tagged: the [European Single Electronic Format](https://www.esma.europa.eu/issuer-disclosure/electronic-reporting) in the Union, and the inline XBRL mandate of the U.S. Securities and Exchange Commission. [`esef`](../esef/README.md) and [`sec`](../sec/README.md) each bring one of them into the lake as its publisher gives it out, in the shape that publisher gives it. This module reduces the two to the same columns and writes one table of facts and one of filings, so that a question put to both at once is put to one table rather than to two of different shapes.
+Module `financialreport` puts the filings of the tagging regimes side by side. Three of them require the periodic reports of listed companies to be tagged: the [European Single Electronic Format](https://www.esma.europa.eu/issuer-disclosure/electronic-reporting) in the Union, the inline XBRL mandate of the U.S. Securities and Exchange Commission, and the XBRL that Japan's Financial Services Agency has required of a securities report since 2008. [`esef`](../esef/README.md), [`sec`](../sec/README.md) and [`edinet`](../edinet/README.md) each bring one of them into the lake as its publisher gives it out, in the shape that publisher gives it. This module reduces them to the same columns and writes one table of facts and one of filings, so that a question put to all three at once is put to one table rather than to three of different shapes.
 
 It holds no data of its own and collects nothing. There is no Bronze layer here, nothing is downloaded, and both tables are derived entirely from tables that are themselves rebuilt -- so both are rebuilt in full on every run, with no watermark to keep and nothing to resume from.
 
@@ -14,21 +14,30 @@ It holds no data of its own and collects nothing. There is no Bronze layer here,
 
 Japan is the exception, and it is worth saying why rather than leaving it as a happy accident. The corporate number of the National Tax Agency, which [`edinet`](../edinet/README.md) carries as `JCN`, is not an identifier of its own: it is a check digit followed by the twelve-digit register number of the commercial register, and GLEIF records that same register number against an LEI issued to a Japanese company. The join is therefore arithmetic rather than a lookup table, and it is exact -- two spellings of one register number, not a comparison of names. It reaches about one listed Japanese filer in seven, the rest having no LEI at all, so it is enough to put a Japanese filer beside a European one where both exist and not enough to key anything by. The edinet README sets out the check and what it found.
 
-**It does not reconcile the vocabularies in the tables.** `ifrs-full:Revenue` and `us-gaap:Revenues` stand as they were filed. What the two have in common is a judgement about accounting, which `mapping` records as data rather than as code, and which is applied per query by whoever has read what it rests on.
+**It does not reconcile the vocabularies in the tables.** `ifrs-full:Revenue`, `us-gaap:Revenues` and `jppfs_cor:NetSales` stand as they were filed. What they have in common is a judgement about accounting, which `mapping` records as data rather than as code, and which is applied per query by whoever has read what it rests on. That catalogue reaches IFRS and US GAAP and does not yet reach Japan; see the section on it below.
 
 ### What each source covers
 
-The two publishers do not give out the same thing, and the difference is a property of what each publishes rather than of this module. `coverage()` returns it as a list of dictionaries, so that a notebook can print it beside a result:
+The three publishers do not give out the same thing, and the difference is a property of what each publishes rather than of this module. `coverage()` returns it as a list of dictionaries, so that a notebook can print it beside a result:
 
-| | `esef` | `sec` |
-| --- | --- | --- |
-| publisher | filings.xbrl.org | sec.gov |
-| facts | every fact of the report, as xBRL-JSON | the undimensioned numeric facts of the filing |
-| dimensions | yes | no |
-| text blocks and narrative | yes | no |
-| entity key | `LEI` | `CIK` |
+| | `esef` | `sec` | `edinet` |
+| --- | --- | --- | --- |
+| publisher | filings.xbrl.org | sec.gov | disclosure2.edinet-fsa.go.jp |
+| facts | every fact of the report, as xBRL-JSON | the undimensioned numeric facts of the filing | every fact of the report, as the agency's own CSV |
+| dimensions | yes | no | yes |
+| text blocks and narrative | yes | no | yes |
+| entity key | `LEI` | `CIK` | `EDINETCODE` |
+| frameworks | IFRS | US-GAAP, IFRS | JP-GAAP, IFRS |
 
-A figure for an entity as a whole is therefore comparable across the two. A breakdown by segment or by class is available on one side only: a quarterly report stating 941 facts is carried in a company file as 321. A reader of the combined table is entitled to know that an absent breakdown may mean the issuer reported none or may mean the publisher does not give them out, and that which of the two it is depends on the source.
+A figure for an entity as a whole is comparable across all three. A breakdown by segment or by class is available on two of them: a quarterly report stating 941 facts is carried in a company file as 321. A reader of the combined table is entitled to know that an absent breakdown may mean the company reported none or may mean the publisher does not give them out, and that which of the two it is depends on the source.
+
+Two things about the Japanese rows have to be read before they are used, and both are properties of the regime rather than of this module.
+
+**A report that consolidates states every figure twice**, the group's with no dimension and the parent company's own under `NonConsolidatedMember`, and both are in this table because both are in the source table. A question that does not say which it wants is asking for two sets of accounts at once. Kanagawa Chuo Kotsu states earnings per share of 294.99 for the group and 236.58 for the parent in one table of one report.
+
+**`JP-GAAP` is not comparable with the other two line by line.** A Japanese profit and loss account has two results where an IFRS one has a single operating line: the operating result, and the ordinary result that adds the recurring items outside it. The extraordinary items below that are a presentation an IFRS statement does not have. `FRAMEWORK` is read from what each filing says it reports under rather than from the prefix of a fact, because a Japanese group that has adopted IFRS tags its statements against the Japanese IFRS taxonomy and its front matter against the same disclosure taxonomy every other filer uses — so the prefix does not settle it, and the filing does.
+
+One kind of Japanese fact is not carried, and it is the only thing this module drops. The agency's conversion carries no dates, so the edinet module resolves a period from what the filing says about itself and leaves both dates empty for a context whose shape it does not recognise. `PRDEND` is the one column of the combined table of facts that may not be empty — a fact in no period can be compared with nothing, which is what this table is for — so such a fact stays in the edinet table of facts, where that module's `PERIOD_UNRESOLVED` check counts them.
 
 ## Setting up
 
@@ -120,6 +129,8 @@ One row per filing.
 `mapping` is the only module in the package that knows IFRS from US GAAP, and the only one that may. Whether `us-gaap:Revenues` and `ifrs-full:Revenue` are the same figure is a judgement about accounting rather than about storage, and it is made here so that it is made once, in one place, where it can be read and disagreed with.
 
 The judgement is data and not code: a CSV shipped in the data directory of the package, `financialreport_measures.csv`, beside the column catalogue and the FIRDS schemas. It currently defines **8 measures in 22 rows**, of which **13 carry a caveat**.
+
+**The catalogue reaches IFRS and US GAAP and does not yet reach Japan.** `concepts_for('revenue', framework='JP-GAAP')` returns nothing, and `measure_values` over the Japanese rows therefore returns nothing rather than something wrong — which is the right failure, but it is a gap and not a judgement. Writing the Japanese rows is a judgement about accounting of the same kind the existing rows record, and a harder one: 経常利益 has no counterpart in either framework, and a Japanese report states every figure of a consolidating filer twice, so a measure row for Japan has to say which of the two sets of accounts it means. The Japanese facts are in the combined tables and are queryable by concept today; what is missing is the vocabulary that would let one question be put to all three regimes at once.
 
 | Column | Meaning |
 | --- | --- |
