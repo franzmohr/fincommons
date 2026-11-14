@@ -85,7 +85,7 @@ One row per fact of a filing, partitioned by `FILEDYEAR`, the year the filing wa
 
 ## Data quality
 
-`quality` holds the checks the figures are held to, and `update_silver_sec_quality` writes what they found into a third Silver table, `issues`, beside the two the module collects. The machinery is shared with the ESEF module in [`fincommons.dataquality`](../dataquality.py); what lives here are the sixteen checks themselves, because a check knows the data set it is made of.
+`quality` holds the checks the figures are held to, and `update_silver_sec_quality` writes what they found into a third Silver table, `issues`, beside the two the module collects. The machinery is shared with the ESEF module in [`fincommons.dataquality`](../../dataquality.py); what lives here are the sixteen checks themselves, because a check knows the data set it is made of.
 
 ```python
 from fincommons.financialreport import sec
