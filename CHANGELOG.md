@@ -367,7 +367,52 @@ release may change the public API, which `tests/test_public_api.py` lists.
   a time zone and are read in UTC, and they do not state the relevant
   trading venue.
 
+- `financialreport`: the catalogue of measures reaches Japan. Sixteen rows
+  added, eight under `JP-GAAP` against the `jppfs_cor` taxonomy and eight
+  under `IFRS` against `jpigp_cor`, which is Japan's own taxonomy for a group
+  that has adopted IFRS -- and which is why the `framework` and `taxonomy`
+  columns are separate: a Japanese IFRS filer's revenue resolves under
+  `framework = 'IFRS'` beside `ifrs-full:Revenue` without being the same
+  element. Every element was read off a real conversion before it was
+  written down; the catalogue now defines 8 measures in 38 rows.
+  Two judgements are recorded as caveats rather than as mappings. **Japan
+  GAAP has no element for the equity attributable to the parent**, 自己資本
+  being 株主資本 plus 評価・換算差額等 and so a sum rather than a line, so no
+  `JP-GAAP` row defines `equity_attributable_to_parent`: taking
+  `jppfs_cor:ShareholdersEquity` for it is short by the valuation and
+  translation adjustments, 9,191 million of a correct 63,326 million for one
+  report checked. And a Japanese balance sheet presents 現金及び預金, cash
+  together with deposits, so the figure meaning what
+  `ifrs-full:CashAndCashEquivalents` means is the closing balance of the cash
+  flow statement; that is the first row and the balance sheet line the
+  second.
+  One gap is named rather than guessed at: a filer whose revenue is 営業収益
+  rather than 売上高 states it under an element no row reaches, none of the
+  reports this was written against using one.
+
 ### Fixed
+
+- `financialreport`: a Japanese filing's framework is now decided per fact
+  and not per filing. The consolidated statements of a Japanese group that
+  has adopted IFRS are IFRS and the parent company's own statements are Japan
+  GAAP, both in one report, so a framework taken from the filing alone called
+  the parent's revenue IFRS: Fujitsu states 3,502,971 million under
+  `jpigp_cor` for the group and 1,692,618 million under `jppfs_cor` for the
+  company, and they are not figures of one framework. The taxonomy decides it
+  where the taxonomy is decisive and the filing decides it otherwise. One
+  residue stays and is named in the code: the five-year summary of an IFRS
+  filer states the parent's Japan GAAP series under the same disclosure
+  taxonomy as the group's IFRS one.
+- `financialreport`: `measure_values` no longer returns nothing for a filer
+  that prepares no consolidated statements. It excludes a fact reported under
+  a dimension, because a figure broken down by segment or by class is a part
+  of an entity and summing the parts beside the whole is the arithmetic that
+  exclusion exists to prevent -- but `NonConsolidatedMember` names a basis of
+  preparation and not a part, and a filer that does not consolidate states
+  its figures under it and under nothing else. Such a fact is now kept, and
+  where a filing states both the consolidated figure wins. The new
+  `BASIS_MEMBERS` holds the one member this applies to; a segment is still
+  not a measure, which a test says.
 
 - `esef` and `sec`: the link to `fincommons.dataquality` in each README,
   which the move of the two modules under `financialreport` had left

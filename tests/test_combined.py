@@ -301,9 +301,13 @@ def test_the_japanese_framework_is_read_from_the_filing(spark, config):
 
 def test_a_japanese_group_reporting_under_ifrs_is_told_from_one_that_is_not(
         spark, config):
+    """A filing is one document and takes the framework it states, even
+    where its facts do not all take the same one: the report of a Japanese
+    group that has adopted IFRS is an IFRS report, and the parent company's
+    Japan GAAP statements inside it do not make it something else."""
     write_edinet(spark, config, standard="IFRS")
     assert {row["FRAMEWORK"] for row in
-            silver.combine(spark, config, "fact").collect()} == {"IFRS"}
+            silver.combine(spark, config, "filing").collect()} == {"IFRS"}
 
 
 def test_a_fact_that_sits_in_no_period_is_not_carried(spark, config):
@@ -329,6 +333,22 @@ def test_the_japanese_dimensions_and_text_survive(spark, config):
     assert facts["f3"]["TEXT"] == "Japan GAAP"
 
 
+def test_a_japanese_ifrs_filer_keeps_its_two_frameworks_apart(spark, config):
+    """Its consolidated statements are IFRS and its parent company's own are
+    Japan GAAP, both in one report, so the framework cannot come from the
+    filing alone: Fujitsu states 3,502,971 million of revenue under
+    jpigp_cor for the group and 1,692,618 million under jppfs_cor for the
+    company, and they are not figures of one framework."""
+    write_edinet(spark, config, standard="IFRS")
+    by_concept = {row["CONCEPT"]: row["FRAMEWORK"] for row in
+                  silver.combine(spark, config, "fact").collect()}
+
+    # The taxonomy settles these two whatever the filing says.
+    assert by_concept["jppfs_cor:NetSales"] == "JP-GAAP"
+    # And what no taxonomy settles takes the filing's answer.
+    assert by_concept["jpdei_cor:AccountingStandardsDEI"] == "IFRS"
+
+
 def test_the_three_regimes_stand_in_one_table(spark, config):
     write_esef(spark, config)
     write_sec(spark, config)
@@ -338,6 +358,60 @@ def test_the_three_regimes_stand_in_one_table(spark, config):
     assert {row["SOURCE"] for row in facts.collect()} \
         == {"esef", "sec", "edinet"}
     assert facts.columns == list(common.fact_schema.names)
+
+
+def test_a_measure_reaches_a_filer_that_does_not_consolidate(spark, config):
+    """NonConsolidatedMember names a basis and not a part of an entity.
+
+    A filer that prepares no consolidated statements states its figures
+    under that member and under nothing else, so excluding every dimensioned
+    fact -- which is right for a segment or a class of share -- would return
+    nothing at all for it.
+    """
+    from fincommons.financialreport.combined import mapping
+
+    write_edinet(spark, config)
+    values = mapping.measure_values(silver.combine(spark, config, "fact"),
+                                    "revenue").collect()
+
+    assert [row["CONCEPT"] for row in values] == ["jppfs_cor:NetSales"]
+    assert values[0]["DIMENSIONS"] == "NonConsolidatedMember"
+    assert values[0]["VALUE"] == 297632.0
+
+
+def test_a_segment_is_still_not_a_measure(spark, config):
+    """The exception is for the consolidation member and for nothing else:
+    a figure broken down by segment is a part of the entity, and summing the
+    parts beside the whole is what the exclusion exists to prevent."""
+    from fincommons.financialreport.combined import mapping
+
+    write_esef(spark, config)
+    values = mapping.measure_values(silver.combine(spark, config, "fact"),
+                                    "revenue").collect()
+
+    assert [row["VALUE"] for row in values] == [100.0]   # not the 40.0 segment
+
+
+def test_the_japanese_measures_resolve_under_both_frameworks():
+    """The catalogue reaches Japan under both of the frameworks a Japanese
+    filer may report under, and the taxonomy is what tells them apart."""
+    from fincommons.financialreport.combined import mapping
+
+    assert ("jppfs_cor", "NetSales") in mapping.concepts_for("revenue",
+                                                             "JP-GAAP")
+    assert ("jpigp_cor", "RevenueIFRS") in mapping.concepts_for("revenue",
+                                                                "IFRS")
+
+
+def test_no_japanese_row_claims_an_equity_attributable_to_the_parent():
+    """Japan GAAP has no element for it: it is the shareholders' equity plus
+    the valuation and translation adjustments, a sum rather than a line, and
+    taking the first of the two alone is short by the second -- 9,191 million
+    of a correct 63,326 million for one report this was checked against."""
+    from fincommons.financialreport.combined import mapping
+
+    assert mapping.concepts_for("equity_attributable_to_parent",
+                                "JP-GAAP") == []
 
 
 def test_a_lake_with_neither_is_told_so(spark, config):
