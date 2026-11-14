@@ -1,0 +1,2823 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+
+  # No font is named beyond the one above, so nothing is fetched from a font
+  # service; a system without it falls back to the default of the renderer.
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  error: true
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a filer
+# --------------------------------------------------------------------------
+
+# The path to the config file, whose edinet section names the Silver layer of
+# the module. A chunk runs with the directory of this template as its working
+# directory, which is inside the installed package, so the path is taken from
+# the environment variable FINCOMMONS_CONFIG where it is set and is otherwise
+# a paths.yaml beside the template.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# The filer, by its EDINET code: the letter E and five digits, which is how
+# the agency addresses a filer and how the Silver layer spells it. This is
+# Kojima Co., Ltd., a listed electronics retailer closing in August; any
+# other filer whose annual report the edinet pipeline has collected can be
+# put here. The securities code is not it: Kojima is 7513 on the exchange and
+# E03270 in EDINET.
+edinet_code <- "E03270"
+
+# The number of financial years shown. The Japanese annual securities report
+# carries a five-year summary of the headline figures in its own front
+# matter, so five is what one report affords and more needs more reports.
+n_years <- 5
+
+# Which report a figure is taken from, where several state the same year.
+#
+#   "as-reported"  the year's own annual report. A figure in the column of a
+#                  year is the one the market saw when that year was
+#                  reported, and the four earlier years of a five-year
+#                  summary are left to the reports whose own years they are
+#                  wherever the lake holds them.
+#   "latest"       the most recently filed report that states the year, which
+#                  is the restated figure wherever the filer restated it.
+#
+# With one report in the lake the two are the same, that report being both.
+# Every figure that is not the year's own is marked with a dagger (†).
+basis <- "as-reported"
+
+# Which set of statements to read.
+#
+#   "auto"              the consolidated accounts where the filing says it
+#                       prepared them, and the parent's own where it says it
+#                       did not
+#   "consolidated"      the group, and a dash for a filer that has none
+#   "nonconsolidated"   the parent alone, for every filer
+#
+# This is the first decision a Japanese report asks for and it is not a
+# formality: a filing that consolidates states every figure of its summary
+# and of its statements twice, once for the group and once for the parent
+# alone, and the two are far apart. Kanagawa Chuo Kotsu reports earnings per
+# share of 294.99 for the group and 236.58 for the parent in the same table
+# of the same report. See the chunk on the consolidation basis below for how
+# the two are told apart.
+consolidation <- "auto"
+
+# The language of the labels in the tables.
+#
+#   "en"    the English names this template carries
+#   "ja"    the Japanese labels the conversion states beside each element
+#   "both"  the English name and the filer's own label under it
+#
+# The agency's conversion gives no English label, so "en" is this template's
+# own naming of the elements and "ja" is the filing's. Charts use the English
+# names whatever this is set to, their font being the one the corporate
+# design names rather than the one the page is set in.
+labels <- "en"
+
+# The font the Japanese text is set in. The page is set in the font the
+# design names, which covers no Japanese, so a second font is named for the
+# characters the first one lacks: a filer's name, an industry, an address and
+# every label under "ja" or "both" are Japanese, and without a fallback typst
+# sets them as empty boxes without saying so. Any installed family covering
+# JIS X 0208 will do; these are the usual ones on Linux, macOS and Windows.
+cjk_fonts <- c("Noto Sans CJK JP", "Hiragino Sans", "Yu Gothic",
+               "IPAexGothic", "Meiryo")
+
+# Amounts are shown in millions of yen, which is the unit a Japanese report
+# states its own statements in.
+scale <- 1e6
+
+# The point size of the text in a chart. A chart stands in a page of nine
+# point text, so it is set a little smaller than the page around it.
+chart_base_size <- 9
+
+# Which documents carry a full set of annual statements. 120 is the annual
+# securities report, the 有価証券報告書, and 130 its correction; see
+# fincommons.financialreport.edinet.common.REPORT_TYPES. A quarterly or
+# half-year report states the previous year end as its comparative, so
+# reading the annual documents only is what keeps a figure of a year out of a
+# filing that is not an annual report.
+annual_doctypes <- c("120", "130")
+
+# --------------------------------------------------------------------------
+# The concepts the factsheet is built from
+# --------------------------------------------------------------------------
+
+# A concept is matched on its local name, the part after the colon, and not
+# on the whole identifier. Three of the four prefixes a conversion uses are
+# fixed -- jppfs_cor for the financial statements, jpcrp_cor for the
+# disclosure ordinance, jpdei_cor for the document and entity information --
+# but the fourth is built from the form and the filer's own EDINET code, and
+# an element a filer created sits under that one. Fujitsu's operating profit
+# is jpcrp030000-asr_E01766-000:OperatingProfitIFRSSummaryOfBusinessResults:
+# the name of an element of the five-year summary, carried by the filer's own
+# prefix because the core taxonomy has no operating profit for an IFRS
+# filer. Matching on the prefix as well would lose it, and lose it silently.
+#
+# A key may be given several names, in order of preference, because the name
+# depends on the accounting standard the filer reports under and because the
+# Japanese and the international lines of one statement are different lines:
+#
+#   Japan GAAP   NetSales, OrdinaryIncomeLoss, ProfitLossAttributableTo-
+#                OwnersOfParent for a group and NetIncomeLoss for a parent
+#   IFRS         RevenueIFRS, OperatingProfitIFRS, ProfitLossIFRS, and the
+#                ...IFRS spelling of nearly everything else
+#
+# Every name below was read off a real conversion: Kojima's report for a
+# filer that does not consolidate, Kanagawa Chuo Kotsu's for one that does
+# under Japan GAAP, and Fujitsu's for one that does under IFRS. The coverage
+# page names every key it looked for and did not find, so a name that is
+# wrong for some other filer shows up as a named gap rather than a blank.
+#
+# `unit` is the unit class a key accepts, and a fact whose unit is not of
+# that class is refused rather than shown. This is not belt and braces. In
+# Fujitsu's own five-year summary the element named EquityToAssetRatioIFRS-
+# SummaryOfBusinessResults carries 8094.70, 842.54, 952.76, 979.53, 1167.25
+# with the unit JPYPerShares: the equity attributable to the owners of the
+# parent per share, under the name of a ratio. A factsheet that trusted the
+# name would print an equity ratio of 1,167 per cent, and the equity ratio is
+# in that report all the same, under RatioOfOwnersEquityToGrossAssetsIFRS-
+# SummaryOfBusinessResults, as 0.60.
+#
+#   money      JPY, and the amount is held in yen
+#   shares     shares
+#   pershare   JPYPerShares
+#   ratio      pure, and the figure is a fraction rather than a percentage:
+#              the filer states an equity ratio of 57.1 per cent as 0.571
+#   count      pure, a number of people or of shareholders
+#   years      pure, a length of time in years
+
+# The five-year summary of the front matter, 主要な経営指標等の推移. This is
+# the backbone of the factsheet and has no counterpart in the other two
+# regimes: one report carries five years of it, so a lake holding a single
+# annual report can show a five-year series.
+summary_concepts <- list(
+  revenue = c("NetSalesSummaryOfBusinessResults",
+              "RevenueIFRSSummaryOfBusinessResults",
+              "OperatingRevenueSummaryOfBusinessResults"),
+  operating_profit = c("OperatingProfitIFRSSummaryOfBusinessResults",
+                       "OperatingIncomeLossSummaryOfBusinessResults"),
+  # 経常利益. The line between the operating result and the pre-tax result
+  # of a Japanese statement, and the one a Japanese reader looks at first.
+  # There is nothing to map it to under IFRS, where the pre-tax result
+  # stands in its place.
+  ordinary_income = c("OrdinaryIncomeLossSummaryOfBusinessResults"),
+  pretax = c("ProfitLossBeforeTaxIFRSSummaryOfBusinessResults"),
+  # The result attributable to the owners of the parent for a group, and the
+  # result of the company for a filer that does not consolidate.
+  profit = c("ProfitLossAttributableToOwnersOfParentIFRSSummaryOfBusinessResults",
+             "ProfitLossAttributableToOwnersOfParentSummaryOfBusinessResults",
+             "NetIncomeLossSummaryOfBusinessResults"),
+  profit_group = c("ProfitLossIFRSSummaryOfBusinessResults"),
+  comprehensive_income = c("ComprehensiveIncomeIFRSSummaryOfBusinessResults",
+                           "ComprehensiveIncomeSummaryOfBusinessResults"),
+  equity = c("EquityAttributableToOwnersOfParentIFRSSummaryOfBusinessResults",
+             "NetAssetsSummaryOfBusinessResults"),
+  assets = c("TotalAssetsIFRSSummaryOfBusinessResults",
+             "TotalAssetsSummaryOfBusinessResults"),
+  capital_stock = c("CapitalStockSummaryOfBusinessResults"),
+  shares_issued = c("TotalNumberOfIssuedSharesSummaryOfBusinessResults"),
+  # The second name is the one an IFRS filer tags its equity per share
+  # under, and it is the name of a ratio. Fujitsu states 1,167.25 there with
+  # the unit JPYPerShares beside an equity of 2,024,915 million and 1,739.78
+  # million shares, which is the equity per share and not a ratio of
+  # anything. The same element therefore serves two keys and the unit
+  # decides which: refused for the equity ratio, which wants a pure number,
+  # and taken here, which wants an amount per share.
+  equity_per_share = c("NetAssetsPerShareSummaryOfBusinessResults",
+                       "EquityToAssetRatioIFRSSummaryOfBusinessResults"),
+  eps_basic = c("BasicEarningsLossPerShareIFRSSummaryOfBusinessResults",
+                "BasicEarningsLossPerShareSummaryOfBusinessResults"),
+  eps_diluted = c("DilutedEarningsLossPerShareIFRSSummaryOfBusinessResults",
+                  "DilutedEarningsPerShareSummaryOfBusinessResults"),
+  dividend_per_share = c("DividendPaidPerShareSummaryOfBusinessResults"),
+  interim_dividend_per_share = c("InterimDividendPaidPerShareSummaryOfBusinessResults"),
+  # 自己資本比率. The ratio, and not the per-share figure some filers tag
+  # under the second of these names; the unit class is what tells them apart.
+  equity_ratio = c("RatioOfOwnersEquityToGrossAssetsIFRSSummaryOfBusinessResults",
+                   "EquityToAssetRatioIFRSSummaryOfBusinessResults",
+                   "EquityToAssetRatioSummaryOfBusinessResults"),
+  roe = c("RateOfReturnOnEquityIFRSSummaryOfBusinessResults",
+          "RateOfReturnOnEquitySummaryOfBusinessResults"),
+  payout_ratio = c("PayoutRatioSummaryOfBusinessResults"),
+  # 株価収益率. The one market figure in this document, and it is the
+  # filer's own statement rather than a price fetched from anywhere.
+  per = c("PriceEarningsRatioIFRSSummaryOfBusinessResults",
+          "PriceEarningsRatioSummaryOfBusinessResults"),
+  operating_cash_flow = c("CashFlowsFromUsedInOperatingActivitiesIFRSSummaryOfBusinessResults",
+                          "NetCashProvidedByUsedInOperatingActivitiesSummaryOfBusinessResults"),
+  investing_cash_flow = c("CashFlowsFromUsedInInvestingActivitiesIFRSSummaryOfBusinessResults",
+                          "NetCashProvidedByUsedInInvestingActivitiesSummaryOfBusinessResults"),
+  financing_cash_flow = c("CashFlowsFromUsedInFinancingActivitiesIFRSSummaryOfBusinessResults",
+                          "NetCashProvidedByUsedInFinancingActivitiesSummaryOfBusinessResults"),
+  cash = c("CashAndCashEquivalentsIFRSSummaryOfBusinessResults",
+           "CashAndCashEquivalentsSummaryOfBusinessResults"),
+  # Not a ...SummaryOfBusinessResults element, though it stands in the same
+  # table of the report: the employee count of the summary is tagged under
+  # the plain element, with five years of contexts.
+  employees = c("NumberOfEmployees"),
+  temporary_workers = c("AverageNumberOfTemporaryWorkers"),
+  # 株主総利回り and the index it is set against, five years of each. The
+  # filer states both; neither is computed here.
+  tsr = c("TotalShareholderReturn"),
+  tsr_index = c("TotalReturnOnSharePriceIndex")
+)
+
+summary_units <- c(
+  revenue = "money", operating_profit = "money", ordinary_income = "money",
+  pretax = "money", profit = "money", profit_group = "money",
+  comprehensive_income = "money", equity = "money",
+  assets = "money", capital_stock = "money", shares_issued = "shares",
+  equity_per_share = "pershare", eps_basic = "pershare",
+  eps_diluted = "pershare", dividend_per_share = "pershare",
+  interim_dividend_per_share = "pershare", equity_ratio = "ratio",
+  roe = "ratio", payout_ratio = "ratio", per = "ratio",
+  operating_cash_flow = "money", investing_cash_flow = "money",
+  financing_cash_flow = "money", cash = "money", employees = "count",
+  temporary_workers = "count", tsr = "ratio", tsr_index = "ratio"
+)
+
+# The statements themselves, from the financial statements taxonomy. A report
+# states two years of these -- the year and its comparative -- so the tables
+# built from them are narrower than the five-year summary above, and
+# deliberately so: a column of dashes for the years no statement covers would
+# say less than a table that covers the years it has.
+#
+# The signs are as the statement presents them and are not flipped here. A
+# Japanese conversion carries a deduction of the profit and loss account as a
+# positive amount -- the cost of sales, the selling expenses, the tax -- and
+# an outflow of the cash flow statement as a negative one, the purchase of
+# property plant and equipment arriving as -1,939 million. See `sign` in the
+# lines of the statements further down for where a table turns one round.
+# The consolidated statements of an IFRS filer are a taxonomy of their own,
+# jpigp_cor, and its names are not the Japan GAAP names with a suffix: the
+# cost of sales is CostOfSalesIFRS but the stock is InventoriesCAIFRS, the
+# trade receivables TradeReceivables2CAIFRS, the current liabilities
+# TotalCurrentLiabilitiesIFRS and the tax charge IncomeTaxExpenseIFRS. The
+# cash flow is the sharpest of these: the investing line of a Japan GAAP
+# statement is NetCashProvidedByUsedInInvestmentActivities and of an IFRS one
+# NetCashProvidedByUsedInInvestingActivitiesIFRS, Investment against
+# Investing, with the five-year summary spelling it Investing for both. All
+# three are read off real conversions.
+statement_concepts <- list(
+  # Profit and loss
+  revenue = c("NetSales", "RevenueIFRS", "OperatingRevenue"),
+  # A trading company builds its cost of sales up from the opening stock, the
+  # purchases and the closing stock and states no 売上原価 total; Kojima
+  # states 商品売上原価 instead, which is the same line of the same statement.
+  cost_of_sales = c("CostOfSales", "CostOfGoodsSold", "CostOfSalesIFRS"),
+  gross_profit = c("GrossProfit", "GrossProfitIFRS"),
+  sgna = c("SellingGeneralAndAdministrativeExpenses",
+           "SellingGeneralAndAdministrativeExpensesIFRS"),
+  rnd = c("ResearchAndDevelopmentExpensesResearchAndDevelopmentActivities"),
+  operating_income = c("OperatingIncome", "OperatingProfitLossIFRS"),
+  nonoperating_income = c("NonOperatingIncome"),
+  nonoperating_expenses = c("NonOperatingExpenses"),
+  ordinary_income = c("OrdinaryIncome"),
+  extraordinary_income = c("ExtraordinaryIncome"),
+  extraordinary_loss = c("ExtraordinaryLoss"),
+  # For an IFRS filer the element names the result before tax of the
+  # continuing operations, which is what the statement presents: Fujitsu
+  # states 409,034 million there and 146,908 million of pre-tax result from
+  # operations it discontinued, and the two are not added up by the report.
+  pretax = c("IncomeBeforeIncomeTaxes", "ProfitLossBeforeTaxIFRS"),
+  pretax_discontinued = c("ProfitLossBeforeTaxFromDiscontinuedOperationsIFRS"),
+  income_taxes = c("IncomeTaxes", "IncomeTaxExpenseIFRS"),
+  income_taxes_current = c("IncomeTaxesCurrent"),
+  income_taxes_deferred = c("IncomeTaxesDeferred"),
+  profit_group = c("ProfitLoss", "ProfitLossIFRS"),
+  profit_nci = c("ProfitLossAttributableToNonControllingInterests",
+                 "ProfitLossAttributableToNonControllingInterestsIFRS"),
+  profit = c("ProfitLossAttributableToOwnersOfParent",
+             "ProfitLossAttributableToOwnersOfParentIFRS"),
+  other_comprehensive_income = c("OtherComprehensiveIncome",
+                                 "OtherComprehensiveIncomeIFRS"),
+  comprehensive_income = c("ComprehensiveIncome", "ComprehensiveIncomeIFRS"),
+
+  # Balance sheet
+  assets = c("Assets", "AssetsIFRS"),
+  current_assets = c("CurrentAssets", "CurrentAssetsIFRS"),
+  noncurrent_assets = c("NoncurrentAssets", "NonCurrentAssetsIFRS"),
+  equity_method = c("InvestmentsAccountedForUsingEquityMethodIFRS"),
+  cash_and_deposits = c("CashAndDeposits", "CashAndCashEquivalentsIFRS"),
+  # Receivables, inventories, payables and debt are summed from their
+  # components further down rather than read from a total, because a Japanese
+  # balance sheet subtotals none of the four. It lists 商品, 製品, 原材料及び
+  # 貯蔵品 and 仕掛品 as separate lines and states no stock figure over them,
+  # which is why a factsheet looking for an Inventories element finds nothing
+  # and puts a retailer's whole stock into the residual: Kojima's 37,874
+  # million of merchandise would sit in "other current assets" and the line
+  # the reader wants would be a dash.
+  receivable_notes = c("NotesReceivableTrade"),
+  receivable_accounts = c("AccountsReceivableTrade"),
+  receivable_both = c("NotesAndAccountsReceivableTradeAndContractAssets",
+                      "NotesAndAccountsReceivableTrade",
+                      "TradeReceivables2CAIFRS"),
+  contract_assets = c("ContractAssets"),
+  inventory_merchandise = c("Merchandise", "MerchandiseAndFinishedGoods",
+                            "FinishedGoods"),
+  inventory_work_in_process = c("WorkInProcess"),
+  inventory_materials = c("RawMaterialsAndSupplies", "RawMaterials",
+                          "Supplies"),
+  inventory_total = c("Inventories", "InventoriesCAIFRS"),
+  ppe = c("PropertyPlantAndEquipment", "PropertyPlantAndEquipmentIFRS"),
+  intangibles = c("IntangibleAssets", "IntangibleAssetsIFRS"),
+  goodwill = c("Goodwill", "GoodwillIFRS"),
+  investments = c("InvestmentsAndOtherAssets"),
+  liabilities = c("Liabilities", "LiabilitiesIFRS"),
+  current_liabilities = c("CurrentLiabilities", "TotalCurrentLiabilitiesIFRS"),
+  noncurrent_liabilities = c("NoncurrentLiabilities",
+                             "TotalNonCurrentLiabilitiesIFRS"),
+  payable_notes = c("NotesPayableTrade"),
+  payable_accounts = c("AccountsPayableTrade"),
+  payable_both = c("NotesAndAccountsPayableTrade", "TradePayables2CLIFRS"),
+  short_term_loans = c("ShortTermLoansPayable",
+                       "ShortTermBorrowingsCurrentPortionOfLongTermDebtAndLeaseLiabilitiesIFRS"),
+  commercial_papers = c("CommercialPapers"),
+  current_portion_long_term = c("CurrentPortionOfLongTermLoansPayable"),
+  current_portion_bonds = c("CurrentPortionOfBonds"),
+  long_term_loans = c("LongTermLoansPayable",
+                      "LongTermDebtAndLeaseObligationsNCLIFRS"),
+  bonds = c("BondsPayable"),
+  lease_obligations = c("LeaseObligationsCL", "LeaseObligationsCLOther"),
+  lease_obligations_noncurrent = c("LeaseObligationsNCL",
+                                   "LeaseObligationsNCLOther"),
+  net_assets = c("NetAssets", "EquityIFRS"),
+  shareholders_equity = c("ShareholdersEquity",
+                          "EquityAttributableToOwnersOfParentIFRS"),
+  share_capital = c("CapitalStock", "ShareCapitalIFRS"),
+  capital_surplus = c("CapitalSurplus", "CapitalSurplusIFRS"),
+  retained_earnings = c("RetainedEarnings", "RetainedEarningsIFRS"),
+  treasury_stock = c("TreasuryStock", "TreasurySharesIFRS"),
+  valuation_adjustments = c("ValuationAndTranslationAdjustments",
+                            "OtherComponentsOfEquityIFRS"),
+  subscription_rights = c("SubscriptionRightsToShares"),
+  nci = c("NonControllingInterests", "NonControllingInterestsIFRS"),
+  liabilities_and_net_assets = c("LiabilitiesAndNetAssets",
+                                 "LiabilitiesAndEquityIFRS"),
+
+  # Cash flow. The investing line is spelled with Investment and not with
+  # Investing, where the operating and the financing lines are spelled with
+  # Activities; the five-year summary spells all three with Investing. Both
+  # spellings are read off real conversions and neither is a typo here.
+  operating_cash_flow = c("NetCashProvidedByUsedInOperatingActivities",
+                          "NetCashProvidedByUsedInOperatingActivitiesIFRS"),
+  investing_cash_flow = c("NetCashProvidedByUsedInInvestmentActivities",
+                          "NetCashProvidedByUsedInInvestingActivities",
+                          "NetCashProvidedByUsedInInvestingActivitiesIFRS"),
+  financing_cash_flow = c("NetCashProvidedByUsedInFinancingActivities",
+                          "NetCashProvidedByUsedInFinancingActivitiesIFRS"),
+  depreciation = c("DepreciationAndAmortizationOpeCF",
+                   "DepreciationAndAmortizationOperatingExpensesIFRS"),
+  capex_cash = c("PurchaseOfPropertyPlantAndEquipmentInvCF",
+                 "PurchaseOfPropertyPlantAndEquipmentAndIntangibleAssetsInvCFIFRS"),
+  dividends_paid = c("CashDividendsPaidFinCF",
+                     "DividendsPaidToOwnersOfParentFinCFIFRS"),
+  cash_end = c("CashAndCashEquivalents", "CashAndCashEquivalentsIFRS")
+)
+
+statement_units <- setNames(rep("money", length(statement_concepts)),
+                            names(statement_concepts))
+
+# What the filer says about itself and about its holders. These are facts of
+# the latest report and of no period of the statements, so each is taken at
+# the latest instant it is stated for.
+profile_concepts <- list(
+  name_ja = c("FilerNameInJapaneseDEI"),
+  name_en = c("FilerNameInEnglishDEI"),
+  standards = c("AccountingStandardsDEI"),
+  consolidated_flag = c("WhetherConsolidatedFinancialStatementsArePreparedDEI"),
+  form = c("DocumentTypeDEI"),
+  ordinance = c("CabinetOfficeOrdinanceDEI"),
+  period_type = c("TypeOfCurrentPeriodDEI"),
+  amended = c("AmendmentFlagDEI"),
+  security_code = c("SecurityCodeDEI"),
+  submissions = c("NumberOfSubmissionDEI")
+)
+
+# The workforce of the parent company, which the ordinance asks for and which
+# neither of the other two regimes has anything like.
+workforce_concepts <- list(
+  average_age = c("AverageAgeYearsInformationAboutReportingCompanyInformationAboutEmployees"),
+  average_service = c("AverageLengthOfServiceYearsInformationAboutReportingCompanyInformationAboutEmployees"),
+  average_salary = c("AverageAnnualSalaryInformationAboutReportingCompanyInformationAboutEmployees")
+)
+workforce_units <- c(average_age = "years", average_service = "years",
+                     average_salary = "money")
+
+# The holders of the shares: the structure by class of investor, and the ten
+# largest by name.
+# Facts of the report that are not figures of the accounts, and do not carry
+# the dimension of a consolidation basis: see `member = "any"` below.
+stated_concepts <- list(
+  shareholders_total = c("NumberOfShareholdersTotal"),
+  unit_shares = c("NumberOfSharesConstitutingOneUnit"),
+  dividends_total = c("TotalAmountOfDividendsDividendsOfSurplus"),
+  # 設備投資額, the capital expenditure as the filer states it in its review
+  # of the year. It is not the purchase of property, plant and equipment of
+  # the cash flow statement and the two usually differ: this one is what was
+  # committed and that one what was paid.
+  stated_capex = c("CapitalExpendituresOverviewOfCapitalExpendituresEtc")
+)
+stated_units <- c(shareholders_total = "count", unit_shares = "shares",
+                  dividends_total = "money", stated_capex = "money")
+
+# The classes of investor the ordinance names, in the order its table puts
+# them. The share of each is tagged as a fraction under the class's own
+# element rather than against a dimension.
+holder_classes <- c(
+  "Government and local government" = "PercentageOfShareholdingsNationalAndLocalGovernment",
+  "Financial institutions" = "PercentageOfShareholdingsFinancialInstitutions",
+  "Securities firms" = "PercentageOfShareholdingsFinancialServiceProviders",
+  "Other corporations" = "PercentageOfShareholdingsOtherCorporations",
+  "Foreign corporations" = "PercentageOfShareholdingsForeignersOtherThanIndividuals",
+  "Foreign individuals" = "PercentageOfShareholdingsForeignIndividuals",
+  "Individuals and others" = "PercentageOfShareholdingsIndividualsAndOthers"
+)
+
+# You can adapt your corporate design in the sourced R-Skript. It is one file
+# for the whole package, in the templates directory at the root of it, so
+# that a factsheet of any regime looks like the others and a change to the
+# design is made once rather than once per module. A copy beside this
+# template wins over it, which is what lets a template taken out of the
+# package carry a design of its own.
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+```
+
+```{r lake}
+# --------------------------------------------------------------------------
+# The Silver layer
+# --------------------------------------------------------------------------
+
+yaml_paths <- read_yaml(config_path)
+path_silver <- yaml_paths[["edinet"]][["silver"]]
+
+# The Silver layer may name a schema in a catalogue rather than a directory,
+# with the directory the tables are written to beside it. R reads files, so
+# it takes the directory.
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+
+# arrow reads every parquet file under a directory. A Delta table keeps the
+# files it has replaced until it is vacuumed, and the table of facts replaces
+# the partition of a year on every run that collects a filing again, so a
+# Delta table read this way counts a fact once for every time it was
+# written. The factsheet therefore refuses one rather than show those sums.
+for (table in c("filings", "facts")) {
+  if (dir.exists(file.path(path_silver, table, "_delta_log"))) {
+    stop("The ", table, " table of the edinet module is a Delta table, ",
+         "which this template does not read. Write the Silver layer as ",
+         "parquet, or read the table through Spark.")
+  }
+}
+
+if (!grepl("^E[0-9]{5}$", edinet_code)) {
+  stop("The filer is named by its EDINET code, the letter E and five ",
+       "digits: ", edinet_code, " is not one. Kojima is E03270, and 7513 ",
+       "is its securities code rather than its EDINET code.")
+}
+
+filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
+  filter(EDINETCODE == edinet_code) %>%
+  collect()
+
+if (nrow(filings_all) == 0) {
+  stop("The table of filings lists no filing of ", edinet_code, ". Collect ",
+       "the indexes of the days the filer submitted on with the edinet ",
+       "pipeline first; the table of filings is built from the indexes and ",
+       "an index covers one calendar day.")
+}
+
+# The annual securities reports of the filer, the original of each year
+# first: a correction restates, and the figure of a year as it was reported
+# is the figure of the report that was filed first. A withdrawn filing is
+# left out altogether -- the agency marks it and the filer took it back.
+annual_all <- filings_all %>%
+  filter(DOCTYPE %in% annual_doctypes, HASCSV == "1",
+         is.na(WITHDRAWN) | WITHDRAWN == "0",
+         !is.na(PERIODEND)) %>%
+  arrange(PERIODEND, SUBMITTED)
+
+if (nrow(annual_all) == 0) {
+  stop("The filer has no annual securities report with a conversion in the ",
+       "Silver layer. The table of filings lists ", nrow(filings_all),
+       " filing(s) of ", edinet_code, ", of document types ",
+       paste(sort(unique(filings_all$DOCTYPE)), collapse = ", "),
+       "; this factsheet reads ", paste(annual_doctypes, collapse = " and "),
+       " with a conversion the agency published.")
+}
+
+# The periods the statements of the reports cover, and the reports that cover
+# them. One report states its own year and the one before it, so a lake
+# holding a single report covers two years of statements and five of the
+# summary of the front matter.
+annual <- annual_all %>%
+  group_by(PERIODEND) %>%
+  slice(1) %>%
+  ungroup() %>%
+  arrange(PERIODEND) %>%
+  slice_tail(n = n_years)
+
+facts_all <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(EDINETCODE == edinet_code, FILING %in% annual_all$FILING) %>%
+  collect()
+
+if (nrow(facts_all) == 0) {
+  stop("The Silver layer holds no fact of any annual report of ",
+       edinet_code, ". The agency's conversion of the report has to be in ",
+       "the Bronze layer for the facts to be read from it; a run of ",
+       "update_edinet over the day the report was filed collects it.")
+}
+
+latest_filing <- tail(annual$FILING, 1)
+filers <- NULL
+if (dir.exists(file.path(path_silver, "filers"))) {
+  filers <- open_dataset(file.path(path_silver, "filers")) %>%
+    filter(EDINETCODE == edinet_code) %>%
+    collect()
+  if (nrow(filers) == 0) filers <- NULL
+}
+
+# The local name of an element: what this factsheet matches on. The prefix is
+# kept beside it, because whether a concept is the filer's own extension or
+# the taxonomy's is read off the prefix and the coverage page says which.
+facts_all <- facts_all %>%
+  mutate(prefix = sub(":.*", "", CONCEPT),
+         local = sub(".*:", "", CONCEPT),
+         extension = !prefix %in% c("jppfs_cor", "jpcrp_cor", "jpdei_cor",
+                                    "jpigp_cor", "jpctl_cor", "jpsps_cor",
+                                    "jppsp_cor", "jpaud_cor"))
+```
+
+```{r consolidation}
+# --------------------------------------------------------------------------
+# Which set of accounts, and how the two are told apart
+# --------------------------------------------------------------------------
+
+# A Japanese annual report states the consolidated accounts without a
+# dimension and the parent company's own under NonConsolidatedMember. A filer
+# that prepares consolidated statements therefore states each figure twice
+# and a filer that does not states it once, under the member -- so a
+# factsheet that simply required an empty dimension would be empty for every
+# filer that does not consolidate, and one that simply took the first fact it
+# found would mix the group and the parent in one column.
+#
+# What the filing itself says is the authority here. The document and entity
+# information carries 連結決算の有無 as a flag, and it disagrees with the
+# agency's own list of filers for Kojima: the list says the filer has
+# consolidated accounts, the filing says it prepared none, and the filing is
+# the thing the figures come from.
+dei <- facts_all %>% filter(FILING == latest_filing, prefix == "jpdei_cor")
+
+dei_of <- function(key) {
+  names <- profile_concepts[[key]]
+  row <- dei %>% filter(local %in% names)
+  if (nrow(row) == 0) return(NA_character_)
+  value <- coalesce(row$TEXT[1], as.character(row$VALUE[1]))
+  # The conversion writes a full-width dash where a field does not apply.
+  if (is.na(value) || value == "―" || value == "－" ||
+      value == "−" || trimws(value) == "-") NA_character_ else value
+}
+
+standards <- dei_of("standards")
+consolidated_flag <- dei_of("consolidated_flag")
+filer_name_ja <- coalesce(dei_of("name_ja"), annual$NAME[nrow(annual)])
+filer_name_en <- dei_of("name_en")
+
+# Whether the consolidated series exists at all is decided by the data and
+# not by the flag alone: a flag that says one thing and a report that states
+# another is a filing to look at rather than a reason to show an empty
+# column. The consolidated series is the facts with no dimension; it is held
+# to exist where the filing states a revenue or a total of assets under none.
+has_group <- facts_all %>%
+  filter(FILING == latest_filing, is.na(DIMENSIONS),
+         local %in% c(summary_concepts$revenue, summary_concepts$assets,
+                      statement_concepts$revenue, statement_concepts$assets),
+         !is.na(VALUE)) %>%
+  nrow() > 0
+
+if (!consolidation %in% c("auto", "consolidated", "nonconsolidated")) {
+  stop("consolidation is \"auto\", \"consolidated\" or \"nonconsolidated\", ",
+       "not ", consolidation)
+}
+
+group_basis <- switch(consolidation,
+                      auto = has_group,
+                      consolidated = TRUE,
+                      nonconsolidated = FALSE)
+
+if (consolidation == "consolidated" && !has_group) {
+  warning("The filer states no consolidated figure in its latest annual ",
+          "report, so a factsheet on the consolidated basis is empty. Set ",
+          "consolidation to \"auto\" or \"nonconsolidated\".")
+}
+
+# The dimension a figure of the chosen basis carries, and the one a figure of
+# the other basis carries. A key for which the chosen basis states nothing
+# falls back to the other and is marked, because a few lines of the summary
+# are stated for the parent only however the filer reports: the capital
+# stock, the number of shares issued, the dividend per share and the payout
+# ratio are properties of the company and not of the group, and Kanagawa Chuo
+# Kotsu and Fujitsu both state them under the member alone.
+member_chosen <- if (group_basis) NA_character_ else "NonConsolidatedMember"
+member_other <- if (group_basis) "NonConsolidatedMember" else NA_character_
+
+# Which lines may be taken from the other basis, and it is a short list on
+# purpose. A few figures of the summary are properties of the company and of
+# nothing else -- its stated capital, the shares it has issued, the dividend
+# it declared and the payout that dividend was, the return its own shares
+# gave -- and a filer states them under the parent however it reports, so a
+# consolidated factsheet that refused them would show a dash where the report
+# shows a figure.
+#
+# Every other line stays on the basis chosen, and this matters most for an
+# IFRS filer. Fujitsu reports its group under IFRS and its parent company
+# under Japan GAAP, so the parent's 経常利益 is in the same report: an
+# unrestricted fallback put 275,236 million of parent-company ordinary
+# profit on the cover of a group factsheet whose revenue is 3,502,971
+# million, a figure of a different company under a different standard, and
+# nothing on the page said so. The ordinary result does not exist under IFRS
+# and a dash is the right answer.
+fallback_keys <- c("capital_stock", "shares_issued", "dividend_per_share",
+                   "interim_dividend_per_share", "payout_ratio",
+                   "tsr", "tsr_index",
+                   "average_age", "average_service", "average_salary")
+
+#: Whether the statements read are IFRS ones, which decides how the equity is
+#: composed and which lines the profit and loss account has at all.
+ifrs_basis <- !is.na(standards) && standards == "IFRS" && group_basis
+
+basis_label <- if (group_basis) "Consolidated" else "Non-consolidated"
+basis_label_ja <- if (group_basis) "連結" else "単体"
+
+if (!is.na(standards) && !standards %in% c("Japan GAAP", "IFRS", "US GAAP")) {
+  warning("The filing states its accounting standard as \"", standards,
+          "\", which this factsheet has no concept list for. Most lines ",
+          "will be a dash and the coverage page will name them.")
+}
+if (!is.na(standards) && standards == "US GAAP") {
+  warning("The filer reports under US GAAP, for which this factsheet ",
+          "carries no concept list: the elements below are those of the ",
+          "Japanese financial statements taxonomy and of the IFRS spelling ",
+          "of the five-year summary. Read the registrant through the sec ",
+          "module where it also files with the Commission.")
+}
+```
+
+```{r selection}
+# --------------------------------------------------------------------------
+# Choosing one fact per key and per period
+# --------------------------------------------------------------------------
+
+# The unit classes, and what counts as one. A fact whose unit is not of the
+# class its key expects is refused: see the note on Fujitsu's equity ratio
+# among the concepts above for why this is not a formality.
+unit_classes <- list(money = "JPY", shares = "shares",
+                     pershare = "JPYPerShares", ratio = "pure",
+                     count = "pure", years = "pure")
+
+# A statement line, as against a breakdown of one. The statement of changes
+# in equity tags the net assets once per component of equity, so Kojima's
+# report states NetAssets under NonConsolidatedMember_CapitalStockMember,
+# ..._RetainedEarningsMember and seven other members besides the total; a
+# selection by element and period alone would take whichever of them came
+# first. A line of a statement carries the dimension of its basis and nothing
+# further, which is what this tests.
+on_basis <- function(data, member) {
+  if (identical(member, "any")) {
+    data
+  } else if (is.na(member)) {
+    data %>% filter(is.na(DIMENSIONS))
+  } else {
+    data %>% filter(!is.na(DIMENSIONS), DIMENSIONS == member)
+  }
+}
+
+# Not everything in a report is a figure of the accounts, and what is not
+# does not follow the consolidation rule. The number of shareholders and the
+# size of a share unit are tagged against the class of share --
+# `OrdinaryShareMember` -- the dividend declared against the row of the
+# resolution that declared it, and the capital expenditure against nothing at
+# all. For those `member` is "any" and the dimension decides nothing; where
+# several facts remain, the one carrying the fewest dimensions is the total
+# and the others are its breakdown, so the shortest wins.
+dimension_depth <- function(dimensions) {
+  ifelse(is.na(dimensions), 0L,
+         lengths(strsplit(dimensions, "_", fixed = TRUE)))
+}
+
+# Which report a period is taken from, and the order that decides it.
+own_filing <- setNames(annual$FILING, as.character(annual$PERIODEND))
+filed_at <- setNames(as.numeric(annual_all$SUBMITTED), annual_all$FILING)
+
+if (!basis %in% c("as-reported", "latest")) {
+  stop("basis is \"as-reported\" or \"latest\", not ", basis)
+}
+
+# The facts a figure may be taken from. Under "as-reported" a period is read
+# from its own report where the lake holds it; a year of the five-year
+# summary whose own report is not in the lake has only the later report that
+# states it, and that figure is marked.
+direction <- if (basis == "latest") -1 else 1
+
+# `pick` takes the concept lists above and returns one row per key and per
+# period: the first name of the key the filer states, on the chosen basis
+# where it states it there and on the other basis where it does not, from the
+# report the basis points to, with the unit class enforced.
+#
+# `source_basis` says which of the two a figure came from and `source_filing`
+# which report, so that the marks in the tables and the coverage page rest on
+# the selection itself rather than on a second pass over the data.
+pick <- function(concepts, units, data = facts_all, periods = NULL,
+                 member = member_chosen, fallback = member_other) {
+  # `name` and not `key`: inside a tibble() call a bare `key` would resolve
+  # to the column of that name being built rather than to the argument.
+  lookup <- bind_rows(lapply(names(concepts), function(name) {
+    tibble(key = name, local = concepts[[name]],
+           preference = seq_along(concepts[[name]]))
+  }))
+
+  candidates <- data %>%
+    filter(!is.na(VALUE)) %>%
+    inner_join(lookup, by = "local", relationship = "many-to-many") %>%
+    mutate(class = units[key],
+           ok_unit = mapply(function(u, cl) {
+             if (is.na(cl)) TRUE else identical(u, unit_classes[[cl]])
+           }, UNIT, class))
+
+  refused <<- bind_rows(refused, candidates %>% filter(!ok_unit) %>%
+                          select("key", "CONCEPT", "UNIT", "class", "VALUE"))
+  candidates <- candidates %>% filter(ok_unit)
+
+  if (!is.null(periods)) {
+    candidates <- candidates %>% filter(PRDEND %in% periods)
+  }
+
+  chosen <- bind_rows(
+    on_basis(candidates, member) %>% mutate(source_basis = "chosen"),
+    on_basis(candidates, fallback) %>%
+      filter(key %in% fallback_keys) %>%
+      mutate(source_basis = "other")
+  )
+  if (nrow(chosen) == 0) {
+    return(tibble(key = character(), PRDEND = as.Date(character()),
+                  VALUE = numeric(), source_basis = character(),
+                  source_filing = character(), own = logical(),
+                  held = logical(), superseded = logical(),
+                  extension = logical()))
+  }
+
+  chosen %>%
+    mutate(depth = dimension_depth(DIMENSIONS),
+           held = as.character(PRDEND) %in% names(own_filing),
+           own = FILING == coalesce(own_filing[as.character(PRDEND)], ""),
+           # A figure the year's own report would have given differently is
+           # one thing; a year whose own report the lake does not hold at all
+           # is another, and only the first is a restatement. The five-year
+           # summary of one report states four years whose own reports may be
+           # nowhere in the lake, and marking those as restated would say
+           # something false about every one of them.
+           superseded = held & !own,
+           ord_filing = direction * coalesce(filed_at[FILING], 0),
+           ord_basis = if_else(source_basis == "chosen", 0L, 1L)) %>%
+    # One row per key and period: the basis asked for before the other, then
+    # the report the basis points to, then the first name of the key the
+    # filer states.
+    arrange(key, PRDEND, ord_basis, ord_filing, preference, depth) %>%
+    group_by(key, PRDEND) %>%
+    slice(1) %>%
+    ungroup() %>%
+    select("key", "PRDEND", "PRDSTART", "VALUE", "UNIT", "LABEL", "CONCEPT",
+           "source_basis", "source_filing" = "FILING", "own", "held",
+           "superseded", "extension")
+}
+
+# What was refused for its unit, which the coverage page reports.
+refused <- tibble()
+
+# The Japanese label of an element, as the conversion states it beside it.
+# The suffix the ordinance appends to every element of a table -- 、経営指標等
+# for the five-year summary -- is dropped, the table saying it once in its
+# own heading.
+trim_label <- function(text, drop = NULL) {
+  if (is.null(drop)) return(text)
+  for (suffix in drop) text <- sub(paste0(suffix, "$"), "", text)
+  text
+}
+```
+
+```{r figures}
+# --------------------------------------------------------------------------
+# The two year axes
+# --------------------------------------------------------------------------
+
+# A Japanese annual report gives a long headline series and a short detailed
+# one, and this factsheet keeps them apart rather than padding the short one
+# out with dashes. The five-year summary of the front matter covers five
+# years in one report; the statements cover the year and its comparative. So
+# the tables of the summary are five columns wide from a single report and
+# the tables of the statements two, and each says in its own heading which
+# years it covers.
+summary_facts <- pick(summary_concepts, summary_units)
+statement_facts <- pick(statement_concepts, statement_units)
+# The facts of the latest report that are not figures of the accounts, taken
+# on whatever dimension they carry.
+stated <- pick(stated_concepts, stated_units,
+               data = facts_all %>% filter(FILING == latest_filing),
+               member = "any", fallback = "any")
+
+count_of <- function(key) {
+  value <- stated$VALUE[stated$key == key]
+  if (length(value) == 0) NA_real_ else tail(value, 1)
+}
+
+if (nrow(summary_facts) == 0 && nrow(statement_facts) == 0) {
+  stop("No figure of the concept lists was found on the ",
+       tolower(basis_label), " basis in any annual report of ", edinet_code,
+       ". The filing states its accounting standard as \"", standards,
+       "\"; if that is not Japan GAAP or IFRS the concept lists do not fit ",
+       "it.")
+}
+
+widen <- function(chosen, keys) {
+  if (nrow(chosen) == 0) {
+    out <- tibble(PERIODEND = as.Date(character()))
+  } else {
+    out <- chosen %>%
+      select("PERIODEND" = "PRDEND", "key", "VALUE") %>%
+      pivot_wider(names_from = "key", values_from = "VALUE") %>%
+      arrange(PERIODEND)
+  }
+  for (key in setdiff(keys, names(out))) out[[key]] <- NA_real_
+  out
+}
+
+# The years of the summary, counted back from the latest the filer states.
+summary_years_all <- sort(unique(summary_facts$PRDEND))
+summary_years_all <- tail(summary_years_all, n_years)
+wide <- widen(summary_facts %>% filter(PRDEND %in% summary_years_all),
+              names(summary_concepts)) %>%
+  filter(PERIODEND %in% summary_years_all)
+
+# The years the statements cover, which are the period ends of the reports
+# read and the comparative of the earliest of them.
+statement_years_all <- sort(unique(statement_facts$PRDEND))
+statement_years_all <- tail(statement_years_all, n_years + 1)
+stmt <- widen(statement_facts %>% filter(PRDEND %in% statement_years_all),
+              names(statement_concepts)) %>%
+  filter(PERIODEND %in% statement_years_all)
+
+# The name of a financial year. A Japanese filer names its years by their
+# ordinal -- Kojima's report is of its 64th term, 第64期 -- and the ordinal is
+# in the description of the filing rather than among the facts, so the year
+# is named here by the calendar year it ends in, with the month where the
+# filer does not close in March. A reader of Japanese accounts reads FY2026
+# of a March filer as the year to 31 March 2026, which is what this gives.
+year_name <- function(dates) {
+  ifelse(is.na(dates), "–",
+         ifelse(format(dates, "%m") == "03",
+                paste0("FY", format(dates, "%Y")),
+                paste0("FY", format(dates, "%Y"), " (", format(dates, "%b"),
+                       ")")))
+}
+wide$year <- year_name(wide$PERIODEND)
+stmt$year <- year_name(stmt$PERIODEND)
+
+# --------------------------------------------------------------------------
+# What the figures are turned into
+# --------------------------------------------------------------------------
+
+# The ratios of the summary are the filer's own and arrive as fractions: an
+# equity ratio of 57.1 per cent is stated as 0.571 with the unit `pure`.
+# They are brought onto percentages here and are marked in the tables as the
+# filer's own, so that they are not read as this factsheet's calculation.
+# The price-earnings ratio and the total shareholder return are multiples
+# rather than percentages and are left as they are.
+wide <- wide %>%
+  mutate(across(any_of(c("equity_ratio", "roe", "payout_ratio")),
+                ~ .x * 100))
+
+wide <- wide %>%
+  mutate(
+    # The result the five-year summary gives, whichever of the two lines the
+    # filer states it under.
+    profit_shown = coalesce(profit, profit_group),
+    # The operating result, which a Japan GAAP summary does not carry: its
+    # three lines are revenue, the ordinary result and the net result. It is
+    # in the statements and the statement tables show it; here it is a dash
+    # for a Japan GAAP filer and a figure for an IFRS one.
+    margin_operating = 100 * operating_profit / revenue,
+    margin_ordinary = 100 * ordinary_income / revenue,
+    margin_net = 100 * profit_shown / revenue,
+    # Three ratios of our own, beside three of the filer's own further down.
+    # Each is marked in its table as a calculation and not as a statement.
+    roa = 100 * profit_shown / ((assets + lag(assets)) / 2),
+    asset_turnover = revenue / ((assets + lag(assets)) / 2),
+    free_cash_flow = operating_cash_flow + investing_cash_flow,
+    fcf_margin = 100 * (operating_cash_flow + investing_cash_flow) / revenue,
+    cash_to_profit = operating_cash_flow / profit_shown,
+    revenue_growth = 100 * (revenue / lag(revenue) - 1),
+    ordinary_growth = 100 * (ordinary_income / lag(ordinary_income) - 1),
+    profit_growth = 100 * (profit_shown / lag(profit_shown) - 1),
+    equity_growth = 100 * (equity / lag(equity) - 1),
+    dividend_total_per_share = dividend_per_share,
+    # The dividend cover, which is the payout the other way up and is shown
+    # beside the filer's own payout ratio.
+    dividend_cover = eps_basic / dividend_per_share,
+    # The issued share count as at each year end, and what it did. A Japanese
+    # filer that splits its stock restates the per-share figures of its
+    # five-year summary at its own discretion and not always for every year
+    # of it: Fujitsu's report states 207.0, 207.0, 207.1, 2,071.1 and 1,739.8
+    # million shares and earnings per share of 924.21, 110.76, 135.59, 120.93
+    # and 254.83, which is four years restated onto the shares after the
+    # ten-for-one split of October 2024 and the fifth left on the shares
+    # before it. No factor is applied here for that reason -- dividing a
+    # restated year by it would be wrong -- and the year the count moved is
+    # named instead, so that a per-share series spanning a split is read as
+    # one.
+    share_ratio = shares_issued / lag(shares_issued)
+  )
+
+stmt <- stmt %>%
+  mutate(
+    # The cost of sales where the statement totals it, and what is left
+    # between revenue and the gross result where it does not: a retailer
+    # builds its cost of sales up from the opening stock, the purchases and
+    # the closing stock, and Kojima's statement carries those three lines and
+    # no total.
+    cost_of_sales_shown = coalesce(cost_of_sales, revenue - gross_profit),
+    gross_profit_shown = coalesce(gross_profit, revenue - cost_of_sales),
+    # The four lines a Japanese balance sheet does not subtotal, summed from
+    # the components the statement states. `..._both` is the line a filer
+    # that presents notes and accounts together states, and it is taken
+    # instead of the two separate ones rather than beside them.
+    receivables = coalesce(receivable_both,
+                           coalesce(receivable_notes, 0) +
+                             coalesce(receivable_accounts, 0) +
+                             coalesce(contract_assets, 0)),
+    receivables = if_else(receivables == 0, NA_real_, receivables),
+    inventories = coalesce(inventory_total,
+                           coalesce(inventory_merchandise, 0) +
+                             coalesce(inventory_work_in_process, 0) +
+                             coalesce(inventory_materials, 0)),
+    inventories = if_else(inventories == 0, NA_real_, inventories),
+    payables = coalesce(payable_both,
+                        coalesce(payable_notes, 0) +
+                          coalesce(payable_accounts, 0)),
+    payables = if_else(payables == 0, NA_real_, payables),
+    net_nonoperating = coalesce(nonoperating_income, 0) -
+      coalesce(nonoperating_expenses, 0),
+    net_extraordinary = coalesce(extraordinary_income, 0) -
+      coalesce(extraordinary_loss, 0),
+    profit_shown = coalesce(profit, profit_group),
+    # Interest-bearing debt as the statement's own lines add up to it. A
+    # Japanese balance sheet has no total for it and a filer tags no such
+    # concept, so this is a sum of the lines the table names and nothing
+    # wider.
+    debt = coalesce(short_term_loans, 0) +
+      coalesce(commercial_papers, 0) +
+      coalesce(current_portion_long_term, 0) +
+      coalesce(current_portion_bonds, 0) +
+      coalesce(long_term_loans, 0) + coalesce(bonds, 0) +
+      coalesce(lease_obligations, 0) +
+      coalesce(lease_obligations_noncurrent, 0),
+    debt = if_else(debt == 0, NA_real_, debt),
+    net_debt = coalesce(debt, 0) - coalesce(cash_and_deposits, 0),
+    # The equity of the holders of the parent's shares, which is the net
+    # assets less what belongs to others. A filer that does not consolidate
+    # has no non-controlling interest and the two are the same.
+    equity_parent = net_assets - coalesce(nci, 0) -
+      coalesce(subscription_rights, 0),
+    # What the components of equity should add up to, which is not the same
+    # question under the two standards. A Japan GAAP balance sheet presents
+    # 株主資本 and 評価・換算差額等 as two parts of the net assets; an IFRS
+    # one presents 親会社の所有者に帰属する持分, which already contains the
+    # other components of equity, and only the non-controlling interests
+    # stand outside it. Fujitsu's parent equity of 2,024,915 million and its
+    # other components of 73,239 million are not two things to add.
+    equity_component_sum = if (ifrs_basis) {
+      coalesce(shareholders_equity, 0) + coalesce(nci, 0)
+    } else {
+      coalesce(shareholders_equity, 0) + coalesce(valuation_adjustments, 0) +
+        coalesce(subscription_rights, 0) + coalesce(nci, 0)
+    },
+    other_current_assets = current_assets - coalesce(cash_and_deposits, 0) -
+      coalesce(receivables, 0) - coalesce(inventories, 0),
+    # An IFRS statement of financial position subtotals its current
+    # liabilities and leaves the non-current side to be read as the
+    # remainder, which is what is done here where no total is stated. The
+    # same is true of the non-current assets of a Japan GAAP statement that
+    # states only the current ones.
+    noncurrent_liabilities = coalesce(noncurrent_liabilities,
+                                      liabilities - current_liabilities),
+    noncurrent_assets = coalesce(noncurrent_assets,
+                                 assets - current_assets),
+    other_noncurrent_assets = noncurrent_assets - coalesce(ppe, 0) -
+      coalesce(goodwill, 0) - coalesce(intangibles, 0) -
+      coalesce(investments, 0) - coalesce(equity_method, 0),
+    other_current_liabilities = current_liabilities -
+      coalesce(payables, 0) - coalesce(short_term_loans, 0) -
+      coalesce(commercial_papers, 0) -
+      coalesce(current_portion_long_term, 0) -
+      coalesce(current_portion_bonds, 0) -
+      coalesce(lease_obligations, 0),
+    other_noncurrent_liabilities = noncurrent_liabilities -
+      coalesce(long_term_loans, 0) - coalesce(bonds, 0) -
+      coalesce(lease_obligations_noncurrent, 0),
+    ebitda = operating_income + coalesce(depreciation, 0),
+    margin_gross = 100 * gross_profit_shown / revenue,
+    margin_operating = 100 * operating_income / revenue,
+    margin_ordinary = 100 * ordinary_income / revenue,
+    margin_pretax = 100 * pretax / revenue,
+    margin_net = 100 * profit_shown / revenue,
+    sgna_share = 100 * sgna / revenue,
+    rnd_share = 100 * rnd / revenue,
+    cost_share = 100 * cost_of_sales_shown / revenue,
+    effective_tax_rate = 100 * income_taxes / pretax,
+    equity_ratio = 100 * equity_parent / assets,
+    gearing = 100 * net_debt / equity_parent,
+    net_debt_to_ebitda = net_debt / ebitda,
+    current_ratio = current_assets / current_liabilities,
+    quick_ratio = (current_assets - coalesce(inventories, 0)) /
+      current_liabilities,
+    inventory_days = 365 * inventories / cost_of_sales_shown,
+    receivable_days = 365 * receivables / revenue,
+    payable_days = 365 * payables / cost_of_sales_shown,
+    free_cash_flow = operating_cash_flow + investing_cash_flow,
+    capex = -coalesce(capex_cash, 0),
+    capex_to_revenue = 100 * (-coalesce(capex_cash, 0)) / revenue,
+    capex_to_depreciation = (-coalesce(capex_cash, 0)) / depreciation,
+    cash_conversion = 100 * operating_cash_flow / ebitda,
+    roe = 100 * profit_shown / ((equity_parent + lag(equity_parent)) / 2),
+    roa = 100 * profit_shown / ((assets + lag(assets)) / 2)
+  )
+
+# The years actually shown. For the statements the extra year behind them has
+# served the returns, which put a flow of a year against the average of the
+# balances at its start and its end.
+shown <- wide
+n_shown <- nrow(shown)
+years <- shown$year
+max_date <- max(c(shown$PERIODEND, stmt$PERIODEND))
+
+shown_stmt <- stmt %>% slice_tail(n = max(1, nrow(stmt) - 1))
+if (nrow(stmt) == 1) shown_stmt <- stmt
+n_stmt <- nrow(shown_stmt)
+stmt_years <- shown_stmt$year
+
+cur <- if (n_shown > 0) as.list(tail(shown, 1)) else list()
+cur_stmt <- if (n_stmt > 0) as.list(tail(shown_stmt, 1)) else list()
+```
+
+```{r formats}
+# --------------------------------------------------------------------------
+# Writing numbers
+# --------------------------------------------------------------------------
+
+fmt <- function(x, digits = 0) {
+  # A figure that rounds to nothing is written as nothing rather than as a
+  # signed nothing: an amount of minus four hundred thousand is 0 in a
+  # column of millions, not -0.
+  x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
+  ifelse(is.na(x) | is.infinite(x), "–",
+         formatC(x, format = "f", digits = digits, big.mark = ",",
+                 decimal.mark = "."))
+}
+
+# A growth rate or a change carries its sign, so that a fall is visible
+# without reading the column beside it.
+fmt_signed <- function(x, digits = 1) {
+  ifelse(is.na(x) | is.infinite(x), "–",
+         paste0(ifelse(x > 0, "+", ""),
+                formatC(x, format = "f", digits = digits, big.mark = ",",
+                        decimal.mark = ".")))
+}
+
+# A caption wider than the figure is clipped rather than wrapped, so it is
+# broken into lines once here.
+wrap_caption <- function(text, width = 125) {
+  paste(strwrap(text, width = width), collapse = "\n")
+}
+
+source_caption <- caption_corporate_design(
+  source = paste0("Annual securities report as converted by the Financial ",
+                  "Services Agency, EDINET. ", basis_label, " basis."),
+  last = format(max_date, "%d %b %Y"),
+  lang = "en")
+
+amount_label <- "JPY million"
+
+# The x-axis of a chart of the summary has one break per financial year,
+# named as the tables name it.
+year_labels <- setNames(shown$year, as.character(shown$PERIODEND))
+scale_x_years <- function(...) {
+  scale_x_date(expand = c(.02, 0), breaks = shown$PERIODEND,
+               labels = function(d) year_labels[as.character(d)], ...)
+}
+
+# Escape what typst reads as its own syntax, for the text that goes into the
+# raw blocks of the cover and of the running head.
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", x)
+  gsub("\"", "\\\\\"", x)
+}
+```
+
+```{r lines}
+# --------------------------------------------------------------------------
+# The tables: one function for every table of the factsheet
+# --------------------------------------------------------------------------
+
+# Every table is one row per line of a statement or per indicator and one
+# column per financial year. `spec` describes the lines:
+#
+#   key      the column of the data the line reads, or "" for a heading
+#   en       the English name this template gives the line
+#   digits   the decimals shown
+#   unit     "amount"  in millions of yen, the figures being held in yen
+#            "raw"     as held, for a per-share amount or a multiple
+#            "pct"     a percentage, which the key already holds
+#            "signed"  a percentage or a change, written with its sign
+#            "shares"  a share count, in millions
+#            "count"   a number of people, as held
+#            "years"   a length of time in years
+#   sign     -1 for a line a table shows as the deduction it is, where the
+#            conversion carries it as a positive amount
+#   style    "" for an ordinary line, "total" for a sum, "head" for a
+#            heading, "sub" for a line indented below the one above it
+#
+# Three marks may follow a label, and each says where the figure came from:
+#
+#   †   from a report other than the year's own, which can only happen
+#       under the "latest" basis or for a year of the five-year summary
+#       whose own report the lake does not hold
+#   ‡   from the other consolidation basis, the chosen one stating nothing
+#       for that line: the capital stock and the dividend per share are
+#       parent-company figures however the filer reports
+#   §   from a concept the filer created for its own report rather than from
+#       the taxonomy
+line_spec <- function(...) {
+  spec <- tribble(...)
+  if (!"sign" %in% names(spec)) spec$sign <- 1
+  if (!"style" %in% names(spec)) spec$style <- ""
+  spec
+}
+
+# Where each key's figures came from, over the years shown, which the marks
+# and the coverage page both read.
+provenance <- bind_rows(
+  summary_facts %>% filter(PRDEND %in% shown$PERIODEND) %>%
+    mutate(table = "summary"),
+  statement_facts %>% filter(PRDEND %in% shown_stmt$PERIODEND) %>%
+    mutate(table = "statements")
+)
+
+marks_of <- function(keys, table = NULL) {
+  rows <- if (is.null(table)) provenance else
+    provenance %>% filter(table == !!table)
+  vapply(keys, function(key) {
+    if (!nzchar(key)) return("")
+    found <- rows %>% filter(key == !!key)
+    if (nrow(found) == 0) return("")
+    paste0(if (any(found$superseded)) "†" else "",
+           if (any(found$source_basis == "other")) "‡" else "",
+           if (any(found$extension)) "§" else "")
+  }, character(1))
+}
+
+label_of <- function(spec, table = NULL) {
+  if (labels == "en") return(spec$en)
+  rows <- if (is.null(table)) provenance else
+    provenance %>% filter(table == !!table)
+  japanese <- vapply(spec$key, function(key) {
+    if (!nzchar(key)) return(NA_character_)
+    found <- rows %>% filter(key == !!key, !is.na(LABEL))
+    if (nrow(found) == 0) return(NA_character_)
+    trim_label(found$LABEL[1], c("、経営指標等", "、提出会社の状況、従業員の状況"))
+  }, character(1))
+  if (labels == "ja") {
+    ifelse(is.na(japanese), spec$en, japanese)
+  } else {
+    ifelse(is.na(japanese), spec$en, paste0(spec$en, " · ", japanese))
+  }
+}
+
+format_line <- function(values, unit, digits) {
+  switch(unit,
+         amount = fmt(values / scale, digits),
+         shares = fmt(values / 1e6, digits),
+         raw = fmt(values, digits),
+         pct = fmt(values, digits),
+         count = fmt(values, digits),
+         years = fmt(values, digits),
+         signed = fmt_signed(values, digits),
+         fmt(values, digits))
+}
+
+render_lines <- function(spec, data = shown, unit_header = NULL,
+                         cagr = FALSE, change = FALSE, table = NULL) {
+  out <- tibble(item = label_of(spec, table))
+  for (i in seq_len(nrow(data))) {
+    column <- character(nrow(spec))
+    for (j in seq_len(nrow(spec))) {
+      if (spec$style[j] == "head" || !nzchar(spec$key[j])) {
+        column[j] <- ""
+      } else if (!spec$key[j] %in% names(data)) {
+        column[j] <- "–"
+      } else {
+        value <- data[[spec$key[j]]][i] * spec$sign[j]
+        column[j] <- format_line(value, spec$unit[j], spec$digits[j])
+      }
+    }
+    out[[data$year[i]]] <- column
+  }
+
+  # The change on the year before and the growth over the window, which only
+  # an amount and a per-share figure are shown with: the change of a ratio is
+  # read off the ratios themselves.
+  countable <- c("amount", "raw", "shares", "count")
+  if (change) {
+    out[["Change, %"]] <- vapply(seq_len(nrow(spec)), function(j) {
+      if (!nzchar(spec$key[j]) || !spec$unit[j] %in% countable) return("")
+      if (!spec$key[j] %in% names(data)) return("–")
+      v <- data[[spec$key[j]]]
+      if (length(v) < 2 || is.na(v[length(v)]) || is.na(v[length(v) - 1]) ||
+          v[length(v) - 1] == 0) return("–")
+      # A percentage change is left out where either end of it is negative.
+      # An investing cash flow that went from -3,016 to -1,433 is a smaller
+      # outflow, and the arithmetic calls that -52.5 per cent; a reader of a
+      # column of percentages takes a minus sign for a fall. The two figures
+      # are in the columns beside it and say it without the ambiguity.
+      if (v[length(v)] < 0 || v[length(v) - 1] < 0) return("·")
+      fmt_signed((v[length(v)] / v[length(v) - 1] - 1) * 100, 1)
+    }, character(1))
+  }
+  if (cagr) {
+    n <- nrow(data)
+    out[["CAGR, %"]] <- vapply(seq_len(nrow(spec)), function(j) {
+      if (!nzchar(spec$key[j]) || !spec$unit[j] %in% countable) return("")
+      if (!spec$key[j] %in% names(data) || n < 2) return("–")
+      v <- data[[spec$key[j]]]
+      if (is.na(v[1]) || is.na(v[n])) return("–")
+      if (v[1] <= 0 || v[n] <= 0) return("·")
+      fmt_signed(((v[n] / v[1])^(1 / (n - 1)) - 1) * 100, 1)
+    }, character(1))
+  }
+
+  # The marks and the styles, which markdown carries into the table.
+  out$item <- paste0(out$item, marks_of(spec$key, table))
+  out$item <- ifelse(spec$style == "sub", paste0(" ", out$item), out$item)
+  bold <- spec$style %in% c("total", "head")
+  for (column in names(out)) {
+    out[[column]] <- ifelse(bold & nzchar(out[[column]]),
+                            paste0("**", out[[column]], "**"), out[[column]])
+  }
+
+  header <- c(if (is.null(unit_header)) "" else unit_header, names(out)[-1])
+  knitr::kable(out, col.names = header,
+               align = paste0("l", strrep("r", ncol(out) - 1)))
+}
+```
+
+```{r charts}
+# --------------------------------------------------------------------------
+# The charts: one function for a stack, a group of bars and a set of lines
+# --------------------------------------------------------------------------
+
+# Each takes the keys of the data to show and their labels, in the order they
+# are to be read, and leaves the corporate design to the sourced script. The
+# labels are the English ones whatever `labels` is set to: a chart is drawn
+# by the graphics device in the font the design names, which covers no
+# Japanese, and a Japanese label would be drawn as empty boxes.
+chart_data <- function(keys, labels, scale_by = scale, data = shown) {
+  present <- keys[keys %in% names(data)]
+  labels <- labels[keys %in% names(data)]
+  data %>%
+    select(all_of(c("PERIODEND", present))) %>%
+    pivot_longer(-"PERIODEND", names_to = "var") %>%
+    mutate(value = value / scale_by,
+           var = factor(var, levels = present,
+                        labels = wrap_labels(labels, 34)))
+}
+
+chart_stacked <- function(keys, labels, subtitle = amount_label,
+                          scale_by = scale, ncol = 2, data = shown,
+                          width = 250) {
+  ggplot(chart_data(keys, labels, scale_by, data),
+         aes(x = PERIODEND, y = value, fill = var)) +
+    geom_col(width = width) +
+    geom_zeroline() +
+    scale_x_years() +
+    scale_y_continuous(labels = function(x) fmt(x)) +
+    scale_fill_corporate_design() +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    guides(fill = guide_legend(ncol = ncol)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+}
+
+chart_bars <- function(keys, labels, subtitle = amount_label,
+                       scale_by = scale, digits = 0, ncol = 3, data = shown,
+                       width = 240) {
+  ggplot(chart_data(keys, labels, scale_by, data),
+         aes(x = PERIODEND, y = value, fill = var)) +
+    geom_col(position = position_dodge(width = width + 20), width = width) +
+    geom_zeroline() +
+    scale_x_years() +
+    scale_y_continuous(labels = function(x) fmt(x, digits)) +
+    scale_fill_corporate_design() +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    guides(fill = guide_legend(ncol = ncol)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+}
+
+chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
+                        digits = 0, zero = TRUE, ncol = 3, data = shown) {
+  g <- ggplot(chart_data(keys, labels, scale_by, data) %>%
+                filter(!is.na(value)),
+              aes(x = PERIODEND, y = value, colour = var)) +
+    geom_line(linewidth = linewidth_corporate_design) +
+    geom_point(size = 1.4) +
+    scale_x_years() +
+    scale_y_continuous(labels = function(x) fmt(x, digits)) +
+    scale_colour_corporate_design() +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    guides(colour = guide_legend(ncol = ncol)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+  if (zero) g <- g + geom_zeroline()
+  g
+}
+```
+
+```{r cover, results='asis'}
+# --------------------------------------------------------------------------
+# The cover and the running head
+# --------------------------------------------------------------------------
+
+# The filer and the period are read from the filings, so the cover is written
+# as typst rather than set in the front matter. A value goes in as a typst
+# string, which keeps a name with a hash or an underscore in it from being
+# read as typst's own syntax.
+ts <- function(x) {
+  if (length(x) == 0 || is.na(x)) x <- "–"
+  paste0("\"", typst_string(as.character(x)), "\"")
+}
+
+# A column of the cover: a label and a value per row.
+typst_kv <- function(items) {
+  rows <- vapply(seq_along(items), function(i) {
+    paste0("  text(size: 7.5pt, fill: soft, ", ts(names(items)[i]), "),\n",
+           "  text(size: 8.5pt, ", ts(items[[i]]), "),")
+  }, character(1))
+  paste0("#grid(columns: (3.5cm, 1fr), row-gutter: 5.5pt, column-gutter: 6pt,\n",
+         paste(rows, collapse = "\n"), "\n)")
+}
+
+period_range <- if (n_shown > 1) paste0(years[1], " – ", years[n_shown]) else
+  years[n_shown]
+
+filer_row <- if (is.null(filers)) NULL else as.list(filers[1, ])
+display_name <- coalesce(filer_name_en, filer_row$NAMEEN, filer_name_ja)
+subtitle_name <- if (!is.na(filer_name_ja) &&
+                     !identical(filer_name_ja, display_name))
+  filer_name_ja else NA_character_
+
+identity_items <- list()
+identity_items[["EDINET code"]] <- edinet_code
+identity_items[["Securities code"]] <- coalesce(dei_of("security_code"),
+                                                annual$SECCODE[nrow(annual)],
+                                                "–")
+identity_items[["Corporate number"]] <- coalesce(annual$JCN[nrow(annual)], "–")
+identity_items[["Industry"]] <- coalesce(filer_row$INDUSTRY, "–")
+identity_items[["Accounting standard"]] <- coalesce(standards, "–")
+identity_items[["Basis of these figures"]] <-
+  paste0(basis_label, " (", basis_label_ja, ")")
+identity_items[["Financial year ends"]] <- coalesce(filer_row$YEAREND,
+                                                    format(max_date, "%d %B"))
+identity_items[["Latest report"]] <- paste(
+  "filed", format(as.Date(tail(annual$SUBMITTED, 1)), "%d %b %Y"))
+identity_items[["Reports read"]] <- as.character(nrow(annual))
+
+summary_items <- list()
+summary_items[["Revenue"]] <- paste(fmt(cur$revenue / scale), amount_label)
+# The ordinary result for a Japan GAAP filer and the pre-tax result for an
+# IFRS one, which is the line standing in its place: naming the row after
+# whichever the filer states keeps a dash off the cover and keeps the other
+# standard's line out of it.
+if (!is.null(cur$ordinary_income) && !is.na(cur$ordinary_income)) {
+  summary_items[["Ordinary result"]] <- paste(
+    fmt(cur$ordinary_income / scale), amount_label)
+} else {
+  summary_items[["Result before tax"]] <- paste(fmt(cur$pretax / scale),
+                                                amount_label)
+}
+summary_items[["Net result"]] <- paste(fmt(cur$profit_shown / scale),
+                                       amount_label)
+summary_items[["Net margin"]] <- paste0(fmt(cur$margin_net, 1), " %")
+summary_items[["Total assets"]] <- paste(fmt(cur$assets / scale), amount_label)
+summary_items[["Equity ratio"]] <- paste0(fmt(cur$equity_ratio, 1), " %")
+summary_items[["Return on equity"]] <- paste0(fmt(cur$roe, 1), " %")
+summary_items[["Earnings per share"]] <- paste(fmt(cur$eps_basic, 2), "JPY")
+
+notice <- paste(
+  "Compiled from the filer's own annual securities reports as the Financial",
+  "Services Agency converted them, published through EDINET. Every figure is",
+  "a fact of a report or is derived from facts of the same report; no market",
+  "data, estimate or forecast is used, the price-earnings ratio and the total",
+  "shareholder return being the filer's own statements in its five-year",
+  "summary. Where a ratio is the filer's own it is marked as such, and the",
+  "remaining indicators are computed by this factsheet and are not the",
+  "filer's own measures. The periods of the two most recent years are the",
+  "dates the filing states about itself and those of the earlier years are",
+  "shifted by whole years from them; see the notes on the figures. This",
+  "document is produced by a template of the open-source project fincommons",
+  "and the filer is an example: it is a summary of published accounts, given",
+  "without warranty as to correctness or completeness, without any",
+  "association with the filer, and it is not investment advice. The",
+  "disclaimer on the last page applies.")
+
+cat("```{=typst}\n")
+# The page is set in the font the design names, which has no Japanese
+# characters in it. A list gives typst a fallback to reach for them, and
+# without one it sets them as empty boxes and says nothing.
+cat("#set text(font: (\"Segoe UI\", ",
+    paste(vapply(cjk_fonts, ts, character(1)), collapse = ", "), "))\n",
+    sep = "")
+cat("#set page(numbering: none)\n")
+cat("#let ink = rgb(\"#22282E\")\n")
+cat("#let soft = rgb(\"#5C666F\")\n")
+cat("#let rule = rgb(\"#DCE1E5\")\n")
+cat("#let accent = rgb(\"#C10016\")\n\n")
+
+cat("#v(1.4cm)\n")
+# The first line of the cover says that this is an example of the template,
+# so that the framing is not left to the small print at the foot of the page.
+cat("#text(size: 8pt, tracking: 1.6pt, fill: soft, ",
+    ts(toupper("Company factsheet · Example")), ")\n", sep = "")
+cat("#v(4pt)\n#line(length: 100%, stroke: 1.2pt + accent)\n#v(14pt)\n")
+cat("#text(size: 25pt, weight: \"bold\", ", ts(display_name), ")\n", sep = "")
+if (!is.na(subtitle_name)) {
+  cat("#v(2pt)\n")
+  cat("#text(size: 13pt, fill: soft, ", ts(subtitle_name), ")\n", sep = "")
+}
+cat("#v(3pt)\n")
+cat("#text(size: 10.5pt, fill: soft, ",
+    ts("Annual securities reports filed with the Financial Services Agency"),
+    ")\n", sep = "")
+cat("#v(26pt)\n")
+cat("#grid(columns: (1fr, 1fr), column-gutter: 16pt,\n")
+cat("  [#text(size: 8pt, weight: \"bold\", ", ts("The filer"),
+    ")\n  #v(6pt)\n  ", typst_kv(identity_items), "],\n", sep = "")
+cat("  [#text(size: 8pt, weight: \"bold\", ",
+    ts(paste("Financial year", years[n_shown], "·", basis_label)),
+    ")\n  #v(6pt)\n  ", typst_kv(summary_items), "]\n)\n", sep = "")
+cat("#v(1fr)\n#line(length: 100%, stroke: 0.5pt + rule)\n#v(6pt)\n")
+cat("#text(size: 7pt, fill: soft, ", ts(notice), ")\n", sep = "")
+cat("#v(8pt)\n")
+cat("#text(size: 7pt, fill: soft, ",
+    ts(paste0("Compiled on ", format(Sys.Date(), "%d %B %Y"),
+              ". Source: EDINET, Financial Services Agency of Japan.")),
+    ")\n", sep = "")
+
+# From here on every page carries the filer and the period in its head and
+# its number in its foot.
+cat("\n#set page(\n")
+cat("  header: [#set text(size: 7pt, fill: soft)\n",
+    "    #grid(columns: (1fr, auto), ",
+    "[#text(weight: \"bold\", ", ts(display_name), ") #h(6pt) ",
+    "#text(", ts(paste("Company factsheet ·", period_range)), ")], ",
+    "[#text(", ts(paste("EDINET annual report data ·", basis_label)),
+    ")])\n",
+    "    #v(-4pt) #line(length: 100%, stroke: 0.5pt + rule)],\n", sep = "")
+cat("  footer: [#set text(size: 7pt, fill: soft)\n",
+    "    #line(length: 100%, stroke: 0.5pt + rule) #v(-2pt)\n",
+    "    #grid(columns: (1fr, auto), ",
+    "[#text(", ts("Source: annual securities reports, EDINET. Own calculations."),
+    ")], [#context counter(page).display()])],\n", sep = "")
+cat("  numbering: \"1\",\n)\n")
+cat("```\n")
+```
+
+## Contents
+
+```{=typst}
+#outline(title: none, depth: 2, indent: 1em)
+```
+
+{{< pagebreak >}}
+
+### How the figures are put together
+
+```{r basis-note, results='asis'}
+consolidation_sentence <- if (group_basis) {
+  paste("**The consolidated accounts.** The filing states that it prepares",
+        "consolidated financial statements, and every figure below is the",
+        "group's unless it is marked ‡. A Japanese report states the",
+        "parent company's own accounts beside the group's, under the",
+        "dimension `NonConsolidatedMember`, and the two are far apart; the",
+        "parent's series is in the same data and a factsheet of it is one",
+        "setting away.")
+} else if (has_group) {
+  paste("**The parent company's own accounts.** The filing does state",
+        "consolidated statements as well, and they have been set aside",
+        "here because `consolidation` is set to \"nonconsolidated\".")
+} else {
+  paste("**The parent company's own accounts.** The filing states that it",
+        "prepares no consolidated financial statements, so these are the",
+        "only accounts there are. They carry the dimension",
+        "`NonConsolidatedMember` in the conversion, which is where a reader",
+        "of the tables will find them.")
+}
+
+basis_sentence <- if (basis == "as-reported") {
+  paste("**As first reported.** Where the lake holds the annual report of a",
+        "year, the figures of that year are the ones its own report states.",
+        "A report also carries the year before it in its statements and four",
+        "earlier years in its five-year summary; those are used only for a",
+        "year whose own report is not in the lake, and every figure so taken",
+        "is marked †.")
+} else {
+  paste("**As last reported.** The figures of a year are taken from the most",
+        "recently filed annual report that states it, so a figure the filer",
+        "restated is shown restated. Every figure that is not from the",
+        "year's own report is marked †.")
+}
+
+two_axes <- paste(
+  "**Two spans, and they are not the same.** The front matter of a Japanese",
+  "annual securities report carries a five-year summary of the headline",
+  "figures, 主要な経営指標等の推移, while its statements carry the year and",
+  "its comparative. One report therefore affords five years of revenue, of",
+  "the ordinary result, of total assets, of the three cash flows and of the",
+  "employee count, and two years of everything that is a line of a",
+  "statement. The tables of this factsheet follow that split instead of",
+  "padding the short span out with dashes:",
+  paste0("the summary covers ", period_range, " and the statements cover ",
+         if (n_stmt > 1) paste0(stmt_years[1], " – ", stmt_years[n_stmt])
+         else stmt_years[n_stmt], "."),
+  "No figure of the summary is mixed into a statement table or the other way",
+  "about.")
+
+periods_note <- paste(
+  "**The periods are resolved and not reported.** The agency's conversion",
+  "carries no dates. It says which period a figure belongs to relative to",
+  "the filing -- `CurrentYearDuration`, `Prior4YearDuration` -- and the",
+  "module turns that into dates: for the current year and the comparative",
+  "from the dates the filing states about itself, and for the earlier years",
+  "by shifting whole years back from them. A filer whose years are not of",
+  "equal length therefore has three of the five columns dated to the day by",
+  "arithmetic rather than by its own statement. The column headings name the",
+  "year the period ends in for that reason, and not a range of dates.")
+
+marks_note <- paste(
+  "**The marks.** † a figure the lake holds the year's own report for and",
+  "which was nonetheless taken from a later one, which is a restatement.",
+  "‡ a figure from the other consolidation basis, the chosen one stating",
+  "none: the capital stock, the dividend per share and the payout ratio are",
+  "properties of the company and not of the group, and a filer states them",
+  "under the parent however it reports. § a figure from a concept the filer",
+  "created for its own report rather than from the taxonomy, which is how an",
+  "IFRS filer tags its operating profit. A mark belongs to a line read from",
+  "a report; a line computed here from two others carries none, and the",
+  "definitions say what each of those rests on. A change or a growth rate",
+  "shown as · is one whose arithmetic would mislead, either end of it being",
+  "negative: a smaller outflow and a fall are not the same thing and a",
+  "column of percentages cannot tell them apart.")
+
+# A year of the five-year summary whose own report is not in the lake is not
+# a restatement and is not marked as one. It is worth saying how many of the
+# columns stand on that footing, which is a property of the lake rather than
+# of the filer.
+held_years <- sum(as.character(shown$PERIODEND) %in% names(own_filing))
+coverage_note <- if (held_years >= n_shown) NULL else paste(
+  "**The lake holds", nrow(annual), "annual",
+  if (nrow(annual) == 1) "report" else "reports", "of this filer, covering",
+  held_years, "of the", n_shown, "years shown.** The other",
+  n_shown - held_years,
+  if (n_shown - held_years == 1) "year is" else "years are",
+  "the five-year summary of a later report, which is the only account of",
+  "them there is here and is not a restatement of anything: no earlier",
+  "report is in the lake to have said otherwise. Collecting the earlier",
+  "reports is what would put each year's own statement of itself beside",
+  "this one.")
+
+for (sentence in c(consolidation_sentence, basis_sentence, two_axes,
+                   coverage_note, periods_note, marks_note)) {
+  cat(sentence, "\n\n")
+}
+
+if (!is.na(standards) && standards == "IFRS") {
+  cat(paste("**An IFRS filer.** The filing reports under IFRS, and the",
+            "elements of its consolidated statements and of its five-year",
+            "summary are the ...IFRS spellings of the taxonomy. Its",
+            "operating profit is a concept of the filer's own and is marked",
+            "§ wherever it is shown. The ordinary result, 経常利益, does not",
+            "exist under IFRS and is a dash for every year of the group;",
+            "it is stated for the parent company, which reports under Japan",
+            "GAAP, and the parent's series is one setting away.\n\n"))
+}
+if (nrow(stmt) == 1) {
+  cat(paste("**One year of statements.** The lake holds a single annual",
+            "report of this filer and that report states no comparative",
+            "under a concept this factsheet reads, so the statement tables",
+            "are one column wide and nothing is compared with anything.",
+            "Collect the earlier reports to widen them.\n\n"))
+}
+```
+
+{{< pagebreak >}}
+
+## At a glance
+
+```{r glance}
+render_lines(
+  table = "summary", unit_header = amount_label, cagr = TRUE, change = TRUE,
+  spec = line_spec(
+    ~key,                  ~en,                                ~digits, ~unit,     ~style,
+    "revenue",             "Revenue",                          0,       "amount",  "total",
+    "operating_profit",    "Operating profit",                 0,       "amount",  "",
+    "ordinary_income",     "Ordinary profit",                  0,       "amount",  "",
+    "profit_shown",        "Net profit",                       0,       "amount",  "total",
+    "comprehensive_income", "Comprehensive income",            0,       "amount",  "",
+    "",                    "",                                 0,       "amount",  "",
+    "assets",              "Total assets",                     0,       "amount",  "total",
+    "equity",              "Equity",                           0,       "amount",  "",
+    "cash",                "Cash and equivalents",             0,       "amount",  "",
+    "",                    "",                                 0,       "amount",  "",
+    "operating_cash_flow", "Operating cash flow",              0,       "amount",  "",
+    "investing_cash_flow", "Investing cash flow",              0,       "amount",  "",
+    "financing_cash_flow", "Financing cash flow",              0,       "amount",  "",
+    "free_cash_flow",      "Free cash flow",                   0,       "amount",  "total",
+    "",                    "",                                 0,       "amount",  "",
+    "employees",           "Employees",                        0,       "count",   "",
+    "eps_basic",           "Earnings per share, JPY",          2,       "raw",     ""
+  ))
+```
+
+### Revenue
+
+```{r glance-revenue-chart}
+chart_bars("revenue", "Revenue")
+```
+
+### The two results
+
+```{r glance-profit-chart}
+# In a chart of its own and not beside the revenue: Kojima's revenue of
+# 297,632 million stands against an ordinary profit of 8,911 million, and
+# bars three orders of magnitude apart in one panel leave the smaller two
+# invisible against the axis.
+chart_bars(c("ordinary_income", "profit_shown"),
+           c("Ordinary profit", "Net profit"))
+```
+
+### Where the cash went
+
+```{r glance-cash-chart}
+chart_bars(c("operating_cash_flow", "investing_cash_flow",
+             "financing_cash_flow"),
+           c("Operating", "Investing", "Financing"))
+```
+
+{{< pagebreak >}}
+
+## The filer
+
+```{r profile, results='asis'}
+# What the agency's list of filers says, which is not in the report: the
+# industry, the address, whether the filer is listed and what day its year
+# ends on. The list needs no API key and is a table of the Silver layer like
+# the others.
+profile_items <- list()
+if (!is.null(filer_row)) {
+  profile_items[["Name"]] <- coalesce(filer_row$NAME, filer_name_ja)
+  profile_items[["Name in English"]] <- coalesce(filer_row$NAMEEN,
+                                                 filer_name_en, "–")
+  profile_items[["Address"]] <- coalesce(filer_row$ADDRESS, "–")
+  profile_items[["Industry"]] <- coalesce(filer_row$INDUSTRY, "–")
+  profile_items[["Kind of filer"]] <- coalesce(filer_row$KIND, "–")
+  profile_items[["Listed"]] <- coalesce(filer_row$LISTED, "–")
+  profile_items[["Stated capital"]] <- if (is.na(filer_row$CAPITAL)) {
+    "–"
+  } else {
+    paste(fmt(as.numeric(filer_row$CAPITAL)), "JPY million")
+  }
+  profile_items[["Financial year ends"]] <- coalesce(filer_row$YEAREND, "–")
+}
+
+report_items <- list()
+report_items[["Form"]] <- coalesce(dei_of("form"), "–")
+report_items[["Cabinet Office ordinance"]] <- coalesce(dei_of("ordinance"), "–")
+report_items[["Accounting standard"]] <- coalesce(standards, "–")
+report_items[["Consolidated statements"]] <- if (is.na(consolidated_flag)) {
+  "–"
+} else if (consolidated_flag == "true") {
+  "prepared"
+} else {
+  "none prepared"
+}
+report_items[["Period type"]] <- coalesce(dei_of("period_type"), "–")
+report_items[["Correction"]] <- if (is.na(dei_of("amended"))) {
+  "–"
+} else if (dei_of("amended") == "true") {
+  "yes"
+} else {
+  "no"
+}
+report_items[["Latest period"]] <-
+  paste(format(tail(annual$PERIODSTART, 1), "%d %b %Y"), "–",
+        format(tail(annual$PERIODEND, 1), "%d %b %Y"))
+report_items[["Document number"]] <- latest_filing
+
+# Two tables rather than one: what the agency's list of filers says and what
+# the report says about itself are different sources and are not mixed.
+kv_rows <- function(items, heading) {
+  out <- tibble(Field = names(items),
+                Value = vapply(items, as.character, character(1)))
+  print(knitr::kable(out, col.names = c(heading, ""), align = "ll"))
+  cat("\n")
+}
+
+if (length(profile_items)) {
+  kv_rows(profile_items, "As the agency lists the filer")
+} else {
+  cat("\n**As the agency lists the filer.** The table of filers is not in",
+      "this Silver layer, so the industry, the address and the stated",
+      "capital are not shown. A run of `update_bronze_edinet` collects the",
+      "list, which needs no API key.\n\n")
+}
+kv_rows(report_items, "As the report describes itself")
+
+# The agency's list and the filing can disagree about the one thing that
+# decides which accounts these are, and for Kojima they do. It is worth
+# saying so rather than quietly preferring one.
+if (!is.null(filer_row) && !is.na(filer_row$CONSOLIDATED) &&
+    !is.na(consolidated_flag)) {
+  listed_says <- filer_row$CONSOLIDATED == "有"
+  filing_says <- consolidated_flag == "true"
+  if (listed_says != filing_says) {
+    cat("\n**The two sources disagree.** The agency's list of filers says",
+        "that this filer", if (listed_says) "has" else "has no",
+        "consolidated accounts and its latest report says that it",
+        if (filing_says) "prepared" else "prepared no",
+        "consolidated financial statements. The report is what the figures",
+        "are read from, and it decides the basis here.\n\n")
+  }
+}
+```
+
+{{< pagebreak >}}
+
+## The five-year summary as the filer states it
+
+The table below is the filer's own 主要な経営指標等の推移, the summary of
+business results the Cabinet Office ordinance requires in the front matter of
+every annual securities report. Nothing in it is computed here: the ratios
+are the filer's own, including the price-earnings ratio, which is the one
+market figure in this document.
+
+```{r summary-table}
+render_lines(
+  table = "summary", unit_header = "The filer's own summary",
+  spec = line_spec(
+    ~key,                   ~en,                                ~digits, ~unit,     ~style,
+    "",                     "Results",                          0,       "amount",  "head",
+    "revenue",              "Revenue",                          0,       "amount",  "",
+    "ordinary_income",      "Ordinary profit",                  0,       "amount",  "",
+    "profit_shown",         "Net profit",                       0,       "amount",  "",
+    "comprehensive_income", "Comprehensive income",             0,       "amount",  "",
+    "",                     "Position",                         0,       "amount",  "head",
+    "equity",               "Equity",                           0,       "amount",  "",
+    "assets",               "Total assets",                     0,       "amount",  "",
+    "capital_stock",        "Stated capital",                   0,       "amount",  "",
+    "shares_issued",        "Shares issued, million",           2,       "shares",  "",
+    "",                     "Per share, JPY",                   0,       "raw",     "head",
+    "equity_per_share",     "Equity per share",                 2,       "raw",     "",
+    "eps_basic",            "Earnings per share, basic",        2,       "raw",     "",
+    "eps_diluted",          "Earnings per share, diluted",      2,       "raw",     "",
+    "dividend_per_share",   "Dividend per share",               2,       "raw",     "",
+    "interim_dividend_per_share", "of which interim",            2,       "raw",     "sub",
+    "",                     "The filer's own ratios",           0,       "pct",     "head",
+    "equity_ratio",         "Equity ratio, %",                  1,       "pct",     "",
+    "roe",                  "Return on equity, %",              1,       "pct",     "",
+    "payout_ratio",         "Payout ratio, %",                  1,       "pct",     "",
+    "per",                  "Price-earnings ratio, times",      1,       "raw",     "",
+    "",                     "Cash flow",                        0,       "amount",  "head",
+    "operating_cash_flow",  "Operating activities",             0,       "amount",  "",
+    "investing_cash_flow",  "Investing activities",             0,       "amount",  "",
+    "financing_cash_flow",  "Financing activities",             0,       "amount",  "",
+    "cash",                 "Cash and cash equivalents",        0,       "amount",  "",
+    "",                     "People",                           0,       "count",   "head",
+    "employees",            "Employees",                        0,       "count",   "",
+    "temporary_workers",    "Temporary workers, average",       0,       "count",   ""
+  ))
+```
+
+```{r split-note, results='asis'}
+# A jump in the issued share count is a split or a consolidation of the
+# stock, and it matters here because a Japanese filer restates the per-share
+# figures of its own five-year summary at its discretion and not always for
+# every year of it. No factor is applied; the year is named instead.
+moves <- shown %>%
+  filter(!is.na(share_ratio),
+         share_ratio > 1.5 | share_ratio < 1 / 1.5)
+if (nrow(moves) > 0) {
+  for (i in seq_len(nrow(moves))) {
+    ratio <- moves$share_ratio[i]
+    cat("\n", paste0("**The share count moved in ", moves$year[i],
+                      "**, by a factor of ", fmt(ratio, 2)),
+        if (ratio > 1) "— a split of the stock." else
+          "— a consolidation of the stock.",
+        "The per-share figures above are the ones the filer states, and a",
+        "filer restates the earlier years of its own summary for a split at",
+        "its discretion: Fujitsu's report restates four of its five years",
+        "and leaves the fifth on the shares before the split. No factor has",
+        "been applied here, because dividing a year the filer already",
+        "restated would be wrong, so the per-share series above spans the",
+        "move and the years either side of it do not rest on the same",
+        "number of shares.\n\n")
+  }
+}
+```
+
+### Margins, and the filer's own returns
+
+```{r summary-margins}
+render_lines(
+  table = "summary", unit_header = "%",
+  spec = line_spec(
+    ~key,               ~en,                                   ~digits, ~unit,    ~style,
+    "margin_operating", "Operating margin",                    1,       "pct",    "",
+    "margin_ordinary",  "Ordinary margin",                     1,       "pct",    "",
+    "margin_net",       "Net margin",                           1,       "pct",    "",
+    "fcf_margin",       "Free cash flow margin",                1,       "pct",    "",
+    "",                 "",                                    0,       "pct",    "",
+    "roe",              "Return on equity, the filer's own",    1,       "pct",    "total",
+    "roa",              "Return on assets, own calculation",    1,       "pct",    "",
+    "asset_turnover",   "Asset turnover, times",                2,       "raw",    "",
+    "equity_ratio",     "Equity ratio, the filer's own",        1,       "pct",    "",
+    "",                 "",                                    0,       "pct",    "",
+    "revenue_growth",   "Revenue, change on the year",          1,       "signed", "",
+    "ordinary_growth",  "Ordinary profit, change on the year",  1,       "signed", "",
+    "profit_growth",    "Net profit, change on the year",       1,       "signed", "",
+    "equity_growth",    "Equity, change on the year",           1,       "signed", ""
+  ))
+```
+
+```{r summary-margin-chart}
+chart_lines(c("margin_ordinary", "margin_net", "roe"),
+            c("Ordinary margin", "Net margin", "Return on equity"),
+            digits = 1)
+```
+
+{{< pagebreak >}}
+
+## Statement of operations
+
+```{r income-note, results='asis'}
+if (!is.na(standards) && standards == "IFRS") {
+  cat(paste(
+    "The statement below is the filer's consolidated income statement under",
+    "IFRS, whose elements are those of the jpigp_cor taxonomy. The two lines",
+    "a Japanese statement has and an IFRS one does not -- the ordinary",
+    "result, 経常利益, and the extraordinary items, 特別損益 -- are a dash",
+    "for every year, and the rows are left in rather than removed so that",
+    "the shape of the statement this factsheet reads is the same whichever",
+    "standard a filer reports under. The parent company of this group does",
+    "report under Japan GAAP and does state an ordinary result; it is not",
+    "shown here, because mixing it into a group statement would put a figure",
+    "of a different company under a different standard into the same",
+    "column.\n\n"))
+  if (!all(is.na(shown_stmt$pretax_discontinued))) {
+    cat(paste(
+      "**The result before tax is of the continuing operations.** The",
+      "element the taxonomy names for it carries the result of the",
+      "operations the filer is continuing, and the result of those it",
+      "discontinued is stated separately and is not added into it. The row",
+      "beneath it carries that figure, and the checks at the end of this",
+      "document show the difference rather than hiding it.\n\n"))
+  }
+} else {
+  cat(paste(
+    "A Japanese profit and loss account has two results where an IFRS or a",
+    "US GAAP one has a single operating line. The operating result,",
+    "営業利益, is the result of the business; the ordinary result, 経常利益,",
+    "adds the recurring items outside it -- interest, dividends received,",
+    "the share of the results of affiliates -- and is the figure a Japanese",
+    "reader looks at first. Below it the extraordinary items, 特別損益,",
+    "carry the gains and losses on disposals and the impairments, which an",
+    "IFRS statement would show within the operating result.\n\n"))
+}
+```
+
+```{r income-statement}
+render_lines(
+  data = shown_stmt, table = "statements", unit_header = amount_label,
+  change = (n_stmt > 1),
+  spec = line_spec(
+    ~key,                    ~en,                              ~digits, ~unit,    ~sign, ~style,
+    "revenue",               "Revenue",                        0,       "amount", 1,     "total",
+    "cost_of_sales_shown",   "Cost of sales",                  0,       "amount", -1,    "",
+    "gross_profit_shown",    "Gross profit",                   0,       "amount", 1,     "total",
+    "sgna",                  "Selling, general and administrative", 0,  "amount", -1,    "",
+    "rnd",                   "of which research and development", 0,   "amount", -1,    "sub",
+    "operating_income",      "Operating profit",               0,       "amount", 1,     "total",
+    "nonoperating_income",   "Non-operating income",           0,       "amount", 1,     "sub",
+    "nonoperating_expenses", "Non-operating expenses",         0,       "amount", -1,    "sub",
+    "ordinary_income",       "Ordinary profit",                0,       "amount", 1,     "total",
+    "extraordinary_income",  "Extraordinary income",           0,       "amount", 1,     "sub",
+    "extraordinary_loss",    "Extraordinary loss",             0,       "amount", -1,    "sub",
+    "pretax",                "Profit before income taxes",     0,       "amount", 1,     "total",
+    "pretax_discontinued",   "and before tax from discontinued operations", 0, "amount", 1, "sub",
+    "income_taxes_current",  "Income taxes, current",          0,       "amount", -1,    "sub",
+    "income_taxes_deferred", "Income taxes, deferred",         0,       "amount", -1,    "sub",
+    "income_taxes",          "Income taxes",                   0,       "amount", -1,    "",
+    "profit_group",          "Profit",                         0,       "amount", 1,     "total",
+    "profit_nci",            "attributable to non-controlling interests", 0, "amount", 1, "sub",
+    "profit",                "attributable to owners of the parent", 0, "amount", 1,     "sub",
+    "",                      "",                               0,       "amount", 1,     "",
+    "other_comprehensive_income", "Other comprehensive income", 0,      "amount", 1,     "",
+    "comprehensive_income",  "Comprehensive income",           0,       "amount", 1,     "total"
+  ))
+```
+
+### Margins and the cost structure
+
+```{r margins-table}
+render_lines(
+  data = shown_stmt, table = "statements", unit_header = "%",
+  spec = line_spec(
+    ~key,                ~en,                                 ~digits, ~unit, ~style,
+    "margin_gross",      "Gross margin",                      1,       "pct", "",
+    "margin_operating",  "Operating margin",                  1,       "pct", "",
+    "margin_ordinary",   "Ordinary margin",                   1,       "pct", "",
+    "margin_pretax",     "Pre-tax margin",                    1,       "pct", "",
+    "margin_net",        "Net margin",                        1,       "pct", "total",
+    "",                  "",                                  0,       "pct", "",
+    "cost_share",        "Cost of sales, share of revenue",   1,       "pct", "",
+    "sgna_share",        "SG&A, share of revenue",            1,       "pct", "",
+    "rnd_share",         "R&D, share of revenue",             1,       "pct", "",
+    "effective_tax_rate", "Effective tax rate",               1,       "pct", ""
+  ))
+```
+
+{{< pagebreak >}}
+
+## Balance sheet
+
+```{r assets-table}
+render_lines(
+  data = shown_stmt, table = "statements", unit_header = amount_label,
+  change = (n_stmt > 1),
+  spec = line_spec(
+    ~key,                      ~en,                            ~digits, ~unit,    ~style,
+    "cash_and_deposits",       "Cash and deposits",            0,       "amount", "",
+    "receivables",             "Trade receivables",            0,       "amount", "",
+    "inventories",             "Inventories",                  0,       "amount", "",
+    "other_current_assets",    "Other current assets",         0,       "amount", "",
+    "current_assets",          "Current assets",               0,       "amount", "total",
+    "ppe",                     "Property, plant and equipment", 0,      "amount", "",
+    "goodwill",                "Goodwill",                     0,       "amount", "",
+    "intangibles",             "Intangible assets",            0,       "amount", "",
+    "investments",             "Investments and other assets", 0,       "amount", "",
+    "equity_method",           "Investments in equity-method associates", 0, "amount", "",
+    "other_noncurrent_assets", "Other non-current assets",     0,       "amount", "",
+    "noncurrent_assets",       "Non-current assets",           0,       "amount", "total",
+    "assets",                  "Total assets",                 0,       "amount", "total"
+  ))
+```
+
+```{r assets-chart}
+chart_stacked(c("cash_and_deposits", "receivables", "inventories",
+                "other_current_assets", "ppe", "goodwill", "intangibles",
+                "investments", "equity_method", "other_noncurrent_assets"),
+              c("Cash and deposits", "Trade receivables", "Inventories",
+                "Other current", "Property, plant and equipment", "Goodwill",
+                "Intangibles", "Investments", "Equity-method associates",
+                "Other non-current"),
+              data = shown_stmt, width = 160)
+```
+
+### Liabilities and net assets
+
+```{r liabilities-table}
+render_lines(
+  data = shown_stmt, table = "statements", unit_header = amount_label,
+  change = (n_stmt > 1),
+  spec = line_spec(
+    ~key,                           ~en,                          ~digits, ~unit,    ~style,
+    "payables",                     "Trade payables",             0,       "amount", "",
+    "short_term_loans",             "Short-term borrowings",      0,       "amount", "",
+    "commercial_papers",            "Commercial paper",           0,       "amount", "",
+    "current_portion_long_term",    "Current portion of long-term borrowings", 0, "amount", "",
+    "current_portion_bonds",        "Current portion of bonds",   0,       "amount", "",
+    "lease_obligations",            "Lease obligations, current", 0,       "amount", "",
+    "other_current_liabilities",    "Other current liabilities",  0,       "amount", "",
+    "current_liabilities",          "Current liabilities",        0,       "amount", "total",
+    "long_term_loans",              "Long-term borrowings",       0,       "amount", "",
+    "bonds",                        "Bonds",                      0,       "amount", "",
+    "lease_obligations_noncurrent", "Lease obligations, non-current", 0,   "amount", "",
+    "other_noncurrent_liabilities", "Other non-current liabilities", 0,    "amount", "",
+    "noncurrent_liabilities",       "Non-current liabilities",    0,       "amount", "total",
+    "liabilities",                  "Total liabilities",          0,       "amount", "total"
+  ))
+```
+
+```{r equity-table}
+# The equity, whose parts the two standards put together differently: a Japan
+# GAAP balance sheet adds 株主資本 and 評価・換算差額等 to reach the net
+# assets, an IFRS one folds the other components of equity into the equity
+# attributable to the owners of the parent and leaves only the
+# non-controlling interests outside it.
+equity_spec <- if (ifrs_basis) {
+  line_spec(
+    ~key,                    ~en,                                 ~digits, ~unit,    ~style,
+    "share_capital",         "Share capital",                     0,       "amount", "",
+    "capital_surplus",       "Capital surplus",                   0,       "amount", "",
+    "retained_earnings",     "Retained earnings",                 0,       "amount", "",
+    "treasury_stock",        "Treasury shares",                   0,       "amount", "",
+    "valuation_adjustments", "Other components of equity",        0,       "amount", "",
+    "shareholders_equity",   "Equity attributable to owners of the parent", 0, "amount", "total",
+    "nci",                   "Non-controlling interests",         0,       "amount", "",
+    "net_assets",            "Total equity",                      0,       "amount", "total"
+  )
+} else {
+  line_spec(
+    ~key,                    ~en,                                 ~digits, ~unit,    ~style,
+    "shareholders_equity",   "Shareholders' equity",              0,       "amount", "",
+    "share_capital",         "of which share capital",            0,       "amount", "sub",
+    "capital_surplus",       "of which capital surplus",          0,       "amount", "sub",
+    "retained_earnings",     "of which retained earnings",        0,       "amount", "sub",
+    "treasury_stock",        "of which treasury stock",           0,       "amount", "sub",
+    "valuation_adjustments", "Valuation and translation adjustments", 0,   "amount", "",
+    "subscription_rights",   "Subscription rights to shares",     0,       "amount", "",
+    "nci",                   "Non-controlling interests",         0,       "amount", "",
+    "net_assets",            "Net assets",                        0,       "amount", "total"
+  )
+}
+render_lines(equity_spec, data = shown_stmt, table = "statements",
+             unit_header = amount_label, change = (n_stmt > 1))
+```
+
+### Debt, leverage and liquidity
+
+Interest-bearing debt has no total of its own in a Japanese balance sheet and
+no filer tags one, so the figure below is the sum of the borrowings, the
+bonds and the lease obligations the statement states, and nothing wider.
+
+```{r leverage-table}
+render_lines(
+  data = shown_stmt, table = "statements", unit_header = "",
+  spec = line_spec(
+    ~key,                ~en,                                  ~digits, ~unit,    ~style,
+    "debt",              "Interest-bearing debt, JPY million", 0,       "amount", "",
+    "cash_and_deposits", "Cash and deposits, JPY million",     0,       "amount", "",
+    "net_debt",          "Net debt, JPY million",              0,       "amount", "total",
+    "",                  "",                                   0,       "pct",    "",
+    "equity_ratio",      "Equity ratio, %",                    1,       "pct",    "",
+    "gearing",           "Net debt to equity, %",              1,       "pct",    "",
+    "net_debt_to_ebitda", "Net debt to EBITDA, times",         2,       "raw",    "",
+    "current_ratio",     "Current ratio, times",               2,       "raw",    "",
+    "quick_ratio",       "Quick ratio, times",                 2,       "raw",    ""
+  ))
+```
+
+### Working capital
+
+The stock, the receivables and the payables are each a sum of the lines the
+statement states, a Japanese balance sheet subtotalling none of the three.
+The days are computed here, on the closing balance rather than on an average
+of the two ends, because the statements cover two years and an average needs
+three.
+
+```{r working-capital-table}
+render_lines(
+  data = shown_stmt, table = "statements", unit_header = "",
+  spec = line_spec(
+    ~key,              ~en,                               ~digits, ~unit,    ~style,
+    "inventories",     "Inventories, JPY million",        0,       "amount", "",
+    "receivables",     "Trade receivables, JPY million",  0,       "amount", "",
+    "payables",        "Trade payables, JPY million",     0,       "amount", "",
+    "",                "",                                0,       "days",   "",
+    "inventory_days",  "Days of inventory",               0,       "raw",    "",
+    "receivable_days", "Days of receivables",             0,       "raw",    "",
+    "payable_days",    "Days of payables",                0,       "raw",    ""
+  ))
+```
+
+{{< pagebreak >}}
+
+## Cash flow
+
+The three cash flows come from the five-year summary, which carries them for
+every year of it; the lines beneath them are of the statement and cover the
+statement years only.
+
+```{r cash-flow-table}
+render_lines(
+  table = "summary", unit_header = amount_label, change = TRUE,
+  spec = line_spec(
+    ~key,                  ~en,                        ~digits, ~unit,    ~style,
+    "operating_cash_flow", "Operating activities",     0,       "amount", "total",
+    "investing_cash_flow", "Investing activities",     0,       "amount", "",
+    "financing_cash_flow", "Financing activities",     0,       "amount", "",
+    "free_cash_flow",      "Free cash flow",           0,       "amount", "total",
+    "cash",                "Cash and cash equivalents at the year end", 0, "amount", ""
+  ))
+```
+
+```{r cash-detail-table}
+render_lines(
+  data = shown_stmt, table = "statements", unit_header = amount_label,
+  spec = line_spec(
+    ~key,            ~en,                                  ~digits, ~unit,    ~style,
+    "depreciation",  "Depreciation and amortisation",      0,       "amount", "",
+    "capex_cash",    "Purchases of property, plant and equipment", 0, "amount", "",
+    "dividends_paid", "Dividends paid",                    0,       "amount", "",
+    "cash_end",      "Cash and equivalents at the year end", 0,      "amount", "",
+    "",              "",                                   0,       "pct",    "",
+    "ebitda",        "EBITDA, own calculation",            0,       "amount", "",
+    "cash_conversion", "Operating cash flow to EBITDA, %", 1,       "pct",    "",
+    "capex_to_revenue", "Capital expenditure to revenue, %", 1,     "pct",    "",
+    "capex_to_depreciation", "Capital expenditure to depreciation, times", 2, "raw", ""
+  ))
+```
+
+```{r stated-capex, results='asis'}
+# 設備投資額, which the filer states in its review of the year and which is
+# not the cash flow statement's purchase of property, plant and equipment.
+stated_capex <- count_of("stated_capex")
+if (!is.na(stated_capex)) {
+  cat("The filer states its capital expenditure for the year as **",
+      fmt(stated_capex / scale), " JPY million** in its review of the",
+      "business, 設備投資等の概要. That is not the purchase of property,",
+      "plant and equipment of the cash flow statement above, which is",
+      fmt(tail(shown_stmt$capex, 1) / scale), "JPY million: the first is",
+      "what the filer committed over the year and the second what it paid,",
+      "and a report states both without reconciling them.\n\n", sep = " ")
+}
+```
+
+```{r cash-chart}
+chart_lines(c("cash_to_profit"),
+            c("Operating cash flow to net profit"),
+            subtitle = "times", digits = 1)
+```
+
+{{< pagebreak >}}
+
+## The workforce
+
+The ordinance asks a filer for the number of its employees, their average age,
+their average length of service and their average annual pay. Neither the
+ESEF nor the SEC regime requires anything of the kind, and these are stated
+for the parent company whatever basis the rest of the report is on.
+
+```{r workforce-table}
+workforce <- pick(workforce_concepts, workforce_units)
+workforce_latest <- workforce %>% arrange(key, desc(PRDEND)) %>%
+  group_by(key) %>% slice(1) %>% ungroup()
+
+workforce_of <- function(key) {
+  value <- workforce_latest$VALUE[workforce_latest$key == key]
+  if (length(value) == 0) NA_real_ else value
+}
+
+items <- tibble(
+  item = c("Employees, at the year end",
+           "Temporary workers, average over the year",
+           "Average age, years",
+           "Average length of service, years",
+           "Average annual pay, JPY thousand"),
+  value = c(fmt(tail(shown$employees, 1)),
+            fmt(tail(shown$temporary_workers, 1)),
+            fmt(workforce_of("average_age"), 1),
+            fmt(workforce_of("average_service"), 1),
+            fmt(workforce_of("average_salary") / 1e3))
+)
+knitr::kable(items, col.names = c(paste("The filer at", years[n_shown]), ""),
+             align = "lr")
+```
+
+```{r workforce-chart}
+chart_bars(c("employees", "temporary_workers"),
+           c("Employees", "Temporary workers"),
+           subtitle = "People", scale_by = 1)
+```
+
+### Revenue and profit per employee
+
+```{r per-employee}
+per_head <- shown %>%
+  mutate(revenue_per_employee = revenue / employees,
+         profit_per_employee = profit_shown / employees)
+render_lines(
+  data = per_head, table = "summary", unit_header = "JPY million per head",
+  spec = line_spec(
+    ~key,                   ~en,                      ~digits, ~unit,    ~style,
+    "revenue_per_employee", "Revenue per employee",   2,       "amount", "",
+    "profit_per_employee",  "Net profit per employee", 2,      "amount", ""
+  ))
+```
+
+{{< pagebreak >}}
+
+## The holders of the shares
+
+```{r holders-table, results='asis'}
+# The ten largest holders, which the ordinance asks for by name. The name and
+# the holding are tagged against the same member -- No1MajorShareholdersMember
+# and so on -- so the two are joined on it rather than on their order in the
+# file.
+holder_facts <- facts_all %>%
+  filter(FILING == latest_filing,
+         grepl("^No[0-9]+MajorShareholdersMember$", DIMENSIONS))
+
+rank_of <- function(dimension) {
+  as.integer(sub("^No([0-9]+)MajorShareholdersMember$", "\\1", dimension))
+}
+
+names_held <- holder_facts %>%
+  filter(local == "NameMajorShareholders", !is.na(TEXT)) %>%
+  transmute(rank = rank_of(DIMENSIONS), name = TEXT)
+shares_held <- holder_facts %>%
+  filter(local == "NumberOfSharesHeld", !is.na(VALUE)) %>%
+  transmute(rank = rank_of(DIMENSIONS), shares = VALUE)
+share_of <- holder_facts %>%
+  filter(local == "ShareholdingRatio", !is.na(VALUE)) %>%
+  transmute(rank = rank_of(DIMENSIONS), ratio = 100 * VALUE)
+
+holders <- names_held %>%
+  full_join(shares_held, by = "rank") %>%
+  full_join(share_of, by = "rank") %>%
+  arrange(rank)
+
+if (nrow(holders) > 0) {
+  out <- tibble(
+    `#` = as.character(holders$rank),
+    Holder = coalesce(holders$name, "–"),
+    `Shares, thousand` = fmt(holders$shares / 1e3),
+    `Share, %` = fmt(holders$ratio, 2))
+  print(knitr::kable(out, align = "clrr"))
+  cat("\n")
+  cat("The share is of the shares issued less the treasury shares, as the",
+      "ordinance defines it, and it is the filer's own figure. The names are",
+      "as the report writes them.\n\n")
+} else {
+  cat("The latest report states no table of major shareholders under the",
+      "elements this factsheet reads. A filer other than a company -- a fund",
+      "or a partnership -- has none to state.\n\n")
+}
+```
+
+### The structure of the register
+
+```{r holder-structure, results='asis'}
+# The share of each class of investor, which the ordinance tags under an
+# element of its own per class rather than against a dimension. The figures
+# are fractions and are brought onto percentages here.
+classes <- facts_all %>%
+  filter(FILING == latest_filing, local %in% holder_classes, !is.na(VALUE)) %>%
+  arrange(desc(PRDEND)) %>%
+  group_by(local) %>%
+  slice(1) %>%
+  ungroup()
+
+structure_table <- tibble(class = names(holder_classes),
+                          local = unname(holder_classes)) %>%
+  left_join(classes %>% select("local", "VALUE"), by = "local") %>%
+  filter(!is.na(VALUE)) %>%
+  mutate(share = 100 * VALUE)
+
+if (nrow(structure_table) > 0) {
+  out <- tibble(Class = structure_table$class,
+                `Share, %` = fmt(structure_table$share, 2))
+  print(knitr::kable(out, align = "lr"))
+  cat("\n")
+}
+
+register_items <- tibble(
+  item = c("Shareholders on the register",
+           "Shares constituting one unit",
+           "Dividends declared for the year, JPY million"),
+  value = c(fmt(count_of("shareholders_total")),
+            fmt(count_of("unit_shares")),
+            fmt(count_of("dividends_total") / scale)))
+knitr::kable(register_items, col.names = c("The register", ""),
+             align = "lr")
+```
+
+### Total shareholder return, as the filer states it
+
+```{r tsr-note, results='asis'}
+if (all(is.na(shown$tsr))) {
+  cat("The latest report states no total shareholder return. The ordinance",
+      "asks a listed filer for it and for the return on the index it is",
+      "compared with; a filer that is not listed states neither.\n\n")
+} else {
+  cat("The ordinance asks a listed filer for the cumulative return on its own",
+      "shares over five years and for the return on a comparison index over",
+      "the same years, each as a multiple of the value at the start. Both",
+      "are the filer's own statements; neither is computed here, and no",
+      "price was fetched from anywhere.\n\n")
+}
+```
+
+```{r tsr-table}
+render_lines(
+  table = "summary", unit_header = "Cumulative, times",
+  spec = line_spec(
+    ~key,        ~en,                               ~digits, ~unit, ~style,
+    "tsr",       "Total shareholder return",        3,       "raw", "total",
+    "tsr_index", "Return on the comparison index",  3,       "raw", ""
+  ))
+```
+
+```{r tsr-chart}
+chart_lines(c("tsr", "tsr_index"),
+            c("Total shareholder return", "Comparison index"),
+            subtitle = "Cumulative, times", digits = 2, scale_by = 1)
+```
+
+{{< pagebreak >}}
+
+## Coverage of the tags
+
+```{r coverage}
+# What each concept list found and what it did not. The question a Japanese
+# conversion raises is not whether a figure is in the data -- the whole
+# report is, extensions included -- but whether the element this factsheet
+# looked for is the element the filer used, which depends on the accounting
+# standard and on the filer's own presentation.
+coverage_of <- function(concepts, chosen, periods, what) {
+  tibble(
+    List = what,
+    `Keys` = length(concepts),
+    `Found` = length(unique(chosen$key[chosen$PRDEND %in% periods])),
+    `Years` = length(periods),
+    `Figures` = sum(chosen$PRDEND %in% periods))
+}
+
+coverage <- bind_rows(
+  coverage_of(summary_concepts, summary_facts, shown$PERIODEND,
+              "Five-year summary"),
+  coverage_of(statement_concepts, statement_facts, shown_stmt$PERIODEND,
+              "Statements"))
+knitr::kable(coverage, align = "lrrrr")
+```
+
+```{r coverage-detail, results='asis'}
+missing_of <- function(concepts, chosen, periods) {
+  setdiff(names(concepts), unique(chosen$key[chosen$PRDEND %in% periods]))
+}
+
+report_missing <- function(concepts, chosen, periods, what) {
+  gone <- missing_of(concepts, chosen, periods)
+  if (length(gone) == 0) {
+    cat("\n**", what, ".** Every key of the list was found.\n\n", sep = "")
+    return(invisible(NULL))
+  }
+  cat("\n**", what, ".** ", length(gone), " of ", length(concepts),
+      " keys were not found on the ", tolower(basis_label),
+      " basis. Each is shown as a dash wherever it appears.\n\n", sep = "")
+  cat("| Key | Elements looked for |\n|:---|:---|\n")
+  for (key in gone) {
+    cat("| ", key, " | `", paste(concepts[[key]], collapse = "`, `"),
+        "` |\n", sep = "")
+  }
+  cat("\n")
+}
+
+report_missing(summary_concepts, summary_facts, shown$PERIODEND,
+               "The five-year summary")
+report_missing(statement_concepts, statement_facts, shown_stmt$PERIODEND,
+               "The statements")
+```
+
+### Figures refused for their unit
+
+```{r refused, results='asis'}
+# A fact whose unit is not of the class its key expects. This is where
+# Fujitsu's equity ratio lands: the element is the one named for a ratio and
+# the unit says it is an amount per share, so it is refused and the equity
+# ratio is taken from the element that carries one.
+if (nrow(refused) == 0) {
+  cat("No fact was refused. Every figure taken carried the unit its line",
+      "expects: an amount in yen, a count of shares, an amount per share or",
+      "a pure number for a ratio.\n\n")
+} else {
+  out <- refused %>%
+    distinct(key, CONCEPT, UNIT, class) %>%
+    arrange(key) %>%
+    transmute(Key = key, Element = paste0("`", CONCEPT, "`"),
+              `Unit stated` = UNIT,
+              `Unit expected` = vapply(class, function(cl)
+                unit_classes[[cl]], character(1)))
+  print(knitr::kable(out, align = "llll"))
+  cat("\n")
+  cat("A fact above was not used, its unit not being the one its line",
+      "expects. This is a check on the elements and not on the filer: an",
+      "element named for a ratio that carries an amount per share is a",
+      "figure that would be printed as a percentage in the hundreds, and the",
+      "line it belongs to is taken from an element whose unit fits.\n\n")
+}
+```
+
+### Where each figure came from
+
+```{r provenance-table}
+# The three marks, counted. Under the "as-reported" basis with every report
+# in the lake there is nothing in the first column by construction.
+origin <- provenance %>%
+  group_by(table) %>%
+  summarise(
+    Figures = n(),
+    `Restated †` = sum(superseded),
+    `No own report` = sum(!held),
+    `Other basis ‡` = sum(source_basis == "other"),
+    `Own concept §` = sum(extension),
+    .groups = "drop") %>%
+  mutate(List = recode(table, summary = "Five-year summary",
+                       statements = "Statements")) %>%
+  select("List", everything(), -"table")
+knitr::kable(origin, align = "lrrrrr")
+```
+
+```{r extensions, results='asis'}
+ext <- provenance %>% filter(extension) %>% distinct(key, CONCEPT)
+if (nrow(ext) > 0) {
+  cat("\nThe figures taken from a concept the filer created for its own",
+      "report, marked § in the tables:\n\n")
+  cat("| Key | Element |\n|:---|:---|\n")
+  for (i in seq_len(nrow(ext))) {
+    cat("| ", ext$key[i], " | `", ext$CONCEPT[i], "` |\n", sep = "")
+  }
+  cat("\nAn element under a prefix built from the form and the filer's own",
+      "EDINET code is one the filer created. The core taxonomy has no",
+      "operating profit for an IFRS filer, so an IFRS filer that states one",
+      "in its five-year summary states it under a concept of its own; the",
+      "name is the taxonomy's all the same, which is why matching on the",
+      "local name finds it.\n\n")
+}
+```
+
+### Checks on the figures
+
+```{r checks}
+# Each check is a statement that must hold if the figures were read
+# correctly, tested against the latest year of the table it belongs to.
+# `left` is given as a list of the figures that make it up rather than as
+# their sum, so that a check none of whose parts the filer states is reported
+# as unstated instead of as a sum of zeros differing from a total. Treating
+# an absent line as nothing is what made an IFRS filer fail the check on its
+# ordinary result -- a line it does not have -- with 0 against 409,034.
+check <- function(what, parts, right, tolerance = 0.01) {
+  parts <- parts[lengths(parts) > 0]
+  stated <- unlist(parts)
+  if (length(stated) == 0 || all(is.na(stated)) ||
+      length(right) == 0 || is.na(right)) {
+    return(tibble(Check = what, Figure = "–", Against = "–",
+                  Result = "not stated"))
+  }
+  left <- sum(vapply(stated, function(x) if (is.na(x)) 0 else x, numeric(1)))
+  scale_of <- max(abs(c(left, right)), 1)
+  tibble(Check = what,
+         Figure = fmt(left / scale),
+         Against = fmt(right / scale),
+         Result = if (abs(left - right) / scale_of <= tolerance) "holds"
+                  else "differs")
+}
+
+# A figure to be subtracted, which stays unstated when the filer states none.
+# `-coalesce(x, 0)` would turn an absent line into a stated zero and make a
+# check out of nothing: an IFRS filer has no extraordinary items, and the
+# check on its ordinary result read 0 against 409,034 rather than saying that
+# neither line is in the statement.
+neg <- function(x) {
+  if (length(x) == 0 || is.na(x)) NA_real_ else -x
+}
+
+# The pre-tax result of an IFRS statement is of the continuing operations
+# and the result of the discontinued ones is stated beside it, so the two
+# have to be added before the tax is taken off: Fujitsu's 409,034 and
+# 146,904 less 100,737 of tax is 455,201 against a stated 454,636.
+pretax_parts <- if (all(is.na(shown_stmt$pretax_discontinued))) {
+  list(cur_stmt$pretax, neg(cur_stmt$income_taxes))
+} else {
+  list(cur_stmt$pretax, cur_stmt$pretax_discontinued,
+       neg(cur_stmt$income_taxes))
+}
+
+checks <- bind_rows(
+  check("Assets equal liabilities and net assets",
+        list(cur_stmt$assets),
+        coalesce(cur_stmt$liabilities_and_net_assets,
+                 cur_stmt$liabilities + cur_stmt$net_assets)),
+  check("Current and non-current assets sum to the total",
+        list(cur_stmt$current_assets, cur_stmt$noncurrent_assets),
+        cur_stmt$assets),
+  check("Current and non-current liabilities sum to the total",
+        list(cur_stmt$current_liabilities, cur_stmt$noncurrent_liabilities),
+        cur_stmt$liabilities),
+  check("Revenue less the cost of sales is the gross profit",
+        list(cur_stmt$revenue, neg(cur_stmt$cost_of_sales_shown)),
+        cur_stmt$gross_profit_shown),
+  check("The gross profit less SG&A is the operating profit",
+        list(cur_stmt$gross_profit_shown, neg(cur_stmt$sgna)),
+        cur_stmt$operating_income),
+  check("The operating profit and the non-operating items are the ordinary profit",
+        list(cur_stmt$operating_income, cur_stmt$nonoperating_income,
+             neg(cur_stmt$nonoperating_expenses)),
+        cur_stmt$ordinary_income),
+  check("The ordinary profit and the extraordinary items are the pre-tax profit",
+        list(cur_stmt$ordinary_income, cur_stmt$extraordinary_income,
+             neg(cur_stmt$extraordinary_loss)),
+        cur_stmt$pretax),
+  check("The pre-tax profit less tax is the profit",
+        pretax_parts, cur_stmt$profit_group, tolerance = 0.02),
+  check("The current and deferred tax sum to the tax charge",
+        list(cur_stmt$income_taxes_current, cur_stmt$income_taxes_deferred),
+        cur_stmt$income_taxes),
+  check("The profit splits between the parent and the minorities",
+        list(cur_stmt$profit, cur_stmt$profit_nci),
+        cur_stmt$profit_group),
+  check("The components of equity sum to the total",
+        list(cur_stmt$equity_component_sum),
+        cur_stmt$net_assets),
+  # Across the two spans: the summary and the statements must agree about the
+  # year they share, and this is the one check that tests the reading of both.
+  check("The summary and the statements agree on revenue",
+        list(shown$revenue[match(tail(shown_stmt$PERIODEND, 1),
+                                 shown$PERIODEND)]),
+        cur_stmt$revenue),
+  check("The summary and the statements agree on total assets",
+        list(shown$assets[match(tail(shown_stmt$PERIODEND, 1),
+                                shown$PERIODEND)]),
+        cur_stmt$assets),
+  # Against the equity of the parent's own holders and not the total: a
+  # filer computes its equity per share on what belongs to them, so a group
+  # with a non-controlling interest would fail a comparison with the whole.
+  # The remaining difference is the treasury, the per-share figure resting
+  # on the shares outstanding and this one on the shares issued.
+  check("The equity per share times the shares issued is the parent's equity",
+        list(cur$equity_per_share * cur$shares_issued),
+        coalesce(cur_stmt$equity_parent, cur$equity), tolerance = 0.05)
+)
+knitr::kable(checks,
+             col.names = c(paste0("At ", tail(stmt_years, 1),
+                                  ", JPY million"),
+                           "Figure", "Against", ""),
+             align = "lrrl")
+```
+
+```{r checks-note, results='asis'}
+differ <- checks %>% filter(Result == "differs")
+if (nrow(differ) > 0) {
+  cat("\n", paste0(
+    nrow(differ),
+    if (nrow(differ) == 1) " of the checks above does not hold."
+    else " of the checks above do not hold.", " ",
+    paste("A check that differs is not by itself an error of the filing. The",
+          "equity per share rests on the shares outstanding rather than on",
+          "the shares issued, so a filer holding treasury shares misses that",
+          "one by the treasury. A filer that presents an operating income or",
+          "expense between its gross profit and its operating result leaves",
+          "that check short by it. And a line this factsheet does not read",
+          "leaves any sum it belongs to short of its total; the coverage page",
+          "names every line it looked for and did not find. The figures",
+          "either side of each check are printed so that the difference can",
+          "be read rather than guessed at.")), "\n\n")
+}
+```
+
+{{< pagebreak >}}
+
+## The reports behind the figures
+
+```{r filings-table}
+reports <- annual_all %>%
+  arrange(desc(SUBMITTED)) %>%
+  transmute(
+    Document = FILING,
+    Type = recode(DOCTYPE, "120" = "Annual report",
+                  "130" = "Correction", .default = DOCTYPE),
+    Period = ifelse(is.na(PERIODEND), "–",
+                    paste(format(PERIODSTART, "%d %b %Y"), "–",
+                          format(PERIODEND, "%d %b %Y"))),
+    Filed = format(as.Date(SUBMITTED), "%d %b %Y"),
+    `In this factsheet` = ifelse(FILING %in% annual$FILING, "yes", "no"),
+    `English version` = ifelse(HASENGLISH == "1", "yes", "no"))
+knitr::kable(reports, align = "lllllc")
+```
+
+```{r filings-note, results='asis'}
+cat("A document number is the 書類管理番号, which is how the API addresses a",
+    "filing and how the Bronze layer names the archive it holds. A report",
+    "marked no above states a period another report in the lake states as",
+    "well, and the basis decided which of them a figure came from.\n\n")
+
+# The one deadline in this regime, and it is worth saying on the document
+# rather than only in the module's documentation.
+oldest <- min(as.Date(annual_all$SUBMITTED))
+if (as.numeric(Sys.Date() - oldest) / 365.25 > 8) {
+  cat("**The oldest report read here was filed", format(oldest, "%B %Y"),
+      "**, which is within two years of the ten the agency keeps a filing",
+      "retrievable for. What is older than ten years cannot be fetched",
+      "again by any parameter of the API, so the Bronze layer of the lake",
+      "is the only copy there will be.\n\n")
+}
+```
+
+### What a figure rests on
+
+```{r definitions, results='asis'}
+definitions <- c(
+  "Ordinary profit (経常利益)" = paste(
+    "The result of the business and the recurring items outside it: interest",
+    "paid and received, dividends received, the share of the results of",
+    "equity-method affiliates, and the other non-operating income and",
+    "expenses. It is the filer's own line and is not computed here. There is",
+    "nothing to map it to under IFRS or US GAAP, and that is why the",
+    "combined tables of this project do not carry it."),
+  "Extraordinary items (特別損益)" = paste(
+    "The gains and losses on disposals, the impairments and the other items",
+    "the filer presents below the ordinary result. An IFRS statement shows",
+    "the same events within the operating result, so the operating margins",
+    "of a Japan GAAP filer and of an IFRS one are not the same measure."),
+  "Equity ratio (自己資本比率)" = paste(
+    "The filer's own, as stated in the five-year summary: the equity of the",
+    "holders of the parent's shares over the total assets. The equity ratio",
+    "of the balance sheet tables is computed here from the net assets less",
+    "the non-controlling interests and the subscription rights, which is the",
+    "same definition on the figures of the statement."),
+  "Return on equity (自己資本利益率)" = paste(
+    "The filer's own, as stated in the five-year summary. The return on",
+    "assets beside it is computed here, on the average of the total assets",
+    "at the start and the end of the year."),
+  "Price-earnings ratio (株価収益率)" = paste(
+    "The filer's own statement in its five-year summary, on the price at its",
+    "own year end. It is the only price-based figure in this document and no",
+    "price was fetched from anywhere."),
+  "Total shareholder return (株主総利回り)" = paste(
+    "The cumulative return on the shares over five years as a multiple of",
+    "the value at the start, and beside it the return on the comparison",
+    "index the filer names. Both are the filer's own statements, which the",
+    "ordinance requires of a listed filer."),
+  "Interest-bearing debt" = paste(
+    "The sum of the short-term borrowings, the current portion of the",
+    "long-term borrowings, the long-term borrowings, the bonds and the lease",
+    "obligations, as the balance sheet states them. A Japanese balance sheet",
+    "has no total for it and no filer tags one, so this is a sum of lines",
+    "and a filer that presents a borrowing under a line this factsheet does",
+    "not read is short of it by that line."),
+  "EBITDA" = paste(
+    "The operating profit and the depreciation and amortisation of the cash",
+    "flow statement. It is computed here and is not a measure of the filer."),
+  "Free cash flow" = paste(
+    "The operating cash flow and the investing cash flow added together, the",
+    "investing flow being negative where it is an outflow. It is computed",
+    "here. The figure of the five-year summary table rests on the summary's",
+    "own two flows and the one beside the statements on the statement's."),
+  "Employees" = paste(
+    "The count at the year end as the five-year summary states it, for the",
+    "group where the figures are the group's and for the company otherwise.",
+    "The average age, the length of service and the pay are of the parent",
+    "company whatever the rest of the report is on, the ordinance asking",
+    "for them of the filer itself."))
+
+for (i in seq_along(definitions)) {
+  cat("**", names(definitions)[i], ".** ", definitions[[i]], "\n\n", sep = "")
+}
+```
+
+### Source and terms
+
+```{r sources, results='asis'}
+cat(paste(
+  "**Source.** The annual securities reports of the filer, 有価証券報告書,",
+  "as lodged with a Local Finance Bureau and published by the Financial",
+  "Services Agency through EDINET. The figures are read from the agency's",
+  "own conversion of the XBRL of each report to CSV, which the agency",
+  "publishes beside the filing, and not from a third party's rendering of",
+  "it. The list of filers is the agency's own Edinetcode list. Reuse of",
+  "EDINET content is permitted under the terms the agency publishes on the",
+  "disclosure site; this document reproduces figures of the reports and the",
+  "names the reports state.\n\n"))
+
+cat(paste(
+  "**What is not here.** No price, no estimate, no forecast and no figure",
+  "from any source but the reports themselves. The price-earnings ratio and",
+  "the total shareholder return are the filer's own statements in its",
+  "five-year summary, which is why they are in a document that fetches no",
+  "market data. Nothing is adjusted for a share split; the note under the",
+  "five-year summary says where one falls.\n\n"))
+
+cat(paste(
+  "**Produced by.** A template of fincommons, an open-source project for",
+  "data lakes built from public financial data. The template is at",
+  "`src/fincommons/financialreport/edinet/templates/` and reads the Silver",
+  "layer of the edinet module; the figures of this document can be",
+  "reproduced from the same lake by rendering it again.\n\n"))
+```
+
+{{< pagebreak >}}
+
+## Disclaimer
+
+```{=typst}
+#set text(size: 8pt)
+```
+
+```{r disclaimer, results='asis'}
+cat(paste(
+  "**No association with the filer.** This document is produced by a",
+  "template of the open-source project fincommons and the filer named on its",
+  "cover is an example of what the template does. It is not issued by the",
+  "filer, not authorised by it, not reviewed by it and carries no",
+  "endorsement from it. Neither the Financial Services Agency nor any Local",
+  "Finance Bureau has any part in it.\n\n"))
+
+cat(paste(
+  "**Not investment advice.** Nothing here is a recommendation to buy, to",
+  "sell or to hold any security, nor investment research, nor a personal",
+  "recommendation within the meaning of any regulation. It is a summary of",
+  "accounts a company has published. Anyone acting on a figure in it should",
+  "read it in the report it came from, which the source section says how to",
+  "find.\n\n"))
+
+cat(paste(
+  "**No warranty.** The figures are given without warranty of any kind as to",
+  "their correctness, their completeness or their fitness for any purpose.",
+  "A reading of a filing can be wrong in ways the checks in this document do",
+  "not catch, and the coverage pages exist so that what was read and what",
+  "was not can be seen rather than assumed. The periods of the earlier years",
+  "are shifted by whole years from the dates the filing states and are",
+  "exact only for a filer whose financial years are of equal length.\n\n"))
+
+cat(paste(
+  "**The figures are the filer's and the arithmetic is this document's.**",
+  "Every amount is a fact of a report or is derived from facts of the same",
+  "report. Where an indicator is the filer's own statement it is marked as",
+  "such; everything else is computed by this template, is not a measure of",
+  "the filer, and may differ from an indicator of the same name that the",
+  "filer or anyone else publishes. The consolidated and the",
+  "non-consolidated accounts of a Japanese filer are different accounts of",
+  "different things, and the basis of this document is named on its cover",
+  "and in its running head.\n\n"))
+
+cat(paste(
+  "**Licence.** fincommons is distributed under the European Union Public",
+  "Licence 1.2. The data are the filer's own disclosures as published by the",
+  "Financial Services Agency and are subject to the agency's terms of use,",
+  "not to the licence of the software.\n\n"))
+```
