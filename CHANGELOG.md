@@ -8,6 +8,22 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
+- `edinet`: a README for the module, which it did not have:
+  `src/fincommons/financialreport/edinet/README.md`. It sets out the one way
+  this regime differs in kind from the other two -- a filing is retrievable
+  for ten years and then it is not, so the Bronze layer is the only lasting
+  copy and a year not collected is a year lost rather than a year postponed
+  -- together with what the agency's conversion carries and leaves out, why
+  the periods in the table of facts are resolved rather than reported, where
+  the API key comes from and why it is never in `paths.yaml`, the three
+  Silver tables, and the factsheet. Two sections say what a reader has to
+  know before querying: that a Japanese report states its figures twice, the
+  consolidated accounts under no dimension and the parent company's own under
+  `NonConsolidatedMember`, so that a query taking the first row that matches
+  mixes two sets of accounts; and that `YEAREND` is text because 1,633 of the
+  3,816 listed filers do not close in March and the agency writes the end of
+  March two ways.
+
 - `edinet`: a template for a factsheet on one Japanese filer, in R and
   Quarto, with Kojima Co., Ltd. as its example:
   `src/fincommons/financialreport/edinet/templates/edinet-analyst-factsheet.qmd`.
@@ -267,6 +283,12 @@ release may change the public API, which `tests/test_public_api.py` lists.
   from the last full file of 2018. The drafts state their timestamps without
   a time zone and are read in UTC, and they do not state the relevant
   trading venue.
+
+### Fixed
+
+- `esef` and `sec`: the link to `fincommons.dataquality` in each README,
+  which the move of the two modules under `financialreport` had left
+  pointing one directory too high.
 
 ### Changed
 

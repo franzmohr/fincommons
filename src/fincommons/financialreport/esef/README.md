@@ -132,7 +132,7 @@ The table is rebuilt country by country, and only for the countries whose report
 
 ## Data quality
 
-`quality` holds the checks the figures are held to, and `update_silver_esef_quality` writes what they found into a third Silver table, `issues`, beside the two the pipeline builds. The machinery is shared with the SEC module in [`fincommons.dataquality`](../dataquality.py); what lives here are the eighteen checks themselves, read from the concepts of the IFRS taxonomy.
+`quality` holds the checks the figures are held to, and `update_silver_esef_quality` writes what they found into a third Silver table, `issues`, beside the two the pipeline builds. The machinery is shared with the SEC module in [`fincommons.dataquality`](../../dataquality.py); what lives here are the eighteen checks themselves, read from the concepts of the IFRS taxonomy.
 
 ```python
 from fincommons.financialreport import esef
