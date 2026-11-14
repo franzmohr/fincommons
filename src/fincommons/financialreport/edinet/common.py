@@ -418,6 +418,23 @@ def path_silver_filers(config_path):
     return ref_silver_filers(config_path).path
 
 
+def ref_silver_issues(config_path):
+    """Where the table of data quality issues lives.
+
+    It sits in the Silver layer beside the tables it is derived from, which is
+    where a table derived from a Silver table belongs: it is read from the
+    tables of this module and from nothing else, and a lake that never runs
+    the checks simply has no such table. No section of the configuration file
+    has to be added for it.
+    """
+    return resolve(config_path, "edinet", "silver", "issues")
+
+
+def path_silver_issues(config_path):
+    """Path of the table of issues, or ``None`` where it is named."""
+    return ref_silver_issues(config_path).path
+
+
 def connect_to_edinet(spark, config_path, table="filings"):
     """Open a table of the Silver layer.
 
@@ -428,7 +445,10 @@ def connect_to_edinet(spark, config_path, table="filings"):
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     table: str
-        Name of the table, ``'facts'``, ``'filings'`` or ``'filers'``.
+        Name of the table, ``'facts'``, ``'filings'``, ``'filers'`` or
+        ``'issues'`` -- the last being the table
+        :mod:`fincommons.financialreport.edinet.quality` writes, which a lake
+        that has never run the checks does not have.
     """
     if table == "facts":
         return read_silver(spark, ref_silver_facts(config_path))
@@ -436,8 +456,11 @@ def connect_to_edinet(spark, config_path, table="filings"):
         return read_silver(spark, ref_silver_filings(config_path))
     if table == "filers":
         return read_silver(spark, ref_silver_filers(config_path))
+    if table == "issues":
+        return read_silver(spark, ref_silver_issues(config_path))
     raise ValueError(
-        f"Table {table!r} not recognised. Use 'facts', 'filings' or 'filers'.")
+        f"Table {table!r} not recognised. Use 'facts', 'filings', 'filers' "
+        "or 'issues'.")
 
 
 def read_json(path):
@@ -532,10 +555,12 @@ __all__ = [
     "path_silver_facts",
     "path_silver_filers",
     "path_silver_filings",
+    "path_silver_issues",
     "read_json",
     "ref_silver_facts",
     "ref_silver_filers",
     "ref_silver_filings",
+    "ref_silver_issues",
     "write_bytes",
     "write_json",
 ]

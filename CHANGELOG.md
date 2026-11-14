@@ -8,6 +8,61 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
+- `edinet`: the checks the figures are held to, and a table of the issues
+  they find: `src/fincommons/financialreport/edinet/quality.py`.
+  `update_silver_edinet_quality` writes a fourth Silver table, `issues`,
+  beside the three the module collects; no section of the configuration file
+  has to be added for it, and a lake that never runs the checks has no such
+  table. The machinery is the one `fincommons/dataquality.py` already holds
+  and what is here are the twenty-six checks themselves. Nothing is dropped
+  and nothing is corrected: a check writes a row and leaves the figure where
+  it is, and a filing with nothing wrong with it has no row at all.
+  Two of the arithmetic checks exist only here, and they are the two lines
+  that make a Japanese profit and loss account what it is. `IMBAL_ORDINARY`
+  sets the operating result and the recurring items outside it against
+  経常利益; `IMBAL_PRETAX` sets the ordinary result and the extraordinary
+  items, 特別損益, against the result before tax. Neither relation can be
+  written for an IFRS or a US GAAP filer, neither having the lines.
+  Four checks have no counterpart anywhere in the package. `SUMMARY_DISAGREES`
+  sets the five-year summary of the front matter against the statements on
+  the year they both state, which is the only check of the package that tests
+  a filing against another part of itself. `PERIOD_SHIFT_INEXACT` asks whether
+  the periods this module resolves can be trusted: anything older than the
+  comparative is shifted by whole years, which is exact only where the filer's
+  years are of equal length, and the filing states the first and last day of
+  both of its two most recent years -- so the filing answers the question
+  about itself, with three days of slack so that a leap year is not mistaken
+  for a 52-week calendar. `BASIS_CONTRADICTS_DIMENSION` sets 連結・個別
+  against the presence of `NonConsolidatedMember` in the context, a
+  correspondence that held for every one of 6,752 facts of the reports read
+  while the module was written. And `UNIT_NOT_A_RATIO` reports an element
+  named for a ratio carrying a unit no ratio can have, which is the only one
+  of the four that has found anything in a real report: Fujitsu tags
+  `EquityToAssetRatioIFRSSummaryOfBusinessResults` with 1,167.25 and the unit
+  `JPYPerShares` -- the equity per share, under the name of a ratio -- while
+  the ratio itself is in the same report under
+  `RatioOfOwnersEquityToGrossAssetsIFRSSummaryOfBusinessResults` as 0.60.
+  Two things are settled once rather than by each check. The figures of a
+  filing are the ones it states for its own period end on the basis the
+  filing itself says it reports on, and a fact carrying a member on top of
+  the consolidation one is a breakdown rather than a statement line -- the
+  statement of changes in equity tags the net assets once per component of
+  equity. And a component of a sum being tested has to be stated: treating an
+  absent line as nothing is what turns a filing that presents its statements
+  differently into one that fails arithmetic, and the first draft reported
+  Fujitsu's liabilities as short by 244,695 million because an IFRS statement
+  subtotals its current liabilities and leaves the non-current side to be
+  read as the remainder. Only a genuinely optional line is coalesced, and
+  each is named where it is added.
+  Run over four real annual securities reports -- Kojima, which prepares no
+  consolidated statements; Kanagawa Chuo Kotsu twice, consolidated under
+  Japan GAAP; Fujitsu, consolidated under IFRS -- the checks report five
+  issues, all five being Fujitsu's mis-tagged ratio. Calibrating them against
+  those reports removed four false positives, every one of them a line a
+  filing legitimately does not state.
+- `edinet`: a section of the module's README on the checks, and
+  `connect_to_edinet(..., "issues")` to read the table they write.
+
 - `edinet`: a README for the module, which it did not have:
   `src/fincommons/financialreport/edinet/README.md`. It sets out the one way
   this regime differs in kind from the other two -- a filing is retrievable
