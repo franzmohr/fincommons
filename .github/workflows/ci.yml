@@ -93,6 +93,8 @@ jobs:
             tests: tests/test_esef_*.py
           - name: sec
             tests: tests/test_sec_*.py
+          - name: edinet
+            tests: tests/test_edinet_*.py
           # The layer that combines the regimes above, and nothing else: it
           # reads their tables and none of them reads it. The row also holds
           # the namespace package they share to the one promise it makes,
@@ -106,7 +108,7 @@ jobs:
           # every data quality run uses. The checks themselves belong to their
           # data sets and run with them, in the esef and sec rows.
           - name: infrastructure
-            tests: tests/test_layout.py tests/test_storage.py tests/test_dataquality.py
+            tests: tests/test_layout.py tests/test_storage.py tests/test_dataquality.py tests/test_credentials.py
     steps:
       - uses: actions/checkout@v7
 
