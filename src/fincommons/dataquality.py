@@ -20,7 +20,7 @@ What is shared and what is not
 The machinery is here and the checks are not. A check knows the data set it is
 made of -- which concept a balance sheet totals under, which column holds the
 reporting party -- and belongs beside that data set:
-:mod:`fincommons.esef.quality` and :mod:`fincommons.secfiling.quality` each
+:mod:`fincommons.financialreport.esef.quality` and :mod:`fincommons.financialreport.sec.quality` each
 hold their own, and each declares its own issue table, because the record a
 check points at is identified differently in each. What is here is everything
 that does not depend on the data set: how a check is described, how its rows
@@ -32,7 +32,7 @@ The description of a check is data
 
 Every check is a row of a catalogue shipped with the package, in the data
 directory beside the column catalogue and the measures of
-:mod:`fincommons.financialreport`. The code a row defines is what the issue
+:mod:`fincommons.financialreport.combined`. The code a row defines is what the issue
 table stores; the row says what the check means, how severe it is, and what to
 do about a record it names. That is deliberate: a reader of an issue table has
 a code and needs the sentence, a person deciding what to fix needs the
@@ -96,8 +96,15 @@ CHECKED_COLUMN = "CHECKED"
 
 
 def _root(package):
-    """The importable name of ``package``; this one as it was imported."""
-    return __package__ if package == "fincommons" else package
+    """The importable name of ``package``; this one as it was imported.
+
+    The first segment of ``__package__`` and not the whole of it, nor its
+    parent: the data directory belongs to the distribution, while the module
+    asking for it may sit at any depth below the top -- ``mapping`` is three
+    levels down -- and counting levels is how a file that moves stops finding
+    its own data.
+    """
+    return __package__.split(".")[0] if package == "fincommons" else package
 
 
 def check_catalogue(dataset=None, severity=None, packages=("fincommons",)):

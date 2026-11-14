@@ -91,18 +91,20 @@ jobs:
             tests: tests/test_marketpricedata*.py
           - name: esef
             tests: tests/test_esef_*.py
-          - name: secfiling
-            tests: tests/test_secfiling_*.py
-          # The module that combines the two above, and nothing else: it
-          # reads their tables and neither of them reads it.
-          - name: financialreport
-            tests: tests/test_financialreport.py
+          - name: sec
+            tests: tests/test_sec_*.py
+          # The layer that combines the regimes above, and nothing else: it
+          # reads their tables and none of them reads it. The row also holds
+          # the namespace package they share to the one promise it makes,
+          # which is that it imports none of them.
+          - name: combined
+            tests: tests/test_combined.py
           - name: famafrenchdata
             tests: tests/test_famafrenchdata*.py
           # The layer the data sets share: how a Silver table is read and
           # written, the file layout of a partitioned table, and the machinery
           # every data quality run uses. The checks themselves belong to their
-          # data sets and run with them, in the esef and secfiling rows.
+          # data sets and run with them, in the esef and sec rows.
           - name: infrastructure
             tests: tests/test_layout.py tests/test_storage.py tests/test_dataquality.py
     steps:

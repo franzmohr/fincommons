@@ -1,53 +1,27 @@
-"""Financial reports: the filings of both regimes in one table.
+"""Financial reports: the regimes that require them tagged, and the two
+tables that put them side by side.
 
-Two regimes require the annual and periodic reports of listed issuers to be
-tagged: the European Single Electronic Format in the Union, and the inline
-XBRL mandate of the Securities and Exchange Commission in the United States.
-:mod:`fincommons.esef` and :mod:`fincommons.secfiling` each bring one of them
-into the lake, as its publisher gives it out. This module puts the two side by
-side.
+Four regimes require the periodic reports of listed issuers to be tagged in
+XBRL, and each publishes the result in its own way:
 
-``common``
-    the layout of the combined tables, and what each source does and does not
-    cover,
-``silver``
-    reducing each source to the same columns and putting them one after the
-    other, which :func:`update_silver_financialreport` does,
-``mapping``
-    the only place in the package where a concept of one framework is put
-    beside a concept of the other, as a catalogue that says on what basis and
-    with what caveat.
+``esef``
+    the European Single Electronic Format, as filings.xbrl.org publishes it,
+``sec``
+    the inline XBRL mandate of the Securities and Exchange Commission, as the
+    company files of data.sec.gov publish it,
+``edinet``
+    the Financial Services Agency of Japan, as the EDINET API publishes it,
+``dart``
+    the Financial Supervisory Service of Korea, as OpenDART publishes it,
+``combined``
+    the four reduced to the same columns and put one after the other.
 
-Three things this module deliberately does not do.
-
-It does not take anything away from the two source modules. Their tables stay
-authoritative and complete, neither imports this module, and neither knows it
-exists: an ESEF-only lake builds nothing here and loses nothing by it. The
-dependency runs one way.
-
-It does not join the regimes by entity, because it cannot. ESEF prescribes the
-legal entity identifier, a filing with the Commission states a central index
-key, and neither body publishes a mapping between the two. What GLEIF does
-publish is where an entity is registered, which for some tens of thousands of
-records is EDGAR -- but nearly all of those are funds, named by a series
-identifier, and the record of an operating company points at its state
-register. The issuers these tables hold are the ones it does not reach. Both
-columns are carried and one of them is empty in every row. It is the one thing
-a lake holding both regimes would most like to do, and the honest shape of the
-table says so.
-
-It does not reconcile the vocabularies in the tables. ``ifrs-full:Revenue``
-and ``us-gaap:Revenues`` stand as they were filed. What the two have in
-common is a judgement about accounting, which ``mapping`` records as data
-rather than as code, and which is applied per query by whoever has read what
-it rests on.
-
-The catalogue of measures is usable on its own. It joins on the concept as
-both source tables spell it, so a lake that has only collected ESEF filings
-can resolve a measure over :mod:`fincommons.esef` directly, without building
-a combined table.
+This file imports none of them, and that is deliberate. Each regime stands on
+its own: a lake that collects Japanese filings and nothing else imports
+:mod:`fincommons.financialreport.combined.edinet`, and neither the combining layer nor
+any other regime is loaded by doing so. The dependency runs one way --
+``combined`` reads the four, none of the four reads ``combined``, and none
+reads another -- and :mod:`tests.test_combined` holds it to that. A package
+that grouped them by importing them here would have taken that away, which is
+why this module is a namespace and not a facade.
 """
-
-from .common import *
-from .silver import *
-from .mapping import *

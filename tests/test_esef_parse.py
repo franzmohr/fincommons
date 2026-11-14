@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas
 import pytest
 
-import fincommons.esef as esef
+import fincommons.financialreport.esef as esef
 
 FIXTURES = Path(__file__).resolve().parent / "data" / "esef"
 LEI_AT = "5299000000000000AT01"

@@ -31,7 +31,7 @@ PUBLIC_API = {
         "LEI_OTHER", "connect_to_entitymasterdata",
     ],
     "fincommons.entitymasterdata.common": ["path_silver_main"],
-    "fincommons.esef": [
+    "fincommons.financialreport.esef": [
         "connect_to_esef", "connect_to_esef_filings", "update_esef",
     ],
     "fincommons.exchangerate": ["connect_to_exchangerate"],

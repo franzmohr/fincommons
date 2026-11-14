@@ -42,6 +42,6 @@ There is no Gold layer yet. The natural first table is one row per issuer and fi
 
 Module \emph{esef} is organised along the layers of the pipeline. The part \emph{common} declares the layout of the data lake and the schemas of the two tables and opens them; \emph{parse} reads an index into filings and a report into facts, in plain Python, so that it can be tested on its own and run on the executors as it is; \emph{bronze} collects the indexes, the reports and the packages; \emph{silver} builds the two tables; and \emph{pipeline} runs the whole in one call, \verb|update_esef|. A scheduled run calls the module from the command line,
 \begin{quote}
-\verb|python -m fincommons.esef --config paths.yaml --country AT|
+\verb|python -m fincommons.financialreport.esef --config paths.yaml --country AT|
 \end{quote}
 which takes the countries to collect -- and, with \verb|--contact|, the contact the repository asks for -- but no argument saying what changed: that is read from the repository and from what the lake already holds.

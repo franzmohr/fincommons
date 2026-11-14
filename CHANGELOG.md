@@ -8,7 +8,7 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
-- `dataquality`, `esef.quality` and `secfiling.quality`: the checks the two
+- `dataquality`, `esef.quality` and `sec.quality`: the checks the two
   regimes' figures are held to, and a table of the issues they find.
   `fincommons/dataquality.py` holds what does not depend on the data set --
   how a check is described, how its rows are gathered, which partitions a run
@@ -16,7 +16,7 @@ release may change the public API, which `tests/test_public_api.py` lists.
   only, and how the issues are counted and joined back onto the records --
   and each module holds its own checks and declares its own issue table,
   because the record a check points at is identified differently in each.
-  `update_silver_esef_quality` and `update_silver_secfiling_quality` write a
+  `update_silver_esef_quality` and `update_silver_sec_quality` write a
   third Silver table, `issues`, beside the tables they are derived from; no
   section of the configuration file has to be added for it, and a lake that
   never runs the checks has no such table. Nothing is dropped and nothing is
@@ -46,7 +46,7 @@ release may change the public API, which `tests/test_public_api.py` lists.
   facts is a question for the index rather than for the table of facts -- the
   last reporting 24,174 filings nobody had downloaded instead of the 192 the
   repository could not convert.
-- `esef` and `secfiling`: a template for a data quality report, one per
+- `esef` and `sec`: a template for a data quality report, one per
   regime, in R and Quarto, which reads the table of issues over the whole
   record rather than filing by filing. Sixteen pages for ESEF and fifteen for
   the Commission, built as a pair in the same way the factsheets are: what
@@ -71,12 +71,12 @@ release may change the public API, which `tests/test_public_api.py` lists.
   file the module reads, so a check added to a module appears in the report
   without the template being touched; a code in the table of issues the
   catalogue does not describe is refused rather than printed bare, as is a
-  Delta Silver layer. The secfiling report gives `RESTATED_MATERIALLY` a
+  Delta Silver layer. The sec report gives `RESTATED_MATERIALLY` a
   section of its own, it being the one check without a counterpart in the
   other regime and the one that needs reading rather than counting.
-- `secfiling`: a template for a factsheet on one registrant, in R and Quarto,
+- `sec`: a template for a factsheet on one registrant, in R and Quarto,
   with NVIDIA Corporation as its example:
-  `src/fincommons/secfiling/templates/secfiling-analyst-factsheet.qmd`. It is
+  `src/fincommons/sec/templates/sec-analyst-factsheet.qmd`. It is
   the counterpart of the esef factsheet and renders a PDF of some twenty
   pages from the facts of the registrant's own annual reports and from
   nothing else: the statement of operations, the balance sheet and the cash
@@ -107,8 +107,8 @@ release may change the public API, which `tests/test_public_api.py` lists.
   for a figure read from a concept of the registrant's own making and no page
   of the issuer's own prose, both being absent from the company files
   altogether. The last page is a disclaimer, which the cover points at.
-- `secfiling`: a README for the module, which it did not have:
-  `src/fincommons/secfiling/README.md`. It sets out what a company file
+- `sec`: a README for the module, which it did not have:
+  `src/fincommons/sec/README.md`. It sets out what a company file
   carries and what it leaves out, the terms the Commission publishes under,
   the two Silver tables, and the factsheet.
 - `financialreport`: a README for the module, which it did not have:
@@ -123,7 +123,7 @@ release may change the public API, which `tests/test_public_api.py` lists.
   own, so an ESEF-only lake can use it without building anything here.
 - `esef`: a template for a factsheet on one issuer, in R and Quarto, with
   voestalpine AG as its example:
-  `src/fincommons/esef/templates/esef-analyst-factsheet.qmd`. It renders a
+  `src/fincommons/financialreport/esef/templates/esef-analyst-factsheet.qmd`. It renders a
   PDF of some twenty pages from the facts of the issuer's own reports and
   from nothing else: the income statement, the statement of financial
   position and the cash flow statement as filed and as a share of revenue,
@@ -148,7 +148,7 @@ release may change the public API, which `tests/test_public_api.py` lists.
   allows, in the terms of Articles 7 and 8 of the licence.
 - `esef`: a template for a coverage report on the record, the counterpart of
   the factsheet, in R and Quarto:
-  `src/fincommons/esef/templates/esef-coverage-report.qmd`. It renders a PDF
+  `src/fincommons/financialreport/esef/templates/esef-coverage-report.qmd`. It renders a PDF
   of some sixteen pages that counts what the repository lists and what the
   issuers tagged, and no amount out of a report: the filings, issuers,
   second filings of a year and filings without facts per country, the days
@@ -193,9 +193,47 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- **Breaking.** The regimes that require a financial report tagged are now
+  sub-modules of one namespace package, and `secfiling` is `sec`:
+
+  | Was | Is |
+  | --- | --- |
+  | `fincommons.esef` | `fincommons.financialreport.esef` |
+  | `fincommons.secfiling` | `fincommons.financialreport.sec` |
+  | `fincommons.financialreport` | `fincommons.financialreport.combined` |
+
+  Four regimes of one thing were four top-level modules with nothing saying
+  they belonged together, and a root that grew a module per jurisdiction. The
+  namespace says it. What it must not do is cost the property the arrangement
+  rests on, which is that each regime stands alone: `combined` reads the
+  regimes, no regime reads `combined`, and no regime reads another, so a lake
+  that collects Japanese filings imports one sub-module and loads neither the
+  combining layer nor the other three. `financialreport/__init__.py` is
+  therefore a namespace and not a facade -- it imports nothing, and a test
+  checks in a session of its own that reaching the namespace loads none of
+  its children. Were it to import them, the lazy imports in
+  `combined.silver` would have nothing left to defer.
+
+  The guard test changed with it. It used to grep both regimes for the string
+  `financialreport`, which every module's own dotted name now contains; it
+  looks for an import of `combined` instead, under either spelling, and for
+  an import of one regime by another.
+
+  What this costs a deployment: the Python import paths above, the
+  `secfiling:` section of `paths.yaml`, which is now `sec:`, and the names
+  `update_secfiling`, `update_bronze_secfiling`, `update_silver_secfiling`,
+  `update_silver_secfiling_quality` and `connect_to_secfiling`, which drop
+  `filing` from the middle. The `esef:` and `financialreport:` sections of
+  the configuration file are unchanged, and so is every data set name the
+  column catalogue and `describe_column` use, `secfiling` excepted: a data
+  set is still addressed as `esef` or `financialreport` while its code lives
+  under the namespace, which `columns.MODULE_FOLDERS` records. The tables
+  themselves, their columns and the layout of the lake are untouched, so
+  nothing has to be rebuilt.
+
 - The claim that no mapping exists between a central index key and a legal
   entity identifier is stated more carefully, in the docstrings of
-  `secfiling` and `financialreport`, in their READMEs and in the two rows of
+  `sec` and `financialreport`, in their READMEs and in the two rows of
   the column catalogue. Neither the Commission nor GLEIF publishes such a
   mapping, which is what the decision to carry both columns and join neither
   rests on; but GLEIF's records do name the register an entity is registered
@@ -299,7 +337,7 @@ and `pypdf` is a new dependency.
   the countries asked for are downloaded once and again only where the
   repository processed them anew, and two Silver tables are built from them:
   every filing, and every tagged fact keyed by LEI, rebuilt country by
-  country. `python -m fincommons.esef --country AT` runs it as a scheduled
+  country. `python -m fincommons.financialreport.esef --country AT` runs it as a scheduled
   job.
 - `entitymasterdata`: the ECB's lists of financial vehicle corporations
   (FVCs) and of payment statistics relevant institutions (PSRIs) are

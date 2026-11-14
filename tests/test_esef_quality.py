@@ -17,7 +17,7 @@ from datetime import date, datetime
 
 import pytest
 
-from fincommons.esef import common, quality
+from fincommons.financialreport.esef import common, quality
 
 LEI = "529900ZAXBMQDIWPNB72"
 COUNTRY = "AT"
