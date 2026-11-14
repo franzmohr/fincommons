@@ -12,11 +12,14 @@ filings.xbrl.org. None of the three parses XBRL.
 ``common``
     the layout of the data lake and the tables the result is read from,
 ``bronze``
-    collecting the index of a day, a filing, and the list of filers.
-
-The reader of the CSV conversion and the Silver layer built from it are not
-here yet: the layout of a conversion is read from one before it is relied on,
-and that needs a key the agency issues.
+    collecting the index of a day, a filing, and the list of filers,
+``parse``
+    reading the agency's conversion into facts, in plain Python,
+``silver``
+    the tables of filings, of facts and of filers, built from what was
+    collected,
+``pipeline``
+    the whole pipeline in one call, :func:`update_edinet`.
 
 **A filing leaves EDINET.** A securities report is retrievable for ten years
 and then it is not, which is unlike EDGAR, where a filing stays for ever, and
@@ -34,4 +37,7 @@ the package. They are publications of the Financial Services Agency.
 """
 
 from .common import *
+from .parse import *
 from .bronze import *
+from .silver import *
+from .pipeline import *

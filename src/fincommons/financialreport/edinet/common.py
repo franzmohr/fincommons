@@ -60,8 +60,8 @@ import datetime
 import json
 import os
 
-from pyspark.sql.types import (DateType, IntegerType, StringType, StructType,
-                               TimestampType)
+from pyspark.sql.types import (DateType, DoubleType, IntegerType, StringType,
+                               StructType, TimestampType)
 
 from ...addressing import resolve
 from ...storage import read_silver
@@ -104,6 +104,15 @@ DOCUMENT_KINDS = {
 #: The documents that carry a set of financial statements, by the code the
 #: index states. A correction carries the code of its own kind rather than of
 #: what it corrects, so both are named.
+#:
+#: Most of what an index names is not here, and the two largest absences are
+#: worth naming. Every report is accompanied by a 確認書, the management
+#: confirmation, which the index codes ``'135'``; of the 2,118 documents filed
+#: on 13 November 2026, 868 were those and 894 were semi-annual reports. And
+#: a report filed for an investment fund carries a ``FUNDCODE`` and reports on
+#: the fund rather than on the filer, which is most of the semi-annual reports
+#: of any given day. A lake after the statements of operating companies wants
+#: these codes *and* an empty fund code.
 REPORT_TYPES = {
     "120": "annual",            # 有価証券報告書
     "130": "annual-correction",  # 訂正有価証券報告書
@@ -197,12 +206,97 @@ public view, in the extension period, or past both. A filing in the last
 state is still named by an index collected earlier and can no longer be
 fetched, which is the thing this module's Bronze layer exists to survive.
 
-Four fields of the index are deliberately absent. ``issuerEdinetCode``,
-``subjectEdinetCode``, ``subsidiaryEdinetCode`` and ``currentReportReason``
-belong to the large-holding report, the takeover bid and the extraordinary
-report, and are empty on every document this module is about. A column that
-is always empty would say nothing; an absent one says it to anyone who looks
-at the table.
+Eight of the twenty-nine fields an index carries are deliberately absent,
+for two reasons. ``issuerEdinetCode``, ``subjectEdinetCode``,
+``subsidiaryEdinetCode`` and ``currentReportReason`` belong to the
+large-holding report, the takeover bid and the extraordinary report, and are
+empty on every document this module is about: a column that is always empty
+would say nothing, while an absent one says it to anyone who looks at the
+table. ``seqNumber`` numbers a row within the day's index and means nothing
+once two days are in one table; ``opeDateTime`` is when an official of a
+finance bureau touched the record, which ``EDITED`` already says; and
+``pdfFlag`` and ``attachDocFlag`` offer forms of the filing this module does
+not read.
+"""
+
+facts_schema = StructType() \
+    .add("EDINETCODE", StringType(), True) \
+    .add("FILING", StringType(), False) \
+    .add("FILEDYEAR", IntegerType(), False) \
+    .add("FACT", StringType(), False) \
+    .add("CONCEPT", StringType(), False) \
+    .add("LABEL", StringType(), True) \
+    .add("CONTEXT", StringType(), False) \
+    .add("RELATIVE", StringType(), True) \
+    .add("BASIS", StringType(), True) \
+    .add("SHAPE", StringType(), True) \
+    .add("PRDSTART", DateType(), True) \
+    .add("PRDEND", DateType(), True) \
+    .add("DIMENSIONS", StringType(), True) \
+    .add("UNIT", StringType(), True) \
+    .add("VALUE", DoubleType(), True) \
+    .add("TEXT", StringType(), True) \
+    .add("DOCFORM", StringType(), True)
+"""The shape of the table of facts: one row per fact of the agency's CSV.
+
+The columns a fact shares with the other regimes are spelled as they spell
+them -- ``FILING``, ``FACT``, ``CONCEPT``, ``PRDSTART``, ``PRDEND``,
+``DIMENSIONS``, ``UNIT``, ``VALUE``, ``TEXT`` -- so that a module combining
+them is combining tables of one shape rather than translating between them.
+
+**The period is resolved rather than reported, and this is the one thing to
+know before using it.** The agency's conversion does not carry the dates of a
+fact's context. It carries a label saying which period the context is
+relative to the filing's own -- ``CurrentYearDuration``,
+``Prior4YearDuration``, ``FilingDateInstant`` -- and ``相対年度`` says the same
+in words.
+
+For the current year and the comparative, the dates are the filer's own: a
+filing states both among its facts, in the document and entity information,
+and those are used as reported. For anything further back the period is
+shifted by whole years from that anchor, and a shift is exact only where the
+filer's years are of equal length -- a filer on a 52- or 53-week calendar, or
+one that moved its year end, has years that are not a whole number of years
+apart. A report stating five years of net sales is therefore anchored for two
+of them and shifted for three.
+
+``CONTEXT`` and ``RELATIVE`` are carried verbatim beside the dates so that
+what each one rested on can always be read, and a context whose shape is not
+recognised leaves both dates null rather than taking a guess. The XBRL
+instance of the filing carries the true dates for every context; a lake that
+needs them for the older years needs the instance and a parser, which is not
+this module.
+
+``CONCEPT`` is the element identifier as the conversion writes it, prefix and
+name. Four prefixes appear: ``jppfs_cor`` is the financial statements
+taxonomy, ``jpcrp_cor`` the disclosure ordinance, ``jpdei_cor`` the document
+and entity information, and a prefix built from the form and the filer's own
+EDINET code -- ``jpcrp030000-asr_E03270-000`` -- marks a concept the filer
+created for its own report, which is how an extension is told from the
+taxonomy here.
+
+``LABEL`` is the Japanese name of the element, which the conversion states
+beside it. Neither of the other two regimes carries a label: the ESEF labels
+live in the extension taxonomy the module does not read, and the Commission
+publishes none. It is kept because it is the only thing in these tables that
+says what a concept means to a reader who does not know the taxonomy.
+
+``VALUE`` holds a number and ``TEXT`` everything else, and a fact can have a
+unit and no number all the same: the conversion writes ``－`` where a figure
+does not apply, forty-eight times in one report of 1,086 facts, and that
+becomes a null ``VALUE`` rather than a zero or an error.
+
+``DOCFORM`` says which member of the archive a fact came from, by the form
+that names it: the report itself (``jpcrp030000-asr``) or the audit report
+(``jpaud-aai-cn``), which the agency converts as well and which is where the
+auditor and the opinion are.
+
+``FACT`` is an identifier made for the fact, the conversion giving it none.
+The element and the context do not identify one: a figure is often tagged in
+several places in a report, and the number of employees appears three times
+under one context in that same report. An occurrence number is therefore part
+of it, which keeps every row of the conversion and lets a check rather than
+the reader decide what to do about a figure tagged twice.
 """
 
 filers_schema = StructType() \
@@ -294,6 +388,16 @@ def path_silver_base(config_path):
     return resolve(config_path, "edinet", "silver").path
 
 
+def ref_silver_facts(config_path):
+    """Where the table of facts lives."""
+    return resolve(config_path, "edinet", "silver", "facts")
+
+
+def path_silver_facts(config_path):
+    """Path of the table of facts, or ``None`` where it is named."""
+    return ref_silver_facts(config_path).path
+
+
 def ref_silver_filings(config_path):
     """Where the table of filings lives."""
     return resolve(config_path, "edinet", "silver", "filings")
@@ -324,15 +428,16 @@ def connect_to_edinet(spark, config_path, table="filings"):
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     table: str
-        Name of the table, ``'filings'`` or ``'filers'``. The table of facts
-        arrives with the reader of the agency's CSV conversion.
+        Name of the table, ``'facts'``, ``'filings'`` or ``'filers'``.
     """
+    if table == "facts":
+        return read_silver(spark, ref_silver_facts(config_path))
     if table == "filings":
         return read_silver(spark, ref_silver_filings(config_path))
     if table == "filers":
         return read_silver(spark, ref_silver_filers(config_path))
     raise ValueError(
-        f"Table {table!r} not recognised. Use 'filings' or 'filers'.")
+        f"Table {table!r} not recognised. Use 'facts', 'filings' or 'filers'.")
 
 
 def read_json(path):
@@ -412,6 +517,7 @@ __all__ = [
     "connect_to_edinet",
     "create_directory_tree",
     "earliest_retrievable",
+    "facts_schema",
     "filers_schema",
     "filings_schema",
     "path_bronze_base",
@@ -423,9 +529,11 @@ __all__ = [
     "path_bronze_indexes",
     "path_index_record",
     "path_silver_base",
+    "path_silver_facts",
     "path_silver_filers",
     "path_silver_filings",
     "read_json",
+    "ref_silver_facts",
     "ref_silver_filers",
     "ref_silver_filings",
     "write_bytes",
