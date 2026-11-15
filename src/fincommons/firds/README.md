@@ -289,6 +289,32 @@ and nothing about what is already written -- a file at or above the size is not
 eligible, so a table that accumulated gigabyte files under the default keeps
 them until something rewrites them, such as the history being built again.
 
+#### A day that does not fit in memory
+
+A message that a block could not be cached and was persisted to disk instead
+need not be the file sizing above. The frames the merge caches -- the records
+of the day and the plan made from them -- are held as deserialized rows, and
+the nested structs of a delta file unroll to a multiple of the Parquet they
+were read from: measured on the file of 2019-04-06, some fourteen times. A day
+on which ESMA republishes in bulk is therefore cached at a size the storage
+memory does not hold. That file is 596 MB in the Bronze layer where the days
+around it are 48 and 53 MB, and its partitions arrived as blocks of 1673 MiB
+against the some 9 GB a 30 GB session reserves for storage, which is `0.6` of
+the heap for the unified pool and `spark.memory.storageFraction`, `0.5`, of
+that again.
+
+Nothing else follows from it. The blocks are read back from disk, the history
+is the same, and the cost is the I/O of one day; `cache()` is
+`MEMORY_AND_DISK`, so the spill is what it is there for. Such a day is not
+worth tuning the run around -- cutting `spark.sql.files.maxPartitionBytes` to
+divide the blocks buys four times the scan tasks on every ordinary day to
+spare one -- and the three cases are told apart by which days carry the
+message. A few outlying days are this one. Every day is the file sizing above.
+Ordinary days say that the storage memory is genuinely short, which is
+answered by caching the two frames serialized rather than by a larger heap:
+the multiple is what costs the memory, and a heap raised past about 32 GB
+loses the compressed object pointers that hold it down.
+
 #### The watermark
 
 How far the history has been built is recorded in a small Delta table of its
