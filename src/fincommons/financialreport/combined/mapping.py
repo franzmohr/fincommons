@@ -86,7 +86,21 @@ FIRST_CONCEPT = 1
 #: registrant tagging only the pre-ASC-606 ``us-gaap:Revenues`` carries no
 #: identifier, which is the honest answer, that element being tagged
 #: inconsistently and not an equivalent of the IFRS total.
-MATERIALISED_MEASURES = ("assets", "revenue")
+#:
+#: Liabilities is third and passes the rule as easily as assets -- four
+#: concepts, one per taxonomy, nothing ranked below them. What it brings is a
+#: second reason a fact carries no identifier, and one a reader has to be
+#: able to tell from the first. Many filings with the Commission tag no total
+#: liabilities at all, presenting only liabilities and equity together, so
+#: for a substantial part of the US population the figure is not stated
+#: rather than not named. Revenue's nulls are the rule declining to name
+#: something the filer did state; these are the filer having stated nothing.
+#: Both are nulls in the same column and neither is a zero. The total is not
+#: derived from the balance sheet identity to fill them: this module invents
+#: no figure, and the cost of pretending otherwise is on record in the edinet
+#: checks, where reading a missing total as zero made Fujitsu's liabilities
+#: short by 244,695 million.
+MATERIALISED_MEASURES = ("assets", "liabilities", "revenue")
 
 #: Dimension members that name a basis of preparation rather than a part of
 #: an entity, and which a measure is therefore resolved over.

@@ -18,14 +18,14 @@ Japan is the exception, and it is worth saying why rather than leaving it as a h
 
 That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
 
-It covers **total assets** and **revenue**:
+It covers **total assets**, **total liabilities** and **revenue**:
 
-| framework | assets | revenue |
-| --- | --- | --- |
-| IFRS | `ifrs-full:Assets` | `ifrs-full:Revenue` |
-| US-GAAP | `us-gaap:Assets` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` |
-| JP-GAAP | `jppfs_cor:Assets` | `jppfs_cor:NetSales` |
-| IFRS, as a Japanese filer tags it | `jpigp_cor:AssetsIFRS` | `jpigp_cor:RevenueIFRS` |
+| framework | assets | liabilities | revenue |
+| --- | --- | --- | --- |
+| IFRS | `ifrs-full:Assets` | `ifrs-full:Liabilities` | `ifrs-full:Revenue` |
+| US-GAAP | `us-gaap:Assets` | `us-gaap:Liabilities` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` |
+| JP-GAAP | `jppfs_cor:Assets` | `jppfs_cor:Liabilities` | `jppfs_cor:NetSales` |
+| IFRS, as a Japanese filer tags it | `jpigp_cor:AssetsIFRS` | `jpigp_cor:LiabilitiesIFRS` | `jpigp_cor:RevenueIFRS` |
 
 What differs between the cells of a row is recognition rather than definition -- development costs are capitalised under IAS 38 and generally expensed under ASC 730, LIFO is permitted under US GAAP and prohibited by IAS 2 -- and that is on the catalogue row where a reader can find it rather than hidden by the shared name.
 
@@ -42,6 +42,14 @@ Assets is the cleanest of the eight measures: one element per taxonomy and no al
 The priorities exist for a caller resolving a measure at query time, who wants the best answer the filing affords and takes the last resort where there is nothing better. The column is held to the stricter bar, so only priority 1 is written down and a fact tagged with one of the others keeps a null. The cost is coverage rather than correctness -- a registrant tagging only the pre-ASC-606 `us-gaap:Revenues` carries no identifier -- which is the right way round for a name a query filters on. Every priority-2 and priority-3 row in the catalogue carries a caveat of the same kind, so the rule is one the catalogue already stated and this column now enforces.
 
 It is also what keeps the column answerable. A filing may tag several concepts of one measure, which is why the ranking is there, and labelling all of them would put two different figures of one filing and one period under one name. At priority 1 the catalogue has one element per taxonomy per measure, so that cannot happen; `canonical_concepts` refuses a catalogue in which it could, and refuses one in which two measures claim a single concept.
+
+#### Two kinds of null, and the column cannot tell them apart
+
+Liabilities passes the rule as easily as assets -- four concepts, one per taxonomy, nothing ranked below them -- and what it adds is the second reason a fact carries no identifier.
+
+Revenue's nulls are the rule declining to name something the filer did state. Liabilities' are different: **many filings with the Commission tag no total liabilities at all**, presenting only liabilities and equity together, so for a substantial part of the US population the figure was never stated. Both appear as a null in the same column, and neither is a zero.
+
+The total is not derived from the balance sheet identity to fill the gap. Nothing in this family of modules invents a figure, and what the alternative costs is already on record: in the `edinet` checks, reading a missing total as zero made one filer's liabilities short by 244,695 million. So a count of the rows carrying a measure is a count of what was stated and named -- never a population, and never a denominator without saying which.
 
 Growing the column is therefore one entry in `MATERIALISED_MEASURES` plus the checks it has to pass. All eight measures pass them today. That includes `equity` and `profit_loss`, which an earlier reading of the catalogue took to be blocked: `us-gaap:StockholdersEquity` is claimed by both `equity` and `equity_attributable_to_parent`, but as the *second* concept of the first and the first of the second, so the priority rule settles it -- it is the equity attributable to the parent, and the stand-in for equity only where a registrant states no wider total. That they pass is not a reason to add them; each is still a judgement to be made against real filings one at a time.
 

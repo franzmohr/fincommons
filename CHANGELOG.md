@@ -450,6 +450,24 @@ release may change the public API, which `tests/test_public_api.py` lists.
   judgement to be made against real filings one at a time, and
   `MATERIALISED_MEASURES` still names two.
 
+- `financialreport`: `liabilities` is the third measure the combined table
+  carries. It passes the rule as easily as assets -- four concepts, one per
+  taxonomy, nothing ranked below them -- and what it adds is **a second
+  reason a fact carries no identifier, which the column cannot distinguish
+  from the first**. Revenue's nulls are the rule declining to name something
+  the filer did state. These are different: many filings with the Commission
+  present liabilities and equity together and tag no total liabilities at
+  all, so for a substantial part of the US population the figure was never
+  stated. Both appear as a null in the same column and neither is a zero.
+  The total is not derived from the balance sheet identity to fill the gap.
+  Nothing in this family of modules invents a figure, and what the
+  alternative costs is already on record: in the `edinet` checks, reading a
+  missing total as zero made one filer's liabilities short by 244,695
+  million. So a count of the rows carrying a measure is a count of what was
+  stated and named -- never a population, and never a denominator without
+  saying which. The README, the `fact_schema` docstring and the column
+  catalogue all now say so, and a test holds the two kinds of null apart.
+
 ### Fixed
 
 - `financialreport`: a Japanese filing's framework is now decided per fact

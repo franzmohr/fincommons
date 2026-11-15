@@ -127,9 +127,10 @@ The restraint is the point. A materialised identifier is read by people who
 will not go back to the caveat, so a measure is written into this column only
 once its concepts are agreed to mean the same figure in every framework the
 catalogue defines it for, and only through the first concept of each
-framework. It covers total assets and revenue and grows one measure at a
-time. What a measure means, and what differs between the frameworks that
-state it, is on the catalogue row; ``describe_measure`` prints it.
+framework. It covers total assets, total liabilities and revenue, and grows
+one measure at a time. What a measure means, and what differs between the
+frameworks that state it, is on the catalogue row; ``describe_measure``
+prints it.
 
 Only the first concept, because the catalogue ranks the others as
 approximations and says so. A caller resolving a measure at query time wants
@@ -147,6 +148,19 @@ period under one name. At the first concept there is one element per taxonomy
 per measure, so that cannot happen, and
 :func:`fincommons.financialreport.combined.mapping.canonical_concepts`
 refuses a catalogue in which it could.
+
+A null here therefore means one of two things, and the column cannot tell
+them apart. Either no measure covers the concept the filer tagged, or the
+measure covers a concept the filer did not tag at all. Total liabilities is
+where the second matters: many filings with the Commission present only
+liabilities and equity together and tag no total, so the figure is missing
+for a substantial part of the US population. It is missing rather than zero,
+and it is not derived from the balance sheet identity to fill the gap --
+nothing in this family of modules invents a figure, and what that costs is
+on record in the edinet checks, where reading a missing total as zero made
+one filer's liabilities short by 244,695 million. A count of the rows
+carrying a measure is a count of what was stated and named, never a
+population.
 
 ``TEXT`` and ``DIMENSIONS`` are filled for the rows that came from ESEF and
 from EDINET, and empty for every row the Commission contributes -- not
