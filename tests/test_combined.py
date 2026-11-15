@@ -81,6 +81,9 @@ def write_esef(spark, config_path, framework="ifrs-full"):
         ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f6",
          f"{framework}:CashAndCashEquivalents", None, date(2025, 12, 31),
          "EUR", None, 150.0, None, 0, "en"),
+        ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f7",
+         f"{framework}:Equity", None, date(2025, 12, 31), "EUR",
+         None, 500.0, None, 0, "en"),
     ], schema=esef.facts_schema)
     write_silver(filings, esef.ref_silver_filings(config_path))
     write_silver(facts, esef.ref_silver_facts(config_path),
@@ -101,11 +104,15 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
     Its cash is stated twice as well, excluding and including restricted
     amounts. Only the first is the measure; ASU 2016-18 puts restricted cash
     in the cash flow statement total and IAS 7 does not.
+
+    Its equity is stated twice over too, with and without the
+    non-controlling interests, and the two are different numbers because
+    this registrant has some. Only the total including them is the measure.
     """
     filings = spark.createDataFrame([(
         "0001628280-26-000002", CIK, "Demo Registrant Inc.", "10-Q",
         date(2026, 10, 1), date(2026, 8, 31), 2026, "Q3",
-        f"dei;{taxonomy}", framework, 5,
+        f"dei;{taxonomy}", framework, 7,
     )], schema=sec.filings_schema)
     facts = spark.createDataFrame([
         (CIK, "0001628280-26-000002", 2026, "a", f"{taxonomy}:Revenues",
@@ -126,6 +133,14 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
          f"{taxonomy}:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
          None, date(2026, 8, 31), "USD", 175.0, "10-Q",
          date(2026, 10, 1), None),
+        (CIK, "0001628280-26-000002", 2026, "f",
+         f"{taxonomy}:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+         None, date(2026, 8, 31), "USD", 700.0, "10-Q",
+         date(2026, 10, 1), None),
+        (CIK, "0001628280-26-000002", 2026, "g",
+         f"{taxonomy}:StockholdersEquity",
+         None, date(2026, 8, 31), "USD", 640.0, "10-Q",
+         date(2026, 10, 1), None),
     ], schema=sec.facts_schema)
     write_silver(filings, sec.ref_silver_filings(config_path))
     write_silver(facts, sec.ref_silver_facts(config_path),
@@ -135,7 +150,7 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
 def write_edinet(spark, config_path, standard="Japan GAAP"):
     """An annual securities report of one Japanese filer.
 
-    Six facts and a seventh that sits in no period: the module leaves both
+    Seven facts and an eighth that sits in no period: the module leaves both
     dates empty for a context whose shape it does not recognise, and the
     combined table of facts does not carry such a row.
     """
@@ -168,6 +183,8 @@ def write_edinet(spark, config_path, standard="Japan GAAP"):
              None, date(2026, 8, 31), "JPY", 18402.0, None),
         fact("f7", "jppfs_cor:CashAndDeposits", "NonConsolidatedMember",
              None, date(2026, 8, 31), "JPY", 21877.0, None),
+        fact("f8", "jppfs_cor:NetAssets", "NonConsolidatedMember",
+             None, date(2026, 8, 31), "JPY", 63326.0, None),
         fact("f3", "jpdei_cor:AccountingStandardsDEI", None,
              None, date(2026, 11, 13), None, None, standard),
         (EDINETCODE, "S100ZH4D", 2026, "f4", "jppfs_cor:NetSales", "label",
@@ -362,7 +379,7 @@ def test_a_fact_that_sits_in_no_period_is_not_carried(spark, config):
 
     assert all(row["PRDEND"] is not None for row in facts)
     assert {row["FACT"] for row in facts} \
-        == {"f1", "f2", "f3", "f5", "f6", "f7"}
+        == {"f1", "f2", "f3", "f5", "f6", "f7", "f8"}
 
 
 def test_the_japanese_dimensions_and_text_survive(spark, config):
@@ -498,8 +515,8 @@ def test_a_fact_no_measure_covers_carries_no_identifier(spark, config):
 
     assert any(row["MEASURE"] is None for row in facts)
     assert {row["MEASURE"] for row in facts} \
-        <= {None, "assets", "cash_and_equivalents", "liabilities",
-            "revenue"}
+        <= {None, "assets", "cash_and_equivalents", "equity",
+            "liabilities", "revenue"}
 
 
 def test_revenue_of_every_regime_answers_to_one_name(spark, config):
@@ -515,6 +532,64 @@ def test_revenue_of_every_regime_answers_to_one_name(spark, config):
     assert {row["CONCEPT"] for row in revenue} == {
         "ifrs-full:Revenue", "jppfs_cor:NetSales",
         "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"}
+
+
+def test_equity_of_every_regime_answers_to_one_name(spark, config):
+    """The totals including the non-controlling interests. 純資産 is their
+    counterpart: 株主資本 and the valuation and translation adjustments and
+    the subscription rights and the non-controlling interests together."""
+    write_esef(spark, config)
+    write_sec(spark, config)
+    write_edinet(spark, config)
+
+    equity = (silver.combine(spark, config, "fact")
+              .where("MEASURE = 'equity'").collect())
+
+    assert {row["SOURCE"] for row in equity} == {"esef", "sec", "edinet"}
+    assert {row["CONCEPT"] for row in equity} == {
+        "ifrs-full:Equity", "jppfs_cor:NetAssets",
+        "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"}
+
+
+def test_the_equity_excluding_minorities_is_not_given_the_name(spark, config):
+    """us-gaap:StockholdersEquity is ranked second "because many filings tag
+    no total including NCI, not because it is equivalent". For a registrant
+    that has non-controlling interests it is a different number, and the
+    element does not say whether a registrant has any."""
+    write_sec(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+
+    by_concept = {row["CONCEPT"]: row for row in facts}
+    including = by_concept[
+        "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]
+    assert including["MEASURE"] == "equity"
+    assert by_concept["us-gaap:StockholdersEquity"]["MEASURE"] is None
+    assert by_concept["us-gaap:StockholdersEquity"]["VALUE"] \
+        != including["VALUE"]
+
+
+def test_the_equity_excluding_minorities_waits_for_its_own_measure():
+    """Its null is the one that is temporary. The element is the first
+    concept of equity_attributable_to_parent, so the day that measure is
+    written down this fact takes a name -- and the right one."""
+    from fincommons.financialreport.combined import mapping
+
+    assert "us-gaap:StockholdersEquity" not in dict(
+        mapping.canonical_concepts(("equity",)))
+    assert dict(mapping.canonical_concepts(("equity_attributable_to_parent",))) \
+        ["us-gaap:StockholdersEquity"] == "equity_attributable_to_parent"
+
+
+def test_no_japanese_concept_is_the_equity_attributable_to_the_parent():
+    """Which is why materialising that measure would reach two regimes of
+    three by construction. 自己資本 is a sum and not a line."""
+    from fincommons.financialreport.combined import mapping
+
+    concepts = dict(mapping.canonical_concepts(
+        ("equity_attributable_to_parent",)))
+
+    assert not [c for c in concepts if c.startswith("jppfs_cor:")]
+    assert mapping.concepts_for("equity_attributable_to_parent", "JP-GAAP") == []
 
 
 def test_cash_answers_to_one_name_from_two_different_statements(spark, config):
@@ -838,7 +913,7 @@ def test_the_facts_of_both_regimes_land_in_one_table(spark, config):
 
     facts = common.connect_to_financialreport(spark, config)
 
-    assert facts.count() == 11
+    assert facts.count() == 14
     assert sorted({row["SOURCE"] for row in facts.collect()}) == ["esef", "sec"]
 
 
@@ -956,7 +1031,7 @@ def test_the_count_of_facts_of_an_esef_filing_comes_from_its_facts(spark, config
 
     filing = common.connect_to_financialreport(spark, config, "filing").collect()[0]
 
-    assert filing["FACTS"] == 6
+    assert filing["FACTS"] == 7
     assert filing["FRAMEWORK"] == "IFRS"
 
 

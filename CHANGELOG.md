@@ -494,6 +494,37 @@ release may change the public API, which `tests/test_public_api.py` lists.
   still reached by `measure_values`, which is the division of labour between
   the stored column and query-time resolution.
 
+- `financialreport`: `equity` is the fifth measure the combined table
+  carries, and the one **whose nulls are a skew rather than a gap**. Its
+  first concepts are the totals including the non-controlling interests --
+  `ifrs-full:Equity`, `jpigp_cor:EquityIFRS`, `jppfs_cor:NetAssets` and
+  `us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest`
+  -- 純資産 being their counterpart, 株主資本 and the valuation and
+  translation adjustments and the subscription rights and the
+  non-controlling interests together.
+  `us-gaap:StockholdersEquity` is left out, and the catalogue says why in as
+  many words: it is ranked second "because many filings tag no total
+  including NCI, not because it is equivalent". That makes this null unlike
+  the one total liabilities leaves. A registrant with no non-controlling
+  interests states the same number under that element as a total including
+  them would be, so the figure is usually there and usually right; what the
+  element does not say is whether this is such a registrant. Naming it would
+  be correct for most filings and wrong for exactly the groups a
+  cross-regime comparison is about.
+  The consequence is a skew in the sample and not only a hole in it: the
+  registrants this column reaches for equity are more often the ones with
+  non-controlling interests to report. A benchmark drawn from it has to say
+  so. Counting the rows carrying a measure says how many filings were named,
+  never how many exist, and the README, the `fact_schema` docstring and the
+  column catalogue now all say that.
+  This null is the one that is temporary. `us-gaap:StockholdersEquity` is
+  the *first* concept of `equity_attributable_to_parent`, so the day that
+  measure is written down the same fact takes a name, and the right one.
+  The two are really one decision and only the first half of it is made
+  here; Japan complicates the second, having no element for 自己資本 at all,
+  so that measure would reach two regimes of three by construction. Tests
+  record both halves.
+
 ### Fixed
 
 - `financialreport`: a Japanese filing's framework is now decided per fact

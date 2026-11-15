@@ -18,14 +18,15 @@ Japan is the exception, and it is worth saying why rather than leaving it as a h
 
 That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
 
-It covers **total assets**, **total liabilities**, **revenue** and **cash and cash equivalents**:
+It covers **total assets**, **total liabilities**, **total equity**, **revenue** and **cash and cash equivalents**. The first concept of each framework, one per taxonomy:
 
-| framework | assets | liabilities | revenue | cash and equivalents |
+| measure | IFRS | US-GAAP | JP-GAAP | IFRS, as a Japanese filer tags it |
 | --- | --- | --- | --- | --- |
-| IFRS | `ifrs-full:Assets` | `ifrs-full:Liabilities` | `ifrs-full:Revenue` | `ifrs-full:CashAndCashEquivalents` |
-| US-GAAP | `us-gaap:Assets` | `us-gaap:Liabilities` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` | `us-gaap:CashAndCashEquivalentsAtCarryingValue` |
-| JP-GAAP | `jppfs_cor:Assets` | `jppfs_cor:Liabilities` | `jppfs_cor:NetSales` | `jppfs_cor:CashAndCashEquivalents` |
-| IFRS, as a Japanese filer tags it | `jpigp_cor:AssetsIFRS` | `jpigp_cor:LiabilitiesIFRS` | `jpigp_cor:RevenueIFRS` | `jpigp_cor:CashAndCashEquivalentsIFRS` |
+| assets | `ifrs-full:Assets` | `us-gaap:Assets` | `jppfs_cor:Assets` | `jpigp_cor:AssetsIFRS` |
+| liabilities | `ifrs-full:Liabilities` | `us-gaap:Liabilities` | `jppfs_cor:Liabilities` | `jpigp_cor:LiabilitiesIFRS` |
+| equity | `ifrs-full:Equity` | `us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest` | `jppfs_cor:NetAssets` | `jpigp_cor:EquityIFRS` |
+| revenue | `ifrs-full:Revenue` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` | `jppfs_cor:NetSales` | `jpigp_cor:RevenueIFRS` |
+| cash and equivalents | `ifrs-full:CashAndCashEquivalents` | `us-gaap:CashAndCashEquivalentsAtCarryingValue` | `jppfs_cor:CashAndCashEquivalents` | `jpigp_cor:CashAndCashEquivalentsIFRS` |
 
 What differs between the cells of a row is recognition rather than definition -- development costs are capitalised under IAS 38 and generally expensed under ASC 730, LIFO is permitted under US GAAP and prohibited by IAS 2 -- and that is on the catalogue row where a reader can find it rather than hidden by the shared name.
 
@@ -50,6 +51,16 @@ Cash and cash equivalents is the first measure whose first concepts are not the 
 Two things follow. The first concept of IFRS carries a caveat about the US total -- ASU 2016-18 puts restricted cash in the cash flow statement total and IAS 7 does not -- and that total is `us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`, a *second* concept the column leaves out. The pair that does carry the identifier is IAS 7 against `us-gaap:CashAndCashEquivalentsAtCarryingValue`, which the catalogue calls the closer match. So the rule removes the mismatch its own caveat warns about.
 
 The other is a cost, and the first the rule has imposed rather than inherited. `jppfs_cor:CashAndDeposits` sits at priority 2 expressly so that a filer stating no cash flow statement is reached at all. The column declines it, because a figure read from that element "should be read as cash and deposits rather than as cash and equivalents" -- which is exactly a thing that must not wear this name. Those filers carry a null here and are still reached by `measure_values`. That is the division of labour between the stored column and query-time resolution, and this is the measure that shows it clearly.
+
+#### Equity, where the null is a skew and not only a gap
+
+Every measure's first concept under US GAAP is a total the filer may not have tagged. For equity that absence is **not random**, and a benchmark has to know it.
+
+The first concept is `us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest`, the total including the non-controlling interests, which is what `ifrs-full:Equity` means and what 純資産 means. Many registrants tag only `us-gaap:StockholdersEquity`, which excludes them. The catalogue ranks that second and says why in as many words: *because many filings tag no total including NCI, not because it is equivalent*.
+
+For a registrant that has no non-controlling interests the two elements carry the same number. The element does not say whether it has none. So naming it `equity` would be right for most filings and wrong for exactly the groups a cross-regime comparison is about -- and the registrants this column does reach are more often the ones with non-controlling interests to report. That is a skew in the sample, not a hole in it. **Counting the rows carrying a measure says how many filings were named, never how many exist.**
+
+This null is also the one that is temporary. `us-gaap:StockholdersEquity` is the *first* concept of `equity_attributable_to_parent`, so the day that measure is written down the same fact takes a name -- and the right one rather than this one. The two are really one decision, and only the first half of it is made here. Japan complicates the second half: Japan GAAP has no element for 自己資本 at all, so `equity_attributable_to_parent` would reach two regimes out of three by construction. That is set out further down.
 
 #### Two kinds of null, and the column cannot tell them apart
 
