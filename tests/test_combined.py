@@ -84,6 +84,9 @@ def write_esef(spark, config_path, framework="ifrs-full"):
         ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f7",
          f"{framework}:Equity", None, date(2025, 12, 31), "EUR",
          None, 500.0, None, 0, "en"),
+        ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f8",
+         f"{framework}:ProfitLoss", date(2025, 1, 1), date(2025, 12, 31),
+         "EUR", None, 30.0, None, 0, "en"),
     ], schema=esef.facts_schema)
     write_silver(filings, esef.ref_silver_filings(config_path))
     write_silver(facts, esef.ref_silver_facts(config_path),
@@ -105,14 +108,15 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
     amounts. Only the first is the measure; ASU 2016-18 puts restricted cash
     in the cash flow statement total and IAS 7 does not.
 
-    Its equity is stated twice over too, with and without the
-    non-controlling interests, and the two are different numbers because
-    this registrant has some. Only the total including them is the measure.
+    Its equity and its result are each stated twice over too, with and
+    without the non-controlling interests, and the pairs are different
+    numbers because this registrant has some. Only the totals including
+    them are the measures.
     """
     filings = spark.createDataFrame([(
         "0001628280-26-000002", CIK, "Demo Registrant Inc.", "10-Q",
         date(2026, 10, 1), date(2026, 8, 31), 2026, "Q3",
-        f"dei;{taxonomy}", framework, 7,
+        f"dei;{taxonomy}", framework, 9,
     )], schema=sec.filings_schema)
     facts = spark.createDataFrame([
         (CIK, "0001628280-26-000002", 2026, "a", f"{taxonomy}:Revenues",
@@ -141,6 +145,12 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
          f"{taxonomy}:StockholdersEquity",
          None, date(2026, 8, 31), "USD", 640.0, "10-Q",
          date(2026, 10, 1), None),
+        (CIK, "0001628280-26-000002", 2026, "h", f"{taxonomy}:ProfitLoss",
+         date(2025, 12, 1), date(2026, 8, 31), "USD", 55.0, "10-Q",
+         date(2026, 10, 1), None),
+        (CIK, "0001628280-26-000002", 2026, "i", f"{taxonomy}:NetIncomeLoss",
+         date(2025, 12, 1), date(2026, 8, 31), "USD", 50.0, "10-Q",
+         date(2026, 10, 1), None),
     ], schema=sec.facts_schema)
     write_silver(filings, sec.ref_silver_filings(config_path))
     write_silver(facts, sec.ref_silver_facts(config_path),
@@ -150,7 +160,7 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
 def write_edinet(spark, config_path, standard="Japan GAAP"):
     """An annual securities report of one Japanese filer.
 
-    Seven facts and an eighth that sits in no period: the module leaves both
+    Eight facts and a ninth that sits in no period: the module leaves both
     dates empty for a context whose shape it does not recognise, and the
     combined table of facts does not carry such a row.
     """
@@ -185,6 +195,11 @@ def write_edinet(spark, config_path, standard="Japan GAAP"):
              None, date(2026, 8, 31), "JPY", 21877.0, None),
         fact("f8", "jppfs_cor:NetAssets", "NonConsolidatedMember",
              None, date(2026, 8, 31), "JPY", 63326.0, None),
+        # A filer that prepares no consolidated statements has no
+        # non-controlling interest and states no attributable line: this
+        # one figure is both measures, and the column names it.
+        fact("f9", "jppfs_cor:ProfitLoss", "NonConsolidatedMember",
+             date(2025, 9, 1), date(2026, 8, 31), "JPY", 8911.0, None),
         fact("f3", "jpdei_cor:AccountingStandardsDEI", None,
              None, date(2026, 11, 13), None, None, standard),
         (EDINETCODE, "S100ZH4D", 2026, "f4", "jppfs_cor:NetSales", "label",
@@ -379,7 +394,7 @@ def test_a_fact_that_sits_in_no_period_is_not_carried(spark, config):
 
     assert all(row["PRDEND"] is not None for row in facts)
     assert {row["FACT"] for row in facts} \
-        == {"f1", "f2", "f3", "f5", "f6", "f7", "f8"}
+        == {"f1", "f2", "f3", "f5", "f6", "f7", "f8", "f9"}
 
 
 def test_the_japanese_dimensions_and_text_survive(spark, config):
@@ -516,7 +531,7 @@ def test_a_fact_no_measure_covers_carries_no_identifier(spark, config):
     assert any(row["MEASURE"] is None for row in facts)
     assert {row["MEASURE"] for row in facts} \
         <= {None, "assets", "cash_and_equivalents", "equity",
-            "liabilities", "revenue"}
+            "liabilities", "profit_loss", "revenue"}
 
 
 def test_revenue_of_every_regime_answers_to_one_name(spark, config):
@@ -532,6 +547,78 @@ def test_revenue_of_every_regime_answers_to_one_name(spark, config):
     assert {row["CONCEPT"] for row in revenue} == {
         "ifrs-full:Revenue", "jppfs_cor:NetSales",
         "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"}
+
+
+def test_profit_or_loss_of_every_regime_answers_to_one_name(spark, config):
+    """The results including the non-controlling interests. What differs
+    between the frameworks is composition rather than definition: a
+    Japanese account reaches 当期純利益 through 経常利益 and the
+    extraordinary items, and the bottom line is still the bottom line."""
+    write_esef(spark, config)
+    write_sec(spark, config)
+    write_edinet(spark, config)
+
+    result = (silver.combine(spark, config, "fact")
+              .where("MEASURE = 'profit_loss'").collect())
+
+    assert {row["SOURCE"] for row in result} == {"esef", "sec", "edinet"}
+    assert {row["CONCEPT"] for row in result} == {
+        "ifrs-full:ProfitLoss", "us-gaap:ProfitLoss", "jppfs_cor:ProfitLoss"}
+
+
+def test_the_result_excluding_minorities_is_not_given_the_name(spark, config):
+    """us-gaap:NetIncomeLoss is ranked second because many filings tag no
+    total including NCI, not because it is equivalent."""
+    write_sec(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+
+    by_concept = {row["CONCEPT"]: row for row in facts}
+    assert by_concept["us-gaap:ProfitLoss"]["MEASURE"] == "profit_loss"
+    assert by_concept["us-gaap:NetIncomeLoss"]["MEASURE"] is None
+    assert by_concept["us-gaap:NetIncomeLoss"]["VALUE"] \
+        != by_concept["us-gaap:ProfitLoss"]["VALUE"]
+
+
+def test_the_two_regimes_are_not_skewed_alike(spark, config):
+    """The same economic fact -- a company with no non-controlling
+    interests -- is named in Japan and unnamed in the United States,
+    because each regime tags it by its own convention. The Japanese
+    population under this measure is close to every filer and the American
+    one is conditional, so the counts are not comparable."""
+    write_sec(spark, config)
+    write_edinet(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+
+    named = {row["SOURCE"] for row in facts if row["MEASURE"] == "profit_loss"}
+    assert named == {"sec", "edinet"}
+
+    # The Japanese filer consolidates nothing, states no attributable line,
+    # and is named all the same.
+    japanese = [row for row in facts
+                if row["SOURCE"] == "edinet" and row["MEASURE"] == "profit_loss"]
+    assert len(japanese) == 1
+    assert japanese[0]["CONCEPT"] == "jppfs_cor:ProfitLoss"
+    assert not [row for row in facts
+                if row["CONCEPT"] == "jppfs_cor:ProfitLossAttributableToOwnersOfParent"]
+
+
+def test_the_result_excluding_minorities_waits_for_its_own_measure():
+    """And that measure, unlike the equity counterpart, has an element in
+    all four taxonomies: Japan states 親会社株主に帰属する当期純利益 as a
+    line of its own."""
+    from fincommons.financialreport.combined import mapping
+
+    assert "us-gaap:NetIncomeLoss" not in dict(
+        mapping.canonical_concepts(("profit_loss",)))
+
+    attributable = dict(mapping.canonical_concepts(
+        ("profit_loss_attributable_to_parent",)))
+    assert attributable["us-gaap:NetIncomeLoss"] \
+        == "profit_loss_attributable_to_parent"
+    assert "jppfs_cor:ProfitLossAttributableToOwnersOfParent" in attributable
+    # Which is the difference from equity_attributable_to_parent.
+    assert not [c for c in dict(mapping.canonical_concepts(
+        ("equity_attributable_to_parent",))) if c.startswith("jppfs_cor:")]
 
 
 def test_equity_of_every_regime_answers_to_one_name(spark, config):
@@ -913,7 +1000,7 @@ def test_the_facts_of_both_regimes_land_in_one_table(spark, config):
 
     facts = common.connect_to_financialreport(spark, config)
 
-    assert facts.count() == 14
+    assert facts.count() == 17
     assert sorted({row["SOURCE"] for row in facts.collect()}) == ["esef", "sec"]
 
 
@@ -1031,7 +1118,7 @@ def test_the_count_of_facts_of_an_esef_filing_comes_from_its_facts(spark, config
 
     filing = common.connect_to_financialreport(spark, config, "filing").collect()[0]
 
-    assert filing["FACTS"] == 7
+    assert filing["FACTS"] == 8
     assert filing["FRAMEWORK"] == "IFRS"
 
 
