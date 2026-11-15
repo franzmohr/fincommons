@@ -46,8 +46,8 @@ Usage, from the root of the repository::
     python tools/ecb_csv_to_spark_schema.py --flow FM \\
         --out src/fincommons/data/marketpricedata_ecb_fm.json
 
-It needs only the standard library, so it runs on the workstation and not in
-the Docker image.
+It needs only the standard library, so it runs on the workstation without
+Spark.
 """
 
 import argparse

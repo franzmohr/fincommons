@@ -518,29 +518,3 @@ Run them, from the root of the repository, with
 ```
 pytest tests/ -k firds
 ```
-
-## A worked run
-
-[`docker/tools/run_firds.py`](../../../docker/tools/run_firds.py) takes the
-whole pipeline through one cycle on data ESMA has actually published: it builds
-the directory tree, downloads one full file, the delta files of the publication
-days that follow it and the most recent cancellations file, imports them into
-the Bronze layer, builds the history from them and derives the compact table,
-and then checks the state that leaves behind -- that every instrument has
-exactly one open version, that the version in force is the open one, that no
-record ends before it begins, and that `compact` holds one row per ISIN. It is
-the place to look for what the stages report and what the tables hold
-afterwards. The run takes the date of the full file to start from:
-
-```
-docker compose -f docker/compose.yaml run --rm firds 2026-09-05
-```
-
-[`docker/tools/run_firds_incremental.py`](../../../docker/tools/run_firds_incremental.py)
-applies one further publication day to the history that leaves behind, which is
-the path the daily job takes, and checks the same invariants against a history
-that already holds millions of records:
-
-```
-docker compose -f docker/compose.yaml run --rm --entrypoint python firds tools/run_firds_incremental.py 2026-09-09
-```

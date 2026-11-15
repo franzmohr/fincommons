@@ -802,6 +802,15 @@ release may change the public API, which `tests/test_public_api.py` lists.
   rather than being closed, so that the next person who needs the same thing
   finds it. Asking obliges nobody to write it.
 
+- The READMEs no longer point at a `docker` directory. The repository holds
+  none: the worked run of the FIRDS README named `docker/tools/run_firds.py`
+  and a compose file, and the test section of the `marketpricedata` README
+  sent a Windows workstation to a container described in `docker/README.md`,
+  and neither has ever been in the tree. The FIRDS section is gone and the
+  `marketpricedata` one now gives the one command that works. The two schema
+  tools said they run on the workstation "and not in the Docker image"; they
+  say "without Spark", which is the part of it that is true and useful.
+
 ## 0.2.0
 
 Two modules are new, `esef` and `frenchdatalibrary`, and `entitymasterdata`
