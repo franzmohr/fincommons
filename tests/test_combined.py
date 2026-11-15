@@ -87,6 +87,10 @@ def write_esef(spark, config_path, framework="ifrs-full"):
         ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f8",
          f"{framework}:ProfitLoss", date(2025, 1, 1), date(2025, 12, 31),
          "EUR", None, 30.0, None, 0, "en"),
+        ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f9",
+         f"{framework}:ProfitLossAttributableToOwnersOfParent",
+         date(2025, 1, 1), date(2025, 12, 31), "EUR", None, 28.0, None,
+         0, "en"),
     ], schema=esef.facts_schema)
     write_silver(filings, esef.ref_silver_filings(config_path))
     write_silver(facts, esef.ref_silver_facts(config_path),
@@ -566,15 +570,18 @@ def test_profit_or_loss_of_every_regime_answers_to_one_name(spark, config):
         "ifrs-full:ProfitLoss", "us-gaap:ProfitLoss", "jppfs_cor:ProfitLoss"}
 
 
-def test_the_result_excluding_minorities_is_not_given_the_name(spark, config):
-    """us-gaap:NetIncomeLoss is ranked second because many filings tag no
-    total including NCI, not because it is equivalent."""
+def test_the_two_american_results_are_two_measures(spark, config):
+    """us-gaap:NetIncomeLoss is ranked second under profit_loss because it
+    excludes the minorities, and first under its own measure because that
+    is what it is. Both facts of the registrant are named, and named
+    differently."""
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
     by_concept = {row["CONCEPT"]: row for row in facts}
     assert by_concept["us-gaap:ProfitLoss"]["MEASURE"] == "profit_loss"
-    assert by_concept["us-gaap:NetIncomeLoss"]["MEASURE"] is None
+    assert by_concept["us-gaap:NetIncomeLoss"]["MEASURE"] \
+        == "profit_loss_attributable_to_parent"
     assert by_concept["us-gaap:NetIncomeLoss"]["VALUE"] \
         != by_concept["us-gaap:ProfitLoss"]["VALUE"]
 
@@ -602,21 +609,60 @@ def test_the_two_regimes_are_not_skewed_alike(spark, config):
                 if row["CONCEPT"] == "jppfs_cor:ProfitLossAttributableToOwnersOfParent"]
 
 
-def test_the_result_excluding_minorities_waits_for_its_own_measure():
-    """And that measure, unlike the equity counterpart, has an element in
-    all four taxonomies: Japan states 親会社株主に帰属する当期純利益 as a
-    line of its own."""
-    from fincommons.financialreport.combined import mapping
+def test_the_pair_inverts_the_skew_rather_than_repairing_it(spark, config):
+    """The attributable line exists only where there are minorities to
+    attribute away, so a filer preparing no consolidated statements states
+    none -- while us-gaap:NetIncomeLoss is the ordinary bottom line every
+    registrant tags. The two measures therefore lean opposite ways, and
+    each reaches a different set of filers."""
+    write_sec(spark, config)
+    write_edinet(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
 
-    assert "us-gaap:NetIncomeLoss" not in dict(
-        mapping.canonical_concepts(("profit_loss",)))
+    named = {measure: {row["SOURCE"] for row in facts
+                       if row["MEASURE"] == measure}
+             for measure in ("profit_loss",
+                             "profit_loss_attributable_to_parent")}
+
+    # The Japanese filer consolidates nothing: its one result is the total,
+    # and it states no attributable line at all.
+    assert named["profit_loss"] == {"sec", "edinet"}
+    assert named["profit_loss_attributable_to_parent"] == {"sec"}
+
+
+def test_the_japanese_filer_states_one_figure_that_is_both_measures(spark, config):
+    """And the column can only call it one of them. A filer with no
+    non-controlling interest has nothing to attribute away, so its 当期純利益
+    is also the result attributable to its shareholders; the column names
+    it profit_loss, which is what the concept says, and leaves the other
+    measure to measure_values."""
+    write_edinet(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+
+    results = [row for row in facts if row["CONCEPT"] == "jppfs_cor:ProfitLoss"]
+    assert len(results) == 1
+    assert results[0]["MEASURE"] == "profit_loss"
+    assert not [row for row in facts
+                if row["MEASURE"] == "profit_loss_attributable_to_parent"]
+
+
+def test_the_attributable_result_reaches_every_regime():
+    """Unlike the equity counterpart, which has no JP-GAAP element at all:
+    Japan states 親会社株主に帰属する当期純利益 as a line of its own but has
+    nothing for 自己資本."""
+    from fincommons.financialreport.combined import mapping
 
     attributable = dict(mapping.canonical_concepts(
         ("profit_loss_attributable_to_parent",)))
-    assert attributable["us-gaap:NetIncomeLoss"] \
-        == "profit_loss_attributable_to_parent"
-    assert "jppfs_cor:ProfitLossAttributableToOwnersOfParent" in attributable
-    # Which is the difference from equity_attributable_to_parent.
+
+    assert set(attributable) == {
+        "ifrs-full:ProfitLossAttributableToOwnersOfParent",
+        "jpigp_cor:ProfitLossAttributableToOwnersOfParentIFRS",
+        "jppfs_cor:ProfitLossAttributableToOwnersOfParent",
+        "us-gaap:NetIncomeLoss"}
+    # The concept is still not the total including the minorities.
+    assert "us-gaap:NetIncomeLoss" not in dict(
+        mapping.canonical_concepts(("profit_loss",)))
     assert not [c for c in dict(mapping.canonical_concepts(
         ("equity_attributable_to_parent",))) if c.startswith("jppfs_cor:")]
 
@@ -1000,7 +1046,7 @@ def test_the_facts_of_both_regimes_land_in_one_table(spark, config):
 
     facts = common.connect_to_financialreport(spark, config)
 
-    assert facts.count() == 17
+    assert facts.count() == 18
     assert sorted({row["SOURCE"] for row in facts.collect()}) == ["esef", "sec"]
 
 
@@ -1118,7 +1164,7 @@ def test_the_count_of_facts_of_an_esef_filing_comes_from_its_facts(spark, config
 
     filing = common.connect_to_financialreport(spark, config, "filing").collect()[0]
 
-    assert filing["FACTS"] == 8
+    assert filing["FACTS"] == 9
     assert filing["FRAMEWORK"] == "IFRS"
 
 

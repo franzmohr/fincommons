@@ -18,7 +18,7 @@ Japan is the exception, and it is worth saying why rather than leaving it as a h
 
 That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
 
-It covers **total assets**, **total liabilities**, **total equity**, **profit or loss**, **revenue** and **cash and cash equivalents**. The first concept of each framework, one per taxonomy:
+It covers **total assets**, **total liabilities**, **total equity**, **profit or loss**, **the profit or loss attributable to the parent**, **revenue** and **cash and cash equivalents**. The first concept of each framework, one per taxonomy:
 
 | measure | IFRS | US-GAAP | JP-GAAP | IFRS, as a Japanese filer tags it |
 | --- | --- | --- | --- | --- |
@@ -26,6 +26,7 @@ It covers **total assets**, **total liabilities**, **total equity**, **profit or
 | liabilities | `ifrs-full:Liabilities` | `us-gaap:Liabilities` | `jppfs_cor:Liabilities` | `jpigp_cor:LiabilitiesIFRS` |
 | equity | `ifrs-full:Equity` | `us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest` | `jppfs_cor:NetAssets` | `jpigp_cor:EquityIFRS` |
 | profit or loss | `ifrs-full:ProfitLoss` | `us-gaap:ProfitLoss` | `jppfs_cor:ProfitLoss` | `jpigp_cor:ProfitLossIFRS` |
+| profit or loss attributable to the parent | `ifrs-full:ProfitLossAttributableToOwnersOfParent` | `us-gaap:NetIncomeLoss` | `jppfs_cor:ProfitLossAttributableToOwnersOfParent` | `jpigp_cor:ProfitLossAttributableToOwnersOfParentIFRS` |
 | revenue | `ifrs-full:Revenue` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` | `jppfs_cor:NetSales` | `jpigp_cor:RevenueIFRS` |
 | cash and equivalents | `ifrs-full:CashAndCashEquivalents` | `us-gaap:CashAndCashEquivalentsAtCarryingValue` | `jppfs_cor:CashAndCashEquivalents` | `jpigp_cor:CashAndCashEquivalentsIFRS` |
 
@@ -73,6 +74,28 @@ The Japanese population under `MEASURE = 'profit_loss'` is close to every filer.
 Both exclusions are temporary in the same way. `us-gaap:StockholdersEquity` and `us-gaap:NetIncomeLoss` are the *first* concepts of `equity_attributable_to_parent` and `profit_loss_attributable_to_parent`, so writing those measures down gives these facts a name -- the right one rather than this one. The two attributable measures differ in reach, and that is the thing to decide them on: profit or loss attributable to the parent has an element in all four taxonomies, Japan stating 親会社株主に帰属する当期純利益 as a line of its own, while **Japan GAAP has no element for 自己資本 at all**, so the equity counterpart would reach two regimes of three by construction. That gap is set out further down.
 
 What differs between the frameworks in profit or loss is composition rather than definition. A Japanese profit and loss account reaches 当期純利益 through 経常利益 and the extraordinary items below it, which an IFRS statement does not have. The intermediate lines are not comparable; the bottom line is still the bottom line.
+
+#### The pair does not repair the skew. It inverts it.
+
+Adding the attributable measure puts a name on `us-gaap:NetIncomeLoss` -- exactly the facts `profit_loss` declines -- and it reaches every regime, Japan stating 親会社株主に帰属する当期純利益 as a line of its own. It does not make the population whole, and the reason is worth following.
+
+The attributable line exists only where there are non-controlling interests to attribute away. A filer preparing no consolidated statements states none under IFRS or under Japan GAAP: its result is the one figure that is both measures at once. `us-gaap:NetIncomeLoss` is not like that. It is the ordinary bottom line of an American income statement, tagged by registrants with subsidiaries and without. So the two measures lean opposite ways:
+
+| measure | IFRS | JP-GAAP | US-GAAP |
+| --- | --- | --- | --- |
+| `profit_loss` | most filers | most filers | needs non-controlling interests |
+| `profit_loss_attributable_to_parent` | needs non-controlling interests | needs non-controlling interests | most filers |
+
+Between them the two cover the population well. **Neither does alone, and they are skewed in opposite directions**, so switching from one to the other changes which filers you are looking at as much as which figure.
+
+#### Which to use, and when
+
+This is the limit of a materialised identifier, and it is better reached honestly than papered over. The figure a population-level comparison wants is *the result attributable to the parent, falling back to the total where there are no minorities to separate*. That is a judgement per filing -- it depends on what the filing states -- and not a judgement per concept, so no concept-to-name map can express it.
+
+- **`MEASURE`** answers a precise question about named facts. This fact is the total including minorities; that one is the parent's share. Filter on it when you mean exactly one of those.
+- **`measure_values`** answers a question about a population. It takes the catalogue's priorities, picks the best concept each filing actually states, and returns one row per filing and period. Use it for a benchmark.
+
+The column does not replace the function, and this pair is where that stops being a technicality.
 
 #### Two kinds of null, and the column cannot tell them apart
 

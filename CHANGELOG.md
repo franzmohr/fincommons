@@ -555,6 +555,34 @@ release may change the public API, which `tests/test_public_api.py` lists.
   no `JP-GAAP` element at all. Materialising the first would reach every
   regime and would put a name on the American facts this measure declines.
 
+- `financialreport`: `profit_loss_attributable_to_parent` is the seventh
+  measure the combined table carries. It puts a name on
+  `us-gaap:NetIncomeLoss`, exactly the facts `profit_loss` declines, and it
+  reaches every regime, Japan stating 親会社株主に帰属する当期純利益 as a
+  line of its own.
+  **It does not repair the skew of `profit_loss`. It inverts it**, and that
+  is the more useful thing to know. The attributable line exists only where
+  there are non-controlling interests to attribute away, so a filer
+  preparing no consolidated statements states none under IFRS or Japan
+  GAAP: its result is the one figure that is both measures at once.
+  `us-gaap:NetIncomeLoss` is not like that, being the ordinary bottom line
+  of an American income statement, tagged by registrants with subsidiaries
+  and without. So `profit_loss` reaches most IFRS and Japanese filers and
+  only American ones with minorities, while the attributable measure
+  reaches most American registrants and only IFRS and Japanese ones with
+  minorities. Between them the two cover the population well; neither does
+  alone, and switching from one to the other changes which filers are in
+  view as much as which figure.
+  That is the limit of a materialised identifier, and the READMEs now say
+  which tool to use for what. The figure a population-level comparison
+  wants is the result attributable to the parent falling back to the total
+  where there are no minorities to separate -- a judgement per filing
+  rather than per concept, which no concept-to-name map can express.
+  **Filter on `MEASURE` to ask a precise question of named facts; resolve
+  through `measure_values`, which picks the best concept each filing
+  actually states, to ask about a population.** The column does not replace
+  the function, and this pair is where that stops being a technicality.
+
 ### Fixed
 
 - `financialreport`: a Japanese filing's framework is now decided per fact
