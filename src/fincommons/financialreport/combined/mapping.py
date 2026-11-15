@@ -159,8 +159,38 @@ FIRST_CONCEPT = 1
 #: ``equity_attributable_to_parent``, so the day that measure is written
 #: down the same fact takes a name -- and the right one, rather than this
 #: one. The two are one decision and only the first half of it is made here.
+#: Profit or loss is sixth and repeats equity's shape exactly:
+#: ifrs-full:ProfitLoss, jpigp_cor:ProfitLossIFRS, jppfs_cor:ProfitLoss and
+#: us-gaap:ProfitLoss are the results including the non-controlling
+#: interests, and ``us-gaap:NetIncomeLoss`` is left out as the one that
+#: excludes them, second in the catalogue "because many filings tag no total
+#: including NCI". What differs between the frameworks is composition and
+#: not definition: a Japanese profit and loss account reaches 当期純利益
+#: through 経常利益 and the extraordinary items, which an IFRS statement does
+#: not have, and the bottom line is still the bottom line.
+#:
+#: Adding it shows the skew of that exclusion to be a cross-regime one,
+#: which equity alone did not make plain. Consider the same economic fact in
+#: two regimes -- a company with no non-controlling interests. In Japan it
+#: states 当期純利益 under ``jppfs_cor:ProfitLoss`` like every other filer,
+#: and the column names it. In the United States it states only
+#: ``us-gaap:NetIncomeLoss``, and the column names nothing, though the
+#: figure is the same one. So the Japanese population under
+#: ``MEASURE = 'profit_loss'`` is close to every filer, while the American
+#: population is conditional on having non-controlling interests to report.
+#: The two samples are selected by different rules, and a comparison of
+#: their medians is not a comparison of the two regimes. The same holds for
+#: equity, 純資産 being tagged by consolidating and non-consolidating filers
+#: alike.
+#:
+#: As with equity the exclusion is also temporary. ``us-gaap:NetIncomeLoss``
+#: is the first concept of ``profit_loss_attributable_to_parent``, and that
+#: measure, unlike its equity counterpart, has an element in all four
+#: taxonomies: Japan states 親会社株主に帰属する当期純利益 as a line of its
+#: own. Materialising it would therefore reach every regime, and would also
+#: put a name on the American facts this measure declines.
 MATERIALISED_MEASURES = ("assets", "cash_and_equivalents", "equity",
-                         "liabilities", "revenue")
+                         "liabilities", "profit_loss", "revenue")
 
 #: Dimension members that name a basis of preparation rather than a part of
 #: an entity, and which a measure is therefore resolved over.

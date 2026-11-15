@@ -525,6 +525,36 @@ release may change the public API, which `tests/test_public_api.py` lists.
   so that measure would reach two regimes of three by construction. Tests
   record both halves.
 
+- `financialreport`: `profit_loss` is the sixth measure the combined table
+  carries. It repeats equity's shape -- `ifrs-full:ProfitLoss`,
+  `jpigp_cor:ProfitLossIFRS`, `jppfs_cor:ProfitLoss` and `us-gaap:ProfitLoss`
+  are the results including the non-controlling interests, and
+  `us-gaap:NetIncomeLoss` is left out as the one that excludes them. What
+  differs between the frameworks is composition rather than definition: a
+  Japanese profit and loss account reaches 当期純利益 through 経常利益 and
+  the extraordinary items, which an IFRS statement does not have, and the
+  bottom line is still the bottom line.
+  Adding it showed **the skew of that exclusion to be a cross-regime one**,
+  which equity alone had not made plain. Take the same economic fact in two
+  places, a company with no non-controlling interests. In Japan it states
+  当期純利益 under `jppfs_cor:ProfitLoss` as every filer does, and the
+  column names it. In the United States it states only
+  `us-gaap:NetIncomeLoss`, and the column names nothing, though the figure
+  is the same one. The Japanese population under `MEASURE = 'profit_loss'`
+  is close to every filer; the American population is conditional on having
+  non-controlling interests to report. The two samples are selected by
+  different rules, so a comparison of their medians is not a comparison of
+  the two regimes, and the same holds for equity, 純資産 being tagged by
+  consolidating and non-consolidating filers alike. The README section on
+  this is now about both measures rather than about equity, and the
+  `fact_schema` docstring and column catalogue say it too.
+  The exclusion is temporary as equity's is, and the two differ in reach,
+  which is the thing to decide them on: `profit_loss_attributable_to_parent`
+  has an element in all four taxonomies, Japan stating 親会社株主に帰属する
+  当期純利益 as a line of its own, while `equity_attributable_to_parent` has
+  no `JP-GAAP` element at all. Materialising the first would reach every
+  regime and would put a name on the American facts this measure declines.
+
 ### Fixed
 
 - `financialreport`: a Japanese filing's framework is now decided per fact

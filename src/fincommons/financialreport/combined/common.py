@@ -127,8 +127,9 @@ The restraint is the point. A materialised identifier is read by people who
 will not go back to the caveat, so a measure is written into this column only
 once its concepts are agreed to mean the same figure in every framework the
 catalogue defines it for, and only through the first concept of each
-framework. It covers total assets, total liabilities, revenue, cash and cash
-equivalents and total equity, and grows one measure at a time. What a measure means, and
+framework. It covers total assets, total liabilities, total equity, profit
+or loss, revenue and cash and cash equivalents, and grows one measure at a
+time. What a measure means, and
 what differs between the frameworks that state it, is on the catalogue row;
 ``describe_measure`` prints it.
 
@@ -164,16 +165,25 @@ where the second matters: many filings with the Commission present only
 liabilities and equity together and tag no total, so the figure is missing
 for a substantial part of the US population.
 
-Total equity sharpens that into a skew. Its first concept under US GAAP is
-the total including the non-controlling interests, and many registrants tag
-only ``us-gaap:StockholdersEquity``, which excludes them. For a registrant
-that has none the two are the same number -- but the element does not say
-whether it has none, so naming it would be right for most filings and wrong
-for exactly the groups a cross-regime comparison is about. The registrants
-this column reaches for equity are therefore more often the ones with
-non-controlling interests to report, which is not a random sample. Counting
-the rows carrying a measure says how many filings were named, never how many
-exist. It is missing rather than zero,
+Total equity and profit or loss sharpen that into a skew, and one that is
+not the same in every regime. The first concept of each under US GAAP is the
+total including the non-controlling interests, and many registrants tag only
+``us-gaap:StockholdersEquity`` and ``us-gaap:NetIncomeLoss``, which exclude
+them. For a registrant that has none the two are the same number -- but the
+element does not say whether it has none, so naming it would be right for
+most filings and wrong for exactly the groups a cross-regime comparison is
+about.
+
+Japan does not fail the same way. A company with no non-controlling
+interests states 当期純利益 under ``jppfs_cor:ProfitLoss`` as every filer
+does, and 純資産 likewise, so the column names it. The same company filing
+with the Commission states only ``us-gaap:NetIncomeLoss`` and the column
+names nothing, though the figure is the same one. The Japanese population
+under these measures is close to every filer and the American population is
+conditional on having non-controlling interests to report: two samples
+selected by different rules, whose medians are not a comparison of the two
+regimes. Counting the rows carrying a measure says how many filings were
+named, never how many exist. It is missing rather than zero,
 and it is not derived from the balance sheet identity to fill the gap --
 nothing in this family of modules invents a figure, and what that costs is
 on record in the edinet checks, where reading a missing total as zero made
