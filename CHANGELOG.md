@@ -415,6 +415,41 @@ release may change the public API, which `tests/test_public_api.py` lists.
   column for the query it is asked: the table stores the measures agreed so
   far, resolving asks about every measure the catalogue defines.
 
+- `financialreport`: `revenue` is the second measure the combined table
+  carries, and adding it settled the rule for every measure after it. **Only
+  the first concept of each framework is written into `MEASURE`.** Assets
+  needed no such rule, having one element per taxonomy and no alternatives at
+  any priority. Revenue has seven catalogue rows and six concepts, three of
+  them ranked below the first, and each of those says in its own caveat that
+  it is not the same figure: `us-gaap:Revenues` is "the last resort and not
+  an equivalent of the IFRS total", the including-assessed-tax element is
+  "larger than the IFRS measure", `ifrs-full:RevenueFromContractsWithCustomers`
+  "excludes revenue outside IFRS 15 that the total may include". The
+  priorities exist for a caller resolving a measure at query time, who wants
+  the best answer the filing affords; the column is held to the stricter bar,
+  so a fact tagged with an approximation keeps a null. The cost is coverage
+  rather than correctness -- a registrant tagging only the pre-ASC-606
+  `us-gaap:Revenues` carries no identifier -- which is the right way round
+  for a name a query filters on. The rule was read off the catalogue rather
+  than imposed on it: every row ranked below the first carries a caveat of
+  that kind, and a test now holds them to it.
+  It is also what keeps the column answerable. A filing may tag several
+  concepts of one measure -- a 10-Q states its revenue under the ASC 606
+  element and under the older total for the same period -- and labelling both
+  would put two different figures of one filing under one name. At the first
+  concept the catalogue has one element per taxonomy per measure, so that
+  cannot happen, and `canonical_concepts` now refuses a catalogue in which it
+  could.
+  **The two collisions reported with the previous entry are settled by this
+  rule rather than blocking anything.** `us-gaap:StockholdersEquity` is named
+  by `equity` and by `equity_attributable_to_parent`, but as the second
+  concept of the first and the first of the second, so it is the equity
+  attributable to the parent; `us-gaap:NetIncomeLoss` likewise. All eight
+  measures of the catalogue now pass the checks. That is a statement about
+  the catalogue and not a licence to materialise them: each is still a
+  judgement to be made against real filings one at a time, and
+  `MATERIALISED_MEASURES` still names two.
+
 ### Fixed
 
 - `financialreport`: a Japanese filing's framework is now decided per fact

@@ -51,6 +51,11 @@ logger = logging.getLogger(__name__)
 #: The file the catalogue is shipped as, in the data directory of a package.
 CATALOGUE_FILE = "financialreport_measures.csv"
 
+#: The priority of the concept a framework states a measure as, as against
+#: the approximations the catalogue ranks below it. Only these are written
+#: into a table; see :func:`canonical_concepts`.
+FIRST_CONCEPT = 1
+
 #: The measures written into the combined table of facts as a column, so that
 #: a fact carries the identifier of what it is rather than only the concept
 #: its filer tagged it with.
@@ -63,13 +68,25 @@ CATALOGUE_FILE = "financialreport_measures.csv"
 #: gets back are comparable, and this tuple is where that claim is made.
 #:
 #: Total assets is first because it is the cleanest of the eight. One element
-#: per taxonomy, no fallbacks, and every framework states the same line of the
-#: same statement: ifrs-full:Assets, us-gaap:Assets, jppfs_cor:Assets and
-#: jpigp_cor:AssetsIFRS. What differs between them is recognition rather than
-#: definition -- development costs are capitalised under IAS 38 and generally
-#: expensed under ASC 730, and LIFO is permitted under US GAAP and prohibited
-#: by IAS 2 -- and that is on the catalogue row where a reader can find it.
-MATERIALISED_MEASURES = ("assets",)
+#: per taxonomy, no fallbacks at any priority, and every framework states the
+#: same line of the same statement: ifrs-full:Assets, us-gaap:Assets,
+#: jppfs_cor:Assets and jpigp_cor:AssetsIFRS. What differs between them is
+#: recognition rather than definition -- development costs are capitalised
+#: under IAS 38 and generally expensed under ASC 730, and LIFO is permitted
+#: under US GAAP and prohibited by IAS 2 -- and that is on the catalogue row
+#: where a reader can find it.
+#:
+#: Revenue is second, and it is the measure that made the rule explicit. The
+#: catalogue gives it seven rows and six concepts, three of them ranked below
+#: the first as approximations, and each of those says in its own caveat that
+#: it is not the same figure. Only the first concept of each framework is
+#: written down -- ifrs-full:Revenue, jpigp_cor:RevenueIFRS,
+#: jppfs_cor:NetSales and the ASC 606 element -- so the identifier means one
+#: thing wherever it appears. The cost is coverage rather than correctness: a
+#: registrant tagging only the pre-ASC-606 ``us-gaap:Revenues`` carries no
+#: identifier, which is the honest answer, that element being tagged
+#: inconsistently and not an equivalent of the IFRS total.
+MATERIALISED_MEASURES = ("assets", "revenue")
 
 #: Dimension members that name a basis of preparation rather than a part of
 #: an entity, and which a measure is therefore resolved over.
@@ -251,22 +268,34 @@ def canonical_concepts(measures=MATERIALISED_MEASURES,
                        packages=("fincommons",)):
     """The concept-to-measure pairs that may be written into a table.
 
-    One row per concept, not per catalogue row: a materialised identifier
-    answers "what is this fact" and a fact is one thing, so a concept that
-    two measures claim cannot be written down as either.
+    Only the first concept of a measure under each framework -- the rows of
+    priority 1 -- and that is the whole of the rule. The priorities exist to
+    rank approximations for a caller resolving a measure at query time, who
+    wants the best answer the filing affords; a materialised identifier is
+    held to a stricter bar, that the figure is the same one. Every row of
+    priority 2 or 3 in the catalogue says in its own caveat that it is not:
+    ``us-gaap:Revenues`` "is the last resort and not an equivalent of the
+    IFRS total", ``RevenueFromContractWithCustomerIncludingAssessedTax`` is
+    "larger than the IFRS measure", ``jppfs_cor:CashAndDeposits`` is "NOT the
+    same figure". A fact tagged with one of those keeps a null rather than an
+    identifier that overstates what is known about it.
 
-    That happens, and it is not a defect of the catalogue. ``equity`` lists
-    ``us-gaap:StockholdersEquity`` second, as the best available stand-in for
-    a registrant that states no total including the non-controlling
-    interests, while ``equity_attributable_to_parent`` lists the same element
-    first because that is what it is. Both rows are right for resolving a
-    measure at query time, where the caller has asked for one measure and
-    the priority decides. Neither can be a column.
+    Dropping them is also what keeps the column answerable. A filing may tag
+    several concepts of one measure -- that is why the priorities are there
+    -- and labelling all of them would put two different figures of one
+    filing and one period under one name, which a query filtering on the
+    name could not tell apart. At priority 1 the catalogue has one element
+    per taxonomy per measure, so that cannot happen.
 
-    So a measure whose concepts collide with another's is refused here rather
-    than resolved by a rule, and the refusal names both. Adding a measure to
-    :data:`MATERIALISED_MEASURES` is how the combined table grows, and this
-    is the check that growth has to pass.
+    One row per concept besides: a concept that two measures claim cannot be
+    written down as either, and is refused here rather than resolved by a
+    rule. No such claim exists at priority 1 today. The two that exist in the
+    catalogue are each between a first concept of one measure and a second of
+    another -- ``us-gaap:StockholdersEquity`` is the equity attributable to
+    the parent and the stand-in for equity where a registrant states no wider
+    total, ``us-gaap:NetIncomeLoss`` likewise -- so the priority rule settles
+    them rather than hiding them. The check stays for the row that collides
+    tomorrow.
 
     Returns
     -------
@@ -277,7 +306,9 @@ def canonical_concepts(measures=MATERIALISED_MEASURES,
     Raises
     ------
     ValueError
-        Where one concept is claimed by two of the measures asked for.
+        Where a measure is not in the catalogue, where one measure has two
+        first concepts under one taxonomy, or where one concept is claimed
+        by two of the measures asked for.
     """
     catalogue = measure_catalogue(packages=packages)
     wanted = [str(m).strip().lower() for m in measures]
@@ -288,10 +319,21 @@ def canonical_concepts(measures=MATERIALISED_MEASURES,
             + ", ".join(sorted(set(catalogue["measure"])))
         )
 
-    rows = catalogue[catalogue["measure"].isin(wanted)]
+    rows = catalogue[catalogue["measure"].isin(wanted)
+                     & (catalogue["priority"] == FIRST_CONCEPT)]
     claimed = {}
+    per_taxonomy = {}
     for row in rows.itertuples():
         concept = f"{row.taxonomy}:{row.element}"
+        here = (row.measure, row.taxonomy)
+        if here in per_taxonomy and per_taxonomy[here] != concept:
+            raise ValueError(
+                f"{row.measure!r} has two first concepts under "
+                f"{row.taxonomy}, {per_taxonomy[here]} and {concept}, so a "
+                "filing tagging both would state the measure twice under one "
+                "name. One of them belongs at a lower priority."
+            )
+        per_taxonomy[here] = concept
         if concept in claimed and claimed[concept] != row.measure:
             raise ValueError(
                 f"{concept} is claimed by both {claimed[concept]!r} and "
@@ -465,6 +507,7 @@ __all__ = [
     "BASIS_MEMBERS",
     "CATALOGUE_COLUMNS",
     "CATALOGUE_FILE",
+    "FIRST_CONCEPT",
     "MATERIALISED_MEASURES",
     "MeasureDefinition",
     "MeasureDefinitions",

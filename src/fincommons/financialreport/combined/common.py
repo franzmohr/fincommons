@@ -126,20 +126,27 @@ a handful of them on purpose.
 The restraint is the point. A materialised identifier is read by people who
 will not go back to the caveat, so a measure is written into this column only
 once its concepts are agreed to mean the same figure in every framework the
-catalogue defines it for. It begins with total assets -- ``ifrs-full:Assets``,
-``us-gaap:Assets``, ``jppfs_cor:Assets`` and ``jpigp_cor:AssetsIFRS``, one
-element per taxonomy with no fallbacks -- and grows one measure at a time.
-What a measure means, and what differs between the frameworks that state it,
-is on the catalogue row; ``describe_measure`` prints it.
+catalogue defines it for, and only through the first concept of each
+framework. It covers total assets and revenue and grows one measure at a
+time. What a measure means, and what differs between the frameworks that
+state it, is on the catalogue row; ``describe_measure`` prints it.
 
-A concept two measures claim cannot be written here as either, and
+Only the first concept, because the catalogue ranks the others as
+approximations and says so. A caller resolving a measure at query time wants
+the best answer the filing affords and takes ``us-gaap:Revenues`` where there
+is nothing better; this column is held to the stricter bar, and that element
+"is the last resort and not an equivalent of the IFRS total" by its own
+caveat. So a fact tagged with it keeps a null. The cost is coverage and not
+correctness, which is the right way round for an identifier a query filters
+on.
+
+It is also what keeps the column answerable at all. A filing may tag several
+concepts of one measure -- that is why the catalogue ranks them -- and
+labelling all of them would put two different figures of one filing and one
+period under one name. At the first concept there is one element per taxonomy
+per measure, so that cannot happen, and
 :func:`fincommons.financialreport.combined.mapping.canonical_concepts`
-refuses it rather than picking one. That is not a defect of the catalogue:
-``us-gaap:StockholdersEquity`` is the best stand-in for ``equity`` where a
-registrant states no wider total and is itself
-``equity_attributable_to_parent``, which is a sensible thing to say when a
-caller has asked for one of the two and a priority decides, and not a thing
-that can be a column.
+refuses a catalogue in which it could.
 
 ``TEXT`` and ``DIMENSIONS`` are filled for the rows that came from ESEF and
 from EDINET, and empty for every row the Commission contributes -- not

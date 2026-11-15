@@ -18,18 +18,32 @@ Japan is the exception, and it is worth saying why rather than leaving it as a h
 
 That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
 
-It begins with **total assets**, which is the cleanest of the eight:
+It covers **total assets** and **revenue**:
 
-| framework | concept |
+| framework | assets | revenue |
+| --- | --- | --- |
+| IFRS | `ifrs-full:Assets` | `ifrs-full:Revenue` |
+| US-GAAP | `us-gaap:Assets` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` |
+| JP-GAAP | `jppfs_cor:Assets` | `jppfs_cor:NetSales` |
+| IFRS, as a Japanese filer tags it | `jpigp_cor:AssetsIFRS` | `jpigp_cor:RevenueIFRS` |
+
+What differs between the cells of a row is recognition rather than definition -- development costs are capitalised under IAS 38 and generally expensed under ASC 730, LIFO is permitted under US GAAP and prohibited by IAS 2 -- and that is on the catalogue row where a reader can find it rather than hidden by the shared name.
+
+#### Only the first concept of each framework
+
+Assets is the cleanest of the eight measures: one element per taxonomy and no alternatives at any priority. Revenue is not, and adding it is what made the rule explicit. The catalogue gives revenue seven rows and six concepts, ranking three of them below the first as approximations -- and each of those says in its own caveat that it is **not the same figure**:
+
+| | |
 | --- | --- |
-| IFRS | `ifrs-full:Assets` |
-| US-GAAP | `us-gaap:Assets` |
-| JP-GAAP | `jppfs_cor:Assets` |
-| IFRS, as a Japanese filer tags it | `jpigp_cor:AssetsIFRS` |
+| `us-gaap:Revenues` | "the last resort and not an equivalent of the IFRS total" |
+| `us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax` | "larger than the IFRS measure by the assessed taxes it includes" |
+| `ifrs-full:RevenueFromContractsWithCustomers` | "excludes revenue outside IFRS 15 that the total may include" |
 
-One element per taxonomy, no fallbacks, and every framework states the same line of the same statement. What differs between them is recognition rather than definition -- development costs are capitalised under IAS 38 and generally expensed under ASC 730, LIFO is permitted under US GAAP and prohibited by IAS 2 -- and that is on the catalogue row where a reader can find it rather than hidden by the shared name.
+The priorities exist for a caller resolving a measure at query time, who wants the best answer the filing affords and takes the last resort where there is nothing better. The column is held to the stricter bar, so only priority 1 is written down and a fact tagged with one of the others keeps a null. The cost is coverage rather than correctness -- a registrant tagging only the pre-ASC-606 `us-gaap:Revenues` carries no identifier -- which is the right way round for a name a query filters on. Every priority-2 and priority-3 row in the catalogue carries a caveat of the same kind, so the rule is one the catalogue already stated and this column now enforces.
 
-Growing the column is one line in `MATERIALISED_MEASURES` plus the check it has to pass. `canonical_concepts` refuses a concept that two measures claim, because a fact is one thing and a column that said otherwise would turn one fact into two rows. `us-gaap:StockholdersEquity` is the live example: it is the best stand-in for `equity` where a registrant states no total including the non-controlling interests, and it is itself `equity_attributable_to_parent`. Both rows are right for resolving a measure at query time, where the caller has asked for one of them and a priority decides. Neither can be a column, so `equity` is not materialised and will not be until the catalogue says which it is.
+It is also what keeps the column answerable. A filing may tag several concepts of one measure, which is why the ranking is there, and labelling all of them would put two different figures of one filing and one period under one name. At priority 1 the catalogue has one element per taxonomy per measure, so that cannot happen; `canonical_concepts` refuses a catalogue in which it could, and refuses one in which two measures claim a single concept.
+
+Growing the column is therefore one entry in `MATERIALISED_MEASURES` plus the checks it has to pass. All eight measures pass them today. That includes `equity` and `profit_loss`, which an earlier reading of the catalogue took to be blocked: `us-gaap:StockholdersEquity` is claimed by both `equity` and `equity_attributable_to_parent`, but as the *second* concept of the first and the first of the second, so the priority rule settles it -- it is the equity attributable to the parent, and the stand-in for equity only where a registrant states no wider total. That they pass is not a reason to add them; each is still a judgement to be made against real filings one at a time.
 
 **The concept is never altered to carry the identifier.** `ifrs-full:Revenue`, `us-gaap:Revenues` and `jppfs_cor:NetSales` stand in `CONCEPT` as they were filed, whatever `MEASURE` says beside them, so that what a filer tagged is always in the table and the judgement about what it means is always separable from it. That judgement is `mapping`'s, recorded as data rather than as code; it reaches all three regimes, and the section on the catalogue below sets out what it does and does not settle.
 
