@@ -219,8 +219,41 @@ FIRST_CONCEPT = 1
 #: thing a column cannot do. Filter on ``MEASURE`` to ask a precise question
 #: of named facts; resolve through ``measure_values`` to ask about a
 #: population.
+#: The equity attributable to the parent is eighth and last, and it names
+#: ``us-gaap:StockholdersEquity`` as the profit pair named
+#: ``us-gaap:NetIncomeLoss``. It completes the catalogue and it is the
+#: weakest of the eight, for a reason no other measure has.
+#:
+#: **Its absence under Japan GAAP is structural, not conditional.** Every
+#: other gap in this column depends on what a filer tagged: a registrant
+#: that states no total liabilities, one that reports no minorities to
+#: attribute away. This one depends on nothing about the filer. Japan GAAP
+#: has no element for 自己資本 at all, it being 株主資本 plus
+#: 評価・換算差額等 -- a sum rather than a line -- so no `JP-GAAP` filing can
+#: carry this measure however it is prepared, and
+#: ``concepts_for('equity_attributable_to_parent', 'JP-GAAP')`` returns
+#: nothing. A query filtering on it excludes Japan entirely and silently.
+#:
+#: The sum is not computed here to close the gap. Taking
+#: ``jppfs_cor:ShareholdersEquity`` for it instead is short by the valuation
+#: and translation adjustments, 9,191 million of a correct 63,326 million on
+#: one report read for the catalogue, and adding the components would be
+#: this module inventing a figure, which it does not do.
+#:
+#: So the reach of the equity pair stays lopsided where the profit pair's is
+#: not: ``equity`` reaches every regime and this reaches two of three. Read
+#: together with ``equity``, which needs the non-controlling interests under
+#: US GAAP and not elsewhere, the two lean opposite ways again -- most
+#: American registrants tag ``us-gaap:StockholdersEquity`` and an IFRS filer
+#: states the attributable line only where there is something to attribute.
+#:
+#: This completes the catalogue, and the gate stays. A measure added to the
+#: catalogue tomorrow is not materialised by being added: it is named here
+#: or it carries no identifier, which is the whole point of the tuple being
+#: written out rather than derived.
 MATERIALISED_MEASURES = ("assets", "cash_and_equivalents", "equity",
-                         "liabilities", "profit_loss",
+                         "equity_attributable_to_parent", "liabilities",
+                         "profit_loss",
                          "profit_loss_attributable_to_parent", "revenue")
 
 #: Dimension members that name a basis of preparation rather than a part of

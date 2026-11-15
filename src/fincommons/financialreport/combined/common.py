@@ -127,9 +127,9 @@ The restraint is the point. A materialised identifier is read by people who
 will not go back to the caveat, so a measure is written into this column only
 once its concepts are agreed to mean the same figure in every framework the
 catalogue defines it for, and only through the first concept of each
-framework. It covers total assets, total liabilities, total equity, profit
-or loss, the profit or loss attributable to the parent, revenue and cash and
-cash equivalents, and grows one measure at a time. What a measure means, and
+framework. It covers all eight measures the catalogue defines, each of them
+written down one at a time and none of them materialised by being added to
+the catalogue. What a measure means, and
 what differs between the frameworks that state it, is on the catalogue row;
 ``describe_measure`` prints it.
 
@@ -199,7 +199,17 @@ right tool instead. The figure a population-level comparison wants is the
 result attributable to the parent falling back to the total where there are
 no minorities to separate, which is a judgement per filing and not per
 concept. Filter on ``MEASURE`` to ask a precise question of named facts;
-resolve through ``measure_values`` to ask about a population. It is missing rather than zero,
+resolve through ``measure_values`` to ask about a population.
+
+One gap is of a third kind and is the only one. Every absence described
+above depends on what a filer tagged, and changing the filer closes it.
+``equity_attributable_to_parent`` has none under Japan GAAP whatever the
+filer does: there is no element for 自己資本, it being 株主資本 plus
+評価・換算差額等, a sum rather than a line. A query filtering on that measure
+excludes Japan entirely and says nothing about having done so. The sum is
+not computed here to close it, and taking ``jppfs_cor:ShareholdersEquity``
+instead is short by the valuation and translation adjustments, 9,191 million
+of a correct 63,326 million on one report read for the catalogue. It is missing rather than zero,
 and it is not derived from the balance sheet identity to fill the gap --
 nothing in this family of modules invents a figure, and what that costs is
 on record in the edinet checks, where reading a missing total as zero made
