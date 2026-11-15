@@ -128,8 +128,8 @@ will not go back to the caveat, so a measure is written into this column only
 once its concepts are agreed to mean the same figure in every framework the
 catalogue defines it for, and only through the first concept of each
 framework. It covers total assets, total liabilities, total equity, profit
-or loss, revenue and cash and cash equivalents, and grows one measure at a
-time. What a measure means, and
+or loss, the profit or loss attributable to the parent, revenue and cash and
+cash equivalents, and grows one measure at a time. What a measure means, and
 what differs between the frameworks that state it, is on the catalogue row;
 ``describe_measure`` prints it.
 
@@ -183,7 +183,23 @@ under these measures is close to every filer and the American population is
 conditional on having non-controlling interests to report: two samples
 selected by different rules, whose medians are not a comparison of the two
 regimes. Counting the rows carrying a measure says how many filings were
-named, never how many exist. It is missing rather than zero,
+named, never how many exist.
+
+``profit_loss_attributable_to_parent`` names the American facts the other
+declines, and inverts the skew rather than removing it. The attributable
+line exists only where there are minorities to attribute away, so an IFRS
+or Japanese filer preparing no consolidated statements states none, while
+``us-gaap:NetIncomeLoss`` is the ordinary bottom line every registrant
+tags. Between them the two measures cover the population well; neither does
+alone.
+
+That is the limit of this column, and it is where
+:func:`fincommons.financialreport.combined.mapping.measure_values` is the
+right tool instead. The figure a population-level comparison wants is the
+result attributable to the parent falling back to the total where there are
+no minorities to separate, which is a judgement per filing and not per
+concept. Filter on ``MEASURE`` to ask a precise question of named facts;
+resolve through ``measure_values`` to ask about a population. It is missing rather than zero,
 and it is not derived from the balance sheet identity to fill the gap --
 nothing in this family of modules invents a figure, and what that costs is
 on record in the edinet checks, where reading a missing total as zero made

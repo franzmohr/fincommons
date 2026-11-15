@@ -189,8 +189,39 @@ FIRST_CONCEPT = 1
 #: taxonomies: Japan states 親会社株主に帰属する当期純利益 as a line of its
 #: own. Materialising it would therefore reach every regime, and would also
 #: put a name on the American facts this measure declines.
+#: The result attributable to the parent is seventh, and it puts a name on
+#: ``us-gaap:NetIncomeLoss`` -- the facts ``profit_loss`` declines. It has an
+#: element in all four taxonomies, Japan stating 親会社株主に帰属する当期純利益
+#: as a line of its own, so unlike its equity counterpart it reaches every
+#: regime.
+#:
+#: It does not repair the skew of ``profit_loss`` though. It inverts it, and
+#: that is the more useful thing to know. The attributable line exists only
+#: where there are non-controlling interests to attribute away: a filer
+#: preparing no consolidated statements states none under IFRS or Japan
+#: GAAP, its result being the one figure that is both measures at once.
+#: ``us-gaap:NetIncomeLoss`` is not like that -- it is the ordinary bottom
+#: line of an American income statement, tagged by registrants with
+#: subsidiaries and without. So the two measures lean opposite ways:
+#:
+#: =================================== ============ ============ ===========
+#: measure                             IFRS         JP-GAAP      US-GAAP
+#: =================================== ============ ============ ===========
+#: profit_loss                         most filers  most filers  needs NCI
+#: profit_loss_attributable_to_parent  needs NCI    needs NCI    most filers
+#: =================================== ============ ============ ===========
+#:
+#: Which is the limit of a materialised identifier, reached honestly. The
+#: figure a population-level comparison wants is the result attributable to
+#: the parent falling back to the total where there are no minorities to
+#: separate, and that is a judgement per filing rather than per concept. It
+#: is what :func:`measure_values` does with the priorities, and it is the
+#: thing a column cannot do. Filter on ``MEASURE`` to ask a precise question
+#: of named facts; resolve through ``measure_values`` to ask about a
+#: population.
 MATERIALISED_MEASURES = ("assets", "cash_and_equivalents", "equity",
-                         "liabilities", "profit_loss", "revenue")
+                         "liabilities", "profit_loss",
+                         "profit_loss_attributable_to_parent", "revenue")
 
 #: Dimension members that name a basis of preparation rather than a part of
 #: an entity, and which a measure is therefore resolved over.
