@@ -468,6 +468,32 @@ release may change the public API, which `tests/test_public_api.py` lists.
   saying which. The README, the `fact_schema` docstring and the column
   catalogue all now say so, and a test holds the two kinds of null apart.
 
+- `financialreport`: `cash_and_equivalents` is the fourth measure the
+  combined table carries, and **the first whose first concepts are not the
+  same line of the same statement**. IFRS, Japanese IFRS and US GAAP each
+  present cash and cash equivalents on the balance sheet. A Japanese balance
+  sheet has no line that means it -- it presents 現金及び預金, cash together
+  with deposits, time deposits of more than three months among them, which
+  are cash equivalents under none of the three -- so for `JP-GAAP` the
+  identifier is given to the closing balance of the cash flow statement. One
+  name over one figure, wherever its regime chose to present it, which is
+  the case this column exists for.
+  The first-concept rule earns its keep twice here. The IFRS first concept
+  carries a caveat about the US total, ASU 2016-18 putting restricted cash in
+  the cash flow statement total where IAS 7 does not; that total is
+  `us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`, a
+  *second* concept the column leaves out, so the rule removes the mismatch
+  its own caveat warns about. The pair that does carry the identifier is
+  IAS 7 against `us-gaap:CashAndCashEquivalentsAtCarryingValue`, which the
+  catalogue calls the closer match.
+  It also costs something for the first time, rather than only inheriting a
+  cost. `jppfs_cor:CashAndDeposits` sits at priority 2 expressly so that a
+  filer stating no cash flow statement is reached at all, and the column
+  declines it, a figure read from that element being cash and deposits
+  rather than cash and equivalents. Those filers carry a null here and are
+  still reached by `measure_values`, which is the division of labour between
+  the stored column and query-time resolution.
+
 ### Fixed
 
 - `financialreport`: a Japanese filing's framework is now decided per fact

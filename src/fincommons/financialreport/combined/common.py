@@ -127,10 +127,18 @@ The restraint is the point. A materialised identifier is read by people who
 will not go back to the caveat, so a measure is written into this column only
 once its concepts are agreed to mean the same figure in every framework the
 catalogue defines it for, and only through the first concept of each
-framework. It covers total assets, total liabilities and revenue, and grows
-one measure at a time. What a measure means, and what differs between the
-frameworks that state it, is on the catalogue row; ``describe_measure``
-prints it.
+framework. It covers total assets, total liabilities, revenue and cash and
+cash equivalents, and grows one measure at a time. What a measure means, and
+what differs between the frameworks that state it, is on the catalogue row;
+``describe_measure`` prints it.
+
+The same figure is not always in the same place. Cash and cash equivalents
+is on the balance sheet under IFRS and under US GAAP, and a Japanese balance
+sheet has no line that means it -- it presents 現金及び預金, cash together
+with deposits, time deposits of more than three months among them -- so for
+Japan GAAP the identifier is given to the closing balance of the cash flow
+statement. That is the case the column exists for: one name over one figure,
+wherever its regime chose to present it.
 
 Only the first concept, because the catalogue ranks the others as
 approximations and says so. A caller resolving a measure at query time wants
