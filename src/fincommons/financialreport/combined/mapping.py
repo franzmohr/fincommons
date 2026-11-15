@@ -129,8 +129,38 @@ FIRST_CONCEPT = 1
 #: that must not wear this name. Those filers keep a null here and are still
 #: reached by :func:`measure_values`, which is the division of labour between
 #: the two.
-MATERIALISED_MEASURES = ("assets", "cash_and_equivalents", "liabilities",
-                         "revenue")
+#: Equity is fifth, and the measure whose nulls need reading most carefully.
+#: Its first concepts are the totals including the non-controlling
+#: interests -- ifrs-full:Equity, jpigp_cor:EquityIFRS, jppfs_cor:NetAssets
+#: and us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+#: -- and 純資産 is their counterpart, being 株主資本 and the valuation and
+#: translation adjustments and the subscription rights and the
+#: non-controlling interests together.
+#:
+#: ``us-gaap:StockholdersEquity`` is left out, and the catalogue says why in
+#: as many words: it is second "because many filings tag no total including
+#: NCI, not because it is equivalent". That makes the null here different
+#: from the one total liabilities leaves. A registrant with no
+#: non-controlling interests states the same number under that element as a
+#: total including them would be, so the figure is usually there and usually
+#: right; what cannot be told from the element is whether this is such a
+#: registrant. Naming it would be correct for most filings and wrong for
+#: exactly the groups a cross-regime comparison is about.
+#:
+#: The consequence is a skew and not only a gap, which a benchmark has to
+#: know. A query over ``MEASURE = 'equity'`` reaches the registrants that
+#: tag the including-NCI total, and those are more often groups that have
+#: non-controlling interests to report. It is not a random sample of the
+#: population. Counting the rows says how many filings were named, never how
+#: many exist.
+#:
+#: The null is also temporary in a way the others are not.
+#: ``us-gaap:StockholdersEquity`` is the *first* concept of
+#: ``equity_attributable_to_parent``, so the day that measure is written
+#: down the same fact takes a name -- and the right one, rather than this
+#: one. The two are one decision and only the first half of it is made here.
+MATERIALISED_MEASURES = ("assets", "cash_and_equivalents", "equity",
+                         "liabilities", "revenue")
 
 #: Dimension members that name a basis of preparation rather than a part of
 #: an entity, and which a measure is therefore resolved over.

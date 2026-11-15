@@ -127,8 +127,8 @@ The restraint is the point. A materialised identifier is read by people who
 will not go back to the caveat, so a measure is written into this column only
 once its concepts are agreed to mean the same figure in every framework the
 catalogue defines it for, and only through the first concept of each
-framework. It covers total assets, total liabilities, revenue and cash and
-cash equivalents, and grows one measure at a time. What a measure means, and
+framework. It covers total assets, total liabilities, revenue, cash and cash
+equivalents and total equity, and grows one measure at a time. What a measure means, and
 what differs between the frameworks that state it, is on the catalogue row;
 ``describe_measure`` prints it.
 
@@ -162,7 +162,18 @@ them apart. Either no measure covers the concept the filer tagged, or the
 measure covers a concept the filer did not tag at all. Total liabilities is
 where the second matters: many filings with the Commission present only
 liabilities and equity together and tag no total, so the figure is missing
-for a substantial part of the US population. It is missing rather than zero,
+for a substantial part of the US population.
+
+Total equity sharpens that into a skew. Its first concept under US GAAP is
+the total including the non-controlling interests, and many registrants tag
+only ``us-gaap:StockholdersEquity``, which excludes them. For a registrant
+that has none the two are the same number -- but the element does not say
+whether it has none, so naming it would be right for most filings and wrong
+for exactly the groups a cross-regime comparison is about. The registrants
+this column reaches for equity are therefore more often the ones with
+non-controlling interests to report, which is not a random sample. Counting
+the rows carrying a measure says how many filings were named, never how many
+exist. It is missing rather than zero,
 and it is not derived from the balance sheet identity to fill the gap --
 nothing in this family of modules invents a figure, and what that costs is
 on record in the edinet checks, where reading a missing total as zero made
