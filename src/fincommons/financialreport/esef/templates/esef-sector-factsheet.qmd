@@ -686,25 +686,39 @@ wide <- wide %>%
 # that is not quoted on the closing date itself does not arise, the table
 # carrying one row per calendar day, but a currency the table does not quote
 # at all leaves both rates missing.
-rate_on <- function(ccy, day) {
-  if (is.na(ccy) || is.na(day)) return(NA_real_)
-  if (ccy == target_ccy) return(1)
-  v <- fx$VALUE[fx$QUOTE == ccy & fx$REFDATE == day]
-  if (length(v) == 0) NA_real_ else v[1]
-}
-rate_over <- function(ccy, from, to) {
-  if (is.na(ccy) || is.na(from) || is.na(to)) return(NA_real_)
-  if (ccy == target_ccy) return(1)
-  v <- fx$VALUE[fx$QUOTE == ccy & fx$REFDATE >= from & fx$REFDATE <= to]
-  if (length(v) == 0) NA_real_ else mean(v)
-}
+# The closing rate is a join on the currency and the day. The average is a
+# mean over a range of days, so it is computed once per distinct period a
+# currency is averaged over -- a few dozen of those even for a panel of a
+# hundred and forty-five -- and joined back. Neither is a loop over the
+# rows: a date in a frame keeps its class, and a date pulled out of one a
+# value at a time does not always.
+if (needs_fx) {
+  wide <- wide %>%
+    left_join(fx %>% select(CCY = QUOTE, PERIODEND = REFDATE,
+                            FXRATE_CLOSING = VALUE),
+              by = c("CCY", "PERIODEND")) %>%
+    mutate(FXRATE_CLOSING = ifelse(!is.na(CCY) & CCY == target_ccy, 1,
+                                   FXRATE_CLOSING))
 
-wide$FXRATE_CLOSING <- if (needs_fx) {
-  mapply(rate_on, wide$CCY, wide$PERIODEND)
-} else rep(1, nrow(wide))
-wide$FXRATE_AVERAGE <- if (needs_fx) {
-  mapply(rate_over, wide$CCY, wide$PRDSTART, wide$PERIODEND)
-} else rep(1, nrow(wide))
+  periods <- wide %>%
+    filter(!is.na(CCY), CCY != target_ccy,
+           !is.na(PRDSTART), !is.na(PERIODEND)) %>%
+    distinct(CCY, PRDSTART, PERIODEND)
+  periods$FXRATE_AVERAGE <- vapply(seq_len(nrow(periods)), function(i) {
+    v <- fx$VALUE[fx$QUOTE == periods$CCY[i]
+                  & fx$REFDATE >= periods$PRDSTART[i]
+                  & fx$REFDATE <= periods$PERIODEND[i]]
+    if (length(v) == 0) NA_real_ else mean(v)
+  }, numeric(1))
+
+  wide <- wide %>%
+    left_join(periods, by = c("CCY", "PRDSTART", "PERIODEND")) %>%
+    mutate(FXRATE_AVERAGE = ifelse(!is.na(CCY) & CCY == target_ccy, 1,
+                                   FXRATE_AVERAGE))
+} else {
+  wide$FXRATE_CLOSING <- rep(1, nrow(wide))
+  wide$FXRATE_AVERAGE <- rep(1, nrow(wide))
+}
 
 # The amounts, and which of the two rates each is translated at. A key that
 # is neither is not an amount -- a ratio, a per-share figure, a date -- and
