@@ -22,9 +22,9 @@ from pyspark.sql import SparkSession
 from delta import configure_spark_with_delta_pip
 
 builder = SparkSession.builder \
+                    .master("local[10]") \
                     .appName("fincommons") \
-                    .config("spark.cores.max", "20") \
-                    .config("spark.driver.memory", "15g") \
+                    .config("spark.driver.memory", "30g") \
                     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
                     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
@@ -37,6 +37,8 @@ from fincommons import firds
 # Make sure that all the necessary directories exist
 firds.create_directory_tree(config_path)
 ```
+
+The cores are stated as `local[10]` rather than through `spark.cores.max`, because that setting is only read by a standalone or Mesos master: a session built without a master at all comes up as `local[*]` and runs a task on every core the machine has. The figure matters because in local mode the executors live inside the driver JVM, so `spark.driver.memory` is the memory of the whole run -- `spark.executor.memory` is ignored -- and the unified pool is divided among the tasks running at once. On a machine of 96 cores that leaves each task some 95 MB of execution memory out of 30 GB, which is not enough for one day's plan: it shows up first as blocks that could not be cached and were persisted to disk instead, and then as a `SparkOutOfMemoryError` raised when a task cannot acquire what the merge needs. The same 30 GB over ten cores leaves nearly a gigabyte each. The two settings are therefore chosen together, and the cores are stated where Spark reads them.
 
 ## Download data into landing zone
 

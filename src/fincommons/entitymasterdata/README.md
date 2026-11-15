@@ -28,14 +28,16 @@ from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
 
 builder = SparkSession.builder \
+                    .master("local[20]") \
                     .appName("fincommons") \
-                    .config("spark.cores.max", "20") \
                     .config("spark.driver.memory", "15g") \
                     .config('spark.sql.extensions', 'io.delta.sql.DeltaSparkSessionExtension') \
                     .config('spark.sql.catalog.spark_catalog', 'org.apache.spark.sql.delta.catalog.DeltaCatalog')
 
 spark = configure_spark_with_delta_pip(builder).getOrCreate()
 ```
+
+The cores are stated as `local[20]` rather than through `spark.cores.max`, which only a standalone or Mesos master reads: a session built without a master comes up as `local[*]` and runs a task on every core the machine has, dividing the driver heap -- which in local mode is the memory of the whole run, since the executors live in that JVM -- among all of them. The FIRDS [README](../firds/README.md) says what that costs on a machine with many cores.
 
 
 ## 1 Raw data collection in the landing zone
