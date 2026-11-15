@@ -18,14 +18,14 @@ Japan is the exception, and it is worth saying why rather than leaving it as a h
 
 That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
 
-It covers **total assets**, **total liabilities** and **revenue**:
+It covers **total assets**, **total liabilities**, **revenue** and **cash and cash equivalents**:
 
-| framework | assets | liabilities | revenue |
-| --- | --- | --- | --- |
-| IFRS | `ifrs-full:Assets` | `ifrs-full:Liabilities` | `ifrs-full:Revenue` |
-| US-GAAP | `us-gaap:Assets` | `us-gaap:Liabilities` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` |
-| JP-GAAP | `jppfs_cor:Assets` | `jppfs_cor:Liabilities` | `jppfs_cor:NetSales` |
-| IFRS, as a Japanese filer tags it | `jpigp_cor:AssetsIFRS` | `jpigp_cor:LiabilitiesIFRS` | `jpigp_cor:RevenueIFRS` |
+| framework | assets | liabilities | revenue | cash and equivalents |
+| --- | --- | --- | --- | --- |
+| IFRS | `ifrs-full:Assets` | `ifrs-full:Liabilities` | `ifrs-full:Revenue` | `ifrs-full:CashAndCashEquivalents` |
+| US-GAAP | `us-gaap:Assets` | `us-gaap:Liabilities` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` | `us-gaap:CashAndCashEquivalentsAtCarryingValue` |
+| JP-GAAP | `jppfs_cor:Assets` | `jppfs_cor:Liabilities` | `jppfs_cor:NetSales` | `jppfs_cor:CashAndCashEquivalents` |
+| IFRS, as a Japanese filer tags it | `jpigp_cor:AssetsIFRS` | `jpigp_cor:LiabilitiesIFRS` | `jpigp_cor:RevenueIFRS` | `jpigp_cor:CashAndCashEquivalentsIFRS` |
 
 What differs between the cells of a row is recognition rather than definition -- development costs are capitalised under IAS 38 and generally expensed under ASC 730, LIFO is permitted under US GAAP and prohibited by IAS 2 -- and that is on the catalogue row where a reader can find it rather than hidden by the shared name.
 
@@ -42,6 +42,14 @@ Assets is the cleanest of the eight measures: one element per taxonomy and no al
 The priorities exist for a caller resolving a measure at query time, who wants the best answer the filing affords and takes the last resort where there is nothing better. The column is held to the stricter bar, so only priority 1 is written down and a fact tagged with one of the others keeps a null. The cost is coverage rather than correctness -- a registrant tagging only the pre-ASC-606 `us-gaap:Revenues` carries no identifier -- which is the right way round for a name a query filters on. Every priority-2 and priority-3 row in the catalogue carries a caveat of the same kind, so the rule is one the catalogue already stated and this column now enforces.
 
 It is also what keeps the column answerable. A filing may tag several concepts of one measure, which is why the ranking is there, and labelling all of them would put two different figures of one filing and one period under one name. At priority 1 the catalogue has one element per taxonomy per measure, so that cannot happen; `canonical_concepts` refuses a catalogue in which it could, and refuses one in which two measures claim a single concept.
+
+#### The same figure is not always in the same place
+
+Cash and cash equivalents is the first measure whose first concepts are not the same line of the same statement. IFRS, Japanese IFRS and US GAAP each present it on the balance sheet. **A Japanese balance sheet has no line that means it** -- it presents 現金及び預金, cash together with deposits, time deposits of more than three months among them, which are cash equivalents under none of the three. The figure that means what `ifrs-full:CashAndCashEquivalents` means is the closing balance of the cash flow statement, and that is what carries the identifier. One name over one figure, wherever its regime chose to present it, which is the case this column exists for.
+
+Two things follow. The first concept of IFRS carries a caveat about the US total -- ASU 2016-18 puts restricted cash in the cash flow statement total and IAS 7 does not -- and that total is `us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`, a *second* concept the column leaves out. The pair that does carry the identifier is IAS 7 against `us-gaap:CashAndCashEquivalentsAtCarryingValue`, which the catalogue calls the closer match. So the rule removes the mismatch its own caveat warns about.
+
+The other is a cost, and the first the rule has imposed rather than inherited. `jppfs_cor:CashAndDeposits` sits at priority 2 expressly so that a filer stating no cash flow statement is reached at all. The column declines it, because a figure read from that element "should be read as cash and deposits rather than as cash and equivalents" -- which is exactly a thing that must not wear this name. Those filers carry a null here and are still reached by `measure_values`. That is the division of labour between the stored column and query-time resolution, and this is the measure that shows it clearly.
 
 #### Two kinds of null, and the column cannot tell them apart
 

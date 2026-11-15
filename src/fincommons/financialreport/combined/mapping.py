@@ -100,7 +100,37 @@ FIRST_CONCEPT = 1
 #: no figure, and the cost of pretending otherwise is on record in the edinet
 #: checks, where reading a missing total as zero made Fujitsu's liabilities
 #: short by 244,695 million.
-MATERIALISED_MEASURES = ("assets", "liabilities", "revenue")
+#:
+#: Cash and cash equivalents is fourth and is the first measure whose first
+#: concepts are not the same line of the same statement. IFRS, Japanese IFRS
+#: and US GAAP each present it on the balance sheet. Japan GAAP does not: its
+#: balance sheet carries 現金及び預金, cash together with deposits, time
+#: deposits of more than three months among them, which are not cash
+#: equivalents under any of the three. The figure that means what
+#: ``ifrs-full:CashAndCashEquivalents`` means is the closing balance of the
+#: cash flow statement, and that is the concept the identifier is given to.
+#: Same meaning, a different place in the report, which is the case this
+#: column exists for.
+#:
+#: Two things follow that are worth naming. The first concept of IFRS carries
+#: a caveat about the US total -- ASU 2016-18 puts restricted cash in the
+#: cash flow statement total and IAS 7 does not -- and that total is
+#: ``us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents``,
+#: a second concept the column leaves out. The pair that does carry the
+#: identifier is IAS 7 against ``CashAndCashEquivalentsAtCarryingValue``,
+#: which the catalogue calls the closer match. So the rule removes the
+#: mismatch its own caveat warns about.
+#:
+#: The second is a cost rather than a gain, and the first the rule has
+#: imposed. ``jppfs_cor:CashAndDeposits`` sits at priority 2 expressly so
+#: that a filer stating no cash flow statement is reached at all, and the
+#: column declines it: a figure read from that element "should be read as
+#: cash and deposits rather than as cash and equivalents", which is a thing
+#: that must not wear this name. Those filers keep a null here and are still
+#: reached by :func:`measure_values`, which is the division of labour between
+#: the two.
+MATERIALISED_MEASURES = ("assets", "cash_and_equivalents", "liabilities",
+                         "revenue")
 
 #: Dimension members that name a basis of preparation rather than a part of
 #: an entity, and which a measure is therefore resolved over.
