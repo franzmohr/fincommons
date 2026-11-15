@@ -75,6 +75,9 @@ def write_esef(spark, config_path, framework="ifrs-full"):
         ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f4",
          f"{framework}:Assets", None, date(2025, 12, 31), "EUR",
          None, 900.0, None, 0, "en"),
+        ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f5",
+         f"{framework}:Liabilities", None, date(2025, 12, 31), "EUR",
+         None, 400.0, None, 0, "en"),
     ], schema=esef.facts_schema)
     write_silver(filings, esef.ref_silver_filings(config_path))
     write_silver(facts, esef.ref_silver_facts(config_path),
@@ -87,6 +90,10 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
     It states its revenue twice, under the ASC 606 element and under the
     older total, which is what registrants do and what the catalogue ranks
     them for. Only the first of the two is the measure.
+
+    It states no total liabilities, which is also what many registrants do:
+    the balance sheet presents liabilities and equity together and tags no
+    total. The measure is absent for it, and absent is not zero.
     """
     filings = spark.createDataFrame([(
         "0001628280-26-000002", CIK, "Demo Registrant Inc.", "10-Q",
@@ -113,7 +120,7 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
 def write_edinet(spark, config_path, standard="Japan GAAP"):
     """An annual securities report of one Japanese filer.
 
-    Three facts and a fourth that sits in no period: the module leaves both
+    Four facts and a fifth that sits in no period: the module leaves both
     dates empty for a context whose shape it does not recognise, and the
     combined table of facts does not carry such a row.
     """
@@ -138,6 +145,8 @@ def write_edinet(spark, config_path, standard="Japan GAAP"):
              date(2025, 9, 1), date(2026, 8, 31), "JPY", 297632.0, None),
         fact("f2", "jppfs_cor:Assets", "NonConsolidatedMember",
              None, date(2026, 8, 31), "JPY", 128669.0, None),
+        fact("f5", "jppfs_cor:Liabilities", "NonConsolidatedMember",
+             None, date(2026, 8, 31), "JPY", 65343.0, None),
         fact("f3", "jpdei_cor:AccountingStandardsDEI", None,
              None, date(2026, 11, 13), None, None, standard),
         (EDINETCODE, "S100ZH4D", 2026, "f4", "jppfs_cor:NetSales", "label",
@@ -331,7 +340,7 @@ def test_a_fact_that_sits_in_no_period_is_not_carried(spark, config):
     facts = silver.combine(spark, config, "fact").collect()
 
     assert all(row["PRDEND"] is not None for row in facts)
-    assert {row["FACT"] for row in facts} == {"f1", "f2", "f3"}
+    assert {row["FACT"] for row in facts} == {"f1", "f2", "f3", "f5"}
 
 
 def test_the_japanese_dimensions_and_text_survive(spark, config):
@@ -466,7 +475,8 @@ def test_a_fact_no_measure_covers_carries_no_identifier(spark, config):
     facts = silver.combine(spark, config, "fact").collect()
 
     assert any(row["MEASURE"] is None for row in facts)
-    assert {row["MEASURE"] for row in facts} <= {None, "assets", "revenue"}
+    assert {row["MEASURE"] for row in facts} \
+        <= {None, "assets", "liabilities", "revenue"}
 
 
 def test_revenue_of_every_regime_answers_to_one_name(spark, config):
@@ -482,6 +492,52 @@ def test_revenue_of_every_regime_answers_to_one_name(spark, config):
     assert {row["CONCEPT"] for row in revenue} == {
         "ifrs-full:Revenue", "jppfs_cor:NetSales",
         "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"}
+
+
+def test_liabilities_of_both_regimes_that_state_it_answer_to_one_name(spark, config):
+    """Four concepts, one per taxonomy, nothing ranked below them -- so
+    liabilities passes the rule as easily as assets does."""
+    write_esef(spark, config)
+    write_edinet(spark, config)
+
+    liabilities = (silver.combine(spark, config, "fact")
+                   .where("MEASURE = 'liabilities'").collect())
+
+    assert {row["SOURCE"] for row in liabilities} == {"esef", "edinet"}
+    assert {row["CONCEPT"] for row in liabilities} \
+        == {"ifrs-full:Liabilities", "jppfs_cor:Liabilities"}
+
+
+def test_a_filer_stating_no_total_liabilities_carries_no_identifier(spark, config):
+    """The other kind of null, and the one a benchmark has to know about.
+    Many filings with the Commission present liabilities and equity
+    together and tag no total, so the figure was never stated. It is not
+    derived from the balance sheet identity to fill the gap, and it is not
+    a zero."""
+    write_sec(spark, config)
+    facts = silver.combine(spark, config, "fact")
+
+    assert facts.where("MEASURE = 'liabilities'").count() == 0
+    # And nothing was invented in its place: the registrant's own concepts
+    # are all that is there.
+    assert "us-gaap:Liabilities" not in {row["CONCEPT"]
+                                         for row in facts.collect()}
+
+
+def test_the_two_kinds_of_null_are_both_nulls_and_neither_is_a_zero(spark, config):
+    """A concept no measure names and a measure no concept states both
+    come back as null, which is the honest answer to two different
+    questions."""
+    write_sec(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+
+    # The older revenue total is stated and deliberately not named.
+    unnamed = next(r for r in facts if r["CONCEPT"] == "us-gaap:Revenues")
+    assert unnamed["MEASURE"] is None and unnamed["VALUE"] == 200.0
+
+    # Liabilities is named by the catalogue and stated by nobody here.
+    assert all(row["MEASURE"] != "liabilities" for row in facts)
+    assert all(row["VALUE"] != 0.0 for row in facts if row["VALUE"] is not None)
 
 
 def test_a_filing_stating_revenue_twice_is_labelled_once(spark, config):
@@ -706,7 +762,7 @@ def test_the_facts_of_both_regimes_land_in_one_table(spark, config):
 
     facts = common.connect_to_financialreport(spark, config)
 
-    assert facts.count() == 7
+    assert facts.count() == 8
     assert sorted({row["SOURCE"] for row in facts.collect()}) == ["esef", "sec"]
 
 
@@ -824,7 +880,7 @@ def test_the_count_of_facts_of_an_esef_filing_comes_from_its_facts(spark, config
 
     filing = common.connect_to_financialreport(spark, config, "filing").collect()[0]
 
-    assert filing["FACTS"] == 4
+    assert filing["FACTS"] == 5
     assert filing["FRAMEWORK"] == "IFRS"
 
 
