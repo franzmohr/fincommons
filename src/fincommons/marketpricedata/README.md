@@ -602,13 +602,7 @@ Some of these are worth naming, because they are pinned to rules that are easy t
 * `test_the_header_row_of_a_proprietary_file_is_not_read_as_a_quote` holds the `header` option on the reader of the proprietary file, which is given a schema and does not skip the header by itself. Unlike the €STR flow, nothing filters that row out again: it would reach the table as a quote with no date and no value.
 * `test_the_most_recent_download_of_a_day_is_the_one_that_is_kept` holds the reduction of the Yahoo Bronze layer to one row per instrument and reference date. That layer is partitioned by the day of the download and appended to, so a reference date delivered by two downloads is held twice, and a merge whose source carries the same key twice fails outright rather than choosing between them — which would take the whole Silver run with it and not only that source.
 
-Spark cannot start natively on a Windows workstation, so the suite is run in the container described in [`docker/README.md`](../../../docker/README.md):
-
-```
-docker compose -f docker/compose.yaml run --rm tests pytest tests/test_marketpricedata.py -q
-```
-
-Where Spark does run natively, the same thing from the root of the repository:
+Run the suite from the root of the repository:
 
 ```
 pytest tests/test_marketpricedata.py

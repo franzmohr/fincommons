@@ -12,7 +12,7 @@ the end.
 ## Deriving from an ISO 20022 XSD
 
 `xsd_to_spark_schema.py` needs only the standard library, so it runs on the
-workstation and not in the Docker image.
+workstation without Spark.
 
 ### Why derive rather than infer
 
