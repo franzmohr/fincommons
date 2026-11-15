@@ -72,6 +72,9 @@ def write_esef(spark, config_path, framework="ifrs-full"):
         ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f3",
          f"{framework}:DescriptionOfAccountingPolicy", date(2025, 1, 1),
          date(2025, 12, 31), None, None, None, "a policy", None, "en"),
+        ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f4",
+         f"{framework}:Assets", None, date(2025, 12, 31), "EUR",
+         None, 900.0, None, 0, "en"),
     ], schema=esef.facts_schema)
     write_silver(filings, esef.ref_silver_filings(config_path))
     write_silver(facts, esef.ref_silver_facts(config_path),
@@ -414,6 +417,119 @@ def test_no_japanese_row_claims_an_equity_attributable_to_the_parent():
                                 "JP-GAAP") == []
 
 
+# The identifier a fact carries for what it is
+# --------------------------------------------------------------------------
+
+
+def test_total_assets_of_every_regime_answers_to_one_name(spark, config):
+    """The point of the column: one identifier, one figure, three regimes.
+
+    Each regime keeps the concept its filer tagged -- ifrs-full:Assets,
+    us-gaap:Assets, jppfs_cor:Assets -- and all three carry MEASURE
+    'assets' beside it.
+    """
+    write_esef(spark, config)
+    write_sec(spark, config)
+    write_edinet(spark, config)
+
+    assets = (silver.combine(spark, config, "fact")
+              .where("MEASURE = 'assets'").collect())
+
+    assert {row["SOURCE"] for row in assets} == {"esef", "sec", "edinet"}
+    assert {row["CONCEPT"] for row in assets} \
+        == {"ifrs-full:Assets", "us-gaap:Assets", "jppfs_cor:Assets"}
+
+
+def test_the_concept_is_never_altered_to_carry_the_identifier(spark, config):
+    """What the filer said stays in the table beside what it is taken to
+    mean, so neither answer is lost."""
+    write_edinet(spark, config)
+    row = next(r for r in silver.combine(spark, config, "fact").collect()
+               if r["MEASURE"] == "assets")
+
+    assert row["CONCEPT"] == "jppfs_cor:Assets"
+
+
+def test_a_fact_no_measure_covers_carries_no_identifier(spark, config):
+    """Most of the table, and on purpose: the identifier is given to the
+    concepts that have been agreed and to nothing else."""
+    write_edinet(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+
+    assert any(row["MEASURE"] is None for row in facts)
+    assert {row["MEASURE"] for row in facts} <= {None, "assets"}
+
+
+def test_the_identifier_never_turns_one_fact_into_two(spark, config):
+    """A concept two measures claim would duplicate the row it is on, which
+    is what canonical_concepts refuses and this says from the other side."""
+    write_esef(spark, config)
+    write_sec(spark, config)
+    write_edinet(spark, config)
+    facts = silver.combine(spark, config, "fact")
+
+    assert facts.count() \
+        == facts.select("SOURCE", "FILING", "FACT").distinct().count()
+
+
+def test_resolving_again_replaces_the_stored_identifier(spark, config):
+    """The table stores an identifier for the measures agreed so far;
+    resolving asks the wider question, over every measure the catalogue
+    defines, so it answers for that query and does not collide with what
+    was stored."""
+    from fincommons.financialreport.combined import mapping
+
+    write_sec(spark, config)
+    facts = silver.combine(spark, config, "fact")
+    assert "MEASURE" in facts.columns
+
+    resolved = mapping.with_measures(facts)
+    assert resolved.columns.count("MEASURE") == 1
+    assert "MEASURE_PRIORITY" in resolved.columns
+    # And the wider question reaches a measure the column does not carry.
+    assert {row["MEASURE"] for row in resolved.collect()} \
+        >= {"assets", "revenue"}
+
+
+def test_a_measure_whose_concepts_collide_is_refused():
+    """us-gaap:StockholdersEquity is the best stand-in for equity where a
+    registrant states no wider total, and is itself the equity attributable
+    to the parent. Both rows are right for resolving a measure at query
+    time, where the caller has asked for one of them; neither can be a
+    column."""
+    from fincommons.financialreport.combined import mapping
+
+    with pytest.raises(ValueError, match="claimed by both"):
+        mapping.canonical_concepts(("equity", "equity_attributable_to_parent"))
+
+
+def test_the_measures_written_down_are_ones_the_catalogue_defines():
+    from fincommons.financialreport.combined import mapping
+
+    defined = set(mapping.measure_catalogue()["measure"])
+    assert set(mapping.MATERIALISED_MEASURES) <= defined
+    # And they resolve without collision, which is what lets them be written.
+    assert mapping.canonical_concepts()
+
+
+def test_total_assets_resolves_in_every_framework_the_lake_may_hold():
+    """Four taxonomies, one measure, no fallbacks -- which is why total
+    assets is the one the combined dataset starts with."""
+    from fincommons.financialreport.combined import mapping
+
+    concepts = dict(mapping.canonical_concepts(("assets",)))
+    assert set(concepts) == {"ifrs-full:Assets", "us-gaap:Assets",
+                             "jppfs_cor:Assets", "jpigp_cor:AssetsIFRS"}
+    assert set(concepts.values()) == {"assets"}
+
+
+def test_an_unknown_measure_is_refused_by_name():
+    from fincommons.financialreport.combined import mapping
+
+    with pytest.raises(ValueError, match="no measure of the catalogue"):
+        mapping.canonical_concepts(("ebitda",))
+
+
 def test_a_lake_with_neither_is_told_so(spark, config):
     with pytest.raises(RuntimeError, match="No source has tables"):
         silver.update_silver_financialreport(spark, config)
@@ -445,7 +561,7 @@ def test_the_facts_of_both_regimes_land_in_one_table(spark, config):
 
     facts = common.connect_to_financialreport(spark, config)
 
-    assert facts.count() == 5
+    assert facts.count() == 6
     assert sorted({row["SOURCE"] for row in facts.collect()}) == ["esef", "sec"]
 
 
@@ -563,7 +679,7 @@ def test_the_count_of_facts_of_an_esef_filing_comes_from_its_facts(spark, config
 
     filing = common.connect_to_financialreport(spark, config, "filing").collect()[0]
 
-    assert filing["FACTS"] == 3
+    assert filing["FACTS"] == 4
     assert filing["FRAMEWORK"] == "IFRS"
 
 

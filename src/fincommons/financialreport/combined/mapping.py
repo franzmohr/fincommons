@@ -51,6 +51,26 @@ logger = logging.getLogger(__name__)
 #: The file the catalogue is shipped as, in the data directory of a package.
 CATALOGUE_FILE = "financialreport_measures.csv"
 
+#: The measures written into the combined table of facts as a column, so that
+#: a fact carries the identifier of what it is rather than only the concept
+#: its filer tagged it with.
+#:
+#: It is deliberately short and grows one measure at a time. A measure may be
+#: added here only once its concepts are agreed to mean the same figure in
+#: every framework the catalogue defines it for, because a materialised
+#: identifier is read by people who will not go back to the caveat: a query
+#: filtering on ``MEASURE = 'assets'`` is making the claim that the rows it
+#: gets back are comparable, and this tuple is where that claim is made.
+#:
+#: Total assets is first because it is the cleanest of the eight. One element
+#: per taxonomy, no fallbacks, and every framework states the same line of the
+#: same statement: ifrs-full:Assets, us-gaap:Assets, jppfs_cor:Assets and
+#: jpigp_cor:AssetsIFRS. What differs between them is recognition rather than
+#: definition -- development costs are capitalised under IAS 38 and generally
+#: expensed under ASC 730, and LIFO is permitted under US GAAP and prohibited
+#: by IAS 2 -- and that is on the catalogue row where a reader can find it.
+MATERIALISED_MEASURES = ("assets",)
+
 #: Dimension members that name a basis of preparation rather than a part of
 #: an entity, and which a measure is therefore resolved over.
 #:
@@ -227,6 +247,63 @@ def describe_measure(name, packages=("fincommons",)):
     )
 
 
+def canonical_concepts(measures=MATERIALISED_MEASURES,
+                       packages=("fincommons",)):
+    """The concept-to-measure pairs that may be written into a table.
+
+    One row per concept, not per catalogue row: a materialised identifier
+    answers "what is this fact" and a fact is one thing, so a concept that
+    two measures claim cannot be written down as either.
+
+    That happens, and it is not a defect of the catalogue. ``equity`` lists
+    ``us-gaap:StockholdersEquity`` second, as the best available stand-in for
+    a registrant that states no total including the non-controlling
+    interests, while ``equity_attributable_to_parent`` lists the same element
+    first because that is what it is. Both rows are right for resolving a
+    measure at query time, where the caller has asked for one measure and
+    the priority decides. Neither can be a column.
+
+    So a measure whose concepts collide with another's is refused here rather
+    than resolved by a rule, and the refusal names both. Adding a measure to
+    :data:`MATERIALISED_MEASURES` is how the combined table grows, and this
+    is the check that growth has to pass.
+
+    Returns
+    -------
+    list of (str, str)
+        ``(concept, measure)`` pairs, the concept spelled as the tables
+        spell it.
+
+    Raises
+    ------
+    ValueError
+        Where one concept is claimed by two of the measures asked for.
+    """
+    catalogue = measure_catalogue(packages=packages)
+    wanted = [str(m).strip().lower() for m in measures]
+    unknown = [m for m in wanted if m not in set(catalogue["measure"])]
+    if unknown:
+        raise ValueError(
+            f"{unknown[0]!r} is no measure of the catalogue; it defines "
+            + ", ".join(sorted(set(catalogue["measure"])))
+        )
+
+    rows = catalogue[catalogue["measure"].isin(wanted)]
+    claimed = {}
+    for row in rows.itertuples():
+        concept = f"{row.taxonomy}:{row.element}"
+        if concept in claimed and claimed[concept] != row.measure:
+            raise ValueError(
+                f"{concept} is claimed by both {claimed[concept]!r} and "
+                f"{row.measure!r}, so it cannot be written as either. A "
+                "concept that two measures claim is resolved at query time, "
+                "where the caller has asked for one of them; see "
+                "canonical_concepts."
+            )
+        claimed[concept] = row.measure
+    return sorted(claimed.items())
+
+
 def concepts_for(measure, framework, packages=("fincommons",)):
     """The concepts a measure resolves to under a framework, best first.
 
@@ -257,6 +334,13 @@ def with_measures(facts, framework=None, packages=("fincommons",)):
     catalogue names keeps a null in both, which is the great majority of them:
     a filing states thousands of facts and the catalogue defines a handful of
     measures.
+
+    A table that already carries ``MEASURE`` has it replaced rather than
+    doubled. The combined table of facts stores one, for the measures
+    :data:`MATERIALISED_MEASURES` covers; resolving here answers the wider
+    question -- every measure the catalogue defines, under a framework the
+    caller may name -- so what it works out supersedes what was stored, for
+    that query and no further. The stored column is untouched on disk.
 
     The join is on ``CONCEPT`` as the tables carry it -- the prefix and the
     element name -- which is what both the ESEF table and the SEC table hold.
@@ -297,6 +381,10 @@ def with_measures(facts, framework=None, packages=("fincommons",)):
         types.StructField("MEASURE_PRIORITY", types.IntegerType(), nullable=False),
     ]))
 
+    stored = [name for name in ("MEASURE", "MEASURE_PRIORITY")
+              if name in facts.columns]
+    if stored:
+        facts = facts.drop(*stored)
     return facts.join(func.broadcast(lookup), ["CONCEPT"], "left")
 
 
@@ -377,8 +465,10 @@ __all__ = [
     "BASIS_MEMBERS",
     "CATALOGUE_COLUMNS",
     "CATALOGUE_FILE",
+    "MATERIALISED_MEASURES",
     "MeasureDefinition",
     "MeasureDefinitions",
+    "canonical_concepts",
     "caveats",
     "concepts_for",
     "describe_measure",
