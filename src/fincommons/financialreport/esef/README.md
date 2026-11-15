@@ -196,6 +196,70 @@ The last page is a disclaimer, and the cover says in its first line and in its s
 
 A Delta Silver layer is refused rather than read: the table of facts replaces a country's partition whenever its reports change, and a Delta table keeps the files it replaced until it is vacuumed, which a reader of the files alone would count again.
 
+## A factsheet on a sector
+
+`templates/esef-sector-factsheet.qmd` is the counterpart of the factsheet on one issuer: several issuers at once, each year's figures beside the years around them and beside the market they were filed in. It reads the two Silver tables of this module as parquet and, where the lake holds them, the combined tables of `fincommons.financialreport.combined` and the exchange rates of `fincommons.exchangerate`, and renders with Quarto to a PDF.
+
+```
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-sector-factsheet.qmd
+```
+
+Two examples ship with it. The template's own first chunk holds the Austrian construction sector, nine issuers, which is small enough to read in the template and is what the page renders with no further setting. `templates/esef-sector-panel-europe.csv` holds the same sector read across Europe -- 145 issuers in seventeen countries -- and is used instead by naming it:
+
+```
+FINCOMMONS_PANEL=.../esef-sector-panel-europe.csv \
+FINCOMMONS_FINANCIAL=.../financial-leis.txt \
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-sector-factsheet.qmd
+```
+
+### The panel is a stated list
+
+**This is the one thing about the template to understand before using it.** An ESEF report carries no sector code: a filing states the issuer's legal entity identifier and nothing about what the issuer does, and the sector classification this package does hold -- `SECTOR` in `fincommons.entitymasterdata` -- is filled from the registers of the ECB, EIOPA and ESMA and covers financial entities only. So whoever writes the panel decides what the sector is. A different panel gives different totals and different medians, which is why the panel is printed in full at the front of the rendered document and why the disclaimer on the last page says in as many words that the page is about the issuers named and about no population wider than them.
+
+A panel of nine fits in the template. A panel of a hundred and forty-five does not, so the panel may instead be read from a csv named in `FINCOMMONS_PANEL`, with `LEI`, `SHORT` and `GROUP` required and `NACE`, `COUNTRY`, `NAME`, `ACTIVITY_EN` and `ACTIVITY_DE` used where the file has them. `NAME` there is for whoever maintains the file; the page names an issuer as its own report names it.
+
+Each row carries a group, and the groups are the reason the template exists in this shape rather than as one list of issuers. A contractor turns its balance sheet several times a year on advance payments, a developer holds a project for years and reports the result when it sells, a materials maker runs plant and carries inventory, a merchant holds stock and no projects at all. A median over all of them hides the thing a reader came for, so every table and chart is shown by group as well as for the panel as a whole, and the colour of a line is its group. The European panel uses five: contractors, developers, building materials, building technology, and merchants and distribution.
+
+What the repository holds limits any such panel, and the limit is worth stating because it is invisible in the output. **filings.xbrl.org holds no German and no Irish filings at all.** Hochtief, Bilfinger and Heidelberg Materials are not in it, and the Irish issuers that are -- Kingspan, Cairn Homes, Glenveagh -- are there under `GB`, filed in London. A European panel built from this repository is therefore European minus Germany, and says so.
+
+### Amounts in more than one currency
+
+A European panel reports in a dozen currencies, and a sum over them is arithmetic on different units. The template converts, and it converts by the convention of the supervisory pipelines that build on this package, which is worth stating because the column names carry it: **an amount keeps the figure and the currency the issuer filed, and the conversion only ever adds two columns beside it.** `<key>_FXRATE` is the rate that was applied and is 1 where the amount was filed in the target currency already; `<key>_DOMESTIC` is the filed amount divided by that rate. The name says `DOMESTIC` rather than `EUR` so that nothing downstream has to be renamed when the target changes.
+
+An amount whose currency the rate table does not quote stays unconverted. `_DOMESTIC` is missing, the sums pass over it, the count beside the sum is smaller by one, and the page names the issuer-years it happened to. It is never the filed figure carried over as though it were already in the target currency, and never a nought. A lake whose rate table holds nothing quoted against the target is refused outright rather than converted into a page of blanks -- the same check the EMIR and SFTR pipelines make, and for the same reason: a null layer reads afterwards as a quiet market rather than as a table that could not be built.
+
+Which rate is applied follows IAS 21 rather than one rate per filing: a balance at the closing rate of the reporting date, an income or expense at the average of the daily rates over the financial year. **A ratio is not converted at all.** A margin, an equity ratio and a return are each a quotient of two amounts of one filing in one currency, so the currency cancels and they are computed from the figures as filed -- which is also why an issuer whose currency the table does not reach still stands in the benchmark while its amounts are missing from the sums.
+
+A panel in one currency needs none of this, reads no rate table, and needs no `exchangerate` section in the configuration file.
+
+### The benchmark, and what counts as a bank
+
+The benchmark is read from the combined table through the materialised `MEASURE` column rather than by resolving a measure per filing. That is the division of labour the combined README argues for, and it has a cost the page states: only the first concept of each framework carries a measure, so a filing that stated revenue as IFRS 15 revenue alone is in the tables of the panel and not in the quartiles, and every count beside a benchmark figure is a count of filings that stated **and named** the figure rather than a population. Which filings are in scope is three lines -- source, country, framework -- so a lake that has run `sec` or `edinet` widens the same page to those regimes, with the warning that module makes about measures that are not skewed alike between them.
+
+Banks and insurers are shown apart rather than dropped, because an equity ratio of ten per cent in the same column as one of forty says something worth seeing about what the ratio means. Two tests identify them, and the second exists because the first has a hole in it:
+
+* the **sectoral registers** -- the ECB's register of monetary financial institutions, EIOPA's of insurance undertakings and of institutions for occupational retirement provision, and ESMA's list of central counterparties, which is where `SECTOR` of `fincommons.entitymasterdata` gets its answer. The LEIs are read from a file named in `FINCOMMONS_FINANCIAL`, one per line, which `entitymasterdata.download_ecb_mfi` and its siblings are enough to produce; GLEIF is not needed for this one question;
+* the **filings themselves**, for a filer whose primary statements carry a line only a financial undertaking has: interest revenue computed with the effective interest method, or one of the IFRS 17 insurance lines. The concepts are named in the first chunk.
+
+The hole is twofold and is what the second test closes. A register lists the authorised entity, and what files an annual financial report is usually the group above it -- BAWAG P.S.K. is on the register and BAWAG Group AG, which files, is not. And the registers are European, so a British bank has not been on them since 2020, which for a lake holding the United Kingdom would leave the largest banks in the population unflagged. Over the Austrian filings the registers alone reach 22 of the 27 the two tests together find; the five they miss are holding companies, and their own statements name them.
+
+### How a figure is picked
+
+| What it sets out | From |
+|---|---|
+| the panel, with the group, the country and the years each issuer filed for | `filings` |
+| the totals of the sector, year by year, each with the number of issuers that stated the figure | `facts` |
+| growth like for like, over the issuers present in both years rather than over those totals | `facts` |
+| the groups apart: revenue, the operating result, the margin and the equity ratio of each | `facts` |
+| each issuer in the latest year, and its revenue since the first year shown | `facts` |
+| the quartiles of the panel against the quartiles of the market, for four indicators | `financialreport.fact` |
+| the equity ratio of every issuer against the interquartile range of the market, year by year | both |
+| which lines each issuer tagged, in how many years | `facts` |
+
+One filing per issuer and financial year is chosen, by the rule of the single-issuer factsheet: the report in the language of the page, then the one with fewer validation errors, then the one the repository processed last. That last tie-break is not cosmetic. PORR filed its report for 2024 twice, both in German and both validating without error, and the two differ by a factor of a thousand -- one states revenue of 6,190,521 with the unit `iso4217:EUR` and the other 6,190,521,000 -- so the filing the repository processed last is the one that is right.
+
+A financial year is placed in the year its period end falls in, a year ending before July counting into the year before, so that Zumtobel's year to 30 April 2026 is the sector's 2025 and is still labelled 2025/26 wherever it stands alone. **No EBITDA is derived**, for the reason it is not derived in the factsheet on one issuer. A Delta Silver layer is refused in either module, for the reason given above.
+
 ## A data quality report on the findings
 
 `templates/esef-quality-report.qmd` is the third template of the module and the counterpart of the table of issues: what the checks found, read over the whole record rather than filing by filing. It reads the three Silver tables as parquet and renders with Quarto to a PDF of some sixteen pages. **No number in it is an amount out of a report**; every figure is a count of filings, findings or checks.

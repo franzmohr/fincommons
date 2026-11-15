@@ -8,6 +8,75 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
+- `esef`: a factsheet on a sector, `templates/esef-sector-factsheet.qmd`, the
+  counterpart of the one on a single issuer. It reads the two Silver tables of
+  the module for the panel's own lines and, where the lake holds them, the
+  combined tables of `financialreport` for the benchmark and the rates of
+  `exchangerate` for the conversion, and renders with Quarto to a PDF. Two
+  examples ship: the Austrian construction sector in the template's own first
+  chunk, nine issuers, and the same sector read across Europe in
+  `templates/esef-sector-panel-europe.csv`, 145 issuers in seventeen
+  countries, in five groups from the contractors through the developers, the
+  materials makers and building technology to the merchants.
+  The panel is a stated list and the template says so twice, in the chunk
+  that sets it and in the disclaimer on the last page. An ESEF report carries
+  no sector code, and `SECTOR` of `entitymasterdata` covers financial
+  entities only, so which issuer stands for a sector is a judgement rather
+  than a classification; a different panel gives different totals and
+  different medians, and the panel is printed in full at the front of the
+  rendered document for that reason. A panel of nine fits in the template and
+  a panel of a hundred and forty-five does not, so it may instead be read
+  from a csv named in `FINCOMMONS_PANEL`.
+  What the repository holds limits any such panel, and the limit is invisible
+  in the output unless it is said: **filings.xbrl.org holds no German and no
+  Irish filings at all**. Hochtief, Bilfinger and Heidelberg Materials are
+  not in it, and the Irish issuers that are stand under `GB`. A European
+  panel built from this repository is Europe minus Germany.
+  Amounts in more than one currency are converted by the `_DOMESTIC`
+  convention of the EMIR and SFTR pipelines, which is the reason the columns
+  are named as they are: the filed figure and its currency stay untouched,
+  `<key>_FXRATE` beside them is the rate applied and is 1 where the amount
+  was filed in the target currency, and `<key>_DOMESTIC` is the filed amount
+  divided by that rate. An amount whose currency the table does not quote
+  stays unconverted rather than being carried over or read as a nought, and a
+  rate table holding nothing quoted against the target is refused outright --
+  the check those pipelines make, so that a page of blanks cannot be mistaken
+  for a sector that reported nothing. Which rate applies follows IAS 21: a
+  balance at the closing rate, an income or expense at the average of the
+  year. A ratio is not converted at all, the currency cancelling in a
+  quotient of two amounts of one filing.
+  Banks and insurers are shown apart rather than dropped, and two tests find
+  them. The sectoral registers are the first -- the ECB's MFI register,
+  EIOPA's two and ESMA's list of CCPs, read as a file of LEIs, with no need
+  of GLEIF for this one question. The filings themselves are the second, for
+  a filer whose primary statements carry interest revenue computed with the
+  effective interest method or one of the IFRS 17 lines. The second exists
+  because the first has a hole: a register lists the authorised entity and
+  what files is usually the group above it -- BAWAG P.S.K. is on the register
+  and BAWAG Group AG, which files, is not -- and a British bank has not been
+  on a European register since 2020. Over the Austrian filings the registers
+  alone reach 22 of the 27 the two tests together find.
+  The benchmark is read through the materialised `MEASURE` column rather than
+  by resolving a measure per filing, which is the division of labour the
+  combined README argues for, and the page states the cost: only the first
+  concept of each framework carries a measure, so a filing stating revenue as
+  IFRS 15 revenue alone is in the tables of the panel and not in the
+  quartiles, and every count beside a benchmark figure counts filings that
+  stated and named the figure rather than a population.
+  Two findings came out of building it, both now in the README. The net
+  margin row for banks and insurers is empty rather than nought: no Austrian
+  bank tags `ifrs-full:Revenue`, because a bank's income statement has no
+  line that means it. And of the 601 Austrian filings read, 96 carry a total
+  liabilities figure; the rest present non-current and current liabilities
+  and never add them up. The two nulls look alike in one column and neither
+  is a zero.
+  The rule that picks one filing per issuer and year turned out not to be
+  cosmetic either. PORR filed its report for 2024 twice, both in German and
+  both validating without error, and the two differ by a factor of a
+  thousand: one states revenue of 6,190,521 with the unit `iso4217:EUR` and
+  the other 6,190,521,000. Taking the report the repository processed last is
+  what picks the right one.
+
 - `edinet` and `financialreport`: the entity question is settled, and the
   answer is yes. The corporate number of the National Tax Agency, which the
   table of filings carries as `JCN`, is not an identifier of its own: it is a
