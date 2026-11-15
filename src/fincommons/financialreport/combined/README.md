@@ -6,7 +6,7 @@ Module `financialreport` puts the filings of the tagging regimes side by side. T
 
 It holds no data of its own and collects nothing. There is no Bronze layer here, nothing is downloaded, and both tables are derived entirely from tables that are themselves rebuilt -- so both are rebuilt in full on every run, with no watermark to keep and nothing to resume from.
 
-### Three things it deliberately does not do
+### What it does, and what it deliberately does not
 
 **It takes nothing away from the two source modules.** Their tables stay authoritative and complete, neither imports this one, and neither knows it exists. An ESEF-only lake builds nothing here and loses nothing by it; the factsheet and the coverage report that `esef` ships keep working untouched, as does the factsheet of `sec`. The dependency runs one way, and only one way.
 
@@ -14,7 +14,24 @@ It holds no data of its own and collects nothing. There is no Bronze layer here,
 
 Japan is the exception, and it is worth saying why rather than leaving it as a happy accident. The corporate number of the National Tax Agency, which [`edinet`](../edinet/README.md) carries as `JCN`, is not an identifier of its own: it is a check digit followed by the twelve-digit register number of the commercial register, and GLEIF records that same register number against an LEI issued to a Japanese company. The join is therefore arithmetic rather than a lookup table, and it is exact -- two spellings of one register number, not a comparison of names. It reaches about one listed Japanese filer in seven, the rest having no LEI at all, so it is enough to put a Japanese filer beside a European one where both exist and not enough to key anything by. The edinet README sets out the check and what it found.
 
-**It does not reconcile the vocabularies in the tables.** `ifrs-full:Revenue`, `us-gaap:Revenues` and `jppfs_cor:NetSales` stand as they were filed. What they have in common is a judgement about accounting, which `mapping` records as data rather than as code, and which is applied per query by whoever has read what it rests on. That catalogue reaches IFRS and US GAAP and does not yet reach Japan; see the section on it below.
+**It reconciles the vocabularies one measure at a time, and only in a column of its own.** `MEASURE` carries the identifier of what a fact *is* -- the same for every regime that states the same figure -- beside the `CONCEPT` its filer tagged, which is never altered. It is filled for the measures `mapping.MATERIALISED_MEASURES` covers and null for everything else, which today is nearly the whole table.
+
+That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
+
+It begins with **total assets**, which is the cleanest of the eight:
+
+| framework | concept |
+| --- | --- |
+| IFRS | `ifrs-full:Assets` |
+| US-GAAP | `us-gaap:Assets` |
+| JP-GAAP | `jppfs_cor:Assets` |
+| IFRS, as a Japanese filer tags it | `jpigp_cor:AssetsIFRS` |
+
+One element per taxonomy, no fallbacks, and every framework states the same line of the same statement. What differs between them is recognition rather than definition -- development costs are capitalised under IAS 38 and generally expensed under ASC 730, LIFO is permitted under US GAAP and prohibited by IAS 2 -- and that is on the catalogue row where a reader can find it rather than hidden by the shared name.
+
+Growing the column is one line in `MATERIALISED_MEASURES` plus the check it has to pass. `canonical_concepts` refuses a concept that two measures claim, because a fact is one thing and a column that said otherwise would turn one fact into two rows. `us-gaap:StockholdersEquity` is the live example: it is the best stand-in for `equity` where a registrant states no total including the non-controlling interests, and it is itself `equity_attributable_to_parent`. Both rows are right for resolving a measure at query time, where the caller has asked for one of them and a priority decides. Neither can be a column, so `equity` is not materialised and will not be until the catalogue says which it is.
+
+**The concept is never altered to carry the identifier.** `ifrs-full:Revenue`, `us-gaap:Revenues` and `jppfs_cor:NetSales` stand in `CONCEPT` as they were filed, whatever `MEASURE` says beside them, so that what a filer tagged is always in the table and the judgement about what it means is always separable from it. That judgement is `mapping`'s, recorded as data rather than as code; it reaches all three regimes, and the section on the catalogue below sets out what it does and does not settle.
 
 ### What each source covers
 

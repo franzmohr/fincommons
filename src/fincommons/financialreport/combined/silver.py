@@ -32,6 +32,14 @@ from .common import (FACT_PARTITION_BY, SOURCES, fact_schema, filing_schema,
 
 logger = logging.getLogger(__name__)
 
+#: The columns a source adapter produces: those of the combined table of
+#: facts except the identifier of what a fact is, which no source knows.
+#: ``MEASURE`` is given once, to the union of the sources, so that one place
+#: decides it and a regime added later cannot answer the question
+#: differently from the others.
+SOURCE_FACT_COLUMNS = tuple(name for name in fact_schema.names
+                            if name != "MEASURE")
+
 #: How the prefix a filing binds to a taxonomy says which framework it
 #: reports under. Both tables spell a concept as prefix and name, so the
 #: prefix is what there is to go on, and it is the same thing the Commission
@@ -92,7 +100,7 @@ def facts_from_esef(spark, config_path):
         .withColumn("JCN", func.lit(None).cast("string"))
         .withColumn("FRAMEWORK", _framework_of(func.col("CONCEPT")))
         .withColumn("PERIODYEAR", func.year("PERIODEND"))
-        .select(*fact_schema.names)
+        .select(*SOURCE_FACT_COLUMNS)
     )
 
 
@@ -121,7 +129,7 @@ def facts_from_sec(spark, config_path):
         .withColumn("PERIODYEAR", func.year("PERIODEND"))
         .withColumn("TEXT", func.lit(None).cast("string"))
         .withColumn("DIMENSIONS", func.lit(None).cast("string"))
-        .select(*fact_schema.names)
+        .select(*SOURCE_FACT_COLUMNS)
     )
 
 
@@ -280,7 +288,7 @@ def facts_from_edinet(spark, config_path):
                     _japanese_framework(func.col("CONCEPT"),
                                         func.col("_STATED")))
         .withColumn("PERIODYEAR", func.year("PERIODEND"))
-        .select(*fact_schema.names)
+        .select(*SOURCE_FACT_COLUMNS)
     )
 
 
@@ -331,6 +339,33 @@ READERS = {
 }
 
 
+def with_canonical_measure(facts, measures=None, packages=("fincommons",)):
+    """Give each fact the identifier of what it is, where one is agreed.
+
+    The concept a filer tagged stays exactly as filed and this is written
+    beside it, so that the same figure of three regimes answers to one name.
+    A fact no materialised measure covers keeps a null, which is most of
+    them.
+
+    One row in and one row out. That is why the concepts are resolved through
+    :func:`fincommons.financialreport.combined.mapping.canonical_concepts`,
+    which refuses a concept two measures claim rather than letting the join
+    turn one fact into two rows.
+    """
+    from .mapping import MATERIALISED_MEASURES, canonical_concepts
+
+    pairs = canonical_concepts(
+        MATERIALISED_MEASURES if measures is None else measures, packages)
+    if not pairs:
+        return facts.withColumn("MEASURE", func.lit(None).cast("string"))
+
+    measure = func.lit(None).cast("string")
+    for concept, name in pairs:
+        measure = func.when(func.col("CONCEPT") == concept,
+                            func.lit(name)).otherwise(measure)
+    return facts.withColumn("MEASURE", measure)
+
+
 def combine(spark, config_path, what, sources=None):
     """Return the rows of one combined table, from the sources available.
 
@@ -366,6 +401,8 @@ def combine(spark, config_path, what, sources=None):
     combined = parts[0]
     for part in parts[1:]:
         combined = combined.unionByName(part)
+    if what == "fact":
+        combined = with_canonical_measure(combined).select(*fact_schema.names)
     return combined
 
 
@@ -418,6 +455,7 @@ __all__ = [
     "FRAMEWORK_PREFIXES",
     "JAPANESE_STANDARDS",
     "READERS",
+    "SOURCE_FACT_COLUMNS",
     "STANDARDS_ELEMENT",
     "TAXONOMY_FRAMEWORKS",
     "available_sources",
@@ -429,4 +467,5 @@ __all__ = [
     "filings_from_esef",
     "filings_from_sec",
     "update_silver_financialreport",
+    "with_canonical_measure",
 ]

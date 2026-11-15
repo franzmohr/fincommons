@@ -62,6 +62,7 @@ fact_schema = StructType() \
     .add("PERIODEND", DateType(), True) \
     .add("PERIODYEAR", IntegerType(), True) \
     .add("CONCEPT", StringType(), False) \
+    .add("MEASURE", StringType(), True) \
     .add("PRDSTART", DateType(), True) \
     .add("PRDEND", DateType(), False) \
     .add("UNIT", StringType(), True) \
@@ -110,10 +111,35 @@ them line by line; a Japanese profit and loss account has two results where
 an IFRS one has a single operating line.
 
 ``CONCEPT`` is the concept as the filing tagged it, prefix and name, and is
-not resolved across frameworks. ``ifrs-full:Revenue`` and
-``us-gaap:Revenues`` stand as they were filed; what the two have in common is
-a judgement, and :mod:`fincommons.financialreport.combined.mapping` is where it is
-made.
+never altered: ``ifrs-full:Revenue``, ``us-gaap:Revenues`` and
+``jppfs_cor:NetSales`` stand as they were filed, so that what a filer said
+is always in the table.
+
+``MEASURE`` is the other half of that, and the one a question is put to. It
+is the identifier of what the fact *is*, the same for every regime that
+states the same figure, and it is filled only for the concepts
+:data:`fincommons.financialreport.combined.mapping.MATERIALISED_MEASURES`
+covers. Everything else carries a null, which today is the great majority of
+the table: a filing states thousands of facts and the identifier is given to
+a handful of them on purpose.
+
+The restraint is the point. A materialised identifier is read by people who
+will not go back to the caveat, so a measure is written into this column only
+once its concepts are agreed to mean the same figure in every framework the
+catalogue defines it for. It begins with total assets -- ``ifrs-full:Assets``,
+``us-gaap:Assets``, ``jppfs_cor:Assets`` and ``jpigp_cor:AssetsIFRS``, one
+element per taxonomy with no fallbacks -- and grows one measure at a time.
+What a measure means, and what differs between the frameworks that state it,
+is on the catalogue row; ``describe_measure`` prints it.
+
+A concept two measures claim cannot be written here as either, and
+:func:`fincommons.financialreport.combined.mapping.canonical_concepts`
+refuses it rather than picking one. That is not a defect of the catalogue:
+``us-gaap:StockholdersEquity`` is the best stand-in for ``equity`` where a
+registrant states no wider total and is itself
+``equity_attributable_to_parent``, which is a sensible thing to say when a
+caller has asked for one of the two and a priority decides, and not a thing
+that can be a column.
 
 ``TEXT`` and ``DIMENSIONS`` are filled for the rows that came from ESEF and
 from EDINET, and empty for every row the Commission contributes -- not

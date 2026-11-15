@@ -390,6 +390,31 @@ release may change the public API, which `tests/test_public_api.py` lists.
   rather than 売上高 states it under an element no row reaches, none of the
   reports this was written against using one.
 
+- `financialreport`: the combined table of facts carries `MEASURE`, a
+  canonical identifier for the figure a fact states, so that the same concept
+  has the same name in all three regimes. It is stored and not resolved on
+  demand: `ifrs-full:Assets`, `us-gaap:Assets`, `jppfs_cor:Assets` and
+  `jpigp_cor:AssetsIFRS` all answer to `'assets'` in the table itself, and the
+  concept the filer tagged stays beside it, so neither the agreed meaning nor
+  what was actually said is lost.
+  It starts with one measure and will grow one at a time.
+  `MATERIALISED_MEASURES` names what has been agreed -- today `('assets',)` --
+  and a measure joins it when its concepts have been read against real
+  filings and found to mean the same figure. Most of the column is therefore
+  null, which is the honest answer: an identifier given to a concept that
+  only approximately matches would be worse than none, because nothing
+  downstream could tell the two apart.
+  `canonical_concepts` refuses to build a lookup in which two measures claim
+  one concept, and two such claims already exist:
+  `us-gaap:StockholdersEquity` is both `equity` and
+  `equity_attributable_to_parent`, and `us-gaap:NetIncomeLoss` is both
+  `profit_loss` and `profit_loss_attributable_to_parent`. Those are judgements
+  about the catalogue and not about this column, so the column waits for them
+  rather than picking a winner.
+  `with_measures` keeps working as before and now supersedes the stored
+  column for the query it is asked: the table stores the measures agreed so
+  far, resolving asks about every measure the catalogue defines.
+
 ### Fixed
 
 - `financialreport`: a Japanese filing's framework is now decided per fact
