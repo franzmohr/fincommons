@@ -514,8 +514,30 @@ period_year <- function(date) {
 }
 
 filings <- filings %>% mutate(FY = period_year(PERIODEND))
-years_shown <- sort(unique(filings$FY)) %>% tail(n_years)
-years_read <- sort(unique(filings$FY)) %>% tail(n_years + 1)
+
+# A financial year still being filed is not a year with less in it, and
+# showing it as one would put a sector's latest year on two or three
+# issuers. A year is therefore shown only where at least `min_share` of the
+# issuers of the fullest year have filed for it. On a European panel in
+# November 2026 that drops the three issuers whose year ended in the second
+# half of 2026 and whose peers have months left to file; on a panel whose
+# issuers all report to 31 December it drops nothing.
+min_share <- 0.5
+filed_per_year <- filings %>%
+  group_by(FY) %>%
+  summarise(issuers = n_distinct(LEI), .groups = "drop")
+complete_years <- filed_per_year %>%
+  filter(issuers >= min_share * max(issuers)) %>%
+  pull("FY") %>%
+  sort()
+if (length(complete_years) == 0) {
+  stop("No financial year of the panel has filings from half the issuers of ",
+       "its fullest year, so there is no year to show.")
+}
+years_shown <- tail(complete_years, n_years)
+years_read <- tail(complete_years, n_years + 1)
+partial_years <- setdiff(sort(unique(filings$FY)), complete_years)
+partial_years <- partial_years[partial_years > max(years_shown)]
 filings <- filings %>% filter(FY %in% years_read)
 
 facts <- open_dataset(file.path(path_esef, "facts")) %>%
@@ -652,9 +674,14 @@ for (key in setdiff(unique(names(concepts)), names(wide))) {
 # It is read per issuer and year rather than once for the panel, because an
 # issuer may redenominate -- a Croatian one did, on the euro changeover of
 # 2023 -- and because a European panel has a dozen of them at once.
+# The unit of a numeric fact is a currency as `iso4217:EUR`, and the prefix
+# is not always written in lower case: a handful of filings spell it
+# `ISO4217:EUR`. Stripping it case-insensitively is the difference between
+# one currency and two, and an issuer landing in the second would have no
+# rate and no converted amount at all.
 reported_ccy <- tagged %>%
   filter(key == "assets", !is.na(UNIT)) %>%
-  transmute(LEI, FY, CCY = sub("^iso4217:", "", UNIT)) %>%
+  transmute(LEI, FY, CCY = toupper(sub("(?i)^iso4217:", "", UNIT, perl = TRUE))) %>%
   distinct(LEI, FY, .keep_all = TRUE)
 
 wide <- wide %>% left_join(reported_ccy, by = c("LEI", "FY"))
@@ -877,15 +904,38 @@ like_for_like <- shown %>%
 # can see which part of the sector a movement in the total came from: the
 # groups do not move together, and that is the whole reason the panel
 # carries a group per issuer rather than one label for all of them.
+# A ratio of two sums has to be summed over the same issuers in both, and
+# that is not what `sum(a) / sum(b)` gives when one issuer states a and not
+# b. The materials group is where this showed itself: Saint-Gobain states
+# its revenue and no operating result under a concept of the taxonomy, so
+# its revenue was in the denominator of the group's margin and its result
+# was in no numerator, and the margin came out meaningless. Each ratio
+# below is therefore summed over the issuers that stated both of its
+# figures, and the count of those is carried beside it.
+ratio_of_sums <- function(num, den) {
+  ok <- !is.na(num) & !is.na(den)
+  if (!any(ok) || sum(den[ok]) == 0) return(NA_real_)
+  100 * sum(num[ok]) / sum(den[ok])
+}
+
 by_group <- shown %>%
   group_by(GROUP, FY) %>%
   summarise(across(c(revenue_DOMESTIC, ebit_DOMESTIC, profit_DOMESTIC,
                      assets_DOMESTIC, equity_DOMESTIC),
                    ~sum(.x, na.rm = TRUE)),
-            issuers = n_distinct(LEI), .groups = "drop") %>%
+            issuers = n_distinct(LEI),
+            ebit_margin = ratio_of_sums(ebit_DOMESTIC, revenue_DOMESTIC),
+            ebit_margin_n = sum(!is.na(ebit_DOMESTIC) & !is.na(revenue_DOMESTIC)),
+            equity_ratio = ratio_of_sums(equity_DOMESTIC, assets_DOMESTIC),
+            equity_ratio_n = sum(!is.na(equity_DOMESTIC) & !is.na(assets_DOMESTIC)),
+            # The median of the issuers' own margins, which no single
+            # issuer can carry and which a sum always can.
+            ebit_margin_median = median(ebit_margin[is.finite(ebit_margin)],
+                                        na.rm = TRUE),
+            equity_ratio_median = median(equity_ratio[is.finite(equity_ratio)],
+                                         na.rm = TRUE),
+            .groups = "drop") %>%
   rename_with(~sub("_DOMESTIC$", "", .x)) %>%
-  mutate(ebit_margin = 100 * ebit / revenue,
-         equity_ratio = 100 * equity / assets) %>%
   arrange(GROUP, FY)
 ```
 
@@ -1212,6 +1262,26 @@ g <- ggplot(temp, aes(x = FY)) +
 g
 ```
 
+```{r partial-years, results = "asis"}
+if (length(partial_years) > 0) {
+  n <- filed_per_year %>% filter(FY %in% partial_years)
+  cat(tr(
+    paste0("A later financial year than ", max(years_shown), " is not shown. ",
+           paste(sprintf("%d has %d issuer(s) so far", n$FY, n$issuers),
+                 collapse = "; "),
+           ", against ", max(filed_per_year$issuers), " in the fullest year, ",
+           "so it is a year still being filed rather than a year with less ",
+           "in it."),
+    paste0("Ein spateres Geschaftsjahr als ", max(years_shown),
+           " wird nicht gezeigt. ",
+           paste(sprintf("%d hat bisher %d Emittenten", n$FY, n$issuers),
+                 collapse = "; "),
+           ", gegen ", max(filed_per_year$issuers),
+           " im vollsten Jahr; es ist ein Jahr, das noch eingereicht wird, ",
+           "und kein Jahr mit weniger Inhalt.")), "\n")
+}
+```
+
 ```{r glance-growth, results = "asis"}
 if (nrow(like_for_like) > 0) {
   last <- like_for_like %>% slice_tail(n = 1)
@@ -1242,17 +1312,27 @@ temp <- by_group %>%
     !!tr("Issuers", "Emittenten") := issuers,
     !!tr("Revenue", "Umsatz") := fmt_num(revenue / scale),
     !!tr("EBIT", "EBIT") := fmt_num(ebit / scale),
-    !!tr("EBIT margin, %", "EBIT-Marge, %") := fmt_num(ebit_margin, 1),
+    !!tr("EBIT margin, %", "EBIT-Marge, %") :=
+      paste0(fmt_num(ebit_margin, 1), " (", ebit_margin_n, ")"),
+    !!tr("Median margin, %", "Median-Marge, %") :=
+      fmt_num(ebit_margin_median, 1),
     !!tr("Result", "Ergebnis") := fmt_num(profit / scale),
     !!tr("Total assets", "Bilanzsumme") := fmt_num(assets / scale),
-    !!tr("Equity ratio, %", "EK-Quote, %") := fmt_num(equity_ratio, 1))
+    !!tr("Equity ratio, %", "EK-Quote, %") := fmt_num(equity_ratio, 1),
+    !!tr("Median equity ratio, %", "Median-EK-Quote, %") :=
+      fmt_num(equity_ratio_median, 1))
 
-knitr::kable(temp, align = "llrrrrrrr",
+knitr::kable(temp, align = "llrrrrrrrrr",
              caption = tr(
                paste0("Sums over the issuers of the group that stated the ",
                       "figure, in ", amount_label, ". A group whose issuer ",
                       "count changes from one year to the next is a group ",
-                      "whose total changed for that reason as well."),
+                      "whose total changed for that reason as well. A margin ",
+                      "and an equity ratio are summed over the issuers that ",
+                      "stated both of their figures, and that count is in ",
+                      "brackets; the median beside each is over the issuers' ",
+                      "own ratios, which one large or one mis-stated issuer ",
+                      "cannot carry and a sum always can."),
                paste0("Summen über die Emittenten der Gruppe, die die Größe ",
                       "angegeben haben, in ", amount_label, ". Ändert sich ",
                       "die Zahl der Emittenten einer Gruppe von Jahr zu ",
