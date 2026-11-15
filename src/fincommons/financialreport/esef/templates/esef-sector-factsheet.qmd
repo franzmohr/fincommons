@@ -184,9 +184,15 @@ group_levels <- c(group_levels, setdiff(unique(panel$GROUP), group_levels))
 # regimes. Holding `framework` to "IFRS" is the safe way to widen this page
 # beyond Europe; naming several frameworks is a decision to be made with
 # that section of the README open.
+# `country` left out means the countries the panel itself filed in, which is
+# the right default and not merely a convenient one: the market a panel is
+# held against is the market it was filed in. It also removes a trap. The
+# panel may be replaced by a file without touching this list, and a country
+# written out here would then quietly measure a European panel against one
+# national market and say nothing about having done so.
 benchmark <- list(
   source    = NULL,   # "esef", "sec", "edinet"; NULL for every one collected
-  country   = "AT",   # as the source codes it; NULL for every country
+  country   = NULL,   # as the source codes it; NULL for the panel's own
   framework = NULL    # "IFRS", "US-GAAP", "JP-GAAP"; NULL for every one
 )
 
@@ -547,8 +553,14 @@ if (has_combined) {
   if (!is.null(benchmark$source)) {
     bench_filings <- bench_filings %>% filter(SOURCE %in% benchmark$source)
   }
-  if (!is.null(benchmark$country)) {
-    bench_filings <- bench_filings %>% filter(COUNTRY %in% benchmark$country)
+  # The countries of the benchmark: the ones named above, or the ones the
+  # panel filed in where none are.
+  bench_countries <- benchmark$country
+  if (is.null(bench_countries)) {
+    bench_countries <- sort(unique(filings$COUNTRY[!is.na(filings$COUNTRY)]))
+  }
+  if (length(bench_countries) > 0) {
+    bench_filings <- bench_filings %>% filter(COUNTRY %in% bench_countries)
   }
   if (!is.null(benchmark$framework)) {
     bench_filings <- bench_filings %>% filter(FRAMEWORK %in% benchmark$framework)
