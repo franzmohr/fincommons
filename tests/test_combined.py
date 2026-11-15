@@ -91,6 +91,9 @@ def write_esef(spark, config_path, framework="ifrs-full"):
          f"{framework}:ProfitLossAttributableToOwnersOfParent",
          date(2025, 1, 1), date(2025, 12, 31), "EUR", None, 28.0, None,
          0, "en"),
+        ("DK", "lei-2025-12-31-0", LEI, date(2025, 12, 31), "f10",
+         f"{framework}:EquityAttributableToOwnersOfParent", None,
+         date(2025, 12, 31), "EUR", None, 460.0, None, 0, "en"),
     ], schema=esef.facts_schema)
     write_silver(filings, esef.ref_silver_filings(config_path))
     write_silver(facts, esef.ref_silver_facts(config_path),
@@ -684,11 +687,10 @@ def test_equity_of_every_regime_answers_to_one_name(spark, config):
         "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"}
 
 
-def test_the_equity_excluding_minorities_is_not_given_the_name(spark, config):
-    """us-gaap:StockholdersEquity is ranked second "because many filings tag
-    no total including NCI, not because it is equivalent". For a registrant
-    that has non-controlling interests it is a different number, and the
-    element does not say whether a registrant has any."""
+def test_the_two_american_equities_are_two_measures(spark, config):
+    """us-gaap:StockholdersEquity is ranked second under equity because it
+    excludes the minorities, and first under its own measure because that
+    is what it is. Both facts are named, and named differently."""
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
@@ -696,15 +698,67 @@ def test_the_equity_excluding_minorities_is_not_given_the_name(spark, config):
     including = by_concept[
         "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]
     assert including["MEASURE"] == "equity"
-    assert by_concept["us-gaap:StockholdersEquity"]["MEASURE"] is None
+    assert by_concept["us-gaap:StockholdersEquity"]["MEASURE"] \
+        == "equity_attributable_to_parent"
     assert by_concept["us-gaap:StockholdersEquity"]["VALUE"] \
         != including["VALUE"]
 
 
-def test_the_equity_excluding_minorities_waits_for_its_own_measure():
-    """Its null is the one that is temporary. The element is the first
-    concept of equity_attributable_to_parent, so the day that measure is
-    written down this fact takes a name -- and the right one."""
+def test_no_japanese_filing_can_carry_the_attributable_equity(spark, config):
+    """The only structural gap in the column. Every other absence depends
+    on what a filer tagged; this one depends on nothing about the filer.
+    Japan GAAP has no element for 自己資本, which is 株主資本 plus
+    評価・換算差額等 -- a sum rather than a line -- so a query filtering on
+    this measure excludes Japan entirely and says nothing about it."""
+    from fincommons.financialreport.combined import mapping
+
+    write_edinet(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+
+    assert not [row for row in facts
+                if row["MEASURE"] == "equity_attributable_to_parent"]
+    # Not because this filer tagged nothing: there is no element to tag.
+    assert mapping.concepts_for("equity_attributable_to_parent", "JP-GAAP") == []
+    assert not [c for c in dict(mapping.canonical_concepts(
+        ("equity_attributable_to_parent",))) if c.startswith("jppfs_cor:")]
+    # And the sum is not computed to close the gap.
+    assert any(row["MEASURE"] == "equity" for row in facts)
+
+
+def test_the_catalogue_is_now_wholly_materialised():
+    from fincommons.financialreport.combined import mapping
+
+    assert set(mapping.MATERIALISED_MEASURES) \
+        == set(mapping.measure_catalogue()["measure"])
+
+
+def test_a_new_catalogue_measure_is_not_materialised_by_being_added(monkeypatch):
+    """The gate is the point of the tuple. It is written out rather than
+    derived from the catalogue so that writing a row and claiming a figure
+    is comparable stay two separate acts."""
+    import pandas
+
+    from fincommons.financialreport.combined import mapping
+
+    catalogue = mapping.measure_catalogue()
+    invented = pandas.DataFrame(
+        [("ebitda", "IFRS", "ifrs-full", "ProfitLossFromOperatingActivities",
+          1, "", "", "test")],
+        columns=list(mapping.CATALOGUE_COLUMNS))
+    monkeypatch.setattr(
+        mapping, "measure_catalogue",
+        lambda **kw: pandas.concat([catalogue, invented], ignore_index=True))
+
+    named = dict(mapping.canonical_concepts())
+
+    assert "ebitda" not in set(named.values())
+    assert "ifrs-full:ProfitLossFromOperatingActivities" not in named
+
+
+def test_the_equity_excluding_minorities_is_its_own_measure():
+    """The element is the second concept of equity and the first of
+    equity_attributable_to_parent, so the priority rule gives it the name
+    it actually has."""
     from fincommons.financialreport.combined import mapping
 
     assert "us-gaap:StockholdersEquity" not in dict(
@@ -1046,7 +1100,7 @@ def test_the_facts_of_both_regimes_land_in_one_table(spark, config):
 
     facts = common.connect_to_financialreport(spark, config)
 
-    assert facts.count() == 18
+    assert facts.count() == 19
     assert sorted({row["SOURCE"] for row in facts.collect()}) == ["esef", "sec"]
 
 
@@ -1164,7 +1218,7 @@ def test_the_count_of_facts_of_an_esef_filing_comes_from_its_facts(spark, config
 
     filing = common.connect_to_financialreport(spark, config, "filing").collect()[0]
 
-    assert filing["FACTS"] == 9
+    assert filing["FACTS"] == 10
     assert filing["FRAMEWORK"] == "IFRS"
 
 

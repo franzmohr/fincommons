@@ -583,6 +583,36 @@ release may change the public API, which `tests/test_public_api.py` lists.
   actually states, to ask about a population.** The column does not replace
   the function, and this pair is where that stops being a technicality.
 
+- `financialreport`: `equity_attributable_to_parent` is the eighth measure
+  and completes the catalogue. It names `us-gaap:StockholdersEquity` as the
+  profit pair named `us-gaap:NetIncomeLoss`, and it is the weakest of the
+  eight for a reason no other measure has.
+  **Its absence under Japan GAAP is structural rather than conditional.**
+  Every other gap in this column depends on what a filer tagged -- a
+  registrant stating no total liabilities, one reporting no minorities to
+  attribute away -- and changing the filer closes it. This one depends on
+  nothing about the filer at all: Japan GAAP has no element for 自己資本,
+  which is 株主資本 plus 評価・換算差額等, a sum rather than a line. No
+  `JP-GAAP` filing can carry this measure however it is prepared, and
+  `concepts_for('equity_attributable_to_parent', 'JP-GAAP')` returns
+  nothing, so a query filtering on it excludes Japan entirely and says
+  nothing about having done so. It is the one case in this column where a
+  null says more about the taxonomy than about the filing.
+  The sum is not computed to close the gap. Taking
+  `jppfs_cor:ShareholdersEquity` instead is short by the valuation and
+  translation adjustments, 9,191 million of a correct 63,326 million on one
+  report read for the catalogue, and adding the components up would be this
+  module inventing a figure. So the equity pair stays lopsided where the
+  profit pair's reach is not: `equity` reaches every regime and this reaches
+  two of three.
+  All eight measures are now materialised, **and the gate stays**. A measure
+  added to the catalogue tomorrow is not materialised by being added: it is
+  named in `MATERIALISED_MEASURES` or it carries no identifier. That tuple
+  is written out rather than derived from the catalogue precisely so that
+  writing a row and claiming a figure is comparable stay two separate acts,
+  and a test now holds that line by inventing a catalogue row and checking
+  the column ignores it.
+
 ### Fixed
 
 - `financialreport`: a Japanese filing's framework is now decided per fact

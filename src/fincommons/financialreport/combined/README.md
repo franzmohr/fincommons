@@ -18,13 +18,14 @@ Japan is the exception, and it is worth saying why rather than leaving it as a h
 
 That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
 
-It covers **total assets**, **total liabilities**, **total equity**, **profit or loss**, **the profit or loss attributable to the parent**, **revenue** and **cash and cash equivalents**. The first concept of each framework, one per taxonomy:
+It covers all eight measures the catalogue defines. The first concept of each framework, one per taxonomy:
 
 | measure | IFRS | US-GAAP | JP-GAAP | IFRS, as a Japanese filer tags it |
 | --- | --- | --- | --- | --- |
 | assets | `ifrs-full:Assets` | `us-gaap:Assets` | `jppfs_cor:Assets` | `jpigp_cor:AssetsIFRS` |
 | liabilities | `ifrs-full:Liabilities` | `us-gaap:Liabilities` | `jppfs_cor:Liabilities` | `jpigp_cor:LiabilitiesIFRS` |
 | equity | `ifrs-full:Equity` | `us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest` | `jppfs_cor:NetAssets` | `jpigp_cor:EquityIFRS` |
+| equity attributable to the parent | `ifrs-full:EquityAttributableToOwnersOfParent` | `us-gaap:StockholdersEquity` | *no element* | `jpigp_cor:EquityAttributableToOwnersOfParentIFRS` |
 | profit or loss | `ifrs-full:ProfitLoss` | `us-gaap:ProfitLoss` | `jppfs_cor:ProfitLoss` | `jpigp_cor:ProfitLossIFRS` |
 | profit or loss attributable to the parent | `ifrs-full:ProfitLossAttributableToOwnersOfParent` | `us-gaap:NetIncomeLoss` | `jppfs_cor:ProfitLossAttributableToOwnersOfParent` | `jpigp_cor:ProfitLossAttributableToOwnersOfParentIFRS` |
 | revenue | `ifrs-full:Revenue` | `us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax` | `jppfs_cor:NetSales` | `jpigp_cor:RevenueIFRS` |
@@ -88,6 +89,16 @@ The attributable line exists only where there are non-controlling interests to a
 
 Between them the two cover the population well. **Neither does alone, and they are skewed in opposite directions**, so switching from one to the other changes which filers you are looking at as much as which figure.
 
+#### One gap is structural, and it is the only one
+
+Every absence described so far depends on what a filer tagged. A registrant that states no total liabilities; one that reports no minorities to attribute away. Change the filer and the gap closes.
+
+`equity_attributable_to_parent` has one that does not. **Japan GAAP has no element for 自己資本 at all.** It is 株主資本 plus 評価・換算差額等 -- a sum rather than a line -- so no `JP-GAAP` filing can carry this measure however it is prepared, and `concepts_for('equity_attributable_to_parent', 'JP-GAAP')` returns nothing. A query filtering on this measure **excludes Japan entirely and says nothing about having done so**, which is the one case in this column where a null says more about the taxonomy than about the filing.
+
+The sum is not computed here to close it. Taking `jppfs_cor:ShareholdersEquity` instead is short by the valuation and translation adjustments -- 9,191 million of a correct 63,326 million on one report read for the catalogue -- and adding the components up would be this module inventing a figure, which it does not do.
+
+So the equity pair stays lopsided where the profit pair's reach is not. `equity` reaches every regime; this reaches two of three. Within those two they lean opposite ways as the profit pair does: most American registrants tag `us-gaap:StockholdersEquity`, and an IFRS filer states the attributable line only where there is something to attribute.
+
 #### Which to use, and when
 
 This is the limit of a materialised identifier, and it is better reached honestly than papered over. The figure a population-level comparison wants is *the result attributable to the parent, falling back to the total where there are no minorities to separate*. That is a judgement per filing -- it depends on what the filing states -- and not a judgement per concept, so no concept-to-name map can express it.
@@ -95,7 +106,9 @@ This is the limit of a materialised identifier, and it is better reached honestl
 - **`MEASURE`** answers a precise question about named facts. This fact is the total including minorities; that one is the parent's share. Filter on it when you mean exactly one of those.
 - **`measure_values`** answers a question about a population. It takes the catalogue's priorities, picks the best concept each filing actually states, and returns one row per filing and period. Use it for a benchmark.
 
-The column does not replace the function, and this pair is where that stops being a technicality.
+The column does not replace the function, and the two pairs are where that stops being a technicality.
+
+All eight measures of the catalogue are now materialised, and the gate stays. A measure added to the catalogue tomorrow is **not** materialised by being added: it is named in `MATERIALISED_MEASURES` or it carries no identifier. That tuple is written out rather than derived from the catalogue precisely so that writing a row and claiming a figure is comparable stay two separate acts.
 
 #### Two kinds of null, and the column cannot tell them apart
 
