@@ -222,6 +222,16 @@ Each row carries a group, and the groups are the reason the template exists in t
 
 What the repository holds limits any such panel, and the limit is worth stating because it is invisible in the output. **filings.xbrl.org holds no German and no Irish filings at all.** Hochtief, Bilfinger and Heidelberg Materials are not in it, and the Irish issuers that are -- Kingspan, Cairn Homes, Glenveagh -- are there under `GB`, filed in London. A European panel built from this repository is therefore European minus Germany, and says so.
 
+### Why the European panel stops at Ukraine
+
+The repository holds the reports of Ukraine as well, filed the same way under the system it codes `UAIFRS`, and they are a third of everything in it: 9,871 filings of 3,164 issuers against 17,797 of 4,136 for the rest of Europe together. Among them are real construction companies -- Івано-Франківськцемент, Миколаївцемент, Київметробуд, Трест Житлобуд-1 -- so leaving them out of a European panel is a decision and not an oversight. Three things decide it, and the first two are properties of the data rather than judgements:
+
+* **They are not keyed by an LEI.** A Ukrainian filing is identified as `EDRPOU-01432552-2023-12-31-UAIFRS-UA-0`: the code of the Ukrainian register, not a legal entity identifier. Nothing in this package that joins on an LEI reaches them -- not the sectoral registers that find the banks, not `fincommons.entitymasterdata`. The test that reads a filer's own statements still does, which is the one place this costs nothing.
+* **The hryvnia is not quoted.** The exchange rate table of `fincommons.exchangerate` carries 41 currencies against the euro and the hryvnia is not among them, the ECB publishing no reference rate for it. Every Ukrainian amount would therefore stay unconverted by the rule above -- correctly, and uselessly: the issuers would appear in every table with every amount missing.
+* **They would carry the population.** A benchmark is a median over the filings in scope, and three thousand Ukrainian issuers reporting under a different regime, in a currency that cannot be converted, through a war, would be most of that median while saying little about what a European contractor's balance sheet looks like.
+
+A lake that wants them collects `UA` like any other country and the tables hold them; what this template's example panel and benchmark leave out is a choice made in one line of configuration, and this is the reasoning behind it.
+
 ### Amounts in more than one currency
 
 A European panel reports in a dozen currencies, and a sum over them is arithmetic on different units. The template converts, and it converts by the convention of the supervisory pipelines that build on this package, which is worth stating because the column names carry it: **an amount keeps the figure and the currency the issuer filed, and the conversion only ever adds two columns beside it.** `<key>_FXRATE` is the rate that was applied and is 1 where the amount was filed in the target currency already; `<key>_DOMESTIC` is the filed amount divided by that rate. The name says `DOMESTIC` rather than `EUR` so that nothing downstream has to be renamed when the target changes.
