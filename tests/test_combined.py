@@ -82,11 +82,16 @@ def write_esef(spark, config_path, framework="ifrs-full"):
 
 
 def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
-    """A quarterly report of one American registrant."""
+    """A quarterly report of one American registrant.
+
+    It states its revenue twice, under the ASC 606 element and under the
+    older total, which is what registrants do and what the catalogue ranks
+    them for. Only the first of the two is the measure.
+    """
     filings = spark.createDataFrame([(
         "0001628280-26-000002", CIK, "Demo Registrant Inc.", "10-Q",
         date(2026, 10, 1), date(2026, 8, 31), 2026, "Q3",
-        f"dei;{taxonomy}", framework, 2,
+        f"dei;{taxonomy}", framework, 3,
     )], schema=sec.filings_schema)
     facts = spark.createDataFrame([
         (CIK, "0001628280-26-000002", 2026, "a", f"{taxonomy}:Revenues",
@@ -95,6 +100,10 @@ def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
         (CIK, "0001628280-26-000002", 2026, "b", f"{taxonomy}:Assets",
          None, date(2026, 8, 31), "USD", 900.0, "10-Q",
          date(2026, 10, 1), "CY2026Q3I"),
+        (CIK, "0001628280-26-000002", 2026, "c",
+         f"{taxonomy}:RevenueFromContractWithCustomerExcludingAssessedTax",
+         date(2025, 12, 1), date(2026, 8, 31), "USD", 200.0, "10-Q",
+         date(2026, 10, 1), None),
     ], schema=sec.facts_schema)
     write_silver(filings, sec.ref_silver_filings(config_path))
     write_silver(facts, sec.ref_silver_facts(config_path),
@@ -457,7 +466,55 @@ def test_a_fact_no_measure_covers_carries_no_identifier(spark, config):
     facts = silver.combine(spark, config, "fact").collect()
 
     assert any(row["MEASURE"] is None for row in facts)
-    assert {row["MEASURE"] for row in facts} <= {None, "assets"}
+    assert {row["MEASURE"] for row in facts} <= {None, "assets", "revenue"}
+
+
+def test_revenue_of_every_regime_answers_to_one_name(spark, config):
+    """The second measure, and the one with alternatives to leave out."""
+    write_esef(spark, config)
+    write_sec(spark, config)
+    write_edinet(spark, config)
+
+    revenue = (silver.combine(spark, config, "fact")
+               .where("MEASURE = 'revenue'").collect())
+
+    assert {row["SOURCE"] for row in revenue} == {"esef", "sec", "edinet"}
+    assert {row["CONCEPT"] for row in revenue} == {
+        "ifrs-full:Revenue", "jppfs_cor:NetSales",
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"}
+
+
+def test_a_filing_stating_revenue_twice_is_labelled_once(spark, config):
+    """The registrant tags the ASC 606 element and the older total for the
+    same period. Labelling both would put two figures of one filing under
+    one name; only the first concept carries the identifier, and the other
+    keeps its concept and a null."""
+    write_sec(spark, config)
+    facts = silver.combine(spark, config, "fact")
+
+    revenue = facts.where("MEASURE = 'revenue'").collect()
+    assert len(revenue) == 1
+    assert revenue[0]["CONCEPT"] \
+        == "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
+
+    older = next(row for row in facts.collect()
+                 if row["CONCEPT"] == "us-gaap:Revenues")
+    assert older["MEASURE"] is None
+
+
+def test_the_older_total_still_resolves_at_query_time(spark, config):
+    """What the column leaves out, resolving still reaches. A caller asking
+    for revenue wants the best answer the filing affords; the column is
+    held to the stricter bar."""
+    from fincommons.financialreport.combined import mapping
+
+    write_sec(spark, config)
+    facts = silver.combine(spark, config, "fact")
+
+    resolved = {row["CONCEPT"]: row["MEASURE"]
+                for row in mapping.with_measures(facts).collect()}
+
+    assert resolved["us-gaap:Revenues"] == "revenue"
 
 
 def test_the_identifier_never_turns_one_fact_into_two(spark, config):
@@ -491,16 +548,104 @@ def test_resolving_again_replaces_the_stored_identifier(spark, config):
         >= {"assets", "revenue"}
 
 
-def test_a_measure_whose_concepts_collide_is_refused():
-    """us-gaap:StockholdersEquity is the best stand-in for equity where a
-    registrant states no wider total, and is itself the equity attributable
-    to the parent. Both rows are right for resolving a measure at query
-    time, where the caller has asked for one of them; neither can be a
-    column."""
+def test_only_the_first_concept_of_a_framework_is_written_down():
+    """Revenue is the measure that made the rule explicit: the catalogue
+    ranks three of its six concepts below the first, and each says in its
+    own caveat that it is not the same figure."""
     from fincommons.financialreport.combined import mapping
 
+    concepts = dict(mapping.canonical_concepts(("revenue",)))
+
+    assert set(concepts) == {
+        "ifrs-full:Revenue", "jpigp_cor:RevenueIFRS", "jppfs_cor:NetSales",
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"}
+    # The approximations carry no identifier rather than a misleading one.
+    assert "us-gaap:Revenues" not in concepts
+    assert "us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax" \
+        not in concepts
+    assert "ifrs-full:RevenueFromContractsWithCustomers" not in concepts
+
+
+def test_every_concept_left_out_says_it_is_not_the_same_figure():
+    """The rule is not imposed on the catalogue; it is read off it. Every
+    row ranked below the first carries a caveat of that kind."""
+    from fincommons.financialreport.combined import mapping
+
+    catalogue = mapping.measure_catalogue()
+    ranked_below = catalogue[catalogue["priority"] != mapping.FIRST_CONCEPT]
+
+    assert len(ranked_below) > 0
+    for row in ranked_below.itertuples():
+        assert row.caveat.strip(), f"{row.taxonomy}:{row.element}"
+
+
+def test_the_priority_rule_settles_a_concept_two_measures_name():
+    """us-gaap:StockholdersEquity is named by equity and by
+    equity_attributable_to_parent, and an earlier reading took that to
+    block both. It is the first concept of the one and the second of the
+    other, so it is the equity attributable to the parent and nothing
+    else."""
+    from fincommons.financialreport.combined import mapping
+
+    concepts = dict(mapping.canonical_concepts(
+        ("equity", "equity_attributable_to_parent")))
+
+    assert concepts["us-gaap:StockholdersEquity"] \
+        == "equity_attributable_to_parent"
+    assert concepts["us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"] \
+        == "equity"
+
+
+def test_every_measure_of_the_catalogue_passes_the_rule():
+    """Which is a statement about the catalogue and not a licence to
+    materialise them: each is still a judgement to be made against real
+    filings one at a time."""
+    from fincommons.financialreport.combined import mapping
+
+    every = tuple(sorted(set(mapping.measure_catalogue()["measure"])))
+    pairs = mapping.canonical_concepts(every)
+
+    assert {measure for _, measure in pairs} == set(every)
+    # One concept, one measure, and no measure duplicated within a taxonomy.
+    assert len(pairs) == len({concept for concept, _ in pairs})
+
+
+def _catalogue_of(monkeypatch, rows):
+    """Put a small catalogue of made-up rows in front of the real one."""
+    import pandas
+
+    from fincommons.financialreport.combined import mapping
+
+    frame = pandas.DataFrame(rows, columns=list(mapping.CATALOGUE_COLUMNS))
+    monkeypatch.setattr(mapping, "measure_catalogue", lambda **kw: frame)
+
+
+def test_a_concept_two_measures_name_first_is_still_refused(monkeypatch):
+    """The priority rule settles the collisions the catalogue has today.
+    The check stays for the row that collides tomorrow."""
+    from fincommons.financialreport.combined import mapping
+
+    _catalogue_of(monkeypatch, [
+        ("equity", "US-GAAP", "us-gaap", "Equity", 1, "", "", "test"),
+        ("assets", "US-GAAP", "us-gaap", "Equity", 1, "", "", "test"),
+    ])
+
     with pytest.raises(ValueError, match="claimed by both"):
-        mapping.canonical_concepts(("equity", "equity_attributable_to_parent"))
+        mapping.canonical_concepts(("equity", "assets"))
+
+
+def test_two_first_concepts_under_one_taxonomy_are_refused(monkeypatch):
+    """A filing tagging both would state the measure twice under one name,
+    which is the thing a materialised identifier may not do."""
+    from fincommons.financialreport.combined import mapping
+
+    _catalogue_of(monkeypatch, [
+        ("revenue", "US-GAAP", "us-gaap", "Revenues", 1, "", "", "test"),
+        ("revenue", "US-GAAP", "us-gaap", "SalesRevenueNet", 1, "", "", "test"),
+    ])
+
+    with pytest.raises(ValueError, match="two first concepts"):
+        mapping.canonical_concepts(("revenue",))
 
 
 def test_the_measures_written_down_are_ones_the_catalogue_defines():
@@ -561,7 +706,7 @@ def test_the_facts_of_both_regimes_land_in_one_table(spark, config):
 
     facts = common.connect_to_financialreport(spark, config)
 
-    assert facts.count() == 6
+    assert facts.count() == 7
     assert sorted({row["SOURCE"] for row in facts.collect()}) == ["esef", "sec"]
 
 
