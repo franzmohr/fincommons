@@ -89,8 +89,18 @@ A record of the cancellations file carries nothing but the instrument and the tr
 The cancellations file is **not** an input to the historical database. Section 4.2 of ESMA65-8-5014 builds that from the full and the delta files alone, and a cancellation reaches it as a `<CancRcrd>` record of a delta file, which `update_from_bronze_to_silver_main` already applies. The cancellations file answers the different question of which records have ever been cancelled, and is kept in the Bronze layer as its own data set.
 
 
+The records of a file are written into a directory of its own and moved into the partition of their reference date once the write is complete. Writing straight into the folder cannot be done by more than one file at a time: Spark's commit protocol stages the output under `_temporary` beside the partitions and removes that directory when a job finishes, which takes with it what every job still running had staged there. The run does not fail cleanly on it either -- the writes that lost their staging raise `FileNotFoundException`, the import quarantines those files as it does any other failure, and what is left is a Bronze layer missing whole files whose names sit in the `error` folder as though they had been malformed. Writing aside also makes the import of a file atomic, so a write that fails leaves the folder as it was rather than a partition half filled.
+
+`workers` is how many files are read at a time, one by default. A higher figure is worth it because a file is read by a single task whatever the session is given: the XML reader reports a file as one it cannot split, so a 164 MB file comes back as one partition, and `local[1]` and `local[4]` take the same time over it. The cores of a session are therefore idle for all but one of them, and the way to use them is to have several files in flight rather than to give one file more. Measured on four cores over 394 MB of delta files, four workers took 14.7 seconds against 33.3, and more workers than cores added nothing. The figure is bounded by memory rather than by cores, since each file being read is held in the driver heap: the parts of a full file want fewer workers than the daily delta files do, and in local mode the executors live in the driver JVM, so `spark.driver.memory` is the whole of what a run has.
+
+Which of two copies of a file is kept is settled before any file is read, in the order the names sort in, so that it does not turn on the order the reads happen to finish in.
+
 ```python
 firds.update_from_landing_to_bronze(spark, config_path)
+
+# Four files at a time, which is what uses the cores of a session on a
+# backfill of several hundred delta files.
+firds.update_from_landing_to_bronze(spark, config_path, workers = 4)
 ```
                                                                                     
 
