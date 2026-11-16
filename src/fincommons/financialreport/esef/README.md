@@ -120,7 +120,7 @@ finally:
 sys.exit(1 if outcome["failed"] else 0)
 ```
 
-A report is read whole before its facts are handed back and some are tens of megabytes of JSON, so the cores and the heap are chosen together: in local mode the executors live in the driver, and the unified pool is divided among the tasks running at once. `spark.local.dir` is named because Spark's own default is `/tmp`, which on a good many Linux installations is a tmpfs sized at half the machine's memory rather than a directory on a disk: a shuffle that outgrows it ends the run in `No space left on device` while the disk the lake sits on is all but empty. The README of `fincommons.firds` says more about both.
+A report is read whole before its facts are handed back and some are tens of megabytes of JSON, so the cores and the heap are chosen together: in local mode the executors live in the driver, and the unified pool is divided among the tasks running at once. `spark.local.dir` is named because Spark's own default is `/tmp`, which on a good many Linux installations is a tmpfs sized at half the machine's memory rather than a directory on a disk: a shuffle that outgrows it ends the run in `No space left on device` while the disk the lake sits on is all but empty. The handbook says more about both, in *Running a pipeline off-cluster*.
 
 A country is the unit a run collects because the reports are large: between a few hundred kilobytes and some tens of megabytes each, most of it the notes as text blocks. A year of the repository is a few thousand filings.
 
