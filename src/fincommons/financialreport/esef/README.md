@@ -291,6 +291,20 @@ Which rate is applied follows IAS 21 rather than one rate per filing: a balance 
 
 A panel in one currency needs none of this, reads no rate table, and needs no `exchangerate` section in the configuration file.
 
+### A panel that reaches past one regime
+
+A panel row is keyed by the identifier its regime uses: an `LEI` for a filing under ESEF, a `CIK` for one with the Commission. Neither body publishes a mapping between the two -- which is why the combined table carries both columns and fills one of them in every row -- so the template does the same, and a row needs one or the other. `templates/esef-sector-panel-crossregime.csv` is the example: the 145 European issuers of the panel above together with 86 American ones, 231 in all.
+
+What crosses the frameworks is **the eight measures of the catalogue and nothing else**. Everything the template reads from the ESEF concepts -- the operating result, the cash flow, the inventories, the net debt -- reaches the European members alone, because no pair of concepts for an operating result is in the catalogue: `describe_measure("ebit")` returns nothing. Pairing `ifrs-full:ProfitLossFromOperatingActivities` with `us-gaap:OperatingIncomeLoss` would be this template inventing a mapping the `combined` module declines to make, so it does not. The cross-regime tables are built from the measures and the per-issuer tables keep saying what each regime's filer tagged.
+
+Three things the Commission's filings force, none of which an ESEF-only lake shows:
+
+* **A filing with the Commission may be quarterly.** There are three `10-Q` for every `10-K`, and a quarter's profit over a year's equity is not a return, so the benchmark keeps the annual forms and a filing that carries no form at all, which is what an ESEF filing does.
+* **A filing with the Commission carries no country.** The combined table has the column and `sec` leaves it empty, so the country filter keeps a row whose country is missing. Without that, naming countries -- or letting them default to the panel's own -- would quietly empty the American half of a pooled benchmark and leave a page that looked complete.
+* **An issuer is not keyed by its LEI.** Grouping the benchmark on one would collapse every American registrant into a single issuer, since they all have none. The key is the identifier of the regime, with the other side empty.
+
+The result and the equity a pooled question wants are the total where the filer states it and the parent's share where it does not. The regimes lean opposite ways -- most ESEF filers state the total, most American registrants only the parent's share -- so neither alone reaches both, and the page carries a table of **what each pooled figure is made of**: how many filings of each source contributed a total and how many a parent's share. A pooled median is not wrong, and it is not one population either.
+
 ### The benchmark, and what counts as a bank
 
 The benchmark is read from the combined table through the materialised `MEASURE` column rather than by resolving a measure per filing. That is the division of labour the combined README argues for, and it has a cost the page states: only the first concept of each framework carries a measure, so a filing that stated revenue as IFRS 15 revenue alone is in the tables of the panel and not in the quartiles, and every count beside a benchmark figure is a count of filings that stated **and named** the figure rather than a population. Which filings are in scope is three lines -- source, country, framework -- so a lake that has run `sec` or `edinet` widens the same page to those regimes, with the warning that module makes about measures that are not skewed alike between them. Left out, the countries are the ones the panel itself filed in, which is the right default rather than a convenient one -- the market a panel is held against is the market it was filed in -- and which also removes a trap: the panel can be replaced by a file without touching that list, and a country written out there would quietly measure a European panel against one national market.

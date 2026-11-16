@@ -115,11 +115,21 @@ panel_file <- Sys.getenv("FINCOMMONS_PANEL", "")
 if (nzchar(panel_file)) {
   panel <- utils::read.csv(panel_file, stringsAsFactors = FALSE,
                            fileEncoding = "UTF-8")
-  required <- c("LEI", "SHORT", "GROUP")
+  # A panel row is keyed by whichever identifier its regime uses: an LEI for
+  # a filing under ESEF, a central index key for one with the Commission.
+  # Neither body publishes a mapping between them, which is why the combined
+  # table carries both columns and fills one, and why this does the same.
+  if (!"LEI" %in% names(panel)) panel$LEI <- NA_character_
+  if (!"CIK" %in% names(panel)) panel$CIK <- NA_character_
+  required <- c("SHORT", "GROUP")
   if (!all(required %in% names(panel))) {
     stop("The panel file ", panel_file, " needs the columns ",
          paste(required, collapse = ", "), "; it has ",
          paste(names(panel), collapse = ", "), ".")
+  }
+  if (any(is.na(panel$LEI) & is.na(panel$CIK))) {
+    stop("Every row of the panel file ", panel_file, " needs an LEI or a CIK; ",
+         sum(is.na(panel$LEI) & is.na(panel$CIK)), " row(s) have neither.")
   }
   # A panel file may carry the issuer's name, which is useful to whoever
   # maintains the file and is not what the page prints: the name comes from
@@ -140,13 +150,51 @@ if (!"PANEL_NAME" %in% names(panel)) {
 # so that the tables below ask for them without knowing where the panel came
 # from. A column no row fills is dropped from the table rather than printed
 # as a column of dashes.
-for (optional in c("NACE", "COUNTRY", "ACTIVITY_EN", "ACTIVITY_DE")) {
+for (optional in c("NACE", "COUNTRY", "ACTIVITY_EN", "ACTIVITY_DE", "CIK",
+                   "LEI")) {
   if (!optional %in% names(panel)) panel[[optional]] <- NA_character_
 }
 
-if (anyDuplicated(panel$LEI)) {
+# The key a panel row is matched on, in the shape the combined table keys a
+# filing: the identifier its regime uses, with the other side empty.
+# A csv writes an absent identifier as an empty field, which reads back as
+# "" rather than NA; both mean the row is keyed by the other one.
+blank_to_na <- function(x) {
+  x <- trimws(as.character(x))
+  ifelse(is.na(x) | x == "", NA_character_, x)
+}
+panel$LEI <- blank_to_na(panel$LEI)
+
+# A central index key is ten digits with the leading zeros kept, and the
+# combined table keys a filing by it in that shape. Two things lose them: a
+# csv read as numbers, which turns 0000868857 into 868857, and formatC on a
+# character, whose "0" flag pads with spaces and not zeros. So it is padded
+# as a number and only then used as text.
+panel$CIK <- blank_to_na(panel$CIK)
+if (any(!is.na(panel$CIK) & grepl("\\D", panel$CIK))) {
+  stop("A central index key in the panel is not all digits: ",
+       paste(unique(panel$CIK[!is.na(panel$CIK) & grepl("\\D", panel$CIK)]),
+             collapse = ", "))
+}
+panel$CIK <- ifelse(is.na(panel$CIK), NA_character_,
+                    formatC(as.integer(panel$CIK), width = 10, flag = "0",
+                            format = "d"))
+
+# Base R, because this runs before dplyr is attached further down.
+panel$KEY <- paste0(ifelse(is.na(panel$LEI), "", panel$LEI), "|",
+                    ifelse(is.na(panel$CIK), "", panel$CIK))
+
+if (any(is.na(panel$LEI) & is.na(panel$CIK))) {
+  stop("Every row of the panel needs an LEI or a CIK; ",
+       sum(is.na(panel$LEI) & is.na(panel$CIK)), " row(s) have neither.")
+}
+
+# On the key rather than on the LEI: a panel of two regimes has an empty
+# LEI in every row keyed by a central index key, and checking that column
+# would read those as one issuer named eighty-six times.
+if (anyDuplicated(panel$KEY)) {
   stop("The panel names an issuer twice: ",
-       paste(unique(panel$LEI[duplicated(panel$LEI)]), collapse = ", "),
+       paste(unique(panel$KEY[duplicated(panel$KEY)]), collapse = ", "),
        ". Each issuer belongs to one group.")
 }
 # The order the groups are shown in, and what they are called. A group the
@@ -252,13 +300,37 @@ financial_leis <- financial_leis[nzchar(financial_leis)]
 # bank's: IFRS 7 and IAS 1 put it on the face of the statement, and a
 # manufacturer that holds a deposit does not present it there. The insurance
 # ones are the IFRS 17 lines, which only an insurer has.
+# The IFRS lines find the European banks and insurers. The US-GAAP ones are
+# here because the registers above are European and no American registrant
+# is on one, so for a lake holding the Commission's filings this second test
+# is the only test there is.
 financial_concepts <- c(
   "ifrs-full:InterestRevenueCalculatedUsingEffectiveInterestMethod",
   "ifrs-full:InsuranceRevenue",
   "ifrs-full:InsuranceContractLiabilities",
   "ifrs-full:InsuranceServiceResult",
-  "ifrs-full:InsuranceServiceExpenses"
+  "ifrs-full:InsuranceServiceExpenses",
+  "us-gaap:InterestAndDividendIncomeOperating",
+  "us-gaap:InterestIncomeExpenseNet",
+  "us-gaap:InterestAndFeeIncomeLoansAndLeases",
+  "us-gaap:PremiumsEarnedNet",
+  "us-gaap:PolicyholderBenefitsAndClaimsIncurredNet",
+  "us-gaap:LoansAndLeasesReceivableNetReportedAmount"
 )
+
+# The forms an annual benchmark is taken over. A filing with the Commission
+# may be quarterly -- there are three 10-Q for every 10-K -- and a quarter's
+# profit over a year's equity is not a return. An ESEF filing is annual by
+# construction and carries no form, so a missing form is kept.
+annual_forms <- c("10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A")
+
+# The measures the benchmark is taken over. Named here rather than beside
+# the benchmark itself because the read of the facts filters on them, and
+# that read comes first.
+measures_wanted <- c("revenue", "assets", "liabilities", "equity",
+                     "profit_loss", "cash_and_equivalents",
+                     "equity_attributable_to_parent",
+                     "profit_loss_attributable_to_parent")
 
 # --------------------------------------------------------------------------
 # The rest of the settings
@@ -585,19 +657,39 @@ if (has_combined) {
   }
   # The countries of the benchmark: the ones named above, or the ones the
   # panel filed in where none are.
+  #
+  # A source that records no country is kept either way, and that is not a
+  # convenience. The Commission's filings carry none -- the combined table
+  # has the column and `sec` leaves it empty -- so a country filter applied
+  # to them would silently empty the American half of a pooled benchmark
+  # and leave a page that looked complete. Naming countries explicitly is
+  # therefore a statement about the sources that have them.
   bench_countries <- benchmark$country
   if (is.null(bench_countries)) {
     bench_countries <- sort(unique(filings$COUNTRY[!is.na(filings$COUNTRY)]))
   }
   if (length(bench_countries) > 0) {
-    bench_filings <- bench_filings %>% filter(COUNTRY %in% bench_countries)
+    bench_filings <- bench_filings %>%
+      filter(is.na(COUNTRY) | COUNTRY %in% bench_countries)
   }
+
+  # Annual reports only; see `annual_forms`.
+  bench_filings <- bench_filings %>%
+    filter(is.na(FORM) | FORM %in% annual_forms)
   if (!is.null(benchmark$framework)) {
     bench_filings <- bench_filings %>% filter(FRAMEWORK %in% benchmark$framework)
   }
 
+  # Everything that can be decided without the rows is decided before them.
+  # A lake holding one regime has a few tens of thousands of measure-bearing
+  # facts; one holding the Commission's filings has millions. The measures
+  # wanted, the undimensioned rows and the period the filing reports on are
+  # therefore filters arrow applies to the files, not conditions R applies
+  # to a frame already pulled into memory.
   bench_facts <- open_dataset(file.path(path_combined, "fact")) %>%
-    filter(!is.na(MEASURE), FILING %in% bench_filings$FILING) %>%
+    filter(MEASURE %in% measures_wanted, is.na(DIMENSIONS), !is.na(VALUE),
+           PRDEND == PERIODEND, FILING %in% bench_filings$FILING) %>%
+    select(SOURCE, FILING, LEI, CIK, PERIODEND, PERIODYEAR, MEASURE, VALUE) %>%
     collect()
 
   # The second test for a bank or an insurer: a filer whose own primary
@@ -607,10 +699,11 @@ if (has_combined) {
   financial_by_statement <- open_dataset(file.path(path_combined, "fact")) %>%
     filter(CONCEPT %in% financial_concepts,
            FILING %in% bench_filings$FILING) %>%
-    select(LEI) %>%
+    select(LEI, CIK) %>%
     collect() %>%
-    distinct() %>%
-    pull("LEI")
+    distinct()
+  financial_by_statement <- unique(c(financial_by_statement$LEI,
+                                     financial_by_statement$CIK))
   financial_by_statement <- financial_by_statement[!is.na(financial_by_statement)]
 } else {
   bench_filings <- filings[0, ]
@@ -966,14 +1059,9 @@ by_group <- shown %>%
 # the Python side makes, for a Japanese filing that states its parent
 # company's accounts under a member, and it does not arise in a table of
 # ESEF filings.
-measures_wanted <- c("revenue", "assets", "liabilities", "equity",
-                     "profit_loss", "cash_and_equivalents")
-
 if (has_combined) {
   bench_values <- bench_facts %>%
-    filter(is.na(DIMENSIONS), !is.na(VALUE), MEASURE %in% measures_wanted,
-           PRDEND == PERIODEND) %>%
-    distinct(SOURCE, FILING, LEI, PERIODEND, PERIODYEAR, MEASURE, VALUE) %>%
+    distinct(SOURCE, FILING, LEI, CIK, PERIODEND, PERIODYEAR, MEASURE, VALUE) %>%
     group_by(FILING, PERIODEND, MEASURE) %>%
     slice(1) %>%
     ungroup() %>%
@@ -986,19 +1074,42 @@ if (has_combined) {
   # One filing per issuer and year, the same rule as for the panel: the
   # filing that carries the most of the measures wins, and the identifier
   # breaks a tie so that the choice is the same on every run.
+  # One filing per issuer and year. The issuer is the key of its regime and
+  # not the LEI: a filing with the Commission has no LEI, so grouping on one
+  # would collapse every American registrant into a single issuer.
   bench_values <- bench_values %>%
-    mutate(filled = rowSums(!is.na(across(all_of(measures_wanted))))) %>%
-    arrange(LEI, FY, desc(filled), FILING) %>%
-    group_by(LEI, FY) %>%
+    mutate(KEY = paste0(coalesce(LEI, ""), "|", coalesce(CIK, "")),
+           filled = rowSums(!is.na(across(all_of(measures_wanted))))) %>%
+    arrange(KEY, FY, desc(filled), FILING) %>%
+    group_by(KEY, FY) %>%
     slice(1) %>%
     ungroup() %>%
     mutate(
-      financial = LEI %in% financial_leis | LEI %in% financial_by_statement,
-      in_panel  = LEI %in% panel$LEI,
-      equity_ratio = 100 * equity / assets,
-      net_margin   = 100 * profit_loss / revenue,
-      roe          = 100 * profit_loss / equity,
-      roa          = 100 * profit_loss / assets,
+      financial = LEI %in% financial_leis
+                  | LEI %in% financial_by_statement
+                  | CIK %in% financial_by_statement,
+      in_panel  = KEY %in% panel$KEY,
+      # The figure a population question wants is the result attributable to
+      # the parent, falling back to the total where there are no minorities
+      # to separate -- or the other way about, since the two regimes lean
+      # opposite ways. Most ESEF filers state the total and most American
+      # registrants only the parent's share, so neither alone reaches both.
+      # The total is taken where it is stated and the parent's share where
+      # it is not, and which was used is carried: a median over a mixture
+      # has to be able to say what it mixed. The combined README argues this
+      # at length and says why no concept map can make the choice.
+      profit = coalesce(profit_loss, profit_loss_attributable_to_parent),
+      profit_basis = ifelse(!is.na(profit_loss), "total",
+                     ifelse(!is.na(profit_loss_attributable_to_parent),
+                            "attributable", NA_character_)),
+      equity_used = coalesce(equity, equity_attributable_to_parent),
+      equity_basis = ifelse(!is.na(equity), "total",
+                     ifelse(!is.na(equity_attributable_to_parent),
+                            "attributable", NA_character_)),
+      equity_ratio = 100 * equity_used / assets,
+      net_margin   = 100 * profit / revenue,
+      roe          = 100 * profit / equity_used,
+      roa          = 100 * profit / assets,
       cash_ratio   = 100 * cash_and_equivalents / assets
     )
 
@@ -1018,6 +1129,64 @@ bench_ratio_labels <- c(
   roe          = tr("Return on equity, %", "Eigenkapitalrendite, %"),
   roa          = tr("Return on assets, %", "Gesamtkapitalrendite, %")
 )
+
+# --------------------------------------------------------------------------
+# The panel across the regimes
+# --------------------------------------------------------------------------
+
+# A panel row keyed by a central index key has no ESEF facts, so everything
+# above this point -- the concepts, the operating result, the cash flow --
+# reaches the European members and nobody else. What reaches both is the
+# measure column of the combined table, and that is what this is: the
+# panel's own figures on the eight agreed measures, for whichever regime
+# each member filed under.
+#
+# It is deliberately not merged into `shown`. The two are different
+# instruments: `shown` carries what an ESEF filer tagged, down to its
+# operating result, and this carries what the catalogue is willing to call
+# the same figure across frameworks. Putting an EBIT column beside a
+# US-GAAP row would promise a comparison the catalogue refuses to make.
+panel_regimes <- panel %>%
+  mutate(REGIME = ifelse(is.na(LEI), "SEC", "ESEF")) %>%
+  select(KEY, SHORT, GROUP, COUNTRY, REGIME)
+
+cross_regime <- NULL
+if (has_combined && !is.null(bench_values)) {
+  cross_regime <- bench_values %>%
+    filter(in_panel, FY %in% years_shown) %>%
+    inner_join(panel_regimes, by = "KEY") %>%
+    mutate(GROUP = factor(GROUP, levels = group_levels))
+}
+
+# Whether the panel reaches past one regime at all. An ESEF-only panel gets
+# the page it always got; a mixed one gets the cross-regime tables as well,
+# and the caveat that goes with them.
+regimes_present <- if (is.null(cross_regime)) character(0) else
+  sort(unique(cross_regime$REGIME))
+is_cross_regime <- length(regimes_present) > 1
+
+# What a pooled median is made of, which is the one thing that must not be
+# left out of it. The two regimes do not tag the same figure: the first
+# concept of `profit_loss` is the total including the non-controlling
+# interests and many American registrants tag only the parent's share,
+# while European filers do the reverse.
+composition <- NULL
+if (!is.null(bench_values)) {
+  composition <- bench_values %>%
+    filter(FY == latest_year) %>%
+    mutate(population = ifelse(in_panel, "panel",
+                        ifelse(financial, "financial", "market"))) %>%
+    group_by(population, SOURCE) %>%
+    summarise(filings = n(),
+              profit_total = sum(profit_basis == "total", na.rm = TRUE),
+              profit_attributable = sum(profit_basis == "attributable",
+                                        na.rm = TRUE),
+              equity_total = sum(equity_basis == "total", na.rm = TRUE),
+              equity_attributable = sum(equity_basis == "attributable",
+                                        na.rm = TRUE),
+              revenue_stated = sum(!is.na(revenue)),
+              .groups = "drop")
+}
 
 # The quartiles of the population in the latest year, and of the panel
 # beside them. A ratio is only read where both of its figures were stated,
@@ -1653,6 +1822,103 @@ if (!is.null(market_band)) {
               "Das Band ist der Quartilsabstand der ubrigen Emittenten im Bereich, ohne Banken und Versicherer; die gestrichelte Linie deren Median.")))) +
     theme_corporate_design(base_size = chart_base_size)
   g
+}
+```
+
+{{< pagebreak >}}
+
+## `r if (is_cross_regime) tr("Across the regimes", "Über die Regime hinweg") else ""`
+
+```{r cross-regime-note, results = "asis"}
+if (is_cross_regime) {
+  cat(tr(
+    paste0("The panel reaches past one regime: ",
+           paste(sprintf("%d issuer(s) under %s",
+                         tapply(cross_regime$KEY, cross_regime$REGIME,
+                                function(x) length(unique(x))),
+                         names(tapply(cross_regime$KEY, cross_regime$REGIME,
+                                      length))), collapse = ", "),
+           ". Everything above this point is read from the ESEF concepts and ",
+           "reaches the European members alone -- the operating result among ",
+           "them, because no pair of concepts for one is in the catalogue of ",
+           "measures. What crosses the frameworks is the eight measures that ",
+           "catalogue has agreed, and the tables here are built from those ",
+           "and from nothing else."),
+    paste0("Das Panel reicht über ein Regime hinaus: ",
+           paste(sprintf("%d Emittent(en) unter %s",
+                         tapply(cross_regime$KEY, cross_regime$REGIME,
+                                function(x) length(unique(x))),
+                         names(tapply(cross_regime$KEY, cross_regime$REGIME,
+                                      length))), collapse = ", "),
+           ". Alles davor stammt aus den ESEF-Konzepten und erreicht nur die ",
+           "europäischen Mitglieder -- darunter das Betriebsergebnis, denn ",
+           "für eines steht kein Konzeptpaar im Measure-Katalog.")), "\n")
+}
+```
+
+```{r cross-regime-table}
+if (is_cross_regime) {
+  temp <- cross_regime %>%
+    filter(FY == latest_year) %>%
+    group_by(GROUP, REGIME) %>%
+    summarise(issuers = n_distinct(KEY),
+              revenue = sum(revenue, na.rm = TRUE),
+              net_margin = median(net_margin[is.finite(net_margin)], na.rm = TRUE),
+              equity_ratio = median(equity_ratio[is.finite(equity_ratio)], na.rm = TRUE),
+              roe = median(roe[is.finite(roe)], na.rm = TRUE),
+              .groups = "drop") %>%
+    arrange(GROUP, REGIME) %>%
+    transmute(
+      !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
+      !!tr("Regime", "Regime") := REGIME,
+      !!tr("Issuers", "Emittenten") := issuers,
+      !!tr("Revenue", "Umsatz") := fmt_num(revenue / scale),
+      !!tr("Net margin, median %", "Nettomarge, Median %") := fmt_num(net_margin, 1),
+      !!tr("Equity %, median", "EK-Quote, Median") := fmt_num(equity_ratio, 1),
+      !!tr("ROE %, median", "EKR, Median") := fmt_num(roe, 1))
+
+  knitr::kable(temp, align = "llrrrrr",
+    caption = tr(
+      paste0("Financial year ", latest_year, ". Amounts are added up as ",
+             "filed and are not converted, so read the revenue column as an ",
+             "order of magnitude; a median of ratios needs no conversion, ",
+             "the currency cancelling in a quotient of one filing."),
+      paste0("Geschäftsjahr ", latest_year, ". Beträge werden wie ",
+             "eingereicht addiert und nicht umgerechnet.")))
+}
+```
+
+```{r composition-table}
+if (is_cross_regime && !is.null(composition)) {
+  temp <- composition %>%
+    mutate(population = factor(population, levels = c("panel", "market", "financial"),
+                               labels = c(tr("The panel", "Das Panel"),
+                                          tr("Other filers", "Übrige Emittenten"),
+                                          tr("Banks and insurers", "Banken und Versicherer")))) %>%
+    arrange(population, SOURCE) %>%
+    transmute(
+      !!tr("Population", "Grundgesamtheit") := as.character(population),
+      !!tr("Source", "Quelle") := toupper(SOURCE),
+      !!tr("Filings", "Berichte") := filings,
+      !!tr("Profit: total", "Ergebnis: gesamt") := profit_total,
+      !!tr("Profit: parent", "Ergebnis: Mutter") := profit_attributable,
+      !!tr("Equity: total", "EK: gesamt") := equity_total,
+      !!tr("Equity: parent", "EK: Mutter") := equity_attributable,
+      !!tr("Revenue stated", "Umsatz angegeben") := revenue_stated)
+
+  knitr::kable(temp, align = "llrrrrrr",
+    caption = tr(
+      paste0("What a pooled median is made of. The first concept of ",
+             "`profit_loss` is the total including the non-controlling ",
+             "interests, and the regimes do not tag it alike: many filings ",
+             "with the Commission state only the parent's share and most ",
+             "ESEF filings state the total. The total is used where it is ",
+             "stated and the parent's share where it is not, and this says ",
+             "how often each was. A pooled figure is not wrong, and it is ",
+             "not one population either."),
+      paste0("Woraus ein gepoolter Median besteht. Das erste Konzept von ",
+             "`profit_loss` ist der Gesamtwert einschliesslich der ",
+             "Minderheiten, und die Regime zeichnen ihn nicht gleich aus.")))
 }
 ```
 

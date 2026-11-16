@@ -23,6 +23,49 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### New
 
+- `esef`: the sector factsheet reaches past one regime. A panel row is keyed
+  by the identifier its regime uses -- an LEI under ESEF, a central index key
+  with the Commission -- and `templates/esef-sector-panel-crossregime.csv` is
+  the example, 145 European issuers and 86 American ones. What crosses the
+  frameworks is the eight measures of the catalogue and nothing else: no pair
+  of concepts for an operating result is in it, so EBIT stays a European
+  exhibit rather than being paired with `us-gaap:OperatingIncomeLoss`, which
+  would be the template inventing a mapping the combined module declines to
+  make.
+  Four things the Commission's filings force, none of them visible in an
+  ESEF-only lake. A filing may be quarterly -- three 10-Q for every 10-K --
+  and a quarter's profit over a year's equity is not a return, so the
+  benchmark keeps the annual forms. A filing carries no country, so a country
+  filter now keeps a row that has none; without that, letting the countries
+  default to the panel's own quietly emptied the American half of a pooled
+  benchmark. An issuer is not keyed by its LEI, and grouping on one collapsed
+  every American registrant into a single issuer. And the bank test needed
+  the US-GAAP lines beside the IFRS ones, the sectoral registers being
+  European and no American registrant being on one.
+  The result and the equity a pooled question wants are the total where the
+  filer states it and the parent's share where it does not: most ESEF filers
+  state the total and most American registrants only the parent's share, so
+  neither alone reaches both. Which was used is carried per filing and
+  printed as a table of what each pooled figure is made of, because a median
+  over a mixture has to be able to say what it mixed.
+  The benchmark's read of the facts is now a filter arrow applies to the
+  files rather than a condition R applies afterwards. A lake holding one
+  regime has a few tens of thousands of measure-bearing facts and one holding
+  the Commission's filings has millions, and collecting those first did not
+  finish.
+
+- `esef`: the sector factsheet was rendered rather than only run, and three
+  things only rendering could show were fixed. A cover that said
+  "Construction in Austria" over a hundred and forty-five issuers in
+  seventeen countries, because the country was a setting and swapping the
+  panel did not touch it; the countries the panel filed in now decide what
+  the cover may claim. An index chart carried away by one issuer whose
+  revenue went from 0.2 to 186 million between two filings, an index of
+  ninety-six thousand that took the axis to 1e+05 and flattened the other
+  hundred and twenty-eight lines onto it; the axis is cut at a quantile and
+  the caption names the lines that leave. And a group label that wrapped onto
+  two lines in every row of a five-hundred-row table.
+
 - `esef`: a factsheet on a sector, `templates/esef-sector-factsheet.qmd`, the
   counterpart of the one on a single issuer. It reads the two Silver tables of
   the module for the panel's own lines and, where the lake holds them, the
