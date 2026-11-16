@@ -78,7 +78,14 @@ No module of the package opens a Spark session, so a job scheduler runs a script
 
 ```python
 # update-esef.py -- the script a job scheduler runs
+# Spark launches its Python workers with whatever `python3` resolves to on
+# the PATH, which need not be the interpreter running this script. This has
+# to be settled before the session is built.
+import os
 import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
 from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
