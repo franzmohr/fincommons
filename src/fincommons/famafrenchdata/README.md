@@ -47,6 +47,14 @@ This is the module in five minutes: set it up, bring two files of the library in
 ```python
 # Start Spark, with the Delta extensions where delta-spark is installed.
 # No module of the package opens a session: the session is the caller's.
+# The workers are launched with `python3` from the PATH unless told
+# otherwise, and the Silver layer parses the files on them.
+import os
+import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+
 from pyspark.sql import SparkSession
 from delta import configure_spark_with_delta_pip
 
@@ -114,7 +122,14 @@ No module of the package opens a Spark session, so a job scheduler runs a script
 
 ```python
 # update-famafrenchdata.py -- the script a job scheduler runs
+# Spark launches its Python workers with whatever `python3` resolves to on
+# the PATH, which need not be the interpreter running this script. This has
+# to be settled before the session is built.
+import os
 import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
 from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession

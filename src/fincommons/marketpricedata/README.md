@@ -84,7 +84,14 @@ It creates the directory tree if it is missing, collects every source into the B
 
 ```python
 # update-marketpricedata.py -- the script a job scheduler runs
+# Spark launches its Python workers with whatever `python3` resolves to on
+# the PATH, which need not be the interpreter running this script. This has
+# to be settled before the session is built.
+import os
 import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
 from fincommons import marketpricedata as mp
 from fincommons.log import configure
