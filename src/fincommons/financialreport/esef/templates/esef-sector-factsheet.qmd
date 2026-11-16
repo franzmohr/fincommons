@@ -57,6 +57,14 @@ config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
 
 # What the sector is called on the cover.
 sector_name <- c(en = "Construction", de = "Bauwirtschaft")
+
+# Where it is, for the cover. This is a name and not a lookup, because the
+# repository codes a country and does not name it, and a factsheet should
+# say "Austria" rather than "AT". It is used only where the panel turns out
+# to sit in one country: a panel spanning several is named by how many,
+# from the filings themselves, and a name left standing here from an
+# earlier panel is ignored rather than printed over seventeen of them.
+# Setting it to NULL always names the countries from the data.
 country_name <- c(en = "Austria", de = "Österreich")
 
 # --------------------------------------------------------------------------
@@ -152,7 +160,7 @@ group_labels <- c(
   developers            = "Developers",
   materials             = "Building materials",
   `building technology` = "Building technology",
-  distribution          = "Merchants and distribution"
+  distribution          = "Merchants"
 )
 group_labels_de <- c(
   contractors           = "Bauunternehmen",
@@ -1087,13 +1095,30 @@ group_colours <- setNames(
 ```
 
 ```{r cover, results = "asis"}
-title <- tr(paste0(sector_name[["en"]], " in ", country_name[["en"]]),
-            paste0(sector_name[["de"]], " in ", country_name[["de"]]))
+# The countries the panel actually filed in decide what the cover may
+# claim. One of them and a name set above: the name. Several: how many,
+# counted rather than named, and the subtitle lists the codes.
+panel_countries <- sort(unique(filings$COUNTRY[!is.na(filings$COUNTRY)]))
+where <- if (length(panel_countries) == 1 && !is.null(country_name)) {
+  country_name[[lang]]
+} else if (length(panel_countries) == 1) {
+  panel_countries
+} else {
+  tr(paste(length(panel_countries), "countries"),
+     paste(length(panel_countries), "Ländern"))
+}
+title <- tr(paste0(sector_name[["en"]], " in ", where),
+            paste0(sector_name[["de"]], " in ", where))
 subtitle <- tr(
   paste0("A factsheet on ", nrow(panel), " issuers, from their ESEF annual ",
-         "financial reports"),
+         "financial reports",
+         if (length(panel_countries) > 1)
+           paste0(" filed in ", paste(panel_countries, collapse = ", ")) else ""),
   paste0("Ein Factsheet zu ", nrow(panel), " Emittenten, aus deren ",
-         "ESEF-Jahresfinanzberichten"))
+         "ESEF-Jahresfinanzberichten",
+         if (length(panel_countries) > 1)
+           paste0(", eingereicht in ", paste(panel_countries, collapse = ", "))
+         else ""))
 cat('```{=typst}\n')
 cat('#text(size: 20pt, weight: "bold", fill: rgb("#C10016"))[',
     typst_string(title), ']\\\n', sep = "")
@@ -1204,8 +1229,8 @@ temp <- panel %>%
     !!tr("Country", "Land") := COUNTRY,
     !!tr("What it does", "Tätigkeit") :=
       if (lang == "de") ACTIVITY_DE else ACTIVITY_EN,
-    !!tr("Years filed", "Jahre") := paste0(first_year, "–", last_year),
-    !!tr("Filings", "Berichte") := filings)
+    !!tr("Years", "Jahre") := paste0(first_year, "–", last_year),
+    !!tr("Reports", "Berichte") := filings)
 
 # A column every row leaves empty is dropped rather than printed as a
 # column of dashes: a panel file that names no activity should not cost the
@@ -1458,12 +1483,37 @@ if (drawn > max_lines) {
   index_note <- ""
 }
 
+# One issuer can carry this chart away. A filing whose revenue line is a
+# tenth of what it was the year before, or a hundred times it, is usually a
+# tagging error or a company that sold its business, and either way its
+# index runs to tens of thousands and flattens every other line onto the
+# axis. The axis is therefore cut at a quantile of the indices and the
+# lines that leave the panel are clipped rather than dropped -- `coord_*`
+# rather than `scale_*`, so a line that goes out of the top comes back in
+# where it returns -- and the caption says how many did.
+upper <- max(160, stats::quantile(base$index, .98, na.rm = TRUE))
+clipped <- base %>%
+  group_by(LEI) %>%
+  filter(any(index > upper)) %>%
+  ungroup() %>%
+  distinct(LEI, SHORT)
+
 g <- g +
   scale_x_years() +
   scale_colour_manual(values = group_colours, labels = group_label,
                       name = NULL) +
+  coord_cartesian(ylim = c(0, upper)) +
   labs(x = NULL, y = tr("First year = 100", "Erstes Jahr = 100"),
-       caption = wrap_caption(paste(source_caption, index_note))) +
+       caption = wrap_caption(paste(
+         source_caption, index_note,
+         if (nrow(clipped) > 0) tr(
+           paste0("The axis is cut at ", round(upper),
+                  "; the line(s) of ", paste(clipped$SHORT, collapse = ", "),
+                  " leave the panel above it."),
+           paste0("Die Achse ist bei ", round(upper),
+                  " abgeschnitten; die Linie(n) von ",
+                  paste(clipped$SHORT, collapse = ", "),
+                  " verlassen das Feld nach oben.")) else ""))) +
   theme_corporate_design(base_size = chart_base_size)
 g
 ```
