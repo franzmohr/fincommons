@@ -1,0 +1,1823 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+
+  # No font is named beyond the one above, so nothing is fetched from a font
+  # service; a system without it falls back to the default of the renderer.
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  error: true
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a sector
+# --------------------------------------------------------------------------
+
+# The path to the config file, whose esef section names the Silver layer of
+# the module and whose financialreport section names the combined tables the
+# benchmark is read from. A chunk runs with the directory of this template
+# as its working directory, which is inside the installed package, so the
+# path is taken from the environment variable FINCOMMONS_CONFIG where it is
+# set and is otherwise a paths.yaml beside the template.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# What the sector is called on the cover.
+sector_name <- c(en = "Construction", de = "Bauwirtschaft")
+country_name <- c(en = "Austria", de = "Österreich")
+
+# --------------------------------------------------------------------------
+# The panel: which issuers the sector is taken to be
+# --------------------------------------------------------------------------
+
+# ESEF carries no sector code. A filing states the issuer's legal entity
+# identifier and nothing about what it does, and the sector classifications
+# the package does hold -- `SECTOR` in fincommons.entitymasterdata -- cover
+# financial entities only, a bank, an insurer, a fund. So the panel is a
+# stated list, and stating it is the one judgement this factsheet makes that
+# the data cannot check.
+#
+# It is written out with a group per issuer because a construction sector
+# read widely is not one population. A contractor turns its balance sheet
+# several times a year on advance payments; a developer holds a project for
+# years and reports the result when it sells; a materials maker runs a plant
+# and carries inventory. Putting them under one median hides exactly what a
+# reader of this page is after, so every figure below is shown by group as
+# well as for the panel as a whole, and the groups are ordered from the
+# building site outwards.
+#
+# `SHORT` is what the charts and the narrow tables use; `NAME` is not set
+# here at all, but read from the table of filings, so that an issuer is
+# named as its own report names it.
+panel <- tibble::tribble(
+  ~LEI,                    ~SHORT,          ~GROUP,                ~NACE,     ~ACTIVITY_EN,                                              ~ACTIVITY_DE,
+  "529900TYYSRJH2VJSP60",  "STRABAG",       "contractors",         "F42/F41", "Civil engineering and building construction, Europe-wide", "Hoch- und Tiefbau, europaweit",
+  "529900ARBU9SBJFNX419",  "PORR",          "contractors",         "F41/F42", "Building construction and civil engineering, Austria and CEE", "Hoch- und Tiefbau, Österreich und CEE",
+  "529900IWRUBPP2VNQB05",  "UBM",           "developers",          "F41.1",   "Development of building projects, residential and office", "Projektentwicklung, Wohnen und Büro",
+  "529900VXIFBHO0SW2I31",  "Wienerberger",  "materials",           "C23.32",  "Clay building materials, pipes and surfaces",             "Keramische Baustoffe, Rohre und Flächen",
+  "529900HM9YCQHAU2QC84",  "SW Umwelttech", "materials",           "C23.61",  "Precast concrete products for water and infrastructure",  "Betonfertigteile für Wasser und Infrastruktur",
+  "5299009A2CSKJBWWKY81",  "Rath",          "materials",           "C23.20",  "Refractory ceramics, sold mainly to industrial plant",    "Feuerfestkeramik, überwiegend für Industrieanlagen",
+  "529900WJZJAEI0VBLP60",  "Egger",         "materials",           "C16.21",  "Wood-based panels; a bond issuer, not listed in equity",  "Holzwerkstoffe; Anleihenemittent, nicht börsenotiert",
+  "529900IIODYNYAZ2ID26",  "Zumtobel",      "building technology", "C27.40",  "Lighting and lighting components for buildings",          "Leuchten und Lichtkomponenten für Gebäude",
+  "52990038OKF8UAD5LA12",  "Frauenthal",    "building technology", "G46.74",  "Wholesale of sanitary and heating technology, and automotive components", "Großhandel mit Sanitär- und Heizungstechnik, und Automotive"
+)
+
+# A panel of nine fits in the template and can be read there. A panel of a
+# hundred and forty-five -- the construction issuers of twenty-seven
+# countries -- does not, and putting it here would bury the code under a
+# list. So the panel may instead be read from a csv named in
+# FINCOMMONS_PANEL, with the columns of the table above: `LEI`, `SHORT` and
+# `GROUP` are required, and `NACE`, `COUNTRY`, `ACTIVITY_EN` and
+# `ACTIVITY_DE` are shown where the file has them. The file is a stated list
+# exactly as the table above is, and the disclaimer says so of either.
+panel_file <- Sys.getenv("FINCOMMONS_PANEL", "")
+if (nzchar(panel_file)) {
+  panel <- utils::read.csv(panel_file, stringsAsFactors = FALSE,
+                           fileEncoding = "UTF-8")
+  required <- c("LEI", "SHORT", "GROUP")
+  if (!all(required %in% names(panel))) {
+    stop("The panel file ", panel_file, " needs the columns ",
+         paste(required, collapse = ", "), "; it has ",
+         paste(names(panel), collapse = ", "), ".")
+  }
+  # A panel file may carry the issuer's name, which is useful to whoever
+  # maintains the file and is not what the page prints: the name comes from
+  # the table of filings, so that an issuer is named as its own report names
+  # it. It is kept under another name rather than dropped, so that a panel
+  # whose LEI no longer files can still be named in the gaps.
+  if ("NAME" %in% names(panel)) {
+    panel$PANEL_NAME <- panel$NAME
+    panel$NAME <- NULL
+  }
+}
+if (!"PANEL_NAME" %in% names(panel)) {
+  panel$PANEL_NAME <- NA_character_
+
+  panel <- tibble::as_tibble(panel)
+}
+# The columns a panel may leave out, filled in for either way of giving one
+# so that the tables below ask for them without knowing where the panel came
+# from. A column no row fills is dropped from the table rather than printed
+# as a column of dashes.
+for (optional in c("NACE", "COUNTRY", "ACTIVITY_EN", "ACTIVITY_DE")) {
+  if (!optional %in% names(panel)) panel[[optional]] <- NA_character_
+}
+
+if (anyDuplicated(panel$LEI)) {
+  stop("The panel names an issuer twice: ",
+       paste(unique(panel$LEI[duplicated(panel$LEI)]), collapse = ", "),
+       ". Each issuer belongs to one group.")
+}
+# The order the groups are shown in, and what they are called. A group the
+# panel uses and this vector does not name would be dropped by the factor
+# below, so the levels are the named ones first and anything else after
+# them, in the order the panel has it.
+group_levels <- c("contractors", "developers", "materials",
+                  "building technology", "distribution")
+group_labels <- c(
+  contractors           = "Contractors",
+  developers            = "Developers",
+  materials             = "Building materials",
+  `building technology` = "Building technology",
+  distribution          = "Merchants and distribution"
+)
+group_labels_de <- c(
+  contractors           = "Bauunternehmen",
+  developers            = "Projektentwickler",
+  materials             = "Baustoffe",
+  `building technology` = "Gebäudetechnik",
+  distribution          = "Baustoffhandel"
+)
+
+group_levels <- c(group_levels, setdiff(unique(panel$GROUP), group_levels))
+
+# --------------------------------------------------------------------------
+# The benchmark
+# --------------------------------------------------------------------------
+
+# Which filings the panel is held against. The benchmark is read from the
+# combined table of fincommons.financialreport.combined, which carries every
+# regime the lake has collected in one shape, so widening the comparison is
+# a change to this list and to nothing else: a lake that has collected
+# German filings as well gets a European benchmark by putting "DE" beside
+# "AT", and one that has run the sec or edinet pipeline gets a cross-regime
+# one by naming those sources. NULL means every value the table holds.
+#
+# A word of warning before that is done, which the combined README sets out
+# at length. The measures are not skewed alike between the regimes: a
+# `profit_loss` is tagged by nearly every IFRS and Japanese filer and only
+# by an American registrant that has non-controlling interests to report,
+# so a median of the three put side by side is not a comparison of three
+# regimes. Holding `framework` to "IFRS" is the safe way to widen this page
+# beyond Europe; naming several frameworks is a decision to be made with
+# that section of the README open.
+# `country` left out means the countries the panel itself filed in, which is
+# the right default and not merely a convenient one: the market a panel is
+# held against is the market it was filed in. It also removes a trap. The
+# panel may be replaced by a file without touching this list, and a country
+# written out here would then quietly measure a European panel against one
+# national market and say nothing about having done so.
+benchmark <- list(
+  source    = NULL,   # "esef", "sec", "edinet"; NULL for every one collected
+  country   = NULL,   # as the source codes it; NULL for the panel's own
+  framework = NULL    # "IFRS", "US-GAAP", "JP-GAAP"; NULL for every one
+)
+
+# A bank and an insurer have an equity ratio an eighth of an industrial
+# one's, and leaving them in the benchmark would make every issuer of this
+# panel look unusually solid for a reason that has nothing to do with
+# building. They are therefore named here and shown apart.
+#
+# Naming them is a stated list for the same reason the panel is: ESEF has no
+# sector code. The right source once a lake holds it is `SECTOR` in
+# fincommons.entitymasterdata, which the registers of the ECB, EIOPA and
+# ESMA fill in and which covers exactly these entities; this list is what a
+# lake without that module uses, and it is a list of Austrian filers only.
+# A bank and an insurer have an equity ratio an eighth of an industrial
+# one's, and leaving them in the benchmark would make every issuer of this
+# panel look unusually solid for a reason that has nothing to do with
+# building. They are therefore identified and shown apart.
+#
+# Two things identify them, and the second exists because the first has a
+# hole in it.
+#
+# The first is the sectoral registers, which is where `SECTOR` of
+# fincommons.entitymasterdata gets its answer: the ECB's register of
+# monetary financial institutions, EIOPA's of insurance undertakings and of
+# institutions for occupational retirement provision, and ESMA's list of
+# central counterparties. A list of the LEIs on those registers is read from
+# the file named in FINCOMMONS_FINANCIAL, one per line.
+#
+# The hole is twofold and worth stating, because it is the reason the second
+# test exists. A register lists the authorised entity, and what files an
+# annual financial report is usually the *group* above it: BAWAG P.S.K. is
+# on the register and BAWAG Group AG, which files, is not. And the registers
+# are European, so a British bank has not been on them since 2020 -- which
+# for a lake holding the United Kingdom leaves the largest banks in the
+# population unflagged.
+#
+# The second test closes both, and closes them from the filings themselves:
+# a filer whose own primary statements present a line that only a bank or an
+# insurer has is one. The concepts are named below rather than guessed at,
+# and a filer is flagged by either test.
+financial_file <- Sys.getenv("FINCOMMONS_FINANCIAL", "")
+financial_leis <- if (nzchar(financial_file)) {
+  toupper(trimws(readLines(financial_file, warn = FALSE)))
+} else character(0)
+financial_leis <- financial_leis[nzchar(financial_leis)]
+
+# The lines a bank or an insurer presents and an industrial issuer does not.
+# Interest revenue computed with the effective interest method is the
+# bank's: IFRS 7 and IAS 1 put it on the face of the statement, and a
+# manufacturer that holds a deposit does not present it there. The insurance
+# ones are the IFRS 17 lines, which only an insurer has.
+financial_concepts <- c(
+  "ifrs-full:InterestRevenueCalculatedUsingEffectiveInterestMethod",
+  "ifrs-full:InsuranceRevenue",
+  "ifrs-full:InsuranceContractLiabilities",
+  "ifrs-full:InsuranceServiceResult",
+  "ifrs-full:InsuranceServiceExpenses"
+)
+
+# --------------------------------------------------------------------------
+# The rest of the settings
+# --------------------------------------------------------------------------
+
+# The number of financial years shown, counted back from the latest period
+# end any issuer of the panel has filed for. One further year is read behind
+# them, because a return puts a flow of a year against the balances at its
+# start and its end and because the growth rates compare a year with the one
+# before it.
+n_years <- 5
+
+# Amounts are shown in millions of the target currency.
+scale <- 1e6
+
+# The currency every amount is converted into before it is added up. A
+# European panel reports in a dozen currencies -- a Swedish contractor in
+# krona, a Polish one in zloty, a British one in pounds -- and a sum over
+# them is arithmetic on different units unless they are brought to one.
+#
+# The conversion follows the convention of the supervisory pipelines that
+# build on this package, which is worth stating because the column names
+# carry it: an amount keeps the figure and the currency the issuer filed,
+# and the conversion only ever adds two columns beside it. `<key>_FXRATE`
+# is the rate that was applied, which is 1 where the amount was filed in
+# the target currency already, and `<key>_DOMESTIC` is the converted
+# amount, the filed amount divided by that rate. The name says `DOMESTIC`
+# rather than `EUR` so that nothing downstream has to be renamed when the
+# target changes.
+#
+# An amount whose currency the rate table does not quote on its day stays
+# unconverted: `_DOMESTIC` is missing, and the sums below pass over it and
+# say so in the count beside them. It is never the filed figure carried
+# over unconverted, and never a nought.
+target_ccy <- "EUR"
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# Above how many issuers a chart stops drawing one mark per issuer. A line
+# per issuer is the clearest thing on a panel of nine and is unreadable on a
+# panel of a hundred and forty-five: the labels collide, the colours repeat
+# within a group and the eye has nothing to follow. Above this many, the
+# charts draw the issuers as a faint background and put the median of each
+# group in front of it, which is the figure a reader of a large panel is
+# after anyway. The tables are unaffected and still list every issuer.
+max_lines <- 12
+
+# The language of the factsheet.
+lang <- "en"
+
+# The month names in the captions come from the system locale rather than
+# from the language set above, so the locale for dates is set from lang.
+invisible(Sys.setlocale("LC_TIME", if (lang == "de") "German" else "C"))
+
+# --------------------------------------------------------------------------
+# The concepts the panel's own lines are read from
+# --------------------------------------------------------------------------
+
+# Only concepts of the IFRS taxonomy. An issuer may tag a line of its
+# statements with a concept of its own, and the single-issuer factsheet of
+# this module makes room for that one issuer at a time; a page covering nine
+# issuers cannot, because an extension concept is each issuer's own to name
+# and to rename. A line no issuer of the panel tags under a concept below is
+# shown as missing rather than guessed at, and the coverage page at the end
+# says for each issuer which of them were found.
+#
+# A key may carry several concepts, in order of preference, for a line the
+# taxonomy offers more than one element for.
+concepts <- c(
+  assets                           = "ifrs-full:Assets",
+  current_assets                   = "ifrs-full:CurrentAssets",
+  noncurrent_assets                = "ifrs-full:NoncurrentAssets",
+  ppe                              = "ifrs-full:PropertyPlantAndEquipmentIncludingRightofuseAssets",
+  ppe                              = "ifrs-full:PropertyPlantAndEquipment",
+  goodwill                         = "ifrs-full:Goodwill",
+  inventories                      = "ifrs-full:Inventories",
+  receivables                      = "ifrs-full:TradeAndOtherCurrentReceivables",
+  cash                             = "ifrs-full:CashAndCashEquivalents",
+
+  equity                           = "ifrs-full:Equity",
+  equity_owners                    = "ifrs-full:EquityAttributableToOwnersOfParent",
+  nci                              = "ifrs-full:NoncontrollingInterests",
+  liabilities                      = "ifrs-full:Liabilities",
+  current_liabilities              = "ifrs-full:CurrentLiabilities",
+  noncurrent_liabilities           = "ifrs-full:NoncurrentLiabilities",
+  payables                         = "ifrs-full:TradeAndOtherCurrentPayables",
+  financial_liabilities_current    = "ifrs-full:OtherCurrentFinancialLiabilities",
+  financial_liabilities_noncurrent = "ifrs-full:OtherNoncurrentFinancialLiabilities",
+  borrowings_current               = "ifrs-full:ShorttermBorrowings",
+  borrowings_noncurrent            = "ifrs-full:LongtermBorrowings",
+
+  revenue                          = "ifrs-full:Revenue",
+  revenue                          = "ifrs-full:RevenueFromContractsWithCustomers",
+  ebit                             = "ifrs-full:ProfitLossFromOperatingActivities",
+  profit_before_tax                = "ifrs-full:ProfitLossBeforeTax",
+  income_tax                       = "ifrs-full:IncomeTaxExpenseContinuingOperations",
+  profit                           = "ifrs-full:ProfitLoss",
+  profit_owners                    = "ifrs-full:ProfitLossAttributableToOwnersOfParent",
+  eps                              = "ifrs-full:BasicEarningsLossPerShare",
+
+  operating_cash_flow              = "ifrs-full:CashFlowsFromUsedInOperatingActivities",
+  investing_cash_flow              = "ifrs-full:CashFlowsFromUsedInInvestingActivities",
+  financing_cash_flow              = "ifrs-full:CashFlowsFromUsedInFinancingActivities"
+)
+
+# The second concept of `revenue` is an approximation and is marked as such
+# wherever a figure rests on it: IFRS 15 revenue excludes revenue outside
+# that standard which the total may include. It is here because a page that
+# shows nothing for an issuer presenting only that line says less than one
+# that shows the figure and says what it is. The benchmark, which is read
+# from the combined table, does not make that trade: the materialised
+# measure names the first concept only, and the README of the combined
+# module is where that rule is argued.
+approximate_concepts <- c("ifrs-full:RevenueFromContractsWithCustomers")
+
+# You can adapt your corporate design in the sourced R-Skript. It is one file
+# for the whole package, in the templates directory at the root of it, so
+# that a factsheet of either regime looks like the other and a change to the
+# design is made once rather than once per module. A copy beside this
+# template wins over it, which is what lets a template taken out of the
+# package carry a design of its own.
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+# Translate a label: `tr("Revenue", "Umsatzerlöse")`.
+tr <- function(en, de) if (lang == "de") de else en
+
+# The label of a financial year. A year that ends on 31 December is named by
+# its calendar year, and any other by the two it spans: Zumtobel's year to
+# 30 April 2025 is 2024/25.
+fy_label <- function(date) {
+  y <- as.integer(format(date, "%Y"))
+  ifelse(format(date, "%m-%d") == "12-31", as.character(y),
+         paste0(y - 1, "/", sprintf("%02d", y %% 100)))
+}
+
+big_mark <- tr(",", ".")
+decimal_mark <- tr(".", ",")
+
+fmt_num <- function(x, digits = 0) {
+  ifelse(is.na(x), "–",
+         formatC(x, format = "f", digits = digits, big.mark = big_mark,
+                 decimal.mark = decimal_mark))
+}
+
+fmt_signed <- function(x, digits = 1) {
+  ifelse(is.na(x), "–",
+         paste0(ifelse(x > 0, "+", ""),
+                formatC(x, format = "f", digits = digits, big.mark = big_mark,
+                        decimal.mark = decimal_mark)))
+}
+
+# A caption wider than the figure is clipped rather than wrapped, so it is
+# broken into lines once here.
+wrap_caption <- function(text, width = 125) {
+  paste(strwrap(text, width = width), collapse = "\n")
+}
+
+# Escape what typst reads as its own syntax, for the text that goes into the
+# raw blocks of the cover and of the running head.
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", x)
+  gsub("\"", "\\\\\"", x)
+}
+
+group_label <- function(key) {
+  labels <- if (lang == "de") group_labels_de else group_labels
+  out <- unname(labels[key])
+  ifelse(is.na(out), key, out)
+}
+```
+
+```{r lake}
+# --------------------------------------------------------------------------
+# The Silver layers
+# --------------------------------------------------------------------------
+
+yaml_paths <- read_yaml(config_path)
+
+silver_of <- function(section) {
+  entry <- yaml_paths[[section]][["silver"]]
+  # The Silver layer may name a schema in a catalogue rather than a
+  # directory, with the directory the tables are written to beside it. R
+  # reads files, so it takes the directory.
+  if (is.list(entry)) entry <- entry[["path"]]
+  entry
+}
+
+# arrow reads every parquet file under a directory. A Delta table keeps the
+# files it has replaced until it is vacuumed, and both of these tables are
+# rebuilt in full, so a Delta table read this way would count a fact once
+# for every time it was written. The factsheet refuses one rather than show
+# those sums.
+refuse_delta <- function(path, table, module) {
+  if (dir.exists(file.path(path, table, "_delta_log"))) {
+    stop("The ", table, " table of the ", module, " module is a Delta table, ",
+         "which this template does not read. Write the Silver layer as ",
+         "parquet, or read the table through Spark.")
+  }
+}
+
+path_esef <- silver_of("esef")
+if (is.null(path_esef)) {
+  stop("The configuration file ", config_path, " names no esef section. ",
+       "This factsheet reads the panel's own lines from the esef tables.")
+}
+for (table in c("filings", "facts")) refuse_delta(path_esef, table, "esef")
+
+filings_all <- open_dataset(file.path(path_esef, "filings")) %>%
+  filter(LEI %in% panel$LEI) %>%
+  collect()
+
+missing_issuers <- setdiff(panel$LEI, filings_all$LEI)
+if (length(missing_issuers) == nrow(panel)) {
+  stop("The table of filings lists no filing of any issuer of the panel. ",
+       "The table lists every country whether its reports were collected or ",
+       "not, so either the identifiers are wrong or the lake is empty.")
+}
+
+# One filing per issuer and financial year. A report filed in two languages,
+# or filed again with corrections, is a filing of its own with facts of its
+# own, and the figures of the year are taken from one of them: the one in
+# the language of the factsheet, then the one with fewer validation errors,
+# then the one the repository processed last. A filing without a JSONURL has
+# no facts and is never chosen while another one is there.
+filings <- filings_all %>%
+  filter(!is.na(JSONURL)) %>%
+  arrange(LEI, PERIODEND,
+          coalesce(LANG, "") != lang,
+          coalesce(ERRORS, 0L),
+          desc(PROCESSED)) %>%
+  group_by(LEI, PERIODEND) %>%
+  slice(1) %>%
+  ungroup()
+
+if (nrow(filings) == 0) {
+  stop("No filing of any issuer of the panel has facts in the Silver layer. ",
+       "Run the esef pipeline for the country of the panel first.")
+}
+
+# The years the page shows: the last `n_years` period ends of the panel,
+# plus one behind them for the growth rates and the average balances. An
+# issuer whose financial year does not end in December is counted into the
+# year its period end falls in, and labelled as the two years it spans.
+period_year <- function(date) {
+  y <- as.integer(format(date, "%Y"))
+  ifelse(as.integer(format(date, "%m")) <= 6L, y - 1L, y)
+}
+
+filings <- filings %>% mutate(FY = period_year(PERIODEND))
+
+# A financial year still being filed is not a year with less in it, and
+# showing it as one would put a sector's latest year on two or three
+# issuers. A year is therefore shown only where at least `min_share` of the
+# issuers of the fullest year have filed for it. On a European panel in
+# November 2026 that drops the three issuers whose year ended in the second
+# half of 2026 and whose peers have months left to file; on a panel whose
+# issuers all report to 31 December it drops nothing.
+min_share <- 0.5
+filed_per_year <- filings %>%
+  group_by(FY) %>%
+  summarise(issuers = n_distinct(LEI), .groups = "drop")
+complete_years <- filed_per_year %>%
+  filter(issuers >= min_share * max(issuers)) %>%
+  pull("FY") %>%
+  sort()
+if (length(complete_years) == 0) {
+  stop("No financial year of the panel has filings from half the issuers of ",
+       "its fullest year, so there is no year to show.")
+}
+years_shown <- tail(complete_years, n_years)
+years_read <- tail(complete_years, n_years + 1)
+partial_years <- setdiff(sort(unique(filings$FY)), complete_years)
+partial_years <- partial_years[partial_years > max(years_shown)]
+filings <- filings %>% filter(FY %in% years_read)
+
+facts <- open_dataset(file.path(path_esef, "facts")) %>%
+  filter(FILING %in% filings$FILING) %>%
+  collect()
+
+# --------------------------------------------------------------------------
+# The combined table, which the benchmark is read from
+# --------------------------------------------------------------------------
+
+# The benchmark is a question about a population rather than about named
+# facts, and the combined table is where this package answers one: it
+# carries every regime the lake has collected in the same columns, and the
+# column `MEASURE` names what a fact is wherever the catalogue of measures
+# has agreed that the frameworks mean the same figure by it.
+#
+# What that column does not carry is as important as what it does. Only the
+# first concept of each framework is named, so a filing stating revenue only
+# as IFRS 15 revenue carries no measure and is absent from the benchmark;
+# and `profit_loss` is the total including the non-controlling interests, so
+# an American registrant tagging only `us-gaap:NetIncomeLoss` is absent too.
+# The counts beside every benchmark figure on this page are therefore counts
+# of filings that stated and named the figure, never of the population.
+path_combined <- silver_of("financialreport")
+has_combined <- !is.null(path_combined) &&
+  dir.exists(file.path(path_combined, "fact"))
+
+if (has_combined) {
+  for (table in c("fact", "filing")) {
+    refuse_delta(path_combined, table, "financialreport")
+  }
+
+  bench_filings <- open_dataset(file.path(path_combined, "filing")) %>%
+    collect()
+  if (!is.null(benchmark$source)) {
+    bench_filings <- bench_filings %>% filter(SOURCE %in% benchmark$source)
+  }
+  # The countries of the benchmark: the ones named above, or the ones the
+  # panel filed in where none are.
+  bench_countries <- benchmark$country
+  if (is.null(bench_countries)) {
+    bench_countries <- sort(unique(filings$COUNTRY[!is.na(filings$COUNTRY)]))
+  }
+  if (length(bench_countries) > 0) {
+    bench_filings <- bench_filings %>% filter(COUNTRY %in% bench_countries)
+  }
+  if (!is.null(benchmark$framework)) {
+    bench_filings <- bench_filings %>% filter(FRAMEWORK %in% benchmark$framework)
+  }
+
+  bench_facts <- open_dataset(file.path(path_combined, "fact")) %>%
+    filter(!is.na(MEASURE), FILING %in% bench_filings$FILING) %>%
+    collect()
+
+  # The second test for a bank or an insurer: a filer whose own primary
+  # statements carry a line only a financial undertaking has. It is a
+  # separate read because these concepts carry no measure, which is what
+  # `bench_facts` is filtered on.
+  financial_by_statement <- open_dataset(file.path(path_combined, "fact")) %>%
+    filter(CONCEPT %in% financial_concepts,
+           FILING %in% bench_filings$FILING) %>%
+    select(LEI) %>%
+    collect() %>%
+    distinct() %>%
+    pull("LEI")
+  financial_by_statement <- financial_by_statement[!is.na(financial_by_statement)]
+} else {
+  bench_filings <- filings[0, ]
+  bench_facts <- NULL
+  financial_by_statement <- character(0)
+}
+
+# --------------------------------------------------------------------------
+# The exchange rates
+# --------------------------------------------------------------------------
+
+# One row per calendar day and quoted currency, the table of
+# fincommons.exchangerate, which carries the last rate quoted on or before a
+# day for at most a week after that quote and marks a carried rate as
+# `IMPUTED`. It is read only where the panel needs it, so a lake holding one
+# currency needs no exchangerate section at all.
+path_fx <- silver_of("exchangerate")
+fx <- NULL
+if (!is.null(path_fx) && dir.exists(file.path(path_fx, "exchangerate"))) {
+  refuse_delta(path_fx, "exchangerate", "exchangerate")
+  fx <- open_dataset(file.path(path_fx, "exchangerate")) %>%
+    filter(BASE == target_ccy) %>%
+    select(REFDATE, QUOTE, VALUE, IMPUTED) %>%
+    collect() %>%
+    mutate(REFDATE = as.Date(REFDATE))
+  if (nrow(fx) == 0) fx <- NULL
+}
+```
+
+```{r figures}
+# --------------------------------------------------------------------------
+# The panel's own figures, one row per issuer and financial year
+# --------------------------------------------------------------------------
+
+# The figures of a year are the totals the year's own filing reports for the
+# year: no dimensions, a period that ends on the period end of the filing,
+# and, for a flow, a period that begins a year before it. The comparative
+# figures of the previous year that every filing carries as well are left
+# aside, so that a restated figure does not stand beside the one first
+# reported without saying so.
+annual <- facts %>%
+  filter(is.na(DIMENSIONS), !is.na(VALUE), PRDEND == PERIODEND,
+         is.na(PRDSTART) | PRDSTART >= PERIODEND - 366) %>%
+  left_join(filings %>% select(FILING, FY), by = "FILING") %>%
+  distinct(LEI, FY, PERIODEND, PRDSTART, CONCEPT, UNIT, VALUE)
+
+lookup <- tibble(key = names(concepts), CONCEPT = unname(concepts),
+                 preference = seq_along(concepts))
+
+tagged <- annual %>%
+  inner_join(lookup, by = "CONCEPT", relationship = "many-to-many") %>%
+  group_by(LEI, FY, key) %>%
+  slice_min(preference, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+wide <- tagged %>%
+  select(LEI, FY, PERIODEND, key, VALUE) %>%
+  pivot_wider(names_from = "key", values_from = "VALUE") %>%
+  arrange(LEI, FY)
+for (key in setdiff(unique(names(concepts)), names(wide))) {
+  wide[[key]] <- NA_real_
+}
+
+# --------------------------------------------------------------------------
+# The currency of each issuer, and the conversion into the target
+# --------------------------------------------------------------------------
+
+# The currency a filing reports in, taken from the unit of its total assets.
+# It is read per issuer and year rather than once for the panel, because an
+# issuer may redenominate -- a Croatian one did, on the euro changeover of
+# 2023 -- and because a European panel has a dozen of them at once.
+# The unit of a numeric fact is a currency as `iso4217:EUR`, and the prefix
+# is not always written in lower case: a handful of filings spell it
+# `ISO4217:EUR`. Stripping it case-insensitively is the difference between
+# one currency and two, and an issuer landing in the second would have no
+# rate and no converted amount at all.
+reported_ccy <- tagged %>%
+  filter(key == "assets", !is.na(UNIT)) %>%
+  transmute(LEI, FY, CCY = toupper(sub("(?i)^iso4217:", "", UNIT, perl = TRUE))) %>%
+  distinct(LEI, FY, .keep_all = TRUE)
+
+wide <- wide %>% left_join(reported_ccy, by = c("LEI", "FY"))
+
+currencies <- sort(unique(wide$CCY[!is.na(wide$CCY)]))
+needs_fx <- any(currencies != target_ccy)
+amount_label <- tr(paste0(target_ccy, " million"), paste0("Mio. ", target_ccy))
+
+# The rate table is required only where something has to be converted, and
+# where it is required it has to carry rates: a table with none would
+# convert every amount to a missing value and the page would read as a
+# sector that reported nothing rather than as a page that could not be
+# built. This is the check the EMIR and SFTR pipelines make for the same
+# reason, and it is made here before anything is converted.
+if (needs_fx && is.null(fx)) {
+  stop("The issuers of the panel report in more than one currency (",
+       paste(currencies, collapse = ", "), ") and the lake holds no ",
+       "exchange rate table quoted against ", target_ccy, ". Build it with ",
+       "fincommons.exchangerate.update_exchangerate and name its layers in ",
+       "the exchangerate section of ", config_path, ", or hold the panel to ",
+       "one currency.")
+}
+
+# The first day of the financial year, from the flows of the filing itself
+# rather than counted back from the period end, so that a year that is not
+# twelve months long is averaged over the months it has.
+period_start <- annual %>%
+  filter(!is.na(PRDSTART)) %>%
+  group_by(LEI, FY) %>%
+  summarise(PRDSTART = min(PRDSTART), .groups = "drop")
+
+wide <- wide %>%
+  left_join(period_start, by = c("LEI", "FY")) %>%
+  mutate(PRDSTART = coalesce(PRDSTART, PERIODEND - 364))
+
+# Two rates per filing, because IAS 21 translates the two kinds of figure
+# differently and a factsheet that adds up translated amounts should do what
+# the standard does. A balance is translated at the closing rate of the
+# reporting date; income and expense at the average rate of the period,
+# which is taken here over the daily rates of the financial year. A rate
+# that is not quoted on the closing date itself does not arise, the table
+# carrying one row per calendar day, but a currency the table does not quote
+# at all leaves both rates missing.
+# The closing rate is a join on the currency and the day. The average is a
+# mean over a range of days, so it is computed once per distinct period a
+# currency is averaged over -- a few dozen of those even for a panel of a
+# hundred and forty-five -- and joined back. Neither is a loop over the
+# rows: a date in a frame keeps its class, and a date pulled out of one a
+# value at a time does not always.
+if (needs_fx) {
+  wide <- wide %>%
+    left_join(fx %>% select(CCY = QUOTE, PERIODEND = REFDATE,
+                            FXRATE_CLOSING = VALUE),
+              by = c("CCY", "PERIODEND")) %>%
+    mutate(FXRATE_CLOSING = ifelse(!is.na(CCY) & CCY == target_ccy, 1,
+                                   FXRATE_CLOSING))
+
+  periods <- wide %>%
+    filter(!is.na(CCY), CCY != target_ccy,
+           !is.na(PRDSTART), !is.na(PERIODEND)) %>%
+    distinct(CCY, PRDSTART, PERIODEND)
+  periods$FXRATE_AVERAGE <- vapply(seq_len(nrow(periods)), function(i) {
+    v <- fx$VALUE[fx$QUOTE == periods$CCY[i]
+                  & fx$REFDATE >= periods$PRDSTART[i]
+                  & fx$REFDATE <= periods$PERIODEND[i]]
+    if (length(v) == 0) NA_real_ else mean(v)
+  }, numeric(1))
+
+  wide <- wide %>%
+    left_join(periods, by = c("CCY", "PRDSTART", "PERIODEND")) %>%
+    mutate(FXRATE_AVERAGE = ifelse(!is.na(CCY) & CCY == target_ccy, 1,
+                                   FXRATE_AVERAGE))
+} else {
+  wide$FXRATE_CLOSING <- rep(1, nrow(wide))
+  wide$FXRATE_AVERAGE <- rep(1, nrow(wide))
+}
+
+# The amounts, and which of the two rates each is translated at. A key that
+# is neither is not an amount -- a ratio, a per-share figure, a date -- and
+# is never converted.
+instant_keys <- c("assets", "current_assets", "noncurrent_assets", "ppe",
+                  "goodwill", "inventories", "receivables", "cash",
+                  "equity", "equity_owners", "nci", "liabilities",
+                  "current_liabilities", "noncurrent_liabilities", "payables",
+                  "financial_liabilities_current",
+                  "financial_liabilities_noncurrent",
+                  "borrowings_current", "borrowings_noncurrent")
+flow_keys <- c("revenue", "ebit", "profit_before_tax", "income_tax", "profit",
+               "profit_owners", "operating_cash_flow", "investing_cash_flow",
+               "financing_cash_flow")
+
+# The derived lines. Nothing here is a figure an issuer stated: each is
+# arithmetic on figures it did state, and a line resting on a figure the
+# issuer did not tag stays missing rather than taking a nought for it.
+#
+# Net debt is the borrowings and the other financial liabilities, current
+# and non-current, less cash. No issuer tags a net debt of its own under a
+# concept of the taxonomy, and the figure a report states in its management
+# report is usually defined more widely, so the one here is not the one the
+# issuer reports.
+#
+# EBITDA is not derived. Depreciation and amortisation are not a line of the
+# primary statements under a concept of the IFRS taxonomy, so every
+# indicator that would rest on EBITDA is shown against EBIT or against the
+# operating cash flow instead.
+wide <- wide %>%
+  left_join(panel, by = "LEI") %>%
+  group_by(LEI) %>%
+  arrange(FY, .by_group = TRUE) %>%
+  mutate(
+    year = fy_label(PERIODEND),
+    liabilities = coalesce(liabilities, assets - equity),
+    financial_liabilities =
+      coalesce(financial_liabilities_noncurrent, borrowings_noncurrent, 0) +
+      coalesce(financial_liabilities_current, borrowings_current, 0),
+    net_debt = ifelse(
+      is.na(financial_liabilities_noncurrent) & is.na(borrowings_noncurrent) &
+        is.na(financial_liabilities_current) & is.na(borrowings_current),
+      NA_real_, financial_liabilities - coalesce(cash, 0)),
+    working_capital = inventories + receivables - payables,
+    equity_ratio = 100 * equity / assets,
+    ebit_margin = 100 * ebit / revenue,
+    net_margin = 100 * profit / revenue,
+    assets_turnover = revenue / assets,
+    current_ratio = current_assets / current_liabilities,
+    cash_conversion = 100 * operating_cash_flow / ebit,
+    equity_avg = (equity + lag(equity)) / 2,
+    assets_avg = (assets + lag(assets)) / 2,
+    roe = 100 * profit / equity_avg,
+    roa = 100 * profit / assets_avg,
+    revenue_growth = 100 * (revenue / lag(revenue) - 1)
+  ) %>%
+  ungroup() %>%
+  mutate(GROUP = factor(GROUP, levels = group_levels))
+
+# The conversion runs here, once the derived amounts exist, so that a net
+# debt or a working capital is translated like the lines it was built from
+# rather than left in the issuer's own currency. The derived keys are
+# translated at the closing rate, every one of them being a balance.
+instant_keys <- c(instant_keys, "financial_liabilities", "net_debt",
+                  "working_capital", "equity_avg", "assets_avg")
+
+for (key in c(instant_keys, flow_keys)) {
+  if (!key %in% names(wide)) next
+  rate <- if (key %in% instant_keys) wide$FXRATE_CLOSING else wide$FXRATE_AVERAGE
+  wide[[paste0(key, "_FXRATE")]] <- rate
+  wide[[paste0(key, "_DOMESTIC")]] <- wide[[key]] / rate
+}
+
+# An amount is shown and added up in the target currency, under its
+# `_DOMESTIC` name; a ratio is not converted at all. A margin, an equity
+# ratio or a return is a quotient of two amounts of one filing in one
+# currency, so the currency cancels, and computing it from the filed figures
+# rather than from the converted ones keeps it answerable for an issuer
+# whose currency the rate table does not quote.
+
+# The issuer-years whose amounts could not be converted, which the page
+# names rather than passing over. A missing rate leaves a missing amount and
+# the issuer drops out of a sum; it is never the filed figure counted as
+# though it were already in the target currency.
+unconverted <- wide %>%
+  filter(FY %in% years_shown, !is.na(assets), is.na(assets_DOMESTIC)) %>%
+  select(LEI, FY, CCY)
+
+# Which lines rest on a concept the catalogue calls an approximation, so the
+# tables can mark them.
+approximate <- tagged %>%
+  filter(CONCEPT %in% approximate_concepts) %>%
+  distinct(LEI, FY, key)
+
+shown <- wide %>% filter(FY %in% years_shown)
+latest_year <- max(years_shown)
+latest <- shown %>% filter(FY == latest_year)
+
+# An issuer that has stopped filing has no row in the latest year, and the
+# page says so rather than dropping it without a word.
+absent_latest <- panel %>%
+  filter(!LEI %in% latest$LEI) %>%
+  left_join(wide %>% group_by(LEI) %>%
+              summarise(last_year = max(FY), .groups = "drop"), by = "LEI")
+
+# --------------------------------------------------------------------------
+# The sector totals
+# --------------------------------------------------------------------------
+
+# A total is the sum of the issuers that stated the figure in that year, and
+# the count beside it says how many those were. A sum over a changing number
+# of issuers is not a time series of the sector, which is why the count is
+# never dropped and why the growth of the sector further down is computed
+# over the issuers present in both years rather than over the totals.
+# The totals are grouped by the financial year rather than by its label:
+# Zumtobel's year to 30 April 2026 and STRABAG's to 31 December 2025 are the
+# same financial year of the sector, and `period_year` is what puts them
+# there. Each issuer keeps its own label in the tables that show it alone.
+totals <- shown %>%
+  group_by(FY) %>%
+  summarise(across(ends_with("_DOMESTIC"),
+                   list(sum = ~sum(.x, na.rm = TRUE),
+                        n = ~sum(!is.na(.x)))),
+            issuers = n(), .groups = "drop") %>%
+  rename_with(~sub("_DOMESTIC_", "_", .x)) %>%
+  arrange(FY)
+
+# Growth of the sector, over the issuers that filed in both years.
+like_for_like <- shown %>%
+  transmute(LEI, FY, revenue = revenue_DOMESTIC) %>%
+  arrange(LEI, FY) %>%
+  group_by(LEI) %>%
+  mutate(prev = lag(revenue), prev_fy = lag(FY)) %>%
+  ungroup() %>%
+  filter(!is.na(revenue), !is.na(prev), FY == prev_fy + 1) %>%
+  group_by(FY) %>%
+  summarise(revenue = sum(revenue), prev = sum(prev), issuers = n(),
+            .groups = "drop") %>%
+  mutate(growth = 100 * (revenue / prev - 1))
+
+# The same sums, group by group. A group is shown with the number of issuers
+# behind it because three of the four have fewer than four, and a median of
+# two is a midpoint rather than a benchmark. They are here so that a reader
+# can see which part of the sector a movement in the total came from: the
+# groups do not move together, and that is the whole reason the panel
+# carries a group per issuer rather than one label for all of them.
+# A ratio of two sums has to be summed over the same issuers in both, and
+# that is not what `sum(a) / sum(b)` gives when one issuer states a and not
+# b. The materials group is where this showed itself: Saint-Gobain states
+# its revenue and no operating result under a concept of the taxonomy, so
+# its revenue was in the denominator of the group's margin and its result
+# was in no numerator, and the margin came out meaningless. Each ratio
+# below is therefore summed over the issuers that stated both of its
+# figures, and the count of those is carried beside it.
+ratio_of_sums <- function(num, den) {
+  ok <- !is.na(num) & !is.na(den)
+  if (!any(ok) || sum(den[ok]) == 0) return(NA_real_)
+  100 * sum(num[ok]) / sum(den[ok])
+}
+
+by_group <- shown %>%
+  group_by(GROUP, FY) %>%
+  summarise(across(c(revenue_DOMESTIC, ebit_DOMESTIC, profit_DOMESTIC,
+                     assets_DOMESTIC, equity_DOMESTIC),
+                   ~sum(.x, na.rm = TRUE)),
+            issuers = n_distinct(LEI),
+            ebit_margin = ratio_of_sums(ebit_DOMESTIC, revenue_DOMESTIC),
+            ebit_margin_n = sum(!is.na(ebit_DOMESTIC) & !is.na(revenue_DOMESTIC)),
+            equity_ratio = ratio_of_sums(equity_DOMESTIC, assets_DOMESTIC),
+            equity_ratio_n = sum(!is.na(equity_DOMESTIC) & !is.na(assets_DOMESTIC)),
+            # The median of the issuers' own margins, which no single
+            # issuer can carry and which a sum always can.
+            ebit_margin_median = median(ebit_margin[is.finite(ebit_margin)],
+                                        na.rm = TRUE),
+            equity_ratio_median = median(equity_ratio[is.finite(equity_ratio)],
+                                         na.rm = TRUE),
+            .groups = "drop") %>%
+  rename_with(~sub("_DOMESTIC$", "", .x)) %>%
+  arrange(GROUP, FY)
+```
+
+```{r benchmark}
+# --------------------------------------------------------------------------
+# The benchmark, from the materialised measures of the combined table
+# --------------------------------------------------------------------------
+
+# One value per filing and measure, for the year the filing reports on. A
+# fact under a dimension is a part of the entity rather than the entity, and
+# is left out; `BASIS_MEMBERS` of the combined module is the one exception
+# the Python side makes, for a Japanese filing that states its parent
+# company's accounts under a member, and it does not arise in a table of
+# ESEF filings.
+measures_wanted <- c("revenue", "assets", "liabilities", "equity",
+                     "profit_loss", "cash_and_equivalents")
+
+if (has_combined) {
+  bench_values <- bench_facts %>%
+    filter(is.na(DIMENSIONS), !is.na(VALUE), MEASURE %in% measures_wanted,
+           PRDEND == PERIODEND) %>%
+    distinct(SOURCE, FILING, LEI, PERIODEND, PERIODYEAR, MEASURE, VALUE) %>%
+    group_by(FILING, PERIODEND, MEASURE) %>%
+    slice(1) %>%
+    ungroup() %>%
+    pivot_wider(names_from = "MEASURE", values_from = "VALUE") %>%
+    mutate(FY = period_year(PERIODEND))
+  for (key in setdiff(measures_wanted, names(bench_values))) {
+    bench_values[[key]] <- NA_real_
+  }
+
+  # One filing per issuer and year, the same rule as for the panel: the
+  # filing that carries the most of the measures wins, and the identifier
+  # breaks a tie so that the choice is the same on every run.
+  bench_values <- bench_values %>%
+    mutate(filled = rowSums(!is.na(across(all_of(measures_wanted))))) %>%
+    arrange(LEI, FY, desc(filled), FILING) %>%
+    group_by(LEI, FY) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(
+      financial = LEI %in% financial_leis | LEI %in% financial_by_statement,
+      in_panel  = LEI %in% panel$LEI,
+      equity_ratio = 100 * equity / assets,
+      net_margin   = 100 * profit_loss / revenue,
+      roe          = 100 * profit_loss / equity,
+      roa          = 100 * profit_loss / assets,
+      cash_ratio   = 100 * cash_and_equivalents / assets
+    )
+
+  # The population the panel is held against: everything the scope above
+  # names, less the banks and insurers, and less the panel itself, so that
+  # the panel is not being compared with a median it is a part of.
+  market <- bench_values %>% filter(!financial, !in_panel)
+} else {
+  bench_values <- NULL
+  market <- NULL
+}
+
+bench_ratios <- c("equity_ratio", "net_margin", "roe", "roa")
+bench_ratio_labels <- c(
+  equity_ratio = tr("Equity ratio, %", "Eigenkapitalquote, %"),
+  net_margin   = tr("Net margin, %", "Nettomarge, %"),
+  roe          = tr("Return on equity, %", "Eigenkapitalrendite, %"),
+  roa          = tr("Return on assets, %", "Gesamtkapitalrendite, %")
+)
+
+# The quartiles of the population in the latest year, and of the panel
+# beside them. A ratio is only read where both of its figures were stated,
+# and `n` says how many filings that was.
+quartiles <- function(data, key) {
+  v <- data[[key]]
+  v <- v[is.finite(v)]
+  if (length(v) == 0) {
+    return(tibble(q1 = NA_real_, median = NA_real_, q3 = NA_real_, n = 0L))
+  }
+  tibble(q1 = unname(quantile(v, .25)), median = median(v),
+         q3 = unname(quantile(v, .75)), n = length(v))
+}
+
+bench_table <- NULL
+if (has_combined && nrow(market) > 0) {
+  bench_table <- lapply(bench_ratios, function(key) {
+    bind_rows(
+      quartiles(bench_values %>% filter(in_panel, FY == latest_year), key) %>%
+        mutate(population = tr("The panel", "Das Panel")),
+      quartiles(market %>% filter(FY == latest_year), key) %>%
+        mutate(population = tr("Other filers, excluding banks and insurers",
+                               "Übrige Emittenten, ohne Banken und Versicherer")),
+      quartiles(bench_values %>% filter(financial, FY == latest_year), key) %>%
+        mutate(population = tr("Banks and insurers", "Banken und Versicherer"))
+    ) %>% mutate(ratio = key)
+  }) %>% bind_rows()
+}
+
+# The median of the population, year by year, for the charts that put the
+# panel against a band.
+market_band <- NULL
+if (has_combined && nrow(market) > 0) {
+  market_band <- lapply(bench_ratios, function(key) {
+    market %>%
+      filter(FY %in% years_shown) %>%
+      group_by(FY) %>%
+      group_modify(~quartiles(.x, key)) %>%
+      ungroup() %>%
+      mutate(ratio = key)
+  }) %>% bind_rows()
+}
+```
+
+```{r charts}
+# --------------------------------------------------------------------------
+# The charts
+# --------------------------------------------------------------------------
+
+source_caption <- caption_corporate_design(
+  source = if (has_combined) {
+    tr("ESEF annual financial reports, filings.xbrl.org; benchmark from the combined table.",
+       "ESEF-Finanzberichte, filings.xbrl.org; Vergleichswerte aus der kombinierten Tabelle.")
+  } else {
+    tr("ESEF annual financial reports, filings.xbrl.org.",
+       "ESEF-Finanzberichte, filings.xbrl.org.")
+  },
+  last = format(max(filings$PERIODEND), tr("%d %b %Y", "%d.%m.%Y")),
+  lang = lang)
+
+# One break per financial year of the sector. The label is the year the
+# period end falls in by `period_year`, so a year to 30 April 2026 is shown
+# under 2025 beside the years to 31 December 2025.
+scale_x_years <- function(...) {
+  scale_x_continuous(breaks = years_shown, labels = as.character(years_shown),
+                     expand = c(.04, 0), ...)
+}
+
+group_colours <- setNames(
+  palette_corporate_design("cat")[seq_along(group_levels)], group_levels)
+```
+
+```{=typst}
+#set page(numbering: "1 / 1")
+```
+
+```{r cover, results = "asis"}
+title <- tr(paste0(sector_name[["en"]], " in ", country_name[["en"]]),
+            paste0(sector_name[["de"]], " in ", country_name[["de"]]))
+subtitle <- tr(
+  paste0("A factsheet on ", nrow(panel), " issuers, from their ESEF annual ",
+         "financial reports"),
+  paste0("Ein Factsheet zu ", nrow(panel), " Emittenten, aus deren ",
+         "ESEF-Jahresfinanzberichten"))
+cat('```{=typst}\n')
+cat('#text(size: 20pt, weight: "bold", fill: rgb("#C10016"))[',
+    typst_string(title), ']\\\n', sep = "")
+cat('#text(size: 11pt, fill: rgb("#5C666F"))[',
+    typst_string(subtitle), ']\n', sep = "")
+cat('```\n')
+```
+
+## `r tr("Contents", "Inhalt")`
+
+```{=typst}
+#outline(title: none, depth: 2, indent: 1em)
+```
+
+### `r tr("How the figures are put together", "Wie die Zahlen zustande kommen")`
+
+`r tr(paste0("Every figure on this page is a fact an issuer tagged in its own annual financial report, read from the ESEF tables of fincommons. A report is filed in Inline XBRL with the officially appointed mechanism of its member state and collected by filings.xbrl.org, which is where the pipeline reads it from. Nothing here is estimated, interpolated or converted: a line an issuer did not tag is shown as a dash, and a ratio whose two figures were not both stated is not computed."), paste0("Jede Zahl auf dieser Seite ist ein Fakt, den ein Emittent in seinem eigenen Jahresfinanzbericht ausgezeichnet hat, gelesen aus den ESEF-Tabellen von fincommons. Ein Bericht wird in Inline XBRL beim Speichersystem seines Mitgliedstaats eingereicht und von filings.xbrl.org gesammelt, von wo die Pipeline ihn liest. Nichts ist geschätzt, interpoliert oder umgerechnet: eine Zeile, die ein Emittent nicht ausgezeichnet hat, steht als Strich, und eine Kennzahl, deren beide Größen nicht beide angegeben wurden, wird nicht berechnet."))`
+
+`r tr("The sector is a stated list. ESEF carries no sector code, so which issuer belongs to a construction sector is a judgement, and it is made in the panel below rather than anywhere in the data. Each issuer is shown with the group it was put in, so that a reader who would draw the boundary elsewhere can see what moving it would do.", "Der Sektor ist eine gesetzte Liste. ESEF enthält keinen Branchencode, daher ist die Zuordnung eines Emittenten zur Bauwirtschaft eine Setzung, und sie wird im Panel unten getroffen und nirgends in den Daten. Jeder Emittent wird mit seiner Gruppe gezeigt, damit erkennbar bleibt, was eine andere Abgrenzung ändern würde.")`
+
+### `r tr("Amounts in one currency", "Beträge in einer Währung")`
+
+```{r currency-note, results = "asis"}
+if (!needs_fx) {
+  cat(tr(paste0("Every issuer of the panel reports in ", target_ccy,
+                ", so nothing is converted."),
+         paste0("Alle Emittenten des Panels berichten in ", target_ccy,
+                "; es wird nichts umgerechnet.")), "\n")
+} else {
+  cat(tr(
+    paste0("The issuers of this panel report in ", length(currencies),
+           " currencies (", paste(currencies, collapse = ", "), "). Every ",
+           "amount on these pages is therefore shown converted into ",
+           target_ccy, ", at the reference rates of ",
+           "fincommons.exchangerate. The figure the issuer filed and the ",
+           "currency it filed it in are kept untouched beside it; the ",
+           "conversion only adds the rate that was applied and the ",
+           "converted amount. A balance is converted at the closing rate of ",
+           "the reporting date and an income or expense at the average rate ",
+           "of the financial year, which is what IAS 21 does and what makes ",
+           "a translated margin mean what it says.\n\n",
+           "A ratio is not converted at all. A margin, an equity ratio and ",
+           "a return are each a quotient of two amounts of one filing in ",
+           "one currency, so the currency cancels, and they are computed ",
+           "from the figures as filed. That is why an issuer whose currency ",
+           "the rate table does not reach can still stand in the ",
+           "benchmark while its amounts are missing from the sums."),
+    paste0("Die Emittenten dieses Panels berichten in ", length(currencies),
+           " Währungen (", paste(currencies, collapse = ", "), "). Jeder ",
+           "Betrag auf diesen Seiten wird daher in ", target_ccy,
+           " umgerechnet gezeigt, zu den Referenzkursen von ",
+           "fincommons.exchangerate. Der vom Emittenten eingereichte Wert ",
+           "und dessen Währung bleiben unangetastet daneben stehen; die ",
+           "Umrechnung fügt nur den angewandten Kurs und den umgerechneten ",
+           "Betrag hinzu. Ein Bestand wird zum Stichtagskurs umgerechnet, ",
+           "ein Ertrag oder Aufwand zum Durchschnittskurs des ",
+           "Geschäftsjahres -- so wie es IAS 21 vorsieht.\n\n",
+           "Eine Kennzahl wird gar nicht umgerechnet. Marge, ",
+           "Eigenkapitalquote und Rendite sind Quotienten zweier Größen ",
+           "eines Berichts in einer Währung; die Währung kürzt sich heraus, ",
+           "und sie werden aus den eingereichten Werten berechnet.")),
+      "\n")
+}
+if (nrow(unconverted) > 0) {
+  missing <- unconverted %>%
+    left_join(panel %>% select(LEI, SHORT), by = "LEI") %>%
+    mutate(txt = paste0(SHORT, " ", FY, " (", CCY, ")"))
+  cat("\n\n", tr(
+    paste0("The rate table does not quote ", nrow(unconverted),
+           " of the issuer-years shown: ",
+           paste(missing$txt, collapse = ", "),
+           ". Those amounts are missing rather than carried over ",
+           "unconverted, and the counts beside the sums are smaller by that ",
+           "many."),
+    paste0("Für ", nrow(unconverted), " der gezeigten Emittentenjahre ",
+           "liefert die Kurstabelle keinen Kurs: ",
+           paste(missing$txt, collapse = ", "),
+           ". Diese Beträge fehlen, statt unumgerechnet übernommen zu ",
+           "werden; die Anzahl neben den Summen ist entsprechend kleiner.")),
+      "\n")
+}
+```
+
+{{< pagebreak >}}
+
+## `r tr("The panel", "Das Panel")`
+
+```{r panel-table}
+temp <- panel %>%
+  left_join(filings %>%
+              arrange(LEI, desc(PERIODEND)) %>%
+              group_by(LEI) %>%
+              summarise(NAME = first(NAME),
+                        first_year = fy_label(min(PERIODEND)),
+                        last_year = fy_label(max(PERIODEND)),
+                        filings = n(), .groups = "drop"),
+            by = "LEI") %>%
+  mutate(GROUP = factor(GROUP, levels = group_levels)) %>%
+  arrange(GROUP, SHORT) %>%
+  transmute(
+    # The name the issuer's own report gives, then the one the panel file
+    # gives, then the short name. An issuer the lake holds no filing for
+    # stays in this table and is named by the panel rather than dropped:
+    # that it filed nothing is a fact about the panel worth printing.
+    !!tr("Issuer", "Emittent") := coalesce(NAME, PANEL_NAME, SHORT),
+    !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
+    !!tr("NACE", "NACE") := NACE,
+    !!tr("Country", "Land") := COUNTRY,
+    !!tr("What it does", "Tätigkeit") :=
+      if (lang == "de") ACTIVITY_DE else ACTIVITY_EN,
+    !!tr("Years filed", "Jahre") := paste0(first_year, "–", last_year),
+    !!tr("Filings", "Berichte") := filings)
+
+# A column every row leaves empty is dropped rather than printed as a
+# column of dashes: a panel file that names no activity should not cost the
+# table a column.
+temp <- temp[, vapply(temp, function(x) any(!is.na(x) & x != ""), logical(1)),
+             drop = FALSE]
+knitr::kable(temp, align = paste(rep("l", ncol(temp)), collapse = ""))
+```
+
+`r if (nrow(absent_latest) > 0) tr(paste0("Not every issuer of the panel filed for ", fy_label(max(latest$PERIODEND)), ". ", paste(absent_latest$SHORT, collapse = ", "), " last filed for ", paste(absent_latest$last_year, collapse = ", "), ", and the totals of the later years are over the issuers that did file. The counts beside every total say how many those were."), paste0("Nicht jeder Emittent des Panels hat für ", fy_label(max(latest$PERIODEND)), " eingereicht. ", paste(absent_latest$SHORT, collapse = ", "), " hat zuletzt für ", paste(absent_latest$last_year, collapse = ", "), " eingereicht; die Summen der späteren Jahre umfassen nur die Emittenten, die eingereicht haben. Die Anzahl steht neben jeder Summe.")) else ""`
+
+{{< pagebreak >}}
+
+## `r tr("At a glance", "Auf einen Blick")`
+
+```{r glance-table}
+temp <- totals %>%
+  transmute(
+    !!tr("Financial year", "Geschäftsjahr") := as.character(FY),
+    !!tr("Issuers", "Emittenten") := issuers,
+    !!tr("Revenue", "Umsatzerlöse") :=
+      paste0(fmt_num(revenue_sum / scale), " (", revenue_n, ")"),
+    !!tr("Operating result", "Betriebsergebnis") :=
+      paste0(fmt_num(ebit_sum / scale), " (", ebit_n, ")"),
+    !!tr("Result for the year", "Jahresergebnis") :=
+      paste0(fmt_num(profit_sum / scale), " (", profit_n, ")"),
+    !!tr("Total assets", "Bilanzsumme") :=
+      paste0(fmt_num(assets_sum / scale), " (", assets_n, ")"),
+    !!tr("Equity", "Eigenkapital") :=
+      paste0(fmt_num(equity_sum / scale), " (", equity_n, ")"))
+
+knitr::kable(temp, align = "lrrrrrr",
+             caption = tr(paste0("Sums over the issuers that stated the ",
+                                 "figure, in ", amount_label,
+                                 "; the number that did is in brackets."),
+                          paste0("Summen über die Emittenten, die die Größe ",
+                                 "angegeben haben, in ", amount_label,
+                                 "; deren Anzahl in Klammern.")))
+```
+
+### `r tr("Revenue and result of the sector", "Umsatz und Ergebnis des Sektors")`
+
+```{r glance-chart, fig.height = 2.6}
+temp <- totals %>%
+  select(FY, revenue = revenue_sum, profit = profit_sum) %>%
+  mutate(across(c(revenue, profit), ~.x / scale))
+
+g <- ggplot(temp, aes(x = FY)) +
+  geom_col(aes(y = revenue, fill = tr("Revenue", "Umsatzerlöse")),
+           width = .62) +
+  geom_line(aes(y = profit, colour = tr("Result for the year",
+                                        "Jahresergebnis")),
+            linewidth = linewidth_corporate_design) +
+  geom_point(aes(y = profit, colour = tr("Result for the year",
+                                         "Jahresergebnis")), size = 1.6) +
+  geom_zeroline() +
+  scale_x_years() +
+  scale_fill_manual(values = unname(design_colours()["mute"]), name = NULL) +
+  scale_colour_manual(values = unname(design_colours()["red"]), name = NULL) +
+  labs(x = NULL, y = amount_label, caption = source_caption) +
+  theme_corporate_design(base_size = chart_base_size)
+g
+```
+
+```{r partial-years, results = "asis"}
+if (length(partial_years) > 0) {
+  n <- filed_per_year %>% filter(FY %in% partial_years)
+  cat(tr(
+    paste0("A later financial year than ", max(years_shown), " is not shown. ",
+           paste(sprintf("%d has %d issuer(s) so far", n$FY, n$issuers),
+                 collapse = "; "),
+           ", against ", max(filed_per_year$issuers), " in the fullest year, ",
+           "so it is a year still being filed rather than a year with less ",
+           "in it."),
+    paste0("Ein spateres Geschaftsjahr als ", max(years_shown),
+           " wird nicht gezeigt. ",
+           paste(sprintf("%d hat bisher %d Emittenten", n$FY, n$issuers),
+                 collapse = "; "),
+           ", gegen ", max(filed_per_year$issuers),
+           " im vollsten Jahr; es ist ein Jahr, das noch eingereicht wird, ",
+           "und kein Jahr mit weniger Inhalt.")), "\n")
+}
+```
+
+```{r glance-growth, results = "asis"}
+if (nrow(like_for_like) > 0) {
+  last <- like_for_like %>% slice_tail(n = 1)
+  cat(tr(
+    paste0("Revenue of the issuers that filed for both ", last$FY - 1, " and ",
+           last$FY, " changed by ", fmt_signed(last$growth), " per cent. That ",
+           "is computed over the ", last$issuers, " issuers present in both ",
+           "years rather than over the totals above, which are sums over a ",
+           "changing number of issuers, and it is a nominal figure: nothing ",
+           "in this lake deflates it."),
+    paste0("Der Umsatz der Emittenten, die sowohl für ", last$FY - 1,
+           " als auch für ", last$FY, " eingereicht haben, veränderte sich um ",
+           fmt_signed(last$growth), " Prozent. Berechnet über die ",
+           last$issuers, " in beiden Jahren vorhandenen Emittenten, nicht über ",
+           "die Summen oben, die über eine wechselnde Zahl von Emittenten ",
+           "laufen; nominell, denn dieser Data Lake deflationiert nichts.")),
+      "\n")
+}
+```
+
+### `r tr("The four groups apart", "Die vier Gruppen getrennt")`
+
+```{r group-table}
+temp <- by_group %>%
+  transmute(
+    !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
+    !!tr("Year", "Jahr") := as.character(FY),
+    !!tr("Issuers", "Emittenten") := issuers,
+    !!tr("Revenue", "Umsatz") := fmt_num(revenue / scale),
+    !!tr("EBIT", "EBIT") := fmt_num(ebit / scale),
+    !!tr("EBIT margin, %", "EBIT-Marge, %") :=
+      paste0(fmt_num(ebit_margin, 1), " (", ebit_margin_n, ")"),
+    !!tr("Median margin, %", "Median-Marge, %") :=
+      fmt_num(ebit_margin_median, 1),
+    !!tr("Result", "Ergebnis") := fmt_num(profit / scale),
+    !!tr("Total assets", "Bilanzsumme") := fmt_num(assets / scale),
+    !!tr("Equity ratio, %", "EK-Quote, %") := fmt_num(equity_ratio, 1),
+    !!tr("Median equity ratio, %", "Median-EK-Quote, %") :=
+      fmt_num(equity_ratio_median, 1))
+
+knitr::kable(temp, align = "llrrrrrrrrr",
+             caption = tr(
+               paste0("Sums over the issuers of the group that stated the ",
+                      "figure, in ", amount_label, ". A group whose issuer ",
+                      "count changes from one year to the next is a group ",
+                      "whose total changed for that reason as well. A margin ",
+                      "and an equity ratio are summed over the issuers that ",
+                      "stated both of their figures, and that count is in ",
+                      "brackets; the median beside each is over the issuers' ",
+                      "own ratios, which one large or one mis-stated issuer ",
+                      "cannot carry and a sum always can."),
+               paste0("Summen über die Emittenten der Gruppe, die die Größe ",
+                      "angegeben haben, in ", amount_label, ". Ändert sich ",
+                      "die Zahl der Emittenten einer Gruppe von Jahr zu ",
+                      "Jahr, so ändert sich ihre Summe auch deshalb.")))
+```
+
+```{r group-chart, fig.height = 2.6}
+g <- ggplot(by_group %>% filter(!is.na(ebit_margin)),
+            aes(x = FY, y = ebit_margin, colour = GROUP)) +
+  geom_zeroline() +
+  geom_line(linewidth = linewidth_corporate_design) +
+  geom_point(size = 1.6) +
+  scale_x_years() +
+  scale_colour_manual(values = group_colours, labels = group_label, name = NULL) +
+  labs(x = NULL, y = tr("EBIT margin, %", "EBIT-Marge, %"),
+       caption = source_caption) +
+  theme_corporate_design(base_size = chart_base_size)
+g
+```
+
+{{< pagebreak >}}
+
+## `r tr("The issuers, year by year", "Die Emittenten, Jahr für Jahr")`
+
+```{r issuer-table}
+temp <- shown %>%
+  arrange(GROUP, SHORT, FY) %>%
+  transmute(
+    !!tr("Issuer", "Emittent") := SHORT,
+    !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
+    !!tr("Year", "Jahr") := year,
+    !!tr("Currency", "Währung") := CCY,
+    !!tr("Revenue", "Umsatz") := fmt_num(revenue_DOMESTIC / scale),
+    !!tr("Growth, %", "Wachstum, %") := fmt_signed(revenue_growth),
+    !!tr("EBIT", "EBIT") := fmt_num(ebit_DOMESTIC / scale),
+    !!tr("EBIT margin, %", "EBIT-Marge, %") := fmt_num(ebit_margin, 1),
+    !!tr("Result", "Ergebnis") := fmt_num(profit_DOMESTIC / scale),
+    !!tr("Total assets", "Bilanzsumme") := fmt_num(assets_DOMESTIC / scale),
+    !!tr("Equity ratio, %", "EK-Quote, %") := fmt_num(equity_ratio, 1),
+    !!tr("ROE, %", "EKR, %") := fmt_num(roe, 1))
+
+knitr::kable(temp, align = "lllcrrrrrrrr",
+             caption = tr(paste0("Amounts in ", amount_label,
+                                 ". A dash is a figure the issuer did not tag."),
+                          paste0("Beträge in ", amount_label,
+                                 ". Ein Strich ist eine Größe, die der ",
+                                 "Emittent nicht ausgezeichnet hat.")))
+```
+
+{{< pagebreak >}}
+
+## `r tr("Revenue", "Umsatzerlöse")`
+
+### `r tr("Each issuer against its own first year", "Jeder Emittent gegen sein eigenes erstes Jahr")`
+
+```{r revenue-index, fig.height = 2.9}
+# The index is taken on the converted revenue rather than on the filed one,
+# because an issuer that redenominated -- as the Croatian ones did on the
+# euro changeover of 2023 -- has a filed series in two units, and an index
+# over that would be a step rather than a growth rate.
+#
+# An issuer is indexed on its own first year with a revenue, so a line
+# starts at 100 wherever that issuer starts. One that files for only one of
+# the years shown has no line to draw and is left out; the caption says how
+# many those were.
+base <- shown %>%
+  filter(!is.na(revenue_DOMESTIC)) %>%
+  group_by(LEI) %>%
+  arrange(FY, .by_group = TRUE) %>%
+  mutate(index = 100 * revenue_DOMESTIC / first(revenue_DOMESTIC),
+         n_years = n()) %>%
+  ungroup() %>%
+  filter(n_years > 1)
+
+drawn <- n_distinct(base$LEI)
+left_out <- n_distinct(shown$LEI) - drawn
+
+g <- ggplot(mapping = aes(x = FY, y = index)) +
+  geom_hline(yintercept = 100, colour = design_colours()["grid"])
+
+if (drawn > max_lines) {
+  # The median of each group in front of every issuer's line, drawn faint.
+  medians <- base %>%
+    group_by(GROUP, FY) %>%
+    summarise(index = median(index, na.rm = TRUE), .groups = "drop")
+  g <- g +
+    geom_line(data = base, aes(group = LEI),
+              colour = design_colours()["mute"], linewidth = .35, alpha = .7) +
+    geom_line(data = medians, aes(colour = GROUP),
+              linewidth = linewidth_corporate_design + .2) +
+    geom_point(data = medians, aes(colour = GROUP), size = 1.8)
+  index_note <- tr(
+    paste0("One faint line per issuer; in front of them the median of each ",
+           "group. A median of indices is not the index of a sum: it says ",
+           "what the middle issuer of the group did, not what the group did."),
+    paste0("Eine blasse Linie je Emittent; davor der Median jeder Gruppe. ",
+           "Ein Median von Indizes ist nicht der Index einer Summe: er sagt, ",
+           "was der mittlere Emittent der Gruppe getan hat, nicht die Gruppe."))
+} else {
+  g <- g +
+    geom_line(data = base, aes(colour = GROUP, group = SHORT),
+              linewidth = linewidth_corporate_design) +
+    geom_point(data = base, aes(colour = GROUP), size = 1.4)
+  index_note <- ""
+}
+
+g <- g +
+  scale_x_years() +
+  scale_colour_manual(values = group_colours, labels = group_label,
+                      name = NULL) +
+  labs(x = NULL, y = tr("First year = 100", "Erstes Jahr = 100"),
+       caption = wrap_caption(paste(source_caption, index_note))) +
+  theme_corporate_design(base_size = chart_base_size)
+g
+```
+
+```{r revenue-index-note, results = "asis"}
+if (left_out > 0) {
+  cat(tr(
+    paste0(left_out, " issuer(s) of the panel filed for only one of the ",
+           "years shown and have no line here. They are in the tables."),
+    paste0(left_out, " Emittent(en) des Panels hat/haben nur für eines der ",
+           "gezeigten Jahre eingereicht und haben hier keine Linie. In den ",
+           "Tabellen stehen sie.")), "\n")
+}
+```
+
+{{< pagebreak >}}
+
+## `r tr("Margins and returns", "Margen und Renditen")`
+
+```{r margin-chart, fig.height = 3.1}
+# The operating margin of the latest year. On a small panel that is one bar
+# per issuer, sorted. On a large one it is the spread within each group --
+# every issuer as a point, the group's quartiles as the box behind them --
+# because a hundred and forty-five bars is a wall rather than a chart, and
+# because what a reader wants from a panel that size is how wide the group
+# is, not the rank of its members.
+temp <- latest %>% filter(!is.na(ebit_margin), is.finite(ebit_margin))
+
+if (nrow(temp) > max_lines) {
+  g <- ggplot(temp, aes(x = ebit_margin, y = GROUP, colour = GROUP)) +
+    geom_zeroline(x = 0) +
+    geom_boxplot(aes(fill = GROUP), outlier.shape = NA, alpha = .18,
+                 width = .55, linewidth = .4) +
+    geom_point(position = position_jitter(height = .13, seed = 1),
+               size = 1.5, alpha = .85) +
+    scale_y_discrete(limits = rev(levels(temp$GROUP)), labels = group_label) +
+    scale_colour_manual(values = group_colours, guide = "none") +
+    scale_fill_manual(values = group_colours, guide = "none") +
+    labs(x = tr("EBIT margin, %", "EBIT-Marge, %"), y = NULL,
+         caption = wrap_caption(paste(source_caption, tr(
+           "One point per issuer, the box the quartiles of its group. Issuers outside the whiskers are drawn as points like the rest, not twice.",
+           "Ein Punkt je Emittent, die Box die Quartile seiner Gruppe. Emittenten ausserhalb der Whisker sind Punkte wie die ubrigen, nicht doppelt.")))) +
+    theme_corporate_design(base_size = chart_base_size, grid = "x")
+} else {
+  temp <- temp %>% arrange(ebit_margin) %>%
+    mutate(SHORT = factor(SHORT, levels = SHORT))
+  g <- ggplot(temp, aes(x = ebit_margin, y = SHORT, colour = GROUP)) +
+    geom_segment(aes(x = 0, xend = ebit_margin, yend = SHORT),
+                 colour = design_colours()["mute"],
+                 linewidth = linewidth_corporate_design) +
+    geom_point(size = 2.4) +
+    geom_zeroline(x = 0) +
+    scale_colour_manual(values = group_colours, labels = group_label,
+                        name = NULL) +
+    labs(x = tr("EBIT margin, %", "EBIT-Marge, %"), y = NULL,
+         caption = source_caption) +
+    theme_corporate_design(base_size = chart_base_size)
+}
+g
+```
+
+{{< pagebreak >}}
+
+## `r tr("The benchmark", "Die Vergleichswerte")`
+
+`r if (!has_combined) tr("The lake holds no combined table, so there is no benchmark on this page. Build it with fincommons.financialreport.combined.update_silver_financialreport and this section fills itself in.", "Der Data Lake enthält keine kombinierte Tabelle, daher gibt es auf dieser Seite keine Vergleichswerte. Mit fincommons.financialreport.combined.update_silver_financialreport gebaut, füllt sich dieser Abschnitt von selbst.") else ""`
+
+```{r benchmark-table}
+if (!is.null(bench_table)) {
+  temp <- bench_table %>%
+    mutate(ratio = factor(ratio, levels = bench_ratios)) %>%
+    arrange(ratio) %>%
+    transmute(
+      !!tr("Indicator", "Kennzahl") := unname(bench_ratio_labels[as.character(ratio)]),
+      !!tr("Population", "Grundgesamtheit") := population,
+      !!tr("Lower quartile", "Unteres Quartil") := fmt_num(q1, 1),
+      !!tr("Median", "Median") := fmt_num(median, 1),
+      !!tr("Upper quartile", "Oberes Quartil") := fmt_num(q3, 1),
+      !!tr("Filings", "Berichte") := n)
+  knitr::kable(temp, align = "llrrrr",
+               caption = tr(
+                 paste0("The latest financial year. Every ratio is read from ",
+                        "the materialised measures of the combined table, so ",
+                        "a filing that stated a figure under a concept the ",
+                        "catalogue ranks below the first carries no measure ",
+                        "and is not counted."),
+                 paste0("Das jüngste Geschäftsjahr. Jede Kennzahl stammt aus ",
+                        "den materialisierten Measures der kombinierten ",
+                        "Tabelle; ein Bericht, der eine Größe unter einem ",
+                        "nachrangigen Konzept ausgezeichnet hat, trägt kein ",
+                        "Measure und wird nicht gezählt.")))
+}
+```
+
+### `r tr("Equity ratio against the market", "Eigenkapitalquote gegen den Markt")`
+
+```{r equity-band, fig.height = 3.0}
+if (!is.null(market_band)) {
+  band <- market_band %>% filter(ratio == "equity_ratio")
+  temp <- shown %>% filter(!is.na(equity_ratio), is.finite(equity_ratio))
+
+  g <- ggplot() +
+    geom_ribbon(data = band, aes(x = FY, ymin = q1, ymax = q3),
+                fill = design_colours()["mute"], alpha = .5) +
+    geom_line(data = band, aes(x = FY, y = median),
+              colour = design_colours()["ink_soft"],
+              linewidth = linewidth_corporate_design, linetype = "22")
+
+  if (n_distinct(temp$LEI) > max_lines) {
+    medians <- temp %>%
+      group_by(GROUP, FY) %>%
+      summarise(equity_ratio = median(equity_ratio), n = n(), .groups = "drop")
+    g <- g +
+      geom_line(data = temp, aes(x = FY, y = equity_ratio, group = LEI),
+                colour = design_colours()["mute"], linewidth = .3, alpha = .55) +
+      geom_line(data = medians, aes(x = FY, y = equity_ratio, colour = GROUP),
+                linewidth = linewidth_corporate_design + .2) +
+      geom_point(data = medians, aes(x = FY, y = equity_ratio, colour = GROUP),
+                 size = 1.8)
+  } else {
+    g <- g +
+      geom_line(data = temp, aes(x = FY, y = equity_ratio, colour = GROUP,
+                                 group = SHORT),
+                linewidth = linewidth_corporate_design) +
+      geom_point(data = temp, aes(x = FY, y = equity_ratio, colour = GROUP),
+                 size = 1.4)
+  }
+
+  g <- g +
+    scale_x_years() +
+    scale_colour_manual(values = group_colours, labels = group_label,
+                        name = NULL) +
+    labs(x = NULL, y = tr("Equity ratio, %", "Eigenkapitalquote, %"),
+         caption = wrap_caption(paste0(
+           source_caption, " ",
+           tr("The band is the interquartile range of the other filers in scope, excluding banks and insurers; the dashed line their median.",
+              "Das Band ist der Quartilsabstand der ubrigen Emittenten im Bereich, ohne Banken und Versicherer; die gestrichelte Linie deren Median.")))) +
+    theme_corporate_design(base_size = chart_base_size)
+  g
+}
+```
+
+{{< pagebreak >}}
+
+## `r tr("What the figures rest on", "Worauf die Zahlen beruhen")`
+
+```{r coverage-table}
+wanted <- c("revenue", "ebit", "profit", "assets", "equity",
+            "operating_cash_flow", "net_debt")
+wanted_labels <- c(
+  revenue             = tr("Revenue", "Umsatz"),
+  ebit                = tr("EBIT", "EBIT"),
+  profit              = tr("Result", "Ergebnis"),
+  assets              = tr("Assets", "Bilanzsumme"),
+  equity              = tr("Equity", "Eigenkapital"),
+  operating_cash_flow = tr("Operating cash flow", "Operativer Cashflow"),
+  net_debt            = tr("Net debt", "Nettofinanzschulden"))
+
+temp <- shown %>%
+  group_by(SHORT, GROUP) %>%
+  summarise(across(all_of(wanted), ~sum(!is.na(.x))),
+            years = n(), .groups = "drop") %>%
+  arrange(GROUP, SHORT)
+
+out <- temp %>%
+  transmute(!!tr("Issuer", "Emittent") := SHORT,
+            !!tr("Years", "Jahre") := years)
+for (key in wanted) {
+  out[[unname(wanted_labels[key])]] <- temp[[key]]
+}
+
+knitr::kable(out, align = paste0("lc", strrep("c", length(wanted))),
+             caption = tr(
+               paste0("In how many of the ", length(years_shown),
+                      " years shown each line was tagged. A nought is a line ",
+                      "the issuer never tagged under a concept of the IFRS ",
+                      "taxonomy; it may still stand in the report under a ",
+                      "concept of the issuer's own, which this page does not ",
+                      "read."),
+               paste0("In wie vielen der ", length(years_shown),
+                      " gezeigten Jahre die Zeile ausgezeichnet wurde. Eine ",
+                      "Null ist eine Zeile, die der Emittent nie unter einem ",
+                      "Konzept der IFRS-Taxonomie ausgezeichnet hat; sie kann ",
+                      "im Bericht unter einem eigenen Konzept stehen, das ",
+                      "diese Seite nicht liest.")))
+```
+
+`r if (nrow(approximate) > 0) tr(paste0("Some figures rest on a concept the catalogue of measures ranks below the first of its framework. ", nrow(approximate), " of the revenue figures above are tagged as IFRS 15 revenue rather than as the total, which excludes revenue outside that standard. The benchmark does not use those facts at all, so an issuer may appear in the tables of this page and not in the quartiles."), paste0("Einige Größen beruhen auf einem Konzept, das der Measure-Katalog unter das erste seines Frameworks reiht. ", nrow(approximate), " der obigen Umsatzgrößen sind als IFRS-15-Umsatz ausgezeichnet und nicht als Gesamtumsatz, der Erlöse außerhalb dieses Standards einschließen kann. Die Vergleichswerte verwenden diese Fakten gar nicht, daher kann ein Emittent in den Tabellen dieser Seite stehen und in den Quartilen fehlen.")) else ""`
+
+### `r tr("Sources", "Quellen")`
+
+`r tr(paste0("The reports are the issuers' own publications, required to be public by the Transparency Directive, collected and validated by filings.xbrl.org and read into the data lake by fincommons.financialreport.esef. The benchmark is read from fincommons.financialreport.combined, whose README sets out which figures of which regimes it holds to be the same figure, and with what caveat."), paste0("Die Berichte sind die eigenen Veröffentlichungen der Emittenten, deren Offenlegung die Transparenzrichtlinie verlangt, gesammelt und validiert von filings.xbrl.org und von fincommons.financialreport.esef in den Data Lake gelesen. Die Vergleichswerte stammen aus fincommons.financialreport.combined, dessen README darlegt, welche Größen welcher Regime als dieselbe Größe gelten und mit welchem Vorbehalt."))`
+
+{{< pagebreak >}}
+
+## `r tr("Disclaimer", "Haftungsausschluss")`
+
+```{=typst}
+#set text(size: 8pt)
+```
+
+```{r disclaimer, results='asis'}
+# The last word on the last page, the counterpart of the one the
+# single-issuer factsheet carries. It says one thing more than that one
+# does, and it is the thing this template adds: the panel is a judgement,
+# not a classification, and a reader who takes the medians of these pages
+# for the medians of a sector is being told here that they are not.
+cat(tr(
+  paste0(
+    "**An example, not a service.** This document is produced by a template ",
+    "of the open-source project fincommons, which is published to show what ",
+    "the annual financial reports filed in the European Single Electronic ",
+    "Format contain and how they can be read. The issuers are examples, ",
+    "chosen because their filings are public; the figures illustrate what ",
+    "the tagged facts of those filings yield. The document is not a ",
+    "financial product, not a research publication, not an investor ",
+    "communication and not a service rendered to anyone. It is produced ",
+    "automatically, no one reviews it before it is produced, and whoever ",
+    "renders or passes it on is responsible for what they do with it.\n\n",
+    "**The panel is a judgement, not a classification.** No sector code is ",
+    "filed with an ESEF report, and no classification was applied to ",
+    "arrive at these issuers. Whoever set the panel decided which issuers ",
+    "stand for the sector and which group each belongs to, and a different ",
+    "panel would give different totals, different medians and a different ",
+    "picture. The panel is printed in full at the front of this document ",
+    "for that reason. Nothing here is a statement about a sector of the ",
+    "economy, about a national accounts aggregate or about any population ",
+    "wider than the issuers named: the listed issuers of a country are a ",
+    "small and unrepresentative part of its industry, and the large private ",
+    "companies of this one are absent because they file no report of this ",
+    "kind. The same applies to the list of banks and insurers the benchmark ",
+    "is shown without, which is a stated list as well.\n\n",
+    "**No warranty as to correctness.** The template and this document are ",
+    "provided as is and without warranty of any kind, express or implied, ",
+    "including as to accuracy, absence of errors, merchantability or ",
+    "fitness for any purpose. No guarantee is given that a figure on these ",
+    "pages is correct. A figure can be wrong because the report it was read ",
+    "from tagged it wrongly, because a concept of the taxonomy was used for ",
+    "something other than what is assumed here, because the repository's ",
+    "copy of a filing is faulty, or because a figure derived on these pages ",
+    "is derived differently from the way an issuer derives the figure it ",
+    "calls by that name. The audited financial statements of each issuer ",
+    "are the authoritative source and prevail wherever they differ from ",
+    "anything shown here. A figure is shown as it was reported for its own ",
+    "year and is not restated.\n\n",
+    "**A total is a sum of what was stated.** Every sum on these pages runs ",
+    "over the issuers that tagged the figure in that year and whose amount ",
+    "could be converted, and the count beside it says how many those were. ",
+    "A sum is not a sector aggregate, a count of issuers carrying a figure ",
+    "is not a population, and an absent figure is never read as a nought. ",
+    "Where the issuers report in more than one currency the amounts are ",
+    "converted at published reference rates, a balance at the closing rate ",
+    "of its reporting date and an income or expense at the average rate of ",
+    "its period; a converted amount is an arithmetic translation and not the ",
+    "figure the issuer reported, which stands unchanged in its own report. ",
+    "A median is taken over the filings that stated both figures of the ",
+    "ratio, and a ratio is computed before any conversion.\n\n",
+    "**No warranty as to completeness.** These pages hold what the reports ",
+    "tag and nothing beyond it. A line of the statements an issuer did not ",
+    "tag, the notes, the management report, the auditor's report, the ",
+    "events after the reporting period and every non-financial disclosure ",
+    "are not in here; the page on what the figures rest on names what was ",
+    "looked for and not found, and makes no claim about what else may be ",
+    "missing. Nothing may be inferred from the absence of a figure.\n\n",
+    "**No association.** Neither this document, nor the template, nor ",
+    "whoever compiled either is associated with, affiliated to, endorsed, ",
+    "authorised, sponsored, commissioned or reviewed by any issuer named ",
+    "here, by XBRL International, by the officially appointed mechanism of ",
+    "any member state or by any other body named on these pages. The names ",
+    "of the issuers and of their reports are used only to identify publicly ",
+    "available documents, and any trade mark named belongs to its owner.\n\n",
+    "**No advice and no reliance.** Nothing here is investment, legal, tax ",
+    "or accounting advice, an offer, a solicitation or a recommendation to ",
+    "buy, to hold or to sell any financial instrument, and nothing here ",
+    "should be relied upon for such a decision or for any other purpose. ",
+    "Whoever uses these figures does so at their own risk and is referred ",
+    "to the reports themselves, which the issuers publish.\n\n",
+    "**No liability.** To the extent the applicable law permits, the ",
+    "authors and contributors of the template and whoever made this ",
+    "document available accept no liability for any direct or indirect ",
+    "damage of any kind arising out of the template, out of this document ",
+    "or out of the use of either, including lost profit, loss of data or ",
+    "any decision taken on the strength of a figure shown here. The ",
+    "template is distributed under the European Union Public Licence, ",
+    "version 1.2, whose Articles 7 and 8 disclaim warranty and liability, ",
+    "and this notice is to be read with them; where such a disclaimer is ",
+    "void under the applicable law, it applies as far as that law allows."),
+  paste0(
+    "**Ein Beispiel, keine Dienstleistung.** Dieses Dokument wird von einer ",
+    "Vorlage des Open-Source-Projekts fincommons erzeugt, die zeigen soll, ",
+    "was die im European Single Electronic Format eingereichten ",
+    "Finanzberichte enthalten und wie sie gelesen werden können. Die ",
+    "Emittenten sind Beispiele, gewählt weil ihre Einreichungen öffentlich ",
+    "sind; die Zahlen veranschaulichen, was die ausgezeichneten Fakten ",
+    "dieser Einreichungen hergeben. Das Dokument ist kein Finanzprodukt, ",
+    "keine Finanzanalyse, keine Mitteilung an Anleger und keine für ",
+    "jemanden erbrachte Dienstleistung. Es wird automatisch erzeugt, ",
+    "niemand prüft es davor, und wer es erzeugt oder weitergibt, ist selbst ",
+    "dafür verantwortlich, was er damit tut.\n\n",
+    "**Das Panel ist eine Setzung, keine Klassifikation.** Mit einem ",
+    "ESEF-Bericht wird kein Branchencode eingereicht, und zu diesen ",
+    "Emittenten führt keine angewandte Klassifikation. Wer das Panel ",
+    "gesetzt hat, hat entschieden, welche Emittenten für den Sektor stehen ",
+    "und zu welcher Gruppe jeder gehört; ein anderes Panel ergäbe andere ",
+    "Summen, andere Mediane und ein anderes Bild. Deshalb steht das Panel ",
+    "vollständig am Anfang dieses Dokuments. Nichts hier ist eine Aussage ",
+    "über einen Wirtschaftszweig, über eine Größe der Volkswirtschaftlichen ",
+    "Gesamtrechnung oder über eine Grundgesamtheit, die über die genannten ",
+    "Emittenten hinausgeht: die börsenotierten Emittenten eines Landes sind ",
+    "ein kleiner und nicht repräsentativer Teil seiner Wirtschaft, und die ",
+    "großen Privatunternehmen dieses Landes fehlen, weil sie keinen solchen ",
+    "Bericht einreichen. Dasselbe gilt für die Liste der Banken und ",
+    "Versicherer, ohne die die Vergleichswerte gezeigt werden; auch sie ist ",
+    "gesetzt.\n\n",
+    "**Keine Gewähr für die Richtigkeit.** Die Vorlage und dieses Dokument ",
+    "werden ohne jede Gewähr bereitgestellt, weder ausdrücklich noch ",
+    "stillschweigend, auch nicht für Richtigkeit, Fehlerfreiheit, ",
+    "Marktgängigkeit oder Eignung für einen bestimmten Zweck. Es wird nicht ",
+    "dafür garantiert, dass eine Zahl auf diesen Seiten richtig ist. Eine ",
+    "Zahl kann falsch sein, weil der Bericht, aus dem sie gelesen wurde, ",
+    "sie falsch ausgezeichnet hat, weil ein Konzept der Taxonomie für etwas ",
+    "anderes verwendet wurde als hier angenommen, weil die Kopie einer ",
+    "Einreichung im Repositorium fehlerhaft ist, oder weil eine hier ",
+    "abgeleitete Zahl anders abgeleitet wird als die Zahl, die ein Emittent ",
+    "so nennt. Maßgeblich sind die geprüften Abschlüsse der Emittenten; sie ",
+    "gehen allem vor, was hier gezeigt wird. Eine Zahl wird so gezeigt, wie ",
+    "sie für ihr eigenes Jahr berichtet wurde, und nicht angepasst.\n\n",
+    "**Eine Summe ist eine Summe des Angegebenen.** Jede Summe auf diesen ",
+    "Seiten läuft über die Emittenten, die die Größe in dem Jahr ",
+    "ausgezeichnet haben und deren Betrag umgerechnet werden konnte, und ",
+    "die Zahl daneben sagt, wie viele das waren. Eine Summe ist keine ",
+    "Sektorgröße, eine Zahl von Emittenten mit einer Größe ist keine ",
+    "Grundgesamtheit, und eine fehlende Größe wird nie als Null gelesen. ",
+    "Berichten die Emittenten in mehreren Währungen, werden die Beträge zu ",
+    "veröffentlichten Referenzkursen umgerechnet, ein Bestand zum ",
+    "Stichtagskurs, ein Ertrag oder Aufwand zum Durchschnittskurs seiner ",
+    "Periode; ein umgerechneter Betrag ist eine rechnerische Übersetzung ",
+    "und nicht die Zahl, die der Emittent berichtet hat. Ein Median läuft ",
+    "über die Berichte, die beide Größen der Kennzahl angegeben haben, und ",
+    "eine Kennzahl wird vor jeder Umrechnung berechnet.\n\n",
+    "**Keine Gewähr für die Vollständigkeit.** Diese Seiten enthalten, was ",
+    "die Berichte auszeichnen, und nichts darüber hinaus. Eine Zeile der ",
+    "Abschlüsse, die ein Emittent nicht ausgezeichnet hat, die ",
+    "Anhangangaben, der Lagebericht, der Bestätigungsvermerk, die ",
+    "Ereignisse nach dem Abschlussstichtag und sämtliche nichtfinanziellen ",
+    "Angaben sind nicht enthalten; die Seite darüber, worauf die Zahlen ",
+    "beruhen, nennt, wonach gesucht und was nicht gefunden wurde, und ",
+    "erhebt keinen Anspruch darauf, was sonst fehlen mag. Aus dem Fehlen ",
+    "einer Zahl darf nichts geschlossen werden.\n\n",
+    "**Keine Verbindung.** Weder dieses Dokument noch die Vorlage noch wer ",
+    "beides erstellt hat, ist mit einem hier genannten Emittenten, mit XBRL ",
+    "International, mit dem Speichersystem eines Mitgliedstaats oder mit ",
+    "einer sonstigen auf diesen Seiten genannten Stelle verbunden, ",
+    "verbündet, von ihr gebilligt, ermächtigt, gesponsert, beauftragt oder ",
+    "geprüft. Die Namen der Emittenten und ihrer Berichte dienen allein der ",
+    "Bezeichnung öffentlich verfügbarer Dokumente, und jede genannte Marke ",
+    "gehört ihrem Inhaber.\n\n",
+    "**Keine Beratung und kein Vertrauensschutz.** Nichts hier ist eine ",
+    "Anlage-, Rechts-, Steuer- oder Bilanzierungsberatung, ein Angebot, ",
+    "eine Aufforderung oder eine Empfehlung, ein Finanzinstrument zu ",
+    "kaufen, zu halten oder zu verkaufen, und auf nichts hier soll für eine ",
+    "solche Entscheidung oder für einen anderen Zweck vertraut werden. Wer ",
+    "diese Zahlen verwendet, tut das auf eigenes Risiko und wird auf die ",
+    "Berichte selbst verwiesen, die die Emittenten veröffentlichen.\n\n",
+    "**Keine Haftung.** Soweit das anwendbare Recht es zulässt, haften die ",
+    "Autorinnen und Autoren und die Beitragenden der Vorlage sowie wer ",
+    "dieses Dokument bereitgestellt hat, nicht für unmittelbare oder ",
+    "mittelbare Schäden jeder Art, die aus der Vorlage, aus diesem Dokument ",
+    "oder aus deren Verwendung entstehen, einschließlich entgangenen ",
+    "Gewinns, Datenverlusts oder einer Entscheidung, die auf eine hier ",
+    "gezeigte Zahl gestützt wurde. Die Vorlage wird unter der Europäischen ",
+    "Union Public Licence, Version 1.2, verbreitet, deren Artikel 7 und 8 ",
+    "Gewährleistung und Haftung ausschließen; dieser Hinweis ist mit ihnen ",
+    "zu lesen. Soweit ein solcher Ausschluss nach dem anwendbaren Recht ",
+    "unwirksam ist, gilt er, soweit dieses Recht es zulässt.")))
+```
