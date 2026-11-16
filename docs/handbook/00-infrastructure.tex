@@ -1,0 +1,84 @@
+\chapter{Infrastructure}\label{ch:infrastructure}
+
+\section{Introduction}
+
+The pipelines of the framework take a Spark session as an argument and never create one. No module of the package opens a session, and the entry points that once did were removed for that reason: a library that builds its own session decides the cores, the memory, the extensions and the scratch space of whoever imports it, and does so invisibly. The consequence is that the session is the caller's to build, and that a run can fail for reasons that lie entirely outside the code this handbook otherwise documents. This chapter sets out what those reasons are, in the environment in which the framework is most often operated off-cluster: one machine, Spark in local mode, PySpark driving it.
+
+The chapter is deliberately placed before the data sets. The failures it describes are not properties of any one pipeline, they are shared by all of them, and two of them are silent in the sense that section \ref{sec:intro-logging} warns about -- the run finishes, the tables look as they should, and what went wrong is visible only in how long it took or in a disk that filled.
+
+\section{Setting up PySpark locally\label{sec:infra-pyspark}}
+
+Four settings decide whether a session on one machine is fit for the work: how many cores it may use, how much memory it has, where it writes what does not fit in that memory, and which Python interpreter its workers run. They are not interchangeable in how they are given, and the order below is forced rather than conventional. Two of them have to be settled before the session is built, and one of those before the Java virtual machine starts.
+
+\subsection{The interpreter, before the session}
+
+Spark launches its Python workers with whatever \verb|python3| resolves to on the \verb|PATH|, which off-cluster is rarely the interpreter the pipeline is being run with: a virtual environment is exactly a different one. The worker still starts, because Spark puts its own \verb|pyspark.zip| on the worker's path, and then fails on the first import that is not Spark's with a \verb|ModuleNotFoundError| naming a package that is plainly installed. \verb|PYSPARK_PYTHON| is what the launcher reads, and it has to be in the environment before the session is built; \verb|spark.pyspark.python| on the builder does not do it in local mode.
+
+What makes this one awkward to diagnose is that the stage in which it surfaces is not the stage in which it is configured. A module whose work stays in the Java virtual machine launches no Python worker at all and so never reveals a wrong interpreter: the FIRDS pipeline is of that kind throughout, its parsing being the XML data source rather than a Python function. A run that touches only such a module therefore completes and says nothing, and the \verb|ModuleNotFoundError| appears later, in whichever module first evaluates a Python function on the workers, in a session that may well have been built for the earlier one.
+
+\subsection{Cores and memory, which are one decision}
+
+The cores are stated in the master, as \verb|local[10]|, and not through \verb|spark.cores.max|, which only a standalone or Mesos master reads; a session built without a master at all comes up as \verb|local[*]| and runs a task on every core the machine has. The figure cannot be chosen apart from the memory, because in local mode the executors live inside the driver's virtual machine. \verb|spark.driver.memory| is therefore the memory of the whole run, \verb|spark.executor.memory| is ignored, and the unified pool is divided among the tasks running at once. On a machine of 96 cores, 30 gigabytes leaves each task some 95 megabytes, which is not enough for one day's plan of a reference data pipeline; the same 30 gigabytes over ten cores leaves nearly a gigabyte each. The failure is reported first as blocks that could not be cached and were persisted to disk instead, and then as a \verb|SparkOutOfMemoryError| raised when a task cannot acquire what a merge needs.
+
+The heap is settled when the virtual machine starts. PySpark launches it through \verb|spark-submit| when the first session of the process is built, and it does read \verb|spark.driver.memory| from the builder for that launch -- but only for that one. A session built while a virtual machine is already running keeps the heap the first launch asked for, whatever its own configuration says. Where a process may already have built a session, the heap has to travel as an argument of the launcher instead, through \verb|PYSPARK_SUBMIT_ARGS|, whose value must end in \verb|pyspark-shell|.
+
+\subsection{The scratch directory\label{sec:infra-scratch}}
+
+Spark writes every shuffle block, every spill file and every broadcast block under \verb|spark.local.dir|, which defaults to \verb|java.io.tmpdir| and thus to \verb|/tmp|. On a good many Linux installations \verb|/tmp| is a \emph{tmpfs} sized at half the machine's memory rather than a directory on a disk. A run that spills there is spending the memory it spilled in order to save, and it fails once the shuffle outgrows that half: a \verb|No space left on device| while the disk the lake sits on is all but empty. What is seen first is a series of \verb|DiskBlockObjectWriter: Error deleting ...| warnings, which are not the fault but its wake, since a write that hit the limit cannot clean up the partial file it left, followed by \verb|Utils: Suppressing exception in finally|, where the exception being suppressed is the one that says what happened. Whether the default would have done is answered by \verb|findmnt -no FSTYPE /tmp|.
+
+Which stage needs the room is worth stating, because it is not the one that moves the most bytes into the lake. An import from a landing zone into a Bronze layer shuffles at most one delivery at a time. The historical database of chapter \ref{ch:firds} is the demanding case: per reference date it joins the incoming delivery against the versions in force, which Spark cannot broadcast in the form the table is written, and merges a table of some seventeen million rows, and once a week it rewrites the files in which deleted rows have accumulated, which is most of the table. Tens of gigabytes is the right order for such a history. A backfill is worse than the daily job by the number of dates it applies in one session, since the files behind a completed job are released only when its structures are collected, which in a long loop lags the loop.
+
+This setting is read when the context starts, which has a useful consequence and a dangerous one. The useful one is that it can be changed without restarting the interpreter: stopping the context and building another applies it, in the same process, which the heap of the preceding subsection does not allow. The dangerous one is in the next subsection.
+
+\subsection{Reading the settings back}
+
+A session that already exists takes none of the settings above. \verb|getOrCreate| hands back the session that is there, every configuration given to the builder is passed over, and nothing is raised. Measured: a builder given \verb|spark.local.dir| against a live session returned a working session that reported the setting as unset and wrote not one block under the path it had been asked for.
+
+Of the four settings this is the one whose failure says nothing at all. A wrong interpreter ends in a \verb|ModuleNotFoundError|, a heap too small in an \verb|OutOfMemoryError|, and both name something; a scratch directory that was ignored merely fills \verb|/tmp| for the length of a backfill and then reports a full disk. The remedy is to read the settings back after the session has been built and to refuse to carry on when one of them did not take. The reading goes through \verb|SparkConf| and not through \verb|spark.conf|: the latter is the registry of the SQL settings, and a core setting that was never given a value is not among them, so asking it for one raises \verb|SQL_CONF_NOT_FOUND| rather than returning a default -- which would turn the check into a crash in precisely the case it exists to catch.
+
+\subsection{A session, in full}
+
+\begin{verbatim}
+import os
+import sys
+
+# 1. The interpreter, before the session: the launcher reads the
+#    environment, not the configuration of the session.
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+
+from pyspark.sql import SparkSession
+from delta import configure_spark_with_delta_pip
+
+# 2. The cores and the memory are one decision; the heap is read here
+#    only because this is the first session of the process.
+builder = (SparkSession.builder
+    .master("local[10]")
+    .appName("fincommons")
+    .config("spark.driver.memory", "30g")
+    # 3. The scratch directory, read when the context starts.
+    .config("spark.local.dir", "/data/spark-tmp")
+    .config("spark.sql.extensions",
+            "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
+
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
+# 4. What the session actually got. A session that already existed took
+#    none of the above and said nothing; SparkConf is asked rather than
+#    spark.conf, which raises for a core setting with no value.
+conf = spark.sparkContext.getConf()
+if not conf.get("spark.local.dir", None):
+    raise RuntimeError(
+        "spark.local.dir did not take; stop the session and build it again"
+    )
+\end{verbatim}
+
+\subsection{What a run may then be given}
+
+Two arguments of the pipelines are bounded by the session rather than by the data, and belong to this chapter for that reason.
+
+The number of files a Bronze import reads at a time is one. A file is read by a single task whatever the session is given, because the XML reader reports a file as one it cannot split: a file of 164 megabytes comes back as one partition, and a session of one core and a session of four take the same time over it. The cores of a session are therefore idle for all but one of them, and the way to use them is to have several files in flight rather than to give one file more. Measured on four cores over 394 megabytes of delta files, four workers took 22.4 seconds against 45.9, and six took no less than four. The bound is the memory rather than the cores, since each file being read is held in the driver's heap, which in local mode is the memory of the whole run.
+
+The two bounds interact, which is the reason for stating them together. Files read at once spill and shuffle at once, so a scratch directory that coped with one file at a time may not cope with six, and the error that follows names neither the setting of section \ref{sec:infra-scratch} nor the number of files.
