@@ -25,6 +25,7 @@ builder = SparkSession.builder \
                     .master("local[10]") \
                     .appName("fincommons") \
                     .config("spark.driver.memory", "30g") \
+                    .config("spark.local.dir", "/data/spark-tmp") \
                     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
                     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
@@ -39,6 +40,8 @@ firds.create_directory_tree(config_path)
 ```
 
 The cores are stated as `local[10]` rather than through `spark.cores.max`, because that setting is only read by a standalone or Mesos master: a session built without a master at all comes up as `local[*]` and runs a task on every core the machine has. The figure matters because in local mode the executors live inside the driver JVM, so `spark.driver.memory` is the memory of the whole run -- `spark.executor.memory` is ignored -- and the unified pool is divided among the tasks running at once. On a machine of 96 cores that leaves each task some 95 MB of execution memory out of 30 GB, which is not enough for one day's plan: it shows up first as blocks that could not be cached and were persisted to disk instead, and then as a `SparkOutOfMemoryError` raised when a task cannot acquire what the merge needs. The same 30 GB over ten cores leaves nearly a gigabyte each. The two settings are therefore chosen together, and the cores are stated where Spark reads them.
+
+The scratch directory is stated for a reason of the same kind. Spark writes every shuffle block, every spill file and every broadcast block under `spark.local.dir`, which defaults to `/tmp`, and on a good many Linux installations `/tmp` is a tmpfs sized at half the machine's memory rather than a directory on a disk. A run that spills there is therefore spending the memory it spilled in order to save, and it fails once the shuffle outgrows that half: a `No space left on device` while the disk the lake sits on is all but empty. What is seen first is a series of `DiskBlockObjectWriter: Error deleting ...` warnings, which are not the fault but its wake -- a write that hit the limit cannot clean up the partial file it left -- followed by `Utils: Suppressing exception in finally`, where the exception being suppressed is the one that says what happened. `spark.local.dir` should accordingly name a directory on a filesystem with room for the shuffle, which for a FIRDS history is tens of gigabytes; `findmnt -no FSTYPE /tmp` says whether the default would have done. In local mode the setting is read from the session as written above, the `SPARK_LOCAL_DIRS` environment variable that Spark's warning recommends instead being the route for a cluster manager, which starts the executors itself.
 
 ## Download data into landing zone
 
