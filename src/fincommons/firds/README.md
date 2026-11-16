@@ -56,6 +56,17 @@ builder = SparkSession.builder \
 
 spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
+# What the session actually got. A session that already existed took none of
+# the settings above and said nothing about it, which is the one failure here
+# that is silent. The core settings are read off SparkConf, because
+# spark.conf is the registry of the SQL settings and raises
+# SQL_CONF_NOT_FOUND for one that is not among them.
+conf = spark.sparkContext.getConf()
+if not conf.get("spark.local.dir", None):
+    raise RuntimeError(
+        "spark.local.dir did not take; stop the session and build it again"
+    )
+
 # Load module
 from fincommons import firds
 
@@ -63,12 +74,20 @@ from fincommons import firds
 firds.create_directory_tree(config_path)
 ```
 
-No module of the package opens a session; this one is the caller's. The three
-settings stated above are the ones that are easy to get wrong without being
-told so -- the cores and the heap are one decision, the scratch directory
-defaults to a `/tmp` that is often a tmpfs, and the workers are launched with
-an interpreter that need not be this one. The handbook gives the reasons, in
-*Running a pipeline off-cluster*.
+No module of the package opens a session; this one is the caller's. Four
+things about it are easy to get wrong without being told so: the cores and the
+heap are one decision, the scratch directory defaults to a `/tmp` that is
+often a tmpfs, the Python workers are launched with whatever `python3` is on
+the PATH, and a session that already exists takes none of these settings and
+says so nowhere -- which is why the scratch directory is read back above. The
+interpreter is settled here because this is where the session is built, not
+because this is where it would be missed: FIRDS launches no Python worker at
+all, since the parsing is the JVM's XML data source, so a FIRDS run with the
+wrong one completes and says nothing. It is the Silver layers of
+`exchangerate`, `famafrenchdata`, `marketpricedata` and `financialreport` that
+raise the `ModuleNotFoundError`, in a session that may well have been built
+while reading this page. The Infrastructure chapter of the handbook gives the
+reasons for all four.
 
 ## Download data into the landing zone
 
@@ -97,8 +116,14 @@ per publication day. A file that was read is moved to `finished`, which is the
 record of what the Bronze layer has been built from; one that was not, or that
 was imported before, is moved to `error` with a warning.
 
+`workers` is how many files are read at a time, one by default. A higher figure is worth it because a file is read by a single task whatever the session is given -- the XML reader reports a file as one it cannot split -- so the cores of a session are used by having several files in flight rather than by giving one file more. The bound is memory rather than cores, since each file being read is held in the driver heap, so the parts of a full file want fewer workers than the daily delta files do, and `spark.local.dir` is worth settling before raising it: files read at once spill at once. The handbook measures it.
+
 ```python
 firds.update_from_landing_to_bronze(spark, config_path)
+
+# Four files at a time, which is what uses the cores of a session on a
+# backfill of several hundred delta files.
+firds.update_from_landing_to_bronze(spark, config_path, workers = 4)
 ```
 
 ## Update the Silver layer: `main`

@@ -613,3 +613,104 @@ def test_a_file_without_records_still_marks_its_reference_date(spark, config, mo
     imports, finished, errors = landing_folders(config)
     assert finished == ["DLTINS_20240102_01of01.xml"]
     assert errors == []
+
+
+# Reading more than one file at a time
+# --------------------------------------------------------------------------
+
+
+def test_every_file_is_imported_when_several_are_read_at_a_time(
+    spark, config, readers
+):
+    """The concurrent import writes the same rows as the sequential one. The
+    files are read at once but each writes aside and moves its own output into
+    place, so none of them loses what another staged."""
+    for day in range(2, 12):
+        put_xml(config, f"DLTINS_202401{day:02d}_01of01.xml", "auth.036.001.03")
+
+    bronze.update_from_landing_to_bronze(spark, config, workers=4)
+
+    imports, finished, errors = landing_folders(config)
+    assert imports == []
+    assert len(finished) == 10
+    assert errors == []
+    partitions = sorted(os.listdir(common.path_bronze_auth_036_001_03(config)))
+    assert partitions == [f"DATADT=2024-01-{day:02d}" for day in range(2, 12)]
+    frame = spark.read.parquet(common.path_bronze_auth_036_001_03(config))
+    assert frame.count() == 10
+
+
+def test_a_file_that_fails_is_the_only_one_set_aside(spark, config, readers):
+    """A run that reads several files at a time still quarantines one file on
+    its own: the others must not be taken down with it."""
+    for day in range(2, 8):
+        put_xml(config, f"DLTINS_202401{day:02d}_01of01.xml", "auth.036.001.03")
+    path = os.path.join(common.path_landing_import(config),
+                        "DLTINS_20240120_01of01.zip")
+    with open(path, "wb") as handle:
+        handle.write(b"not an archive at all")
+
+    bronze.update_from_landing_to_bronze(spark, config, workers=4)
+
+    imports, finished, errors = landing_folders(config)
+    assert imports == []
+    assert len(finished) == 6
+    assert errors == ["DLTINS_20240120_01of01.zip"]
+    assert spark.read.parquet(common.path_bronze_auth_036_001_03(config)).count() == 6
+
+
+def test_no_staging_directory_is_left_behind(spark, config, readers):
+    """The directory a file is written into is removed once its output has
+    been moved, so that nothing beside the partitions survives a run."""
+    for day in range(2, 8):
+        put_xml(config, f"DLTINS_202401{day:02d}_01of01.xml", "auth.036.001.03")
+
+    bronze.update_from_landing_to_bronze(spark, config, workers=4)
+
+    left = [name for name in os.listdir(common.path_bronze_auth_036_001_03(config))
+            if name.startswith(bronze.STAGING_PREFIX)]
+    assert left == []
+
+
+def test_a_write_that_fails_leaves_the_folder_as_it_was(spark, config, readers,
+                                                        monkeypatch):
+    """The records are written aside and moved in afterwards, so a write that
+    fails leaves no partition half filled and no staging directory behind."""
+    def explode(df, *columns):
+        raise RuntimeError("the write failed")
+
+    monkeypatch.setattr(bronze, "rebalanced", explode)
+    put_xml(config, "DLTINS_20240102_01of01.xml", "auth.036.001.03")
+
+    bronze.update_from_landing_to_bronze(spark, config)
+
+    folder = common.path_bronze_auth_036_001_03(config)
+    assert os.listdir(folder) == []
+    imports, finished, errors = landing_folders(config)
+    assert finished == []
+    assert errors == ["DLTINS_20240102_01of01.xml"]
+
+
+def test_the_copy_that_is_kept_does_not_depend_on_the_workers(
+    spark, config, readers, caplog
+):
+    """Which of two copies of a file is kept is settled before any file is
+    read, so that it does not turn on the order the reads happen to finish
+    in."""
+    name = "DLTINS_20240102_01of01.xml"
+    open(os.path.join(common.path_landing_finished(config), name), "w").close()
+    put_xml(config, name, "auth.036.001.03")
+
+    with caplog.at_level(logging.WARNING):
+        bronze.update_from_landing_to_bronze(spark, config, workers=4)
+
+    imports, finished, errors = landing_folders(config)
+    assert imports == []
+    assert finished == [name]
+    assert errors == [name]
+    assert "File was already imported" in caplog.text
+
+
+def test_fewer_than_one_worker_is_refused(spark, config):
+    with pytest.raises(ValueError, match="at least one file"):
+        bronze.update_from_landing_to_bronze(spark, config, workers=0)

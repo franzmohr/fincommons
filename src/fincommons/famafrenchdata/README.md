@@ -163,7 +163,7 @@ finally:
 sys.exit(1 if outcome["failed"] else 0)
 ```
 
-`spark.local.dir` is named because Spark's own default is `/tmp`, which on a good many Linux installations is a tmpfs sized at half the machine's memory rather than a directory on a disk: a shuffle that outgrows it ends the run in `No space left on device` while the disk the lake sits on is all but empty. The handbook says more about that, and about choosing the cores and the heap together, in *Running a pipeline off-cluster*.
+`spark.local.dir` is named because Spark's own default is `/tmp`, which on a good many Linux installations is a tmpfs sized at half the machine's memory rather than a directory on a disk: a shuffle that outgrows it ends the run in `No space left on device` while the disk the lake sits on is all but empty. The handbook says more about that, and about choosing the cores and the heap together, in the Infrastructure chapter.
 
 The run needs no argument saying what to collect. It reads the library's page for the files it offers -- the list is not kept in the package, because the library adds and renames files without notice -- and asks the server, with a `HEAD` request, when each file was last modified and what its entity tag is. A file whose tag is the one kept from the last collection is not downloaded. Where the server does not answer, the file is downloaded and its text compared with the one kept by its SHA-256, so an unchanged file is never written again. On most days a run downloads nothing; in the days after French's monthly update it downloads everything.
 

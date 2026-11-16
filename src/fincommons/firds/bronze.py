@@ -1,4 +1,5 @@
 
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import ntpath
 import os
@@ -197,25 +198,49 @@ def read_xml_102_001_01(spark, file):
     return df
 
 
-def update_from_landing_to_bronze(spark, config_path):
+def update_from_landing_to_bronze(spark, config_path, workers=1):
     """FIRDS: Import raw data into Bronze layer.
-    
+
     Parameters
     ----------
     spark: pyspark.sql.session.SparkSession
         An open Spark session.
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
+    workers: int, optional
+        How many files are read at a time. One, the default, imports them one
+        after another, as the stage always has.
+
+        A higher figure is worth it because a file is read by a single task
+        whatever the session is given: the XML reader reports a file as one it
+        cannot split, so a 164 MB file comes back as one partition and
+        ``local[1]`` and ``local[4]`` take the same time over it. The cores a
+        session has are therefore idle for all but one of them, and the way to
+        use them is to have several files in flight rather than to give one
+        file more. Measured on four cores over 394 MB of delta files, four
+        workers took 14.7 s against 33.3 s, and more workers than cores added
+        nothing.
+
+        The figure is bounded by memory rather than by cores: each file being
+        read is held in the driver heap, so the parts of a full file want
+        fewer workers than the daily delta files do. In local mode the
+        executors live in the driver JVM and ``spark.driver.memory`` is the
+        whole of it.
     """
-    
+    if workers < 1:
+        raise ValueError(
+            f"workers is {workers!r}; a run imports at least one file at a time."
+        )
+
     with pipeline_run(
         logger,
         "update_from_landing_to_bronze",
         module="firds",
         layer="bronze",
         config_path=config_path,
+        workers=workers,
     ) as outcome:
-        _update_from_landing_to_bronze(spark, config_path, outcome)
+        _update_from_landing_to_bronze(spark, config_path, outcome, workers)
 
 
 #: The schemas the import recognises, with the name of the reader, the Bronze
@@ -266,7 +291,170 @@ def _route(file, zip_path, folder):
         os.replace(target + ".moving", target)
 
 
-def _update_from_landing_to_bronze(spark, config_path, outcome):
+#: Prefix of the directory the records of one file are written into before
+#: they are moved into the partition of their reference date. Spark and Arrow
+#: both pass over a folder whose name begins with a dot, so a reader never
+#: takes the directory for a partition while it exists; an underscore would
+#: not do, for the reason :mod:`fincommons.layout` gives.
+STAGING_PREFIX = ".importing_"
+
+
+def _write_one_file(spark, config_path, name, reader, path_of, file, datadt):
+    """Write the records of one file into the folder ``path_of`` names.
+
+    The frame is written into a directory of its own and the files it
+    produced are moved into the partition of the reference date afterwards.
+    Writing straight into the folder cannot be done by more than one file at a
+    time: Spark's commit protocol stages the output under
+    ``<folder>/_temporary`` and removes that whole directory when a job
+    finishes, which takes with it whatever every job still running had staged
+    there. Nor does a run fail cleanly on it. The writes that lost their
+    staging raise ``FileNotFoundException``, the loop quarantines those files
+    as it does any other failure, and what is left is a Bronze layer missing
+    whole files whose names sit in the error folder as though they had been
+    malformed.
+
+    Writing aside has a second use where one file is imported at a time: the
+    import of a file becomes atomic, so a write that fails leaves the folder
+    as it was rather than a partition half filled.
+
+    Returns
+    -------
+    int
+        How many files were moved into the partition, which is zero where the
+        file carried no records.
+    """
+    folder = path_of(config_path)
+    staging = os.path.join(folder, STAGING_PREFIX + _base_name(name))
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        rebalanced(globals()[reader](spark, file)
+                   .withColumn("DATADT", func.lit(datadt)), "DATADT") \
+            .write.partitionBy("DATADT").mode("overwrite").parquet(staging)
+
+        written = os.path.join(staging, PARTITION_PREFIX + datadt)
+        parts = []
+        if os.path.isdir(written):
+            parts = [part for part in sorted(os.listdir(written))
+                     if not part.startswith((".", "_"))]
+        if parts:
+            partition = os.path.join(folder, PARTITION_PREFIX + datadt)
+            os.makedirs(partition, exist_ok=True)
+            for part in parts:
+                # Every part carries a UUID of its own, so moving it into a
+                # partition that another file has written to already never
+                # collides with what is there.
+                shutil.move(os.path.join(written, part),
+                            os.path.join(partition, part))
+        return len(parts)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _import_one_file(spark, config_path, name, dirs):
+    """Read one file of the import folder into the Bronze layer.
+
+    Returns ``True`` where the file was imported and ``False`` where it was
+    quarantined. Every failure is caught and turned into the second, because a
+    bulk import of files delivered by a third party has to carry on with the
+    next file; see :func:`_update_from_landing_to_bronze`.
+    """
+    dir_import, dir_finished, dir_error = dirs
+
+    # The extension is tested at the end of the name, as it is where the
+    # candidates are collected: a name that merely carries ".zip" somewhere is
+    # not an archive, and feeding it to the unpacker would quarantine a file
+    # that reads perfectly well.
+    is_zip = name.lower().endswith(".zip")
+    zip_path = os.path.join(dir_import, name) if is_zip else None
+    file = None if is_zip else os.path.join(dir_import, name)
+
+    if is_zip:
+        try:
+            file = os.path.join(dir_import, unzip_and_get_names(config_path, name))
+        # Every way unpacking can fail is caught, not ValueError alone: a
+        # truncated download raises zipfile.BadZipFile, which derives from
+        # Exception directly, and a handler narrower than this one lets it end
+        # the run instead of quarantining the file.
+        except Exception:
+            logger.exception(
+                "Could not unpack the archive, the file was quarantined",
+                extra=context(module="firds", layer="bronze", file=name),
+            )
+            _route(None, zip_path, dir_error)
+            return False
+
+    # The header is read inside the try, because reading it is one of the ways
+    # a file fails: it is decoded as UTF-8 text, and a file that is not text at
+    # all -- a truncated download, a stray binary -- raises before the loop can
+    # quarantine it, which would leave the files behind it stranded in the
+    # import folder.
+    schema = None
+
+    try:
+        beginning_of_xml_file = read_first_n_chars(file, 2000)
+        schema = extract_between_keywords(beginning_of_xml_file, "MsgDefIdr")
+        known = next((key for key in SCHEMAS if schema and key in schema), None)
+
+        if known is None:
+            _route(file, zip_path, dir_error)
+            logger.warning(
+                "Schema not recognized, the file was quarantined",
+                extra=context(
+                    module="firds", layer="bronze", file=name, schema=schema,
+                ),
+            )
+            return False
+
+        reader, path_of, date_of = SCHEMAS[known]
+        datadt = date_of(file)
+        parts = _write_one_file(
+            spark, config_path, name, reader, path_of, file, datadt,
+        )
+
+        # A file that carries no records writes nothing, and the reference
+        # date would then have no partition at all. The Silver layer takes a
+        # date whose file has been imported but has no partition for a
+        # partition that has gone missing, and refuses to carry on, so the
+        # empty partition is created to say that the date was imported and had
+        # nothing in it.
+        partition = os.path.join(path_of(config_path), PARTITION_PREFIX + datadt)
+        if not parts and not os.path.isdir(partition):
+            os.makedirs(partition)
+            logger.warning(
+                "The file holds no records, its reference date is empty",
+                extra=context(
+                    module="firds", layer="bronze", file=name,
+                    schema=known, datadt=datadt,
+                ),
+            )
+    except Exception:
+        _route(file, zip_path, dir_error)
+        logger.exception(
+            "Import failed, the file was quarantined",
+            extra=context(
+                module="firds", layer="bronze", file=name, schema=schema,
+            ),
+        )
+        return False
+
+    # The records are in the Bronze layer from here on, so a failure to move
+    # the file is not caught: quarantining it would have it downloaded and
+    # imported a second time. The run stops instead, and the file, which is
+    # still in the import folder, needs moving to the finished folder by hand
+    # before the next one.
+    _route(file, zip_path, dir_finished)
+    logger.info(
+        "Imported file into the Bronze layer",
+        extra=context(
+            module="firds", layer="bronze", file=name,
+            schema=known, datadt=datadt,
+        ),
+    )
+    return True
+
+
+def _update_from_landing_to_bronze(spark, config_path, outcome, workers=1):
     """Do the work of :func:`update_from_landing_to_bronze`.
 
     A file that cannot be read is moved to the error folder and the import
@@ -280,125 +468,64 @@ def _update_from_landing_to_bronze(spark, config_path, outcome):
 
     A file whose name is already in the finished folder is not imported again
     but set aside as well. The Bronze layer is only ever appended to, so a
-    second import would put every record of the file into it twice.
+    second import would put every record of the file into it twice. The names
+    are settled before any file is read, in the order the names sort in, so
+    that which of two copies is kept does not depend on how many files are
+    read at a time.
+
+    ``workers`` files are read at a time; see
+    :func:`update_from_landing_to_bronze` for why reading more than one at
+    once is what uses the cores of the session. The files that are read
+    concurrently share nothing: each writes aside and moves its own output
+    into place, each moves its own file out of the import folder, and the
+    counts are taken from what the imports returned rather than added up as
+    they go.
     """
     remove_duplicates_from_landing_import_folder(config_path)
     files_in_folder = sorted(get_candidates_for_import(config_path))
     dir_import = path_landing_import(config_path)
     dir_finished = path_landing_finished(config_path)
     dir_error = path_landing_error(config_path)
+    dirs = (dir_import, dir_finished, dir_error)
     already_imported = {_base_name(name) for name in os.listdir(dir_finished)}
 
     outcome["candidates"] = len(files_in_folder)
-    imported = 0
-    quarantined = 0
 
+    # The copies are settled first and in order, so that the file that is kept
+    # is the first of its name however many files are read at a time.
+    pending = []
+    duplicates = []
     for name in files_in_folder:
-        # The extension is tested at the end of the name, as it is where the
-        # candidates are collected: a name that merely carries ".zip"
-        # somewhere is not an archive, and feeding it to the unpacker would
-        # quarantine a file that reads perfectly well.
+        base = _base_name(name)
+        if base in already_imported:
+            duplicates.append(name)
+            continue
+        already_imported.add(base)
+        pending.append(name)
+
+    for name in duplicates:
         is_zip = name.lower().endswith(".zip")
-        zip_path = os.path.join(dir_import, name) if is_zip else None
-        file = None if is_zip else os.path.join(dir_import, name)
-
-        if _base_name(name) in already_imported:
-            _route(file, zip_path, dir_error)
-            quarantined += 1
-            logger.warning(
-                "File was already imported, the copy was quarantined",
-                extra=context(module="firds", layer="bronze", file=name),
-            )
-            continue
-
-        if is_zip:
-            try:
-                file = os.path.join(dir_import, unzip_and_get_names(config_path, name))
-            # Every way unpacking can fail is caught, not ValueError
-            # alone: a truncated download raises zipfile.BadZipFile, which
-            # derives from Exception directly, and a handler narrower than
-            # this one lets it end the run instead of quarantining the
-            # file.
-            except Exception:
-                logger.exception(
-                    "Could not unpack the archive, the file was quarantined",
-                    extra=context(module="firds", layer="bronze", file=name),
-                )
-                _route(None, zip_path, dir_error)
-                quarantined += 1
-                continue
-
-        # The header is read inside the try, because reading it is one of
-        # the ways a file fails: it is decoded as UTF-8 text, and a file
-        # that is not text at all -- a truncated download, a stray binary
-        # -- raises before the loop can quarantine it, which would leave
-        # the files behind it stranded in the import folder.
-        schema = None
-
-        try:
-            beginning_of_xml_file = read_first_n_chars(file, 2000)
-            schema = extract_between_keywords(beginning_of_xml_file, "MsgDefIdr")
-            known = next((key for key in SCHEMAS if schema and key in schema), None)
-
-            if known is None:
-                _route(file, zip_path, dir_error)
-                quarantined += 1
-                logger.warning(
-                    "Schema not recognized, the file was quarantined",
-                    extra=context(
-                        module="firds", layer="bronze", file=name, schema=schema,
-                    ),
-                )
-                continue
-
-            reader, path_of, date_of = SCHEMAS[known]
-            datadt = date_of(file)
-            rebalanced(globals()[reader](spark, file)
-                       .withColumn("DATADT", func.lit(datadt)), "DATADT") \
-                .write.partitionBy("DATADT").mode("append").parquet(path_of(config_path))
-
-            # A file that carries no records writes nothing, and the reference
-            # date would then have no partition at all. The Silver layer takes
-            # a date whose file has been imported but has no partition for a
-            # partition that has gone missing, and refuses to carry on, so the
-            # empty partition is created to say that the date was imported and
-            # had nothing in it.
-            partition = os.path.join(path_of(config_path), PARTITION_PREFIX + datadt)
-            if not os.path.isdir(partition):
-                os.makedirs(partition)
-                logger.warning(
-                    "The file holds no records, its reference date is empty",
-                    extra=context(
-                        module="firds", layer="bronze", file=name,
-                        schema=known, datadt=datadt,
-                    ),
-                )
-        except Exception:
-            _route(file, zip_path, dir_error)
-            quarantined += 1
-            logger.exception(
-                "Import failed, the file was quarantined",
-                extra=context(
-                    module="firds", layer="bronze", file=name, schema=schema,
-                ),
-            )
-            continue
-
-        # The records are in the Bronze layer from here on, so a failure to
-        # move the file is not caught: quarantining it would have it
-        # downloaded and imported a second time. The run stops instead, and
-        # the file, which is still in the import folder, needs moving to the
-        # finished folder by hand before the next one.
-        _route(file, zip_path, dir_finished)
-        already_imported.add(_base_name(name))
-        imported += 1
-        logger.info(
-            "Imported file into the Bronze layer",
-            extra=context(
-                module="firds", layer="bronze", file=name,
-                schema=known, datadt=datadt,
-            ),
+        _route(
+            None if is_zip else os.path.join(dir_import, name),
+            os.path.join(dir_import, name) if is_zip else None,
+            dir_error,
         )
+        logger.warning(
+            "File was already imported, the copy was quarantined",
+            extra=context(module="firds", layer="bronze", file=name),
+        )
+
+    def run(name):
+        return _import_one_file(spark, config_path, name, dirs)
+
+    if workers == 1:
+        results = [run(name) for name in pending]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(run, pending))
+
+    imported = sum(1 for done in results if done)
+    quarantined = len(duplicates) + sum(1 for done in results if not done)
 
     outcome["imported"] = imported
     outcome["quarantined"] = quarantined
@@ -419,6 +546,7 @@ def _update_from_landing_to_bronze(spark, config_path, outcome):
 __all__ = [
     "SCHEMAS",
     "DRAFT_TIME_ZONE",
+    "STAGING_PREFIX",
     "read_xml_draft13_017_001_01",
     "read_xml_017_001_02",
     "read_xml_draft6_036_001_01",
