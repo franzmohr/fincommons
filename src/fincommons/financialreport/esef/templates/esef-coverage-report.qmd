@@ -276,8 +276,8 @@ filings_all <- open_dataset(file.path(path_silver, "filings")) %>% collect()
 
 if (nrow(filings_all) == 0) {
   stop("The table of filings of the esef module is empty. Run the pipeline ",
-       "first: python -m fincommons.financialreport.esef --config <paths.yaml> --country AT ",
-       "--contact <you@example.org>")
+       "first: esef.update_esef(spark, '<paths.yaml>', ['AT'], ",
+       "contact='<you@example.org>')")
 }
 
 # The countries and the years the report covers. A country named in the

@@ -53,13 +53,19 @@ os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 #: with an OutOfMemoryError in whichever test happens to be running.
 DRIVER_MEMORY = "4g"
 
-# The driver heap cannot be set on the builder below. PySpark starts the JVM
-# through spark-submit when the session is first built, and by the time the
-# builder's configuration is applied that JVM is already running with the heap
-# it was launched with. The launcher reads it from its own arguments, so it
-# has to travel as one -- hence PYSPARK_SUBMIT_ARGS, whose value must end in
-# "pyspark-shell". As with the interpreter above, a value already in the
-# environment is left alone, so that a run can still be aimed elsewhere.
+# The heap is settled when the JVM starts, which is what the builder below
+# cannot be relied on for. PySpark launches the JVM through spark-submit when
+# the first session of the process is built, and it does read the builder's
+# spark.driver.memory for that launch -- but only for that one: a session built
+# while a JVM is already running keeps the heap the first launch asked for,
+# whatever its own configuration says. This module does not get to decide who
+# builds the first session, since a suite of a package built on fincommons may
+# have started one of its own before this fixture is first used. The launcher
+# reads the heap from its own arguments, so it is passed as one -- hence
+# PYSPARK_SUBMIT_ARGS, whose value must end in "pyspark-shell", and the heap is
+# then the same whichever session is built first. As with the interpreter
+# above, a value already in the environment is left alone, so that a run can
+# still be aimed elsewhere.
 os.environ.setdefault(
     "PYSPARK_SUBMIT_ARGS", f"--driver-memory {DRIVER_MEMORY} pyspark-shell"
 )

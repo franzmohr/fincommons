@@ -6,6 +6,21 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ## Unreleased
 
+### Changed
+
+- No module of the package opens a Spark session. The three entry points that
+  did -- `python -m fincommons.marketpricedata`, `python -m
+  fincommons.famafrenchdata` and `python -m fincommons.financialreport.esef`
+  -- are gone, with the `build_session` each of them exported. The session is
+  the caller's: a cluster has one already, a workstation has to say how much
+  of itself to give it, and a pipeline that opened its own was deciding that
+  for every caller. What the commands did is now a script of a dozen lines
+  that the operator owns -- the session, `fincommons.log.configure`, the one
+  `update_*` call, and an exit code taken from the outcome's `failed` entry --
+  and each module's README shows it, as the README of `firds`, which never
+  had an entry point, already did. The pipelines themselves are unchanged:
+  they took a session as their first argument before and they take one now.
+
 ### New
 
 - `esef`: a factsheet on a sector, `templates/esef-sector-factsheet.qmd`, the
