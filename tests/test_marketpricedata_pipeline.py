@@ -2,8 +2,8 @@
 
 A source that fails is set aside so that the others are still brought up to
 date, and that is by design. What these tests pin is that it is not silent: the
-stage counts it, says so at its end, and the command line a scheduler runs exits
-with a code that is not 0.
+stage counts it, says so at its end, and the run hands back an outcome the
+script a scheduler runs can turn into an exit code that is not 0.
 
 Every source is replaced by a stub, so the tests need neither a Spark session
 nor the network: what is under test is the bookkeeping around the sources, not
@@ -13,12 +13,10 @@ the sources themselves, which ``tests/test_marketpricedata.py`` covers.
 from __future__ import annotations
 
 import logging
-import sys
 from contextlib import nullcontext
 
 import pytest
 
-from fincommons.marketpricedata import __main__ as cli
 from fincommons.marketpricedata import pipeline
 
 #: The functions that run a whole stage. They are what is under test, so they
@@ -110,53 +108,27 @@ def test_the_run_adds_up_what_its_stages_set_aside(sources, caplog):
     assert warnings[0].ctx["failed"] == 3
 
 
-class FakeSession:
-    """The part of a Spark session the command line uses."""
-
-    def __init__(self):
-        self.stopped = False
-
-    def stop(self):
-        self.stopped = True
-
-
-@pytest.fixture
-def command_line(monkeypatch):
-    """Run the command line against the stubbed sources and a fake session.
-
-    Logging is left as the test harness set it up: the command configures the
-    ``fincommons`` logger to write to standard error and stop propagating,
-    which would hide the records of every later test from ``caplog``.
-    """
-    session = FakeSession()
-    monkeypatch.setattr(cli, "build_session", lambda master: session)
-    monkeypatch.setattr(cli, "configure", lambda level: None)
-    monkeypatch.setattr(sys, "argv", ["fincommons.marketpricedata",
-                                      "--config", "paths.yaml"])
-    return session
-
-
-def test_the_command_fails_where_a_source_was_set_aside(
-        sources, command_line, caplog):
-    """A scheduler only sees the exit code, so a run that did not update every
-    source has to end with one that is not 0 -- while the other sources were
-    still brought up to date."""
+def test_the_run_reports_a_failure_a_scheduler_can_act_on(sources, caplog):
+    """No module of the package opens a Spark session or parses a command
+    line, so a scheduled run is a script the operator owns and the outcome is
+    all it has to go on. What such a script needs is pinned here: a run that
+    set a source aside says so in ``failed``, the sources after it were still
+    brought up to date, and the failure itself is in the log."""
     sources["failing"].add("update_bronze_boe")
 
     with caplog.at_level(logging.INFO, logger="fincommons"):
-        code = cli.main()
+        outcome = pipeline.update_marketpricedata(None, "paths.yaml")
 
-    assert code != 0
+    assert outcome["failed"] != 0
     assert "update_silver_boe" in sources["ran"]
-    assert command_line.stopped
     assert any(r.levelno == logging.ERROR and r.ctx.get("source") == "BOE"
                for r in caplog.records)
 
 
-def test_the_command_succeeds_where_every_source_was_updated(
-        sources, command_line):
-    assert cli.main() == 0
-    assert command_line.stopped
+def test_the_run_reports_no_failure_where_every_source_was_updated(sources):
+    outcome = pipeline.update_marketpricedata(None, "paths.yaml")
+    assert outcome["failed"] == 0
+    assert outcome["failed_sources"] == []
 
 
 def test_the_library_writes_nothing_to_standard_output():
@@ -173,7 +145,6 @@ def test_the_library_writes_nothing_to_standard_output():
     calls = [
         f"{path.name}:{node.lineno}"
         for path in sorted(package.glob("*.py"))
-        if path.name != "__main__.py"
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "print"
     ]

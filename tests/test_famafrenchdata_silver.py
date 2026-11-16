@@ -21,7 +21,6 @@ import datetime
 import hashlib
 import logging
 import os
-import sys
 from pathlib import Path
 
 import pandas
@@ -362,27 +361,6 @@ def test_the_pipeline_runs_from_the_page_to_the_table(spark, data_lake, library)
     # A second run finds the files unchanged and writes nothing.
     again = ffd.update_silver_famafrenchdata(spark, data_lake)
     assert again["written"] == 0
-
-
-def test_the_command_fails_where_a_file_was_set_aside(monkeypatch):
-    import fincommons.famafrenchdata.__main__ as cli
-
-    class Session:
-        def stop(self):
-            pass
-
-    outcome = {"failed": 1, "failed_sources": ["bronze/x"]}
-    monkeypatch.setattr(cli, "build_session",
-                        lambda master, driver_memory=None: Session())
-    monkeypatch.setattr(cli, "configure", lambda level: None)
-    monkeypatch.setattr(cli, "update_famafrenchdata",
-                        lambda spark, config, full, datasets: outcome)
-    monkeypatch.setattr(sys, "argv", ["fincommons.famafrenchdata",
-                                      "--config", "paths.yaml"])
-
-    assert cli.main() == 1
-    outcome["failed"] = 0
-    assert cli.main() == 0
 
 
 # The vignette: reproducing a Fama-French factor

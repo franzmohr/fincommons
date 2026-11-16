@@ -13,9 +13,9 @@ names them as ``layer/SOURCE``, and the closing record of the stage carries
 the same two entries. A stage that set a source aside also ends with a
 ``WARNING`` saying how many. The functions do not raise for it, because
 carrying on past one publisher is what they are for and a caller in a notebook
-should still get the outcome of the others; it is the command line,
-:mod:`fincommons.marketpricedata.__main__`, that turns a count above nought
-into an exit code a scheduler sees.
+should still get the outcome of the others. No module of the package opens a
+Spark session or parses a command line, so it is the script a scheduler runs
+that turns a count above nought into an exit code.
 
 The Yahoo Finance source is part of the Silver layer but not of the Bronze one.
 Its download is the only one that has to be told how far back to go and the only
@@ -250,9 +250,9 @@ def update_marketpricedata(spark, config_path, min_date=YAHOO_FIRST_DATE,
     stop the morning's update. The sources set aside in the three stages are
     added up in the outcome the function returns and in a closing ``WARNING``,
     and the function returns rather than raises: a caller decides what a
-    source set aside means to it. The command line,
-    :mod:`fincommons.marketpricedata.__main__`, exits with 1 for it, so a
-    scheduler sees a run that did not update every source as a failed job.
+    source set aside means to it. The script a scheduler runs exits with 1 for
+    it, so a scheduler sees a run that did not update every source as a failed
+    job; the module's README shows that script.
 
     Parameters
     ----------
