@@ -41,6 +41,17 @@ builder = SparkSession.builder \
 
 spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
+# What the session actually got. A session that already existed took none of
+# the settings above and said nothing about it, which is the one failure here
+# that is silent. The core settings are read off SparkConf, because
+# spark.conf is the registry of the SQL settings and raises
+# SQL_CONF_NOT_FOUND for one that is not among them.
+conf = spark.sparkContext.getConf()
+if not conf.get("spark.local.dir", None):
+    raise RuntimeError(
+        "spark.local.dir did not take; stop the session and build it again"
+    )
+
 # Load module
 from fincommons import firds
 
@@ -53,6 +64,8 @@ The cores are stated as `local[10]` rather than through `spark.cores.max`, becau
 The scratch directory is stated for a reason of the same kind. Spark writes every shuffle block, every spill file and every broadcast block under `spark.local.dir`, which defaults to `/tmp`, and on a good many Linux installations `/tmp` is a tmpfs sized at half the machine's memory rather than a directory on a disk. A run that spills there is therefore spending the memory it spilled in order to save, and it fails once the shuffle outgrows that half: a `No space left on device` while the disk the lake sits on is all but empty. What is seen first is a series of `DiskBlockObjectWriter: Error deleting ...` warnings, which are not the fault but its wake -- a write that hit the limit cannot clean up the partial file it left -- followed by `Utils: Suppressing exception in finally`, where the exception being suppressed is the one that says what happened. `spark.local.dir` should accordingly name a directory on a filesystem with room for the shuffle, which for a FIRDS history is tens of gigabytes; `findmnt -no FSTYPE /tmp` says whether the default would have done. In local mode the setting is read from the session as written above, the `SPARK_LOCAL_DIRS` environment variable that Spark's warning recommends instead being the route for a cluster manager, which starts the executors itself.
 
 The interpreter is settled before the session for a reason the scratch directory does not share: it is not a setting of the session at all. Spark launches its Python workers with whatever `python3` resolves to on the PATH, which off-cluster is rarely the interpreter the pipeline is being run with -- a virtual environment is exactly a different one. The worker still starts, because Spark puts its own `pyspark.zip` on the worker's path, and then fails on the first import that is not Spark's -- `pandas`, or `fincommons` itself -- with a `ModuleNotFoundError` naming a package that is plainly installed. Which run that happens in is not this one: FIRDS launches no Python worker at all, since the parsing is the JVM's XML data source and nothing in the Bronze or the Silver layer leaves the JVM for a Python function. A FIRDS run with the wrong interpreter therefore completes and says nothing. The modules that do launch a worker are the Silver layers of `exchangerate`, `famafrenchdata`, `marketpricedata` and `financialreport`, and that is where the error appears -- in a session that may well have been built while reading this page. The interpreter is settled here because this is where the session is built, not because this is where it would be missed. `PYSPARK_PYTHON` is what the launcher reads, and it has to be in the environment before the session is built; `spark.pyspark.python` on the builder does not do it in local mode, which was measured rather than assumed. `sys.executable` is the honest value for it, since the interpreter running the pipeline is the one the package is installed in, and `setdefault` leaves a value already in the environment alone so that a run can still be aimed elsewhere.
+
+The settings are read back because a session that already exists takes none of them. `getOrCreate` hands back the session that is there, every `config` above it is passed over, and nothing is raised: a builder given `spark.local.dir` against a live session returns a working session that still reports the setting as unset and writes not one block under the path it was asked for, which was measured rather than assumed. That is the one of the three failures that says nothing at all -- a wrong interpreter ends in a `ModuleNotFoundError` and a heap too small in an `OutOfMemoryError`, while a scratch directory that was ignored merely fills `/tmp` for the length of a backfill and reports it as a full disk. Stopping the context and building it again applies it, in the same process and without restarting the interpreter, since `spark.local.dir` is read when the context starts and `spark.stop()` is what ends one. The heap is not read then but when the JVM is launched, so that one does need a new process, which is why it is worth getting right the first time.
 
 ## Download data into landing zone
 
