@@ -918,22 +918,30 @@ ratio_of_sums <- function(num, den) {
   100 * sum(num[ok]) / sum(den[ok])
 }
 
+# The order of these is load-bearing and not a matter of taste. `across`
+# writes its sums back under the names it read -- `revenue_DOMESTIC` becomes
+# the sum of revenue_DOMESTIC -- and `summarise` evaluates in order, so
+# every expression after it sees a scalar where the column was. Put it
+# first and `ratio_of_sums` divides one sum by another, which is the bug
+# this function exists to avoid, and `median` takes the median of a single
+# number, which is that number. The summed columns are therefore written
+# last, once nothing else needs the rows.
 by_group <- shown %>%
   group_by(GROUP, FY) %>%
-  summarise(across(c(revenue_DOMESTIC, ebit_DOMESTIC, profit_DOMESTIC,
-                     assets_DOMESTIC, equity_DOMESTIC),
-                   ~sum(.x, na.rm = TRUE)),
-            issuers = n_distinct(LEI),
-            ebit_margin = ratio_of_sums(ebit_DOMESTIC, revenue_DOMESTIC),
-            ebit_margin_n = sum(!is.na(ebit_DOMESTIC) & !is.na(revenue_DOMESTIC)),
-            equity_ratio = ratio_of_sums(equity_DOMESTIC, assets_DOMESTIC),
-            equity_ratio_n = sum(!is.na(equity_DOMESTIC) & !is.na(assets_DOMESTIC)),
-            # The median of the issuers' own margins, which no single
-            # issuer can carry and which a sum always can.
+  summarise(issuers = n_distinct(LEI),
+            # The median of the issuers' own ratios, which no single issuer
+            # can carry and which a sum always can.
             ebit_margin_median = median(ebit_margin[is.finite(ebit_margin)],
                                         na.rm = TRUE),
             equity_ratio_median = median(equity_ratio[is.finite(equity_ratio)],
                                          na.rm = TRUE),
+            ebit_margin_n = sum(!is.na(ebit_DOMESTIC) & !is.na(revenue_DOMESTIC)),
+            equity_ratio_n = sum(!is.na(equity_DOMESTIC) & !is.na(assets_DOMESTIC)),
+            ebit_margin = ratio_of_sums(ebit_DOMESTIC, revenue_DOMESTIC),
+            equity_ratio = ratio_of_sums(equity_DOMESTIC, assets_DOMESTIC),
+            across(c(revenue_DOMESTIC, ebit_DOMESTIC, profit_DOMESTIC,
+                     assets_DOMESTIC, equity_DOMESTIC),
+                   ~sum(.x, na.rm = TRUE)),
             .groups = "drop") %>%
   rename_with(~sub("_DOMESTIC$", "", .x)) %>%
   arrange(GROUP, FY)
@@ -1241,22 +1249,29 @@ knitr::kable(temp, align = "lrrrrrr",
 ### `r tr("Revenue and result of the sector", "Umsatz und Ergebnis des Sektors")`
 
 ```{r glance-chart, fig.height = 2.6}
+# Revenue and the result of the year, each on a scale of its own. They are
+# two charts rather than two series of one because the result of this panel
+# is a twenty-fifth of its revenue: drawn against a revenue axis it is a
+# flat line on the zero, which says nothing about the years it moved
+# through. A second axis on the right would be the other way of doing it
+# and is worse -- the two scales can be chosen to make the lines cross
+# wherever the author likes.
 temp <- totals %>%
   select(FY, revenue = revenue_sum, profit = profit_sum) %>%
-  mutate(across(c(revenue, profit), ~.x / scale))
+  mutate(across(c(revenue, profit), ~.x / scale)) %>%
+  pivot_longer(c(revenue, profit), names_to = "measure", values_to = "value") %>%
+  mutate(measure = factor(
+    measure, levels = c("revenue", "profit"),
+    labels = c(tr("Revenue", "Umsatzerlöse"),
+               tr("Result for the year", "Jahresergebnis"))))
 
-g <- ggplot(temp, aes(x = FY)) +
-  geom_col(aes(y = revenue, fill = tr("Revenue", "Umsatzerlöse")),
-           width = .62) +
-  geom_line(aes(y = profit, colour = tr("Result for the year",
-                                        "Jahresergebnis")),
-            linewidth = linewidth_corporate_design) +
-  geom_point(aes(y = profit, colour = tr("Result for the year",
-                                         "Jahresergebnis")), size = 1.6) +
+g <- ggplot(temp, aes(x = FY, y = value, fill = measure)) +
+  geom_col(width = .62) +
   geom_zeroline() +
+  facet_wrap(~measure, nrow = 1, scales = "free_y") +
   scale_x_years() +
-  scale_fill_manual(values = unname(design_colours()["mute"]), name = NULL) +
-  scale_colour_manual(values = unname(design_colours()["red"]), name = NULL) +
+  scale_fill_manual(values = unname(design_colours()[c("mute", "red")]),
+                    guide = "none") +
   labs(x = NULL, y = amount_label, caption = source_caption) +
   theme_corporate_design(base_size = chart_base_size)
 g
@@ -1312,17 +1327,17 @@ temp <- by_group %>%
     !!tr("Issuers", "Emittenten") := issuers,
     !!tr("Revenue", "Umsatz") := fmt_num(revenue / scale),
     !!tr("EBIT", "EBIT") := fmt_num(ebit / scale),
-    !!tr("EBIT margin, %", "EBIT-Marge, %") :=
+    !!tr("EBIT %", "EBIT %") :=
       paste0(fmt_num(ebit_margin, 1), " (", ebit_margin_n, ")"),
-    !!tr("Median margin, %", "Median-Marge, %") :=
+    !!tr("EBIT % med.", "EBIT % Md.") :=
       fmt_num(ebit_margin_median, 1),
     !!tr("Result", "Ergebnis") := fmt_num(profit / scale),
-    !!tr("Total assets", "Bilanzsumme") := fmt_num(assets / scale),
-    !!tr("Equity ratio, %", "EK-Quote, %") := fmt_num(equity_ratio, 1),
-    !!tr("Median equity ratio, %", "Median-EK-Quote, %") :=
+    !!tr("Assets", "Bilanz") := fmt_num(assets / scale),
+    !!tr("Equity %", "EK %") := fmt_num(equity_ratio, 1),
+    !!tr("Equity % med.", "EK % Md.") :=
       fmt_num(equity_ratio_median, 1))
 
-knitr::kable(temp, align = "llrrrrrrrrr",
+knitr::kable(temp, align = paste0("ll", strrep("r", ncol(temp) - 2)),
              caption = tr(
                paste0("Sums over the issuers of the group that stated the ",
                       "figure, in ", amount_label, ". A group whose issuer ",
@@ -1364,17 +1379,21 @@ temp <- shown %>%
     !!tr("Issuer", "Emittent") := SHORT,
     !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
     !!tr("Year", "Jahr") := year,
-    !!tr("Currency", "Währung") := CCY,
+    !!tr("Ccy", "Whg") := CCY,
     !!tr("Revenue", "Umsatz") := fmt_num(revenue_DOMESTIC / scale),
-    !!tr("Growth, %", "Wachstum, %") := fmt_signed(revenue_growth),
+    !!tr("Growth %", "Wachstum %") := fmt_signed(revenue_growth),
     !!tr("EBIT", "EBIT") := fmt_num(ebit_DOMESTIC / scale),
-    !!tr("EBIT margin, %", "EBIT-Marge, %") := fmt_num(ebit_margin, 1),
+    !!tr("EBIT %", "EBIT %") := fmt_num(ebit_margin, 1),
     !!tr("Result", "Ergebnis") := fmt_num(profit_DOMESTIC / scale),
-    !!tr("Total assets", "Bilanzsumme") := fmt_num(assets_DOMESTIC / scale),
-    !!tr("Equity ratio, %", "EK-Quote, %") := fmt_num(equity_ratio, 1),
-    !!tr("ROE, %", "EKR, %") := fmt_num(roe, 1))
+    !!tr("Assets", "Bilanz") := fmt_num(assets_DOMESTIC / scale),
+    !!tr("Equity %", "EK %") := fmt_num(equity_ratio, 1),
+    !!tr("ROE %", "EKR %") := fmt_num(roe, 1))
 
-knitr::kable(temp, align = "lllcrrrrrrrr",
+# A column of one repeated currency is a column of no information, and on
+# A4 it is a column another one needed.
+if (!needs_fx) temp[[tr("Ccy", "Whg")]] <- NULL
+
+knitr::kable(temp, align = paste0("lll", strrep("r", ncol(temp) - 3)),
              caption = tr(paste0("Amounts in ", amount_label,
                                  ". A dash is a figure the issuer did not tag."),
                           paste0("Beträge in ", amount_label,
