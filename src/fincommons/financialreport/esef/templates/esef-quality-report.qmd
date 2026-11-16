@@ -239,8 +239,8 @@ filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
 
 if (nrow(filings_all) == 0) {
   stop("The table of filings of the esef module is empty. Run the pipeline ",
-       "first: python -m fincommons.financialreport.esef --config <paths.yaml> --country AT ",
-       "--contact <you@example.org>")
+       "first: esef.update_esef(spark, '<paths.yaml>', ['AT'], ",
+       "contact='<you@example.org>')")
 }
 
 # Which filings the table of facts holds facts for. A filing the repository
@@ -435,8 +435,8 @@ rated <- filing_state %>% filter(read)
 if (nrow(rated) == 0) {
   stop("The table of facts holds no fact for any filing of this selection, ",
        "so no check that reads a figure could have run. Collect the reports ",
-       "first: python -m fincommons.financialreport.esef --config <paths.yaml> --country AT ",
-       "--contact <you@example.org>")
+       "first: esef.update_esef(spark, '<paths.yaml>', ['AT'], ",
+       "contact='<you@example.org>')")
 }
 
 # Per year: the record checked, and how much of the part of it with facts

@@ -29,9 +29,10 @@ def update_famafrenchdata(spark, config_path, full=False, file_format=None,
     the run carries on, as in
     :func:`fincommons.marketpricedata.update_marketpricedata`. The files set
     aside are counted in the outcome the function returns and in a closing
-    ``WARNING``, and the function returns rather than raises: the command
-    line, :mod:`fincommons.famafrenchdata.__main__`, turns a count above
-    nought into an exit code a scheduler sees.
+    ``WARNING``, and the function returns rather than raises: no module of
+    the package opens a Spark session or parses a command line, so it is the
+    script a scheduler runs that turns a count above nought into an exit
+    code.
 
     Parameters
     ----------

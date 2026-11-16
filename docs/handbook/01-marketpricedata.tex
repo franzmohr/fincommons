@@ -138,10 +138,10 @@ Figure \ref{fig:marketpricedata-module} illustrates the structure of the module.
 
 Two aspects of the layout do not follow from the layers alone. The download from Yahoo Finance is not part of the Bronze layer function: it is the only download that has to be told how far back to go and the only one that needs a package outside the dependencies of \emph{fincommons}, namely \emph{yfinance}, which is why it is called on its own, while the Silver stage that reads what it left behind needs neither and runs with the rest. The proprietary source, by contrast, has no Bronze stage at all, since nothing is downloaded for it, and \emph{silver\_internal} is the whole of it.
 
-The functions above take the module apart, one source at a time, so that a single publisher can be collected, inspected or collected again on its own. A scheduled run wants none of that, and \verb|update_marketpricedata| is the one call that creates the directory tree where it is missing, collects every source and folds the whole Bronze layer into the Silver table. The module can also be run directly, which is easier from a job scheduler than writing a script around it:
+The functions above take the module apart, one source at a time, so that a single publisher can be collected, inspected or collected again on its own. A scheduled run wants none of that, and \verb|update_marketpricedata| is the one call that creates the directory tree where it is missing, collects every source and folds the whole Bronze layer into the Silver table. A scheduled run is a script around it, since no module of the package opens a Spark session: the session is the caller's, so that the same pipeline runs on a cluster that has one and on a workstation that has to say how much of itself to give it.
 
 \begin{quote}
-\verb|python -m fincommons.marketpricedata --config paths.yaml --log-level INFO|
+\verb|mp.update_marketpricedata(spark, "paths.yaml")|
 \end{quote}
 
 Where the history of a new data lake begins is an argument of that call, and it applies only to a source whose Bronze layer is still empty, so passing it to a lake that already holds data changes nothing. A further argument ignores the marks described above and merges every source from the beginning.

@@ -29,9 +29,10 @@ def update_esef(spark, config_path, countries, years=None, full=False,
     the run carries on, as in
     :func:`fincommons.famafrenchdata.update_famafrenchdata`. The reports
     set aside are counted in the outcome the function returns and in a
-    closing ``WARNING``, and the function returns rather than raises: the
-    command line, :mod:`fincommons.financialreport.esef.__main__`, turns a count above nought
-    into an exit code a scheduler sees.
+    closing ``WARNING``, and the function returns rather than raises: no
+    module of the package opens a Spark session or parses a command line, so
+    it is the script a scheduler runs that turns a count above nought into an
+    exit code.
 
     Parameters
     ----------
