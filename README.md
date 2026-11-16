@@ -167,9 +167,11 @@ message rather than inside it, so that the sentence stays constant across runs:
 
 `print` keeps a job next to this. Result tables that a script writes for
 someone watching the console are the output of the program and stay on
-standard output; the log goes to standard error. `python -m
-fincommons.marketpricedata`, `python -m fincommons.famafrenchdata` and
-`python -m fincommons.financialreport.esef` take `--log-level`.
+standard output; the log goes to standard error. No module of the package
+opens a Spark session or parses a command line, so a scheduled run is a
+script the operator owns: it sets the level with `fincommons.log.configure`,
+and `add_log_level_argument` adds `--log-level` to that script's own parser
+where it takes one. Each module's README shows the script for its pipeline.
 
 ## Looking up what a column or a series is
 

@@ -45,9 +45,28 @@ The table is then `fincommons.famafrenchdata.famafrenchdata`, always Delta.
 This is the module in five minutes: set it up, bring two files of the library into the lake, read them, and rebuild two of the published factors from the portfolios they are made of.
 
 ```python
-# Start Spark, with the Delta extensions where delta-spark is installed
-from fincommons.famafrenchdata.__main__ import build_session
-spark = build_session("local[*]")
+# Start Spark, with the Delta extensions where delta-spark is installed.
+# No module of the package opens a session: the session is the caller's.
+# The workers are launched with `python3` from the PATH unless told
+# otherwise, and the Silver layer parses the files on them.
+import os
+import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+
+from pyspark.sql import SparkSession
+from delta import configure_spark_with_delta_pip
+
+builder = (SparkSession.builder
+           .master("local[4]")
+           .appName("fincommons-famafrenchdata")
+           .config("spark.driver.memory", "4g")
+           .config("spark.local.dir", "/data/spark-tmp")
+           .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+           .config("spark.sql.catalog.spark_catalog",
+                   "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
 from fincommons import famafrenchdata as ffd
 
@@ -97,13 +116,54 @@ The same comparison runs in the test suite against synthetic files (`tests/test_
 ffd.update_famafrenchdata(spark, config_path)
 ```
 
-or, as the command a job scheduler runs,
+`datasets` restricts the run to named files and `full=True` rebuilds every partition of the table from the Bronze layer, which is how the table follows a new version of the reader. The call returns the outcome of the run, whose `failed` entry is the number of files set aside and `failed_sources` their names.
 
-```
-python -m fincommons.famafrenchdata --config paths.yaml --log-level INFO
+No module of the package opens a Spark session, so a job scheduler runs a script of a few lines rather than the module itself. The session belongs to whoever starts the run -- a cluster has one already, a workstation has to say how much of itself to give it -- and a pipeline that opened its own would be deciding that for every caller:
+
+```python
+# update-famafrenchdata.py -- the script a job scheduler runs
+# Spark launches its Python workers with whatever `python3` resolves to on
+# the PATH, which need not be the interpreter running this script. This has
+# to be settled before the session is built.
+import os
+import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+
+from delta import configure_spark_with_delta_pip
+from pyspark.sql import SparkSession
+
+from fincommons import famafrenchdata as ffd
+from fincommons.log import configure
+
+# The log goes to standard error. The script writes nothing to standard
+# output: what it did is the log, and whether it did all of it is the exit
+# code.
+configure("INFO")
+
+builder = (SparkSession.builder
+           .master("local[4]")
+           .appName("fincommons-famafrenchdata")
+           .config("spark.driver.memory", "4g")
+           .config("spark.local.dir", "/data/spark-tmp")
+           .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+           .config("spark.sql.catalog.spark_catalog",
+                   "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
+try:
+    outcome = ffd.update_famafrenchdata(spark, "paths.yaml")
+finally:
+    spark.stop()
+
+# A file set aside is not a failure of the run, which is why the library
+# returns rather than raises for it -- but it is a job that did less than it
+# was scheduled to do, and a scheduler only sees the exit code.
+sys.exit(1 if outcome["failed"] else 0)
 ```
 
-which exits with 1 where a file was set aside. `--dataset NAME` restricts the run to a file and may be given more than once; `--full` rebuilds every partition of the table from the Bronze layer, which is how the table follows a new version of the reader.
+`spark.local.dir` is named because Spark's own default is `/tmp`, which on a good many Linux installations is a tmpfs sized at half the machine's memory rather than a directory on a disk: a shuffle that outgrows it ends the run in `No space left on device` while the disk the lake sits on is all but empty. The README of `fincommons.firds` says more about that, and about choosing the cores and the heap together.
 
 The run needs no argument saying what to collect. It reads the library's page for the files it offers -- the list is not kept in the package, because the library adds and renames files without notice -- and asks the server, with a `HEAD` request, when each file was last modified and what its entity tag is. A file whose tag is the one kept from the last collection is not downloaded. Where the server does not answer, the file is downloaded and its text compared with the one kept by its SHA-256, so an unchanged file is never written again. On most days a run downloads nothing; in the days after French's monthly update it downloads everything.
 

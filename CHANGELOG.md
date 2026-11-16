@@ -6,6 +6,21 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ## Unreleased
 
+### Changed
+
+- No module of the package opens a Spark session. The three entry points that
+  did -- `python -m fincommons.marketpricedata`, `python -m
+  fincommons.famafrenchdata` and `python -m fincommons.financialreport.esef`
+  -- are gone, with the `build_session` each of them exported. The session is
+  the caller's: a cluster has one already, a workstation has to say how much
+  of itself to give it, and a pipeline that opened its own was deciding that
+  for every caller. What the commands did is now a script of a dozen lines
+  that the operator owns -- the session, `fincommons.log.configure`, the one
+  `update_*` call, and an exit code taken from the outcome's `failed` entry --
+  and each module's README shows it, as the README of `firds`, which never
+  had an entry point, already did. The pipelines themselves are unchanged:
+  they took a session as their first argument before and they take one now.
+
 ### New
 
 - `esef`: a factsheet on a sector, `templates/esef-sector-factsheet.qmd`, the
@@ -711,6 +726,33 @@ release may change the public API, which `tests/test_public_api.py` lists.
   pointing one directory too high.
 
 ### Changed
+
+- `firds`: `update_from_landing_to_bronze` takes `workers`, how many files it
+  reads at a time, one by default as the stage has always worked. A file is
+  read by a single task whatever the session is given -- the XML reader
+  reports a file as one it cannot split, so a 164 MB file comes back as one
+  partition and `local[1]` and `local[4]` take the same time over it -- so the
+  cores of a session sit idle for all but one of them, and the way to use them
+  is to have several files in flight rather than to give one file more.
+  Measured on four cores over 394 MB of delta files, four workers took 14.7
+  seconds against 33.3, and more workers than cores added nothing. The figure
+  is bounded by memory rather than by cores, since each file being read is
+  held in the driver heap.
+  The records of a file are now written into a directory of their own and
+  moved into the partition of their reference date afterwards, whatever
+  `workers` says. Writing straight into the folder cannot be done by more than
+  one file at a time: Spark's commit protocol stages under `_temporary` beside
+  the partitions and removes that whole directory when a job finishes, which
+  takes with it what every job still running had staged there, and the run
+  does not fail cleanly on it -- the writes that lost their staging raise
+  `FileNotFoundException`, the import quarantines those files as it does any
+  other failure, and what is left is a Bronze layer missing whole files whose
+  names sit in the `error` folder as though they had been malformed. Writing
+  aside also makes the import of one file atomic, so a write that fails leaves
+  the folder as it was rather than a partition half filled.
+  Which of two copies of a file is kept is settled before any file is read, in
+  the order the names sort in, so that it does not turn on the order the reads
+  finish in.
 
 - `financialreport`: `edinet` is a third source of the combined tables.
   `SOURCES` names it, `facts_from_edinet` and `filings_from_edinet` reduce it

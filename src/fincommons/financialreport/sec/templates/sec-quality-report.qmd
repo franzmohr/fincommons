@@ -240,8 +240,8 @@ filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
 
 if (nrow(filings_all) == 0) {
   stop("The table of filings of the sec module is empty. Run the ",
-       "pipeline first: python -m fincommons.financialreport.sec --config ",
-       "<paths.yaml> --cik 0001045810 --contact <you@example.org>")
+       "pipeline first: sec.update_sec(spark, '<paths.yaml>', ",
+       "ciks=['0001045810'], contact='<you@example.org>')")
 }
 
 issues_all <- open_dataset(file.path(path_silver, "issues")) %>% collect()

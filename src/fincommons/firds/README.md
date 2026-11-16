@@ -17,6 +17,15 @@ from fincommons.log import configure
 
 configure("INFO")
 
+# Spark launches its Python workers with whatever `python3` resolves to on
+# the PATH, which need not be the interpreter running this script. This has
+# to be settled before the session is built.
+import os
+import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+
 # Start Spark
 from pyspark.sql import SparkSession
 from delta import configure_spark_with_delta_pip
@@ -25,6 +34,7 @@ builder = SparkSession.builder \
                     .master("local[10]") \
                     .appName("fincommons") \
                     .config("spark.driver.memory", "30g") \
+                    .config("spark.local.dir", "/data/spark-tmp") \
                     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
                     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
@@ -39,6 +49,10 @@ firds.create_directory_tree(config_path)
 ```
 
 The cores are stated as `local[10]` rather than through `spark.cores.max`, because that setting is only read by a standalone or Mesos master: a session built without a master at all comes up as `local[*]` and runs a task on every core the machine has. The figure matters because in local mode the executors live inside the driver JVM, so `spark.driver.memory` is the memory of the whole run -- `spark.executor.memory` is ignored -- and the unified pool is divided among the tasks running at once. On a machine of 96 cores that leaves each task some 95 MB of execution memory out of 30 GB, which is not enough for one day's plan: it shows up first as blocks that could not be cached and were persisted to disk instead, and then as a `SparkOutOfMemoryError` raised when a task cannot acquire what the merge needs. The same 30 GB over ten cores leaves nearly a gigabyte each. The two settings are therefore chosen together, and the cores are stated where Spark reads them.
+
+The scratch directory is stated for a reason of the same kind. Spark writes every shuffle block, every spill file and every broadcast block under `spark.local.dir`, which defaults to `/tmp`, and on a good many Linux installations `/tmp` is a tmpfs sized at half the machine's memory rather than a directory on a disk. A run that spills there is therefore spending the memory it spilled in order to save, and it fails once the shuffle outgrows that half: a `No space left on device` while the disk the lake sits on is all but empty. What is seen first is a series of `DiskBlockObjectWriter: Error deleting ...` warnings, which are not the fault but its wake -- a write that hit the limit cannot clean up the partial file it left -- followed by `Utils: Suppressing exception in finally`, where the exception being suppressed is the one that says what happened. `spark.local.dir` should accordingly name a directory on a filesystem with room for the shuffle, which for a FIRDS history is tens of gigabytes; `findmnt -no FSTYPE /tmp` says whether the default would have done. In local mode the setting is read from the session as written above, the `SPARK_LOCAL_DIRS` environment variable that Spark's warning recommends instead being the route for a cluster manager, which starts the executors itself.
+
+The interpreter is settled before the session for a reason the scratch directory does not share: it is not a setting of the session at all. Spark launches its Python workers with whatever `python3` resolves to on the PATH, which off-cluster is rarely the interpreter the pipeline is being run with -- a virtual environment is exactly a different one. The worker still starts, because Spark puts its own `pyspark.zip` on the worker's path, and then fails on the first import that is not Spark's -- `pandas`, or `fincommons` itself -- with a `ModuleNotFoundError` naming a package that is plainly installed. Which run that happens in is not this one: FIRDS launches no Python worker at all, since the parsing is the JVM's XML data source and nothing in the Bronze or the Silver layer leaves the JVM for a Python function. A FIRDS run with the wrong interpreter therefore completes and says nothing. The modules that do launch a worker are the Silver layers of `exchangerate`, `famafrenchdata`, `marketpricedata` and `financialreport`, and that is where the error appears -- in a session that may well have been built while reading this page. The interpreter is settled here because this is where the session is built, not because this is where it would be missed. `PYSPARK_PYTHON` is what the launcher reads, and it has to be in the environment before the session is built; `spark.pyspark.python` on the builder does not do it in local mode, which was measured rather than assumed. `sys.executable` is the honest value for it, since the interpreter running the pipeline is the one the package is installed in, and `setdefault` leaves a value already in the environment alone so that a run can still be aimed elsewhere.
 
 ## Download data into landing zone
 
@@ -89,8 +103,18 @@ A record of the cancellations file carries nothing but the instrument and the tr
 The cancellations file is **not** an input to the historical database. Section 4.2 of ESMA65-8-5014 builds that from the full and the delta files alone, and a cancellation reaches it as a `<CancRcrd>` record of a delta file, which `update_from_bronze_to_silver_main` already applies. The cancellations file answers the different question of which records have ever been cancelled, and is kept in the Bronze layer as its own data set.
 
 
+The records of a file are written into a directory of its own and moved into the partition of their reference date once the write is complete. Writing straight into the folder cannot be done by more than one file at a time: Spark's commit protocol stages the output under `_temporary` beside the partitions and removes that directory when a job finishes, which takes with it what every job still running had staged there. The run does not fail cleanly on it either -- the writes that lost their staging raise `FileNotFoundException`, the import quarantines those files as it does any other failure, and what is left is a Bronze layer missing whole files whose names sit in the `error` folder as though they had been malformed. Writing aside also makes the import of a file atomic, so a write that fails leaves the folder as it was rather than a partition half filled.
+
+`workers` is how many files are read at a time, one by default. A higher figure is worth it because a file is read by a single task whatever the session is given: the XML reader reports a file as one it cannot split, so a 164 MB file comes back as one partition, and `local[1]` and `local[4]` take the same time over it. The cores of a session are therefore idle for all but one of them, and the way to use them is to have several files in flight rather than to give one file more. Measured on four cores over 394 MB of delta files, four workers took 14.7 seconds against 33.3, and more workers than cores added nothing. The figure is bounded by memory rather than by cores, since each file being read is held in the driver heap: the parts of a full file want fewer workers than the daily delta files do, and in local mode the executors live in the driver JVM, so `spark.driver.memory` is the whole of what a run has. It is worth settling `spark.local.dir` before raising it, for the reason given above: files read at once spill and shuffle at once, so a scratch directory left on a tmpfs `/tmp` runs out sooner with several workers than it would have with one, and the `No space left on device` that follows names neither the setting nor the workers.
+
+Which of two copies of a file is kept is settled before any file is read, in the order the names sort in, so that it does not turn on the order the reads happen to finish in.
+
 ```python
 firds.update_from_landing_to_bronze(spark, config_path)
+
+# Four files at a time, which is what uses the cores of a session on a
+# backfill of several hundred delta files.
+firds.update_from_landing_to_bronze(spark, config_path, workers = 4)
 ```
                                                                                     
 

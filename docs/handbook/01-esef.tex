@@ -40,8 +40,8 @@ There is no Gold layer yet. The natural first table is one row per issuer and fi
 
 \section{Software architecture}
 
-Module \emph{esef} is organised along the layers of the pipeline. The part \emph{common} declares the layout of the data lake and the schemas of the two tables and opens them; \emph{parse} reads an index into filings and a report into facts, in plain Python, so that it can be tested on its own and run on the executors as it is; \emph{bronze} collects the indexes, the reports and the packages; \emph{silver} builds the two tables; and \emph{pipeline} runs the whole in one call, \verb|update_esef|. A scheduled run calls the module from the command line,
+Module \emph{esef} is organised along the layers of the pipeline. The part \emph{common} declares the layout of the data lake and the schemas of the two tables and opens them; \emph{parse} reads an index into filings and a report into facts, in plain Python, so that it can be tested on its own and run on the executors as it is; \emph{bronze} collects the indexes, the reports and the packages; \emph{silver} builds the two tables; and \emph{pipeline} runs the whole in one call, \verb|update_esef|. A scheduled run is a script around that call,
 \begin{quote}
-\verb|python -m fincommons.financialreport.esef --config paths.yaml --country AT|
+\verb|esef.update_esef(spark, "paths.yaml", ["AT"], contact="me@example.org")|
 \end{quote}
-which takes the countries to collect -- and, with \verb|--contact|, the contact the repository asks for -- but no argument saying what changed: that is read from the repository and from what the lake already holds.
+which takes the countries to collect -- and, with \verb|contact|, the contact the repository asks for -- but no argument saying what changed: that is read from the repository and from what the lake already holds. No module of the package opens a Spark session; the session is the caller's, so that the same pipeline runs on a cluster that has one and on a workstation that has to say how much of itself to give it.

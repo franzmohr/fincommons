@@ -65,13 +65,62 @@ An issuer may file the same report more than once -- in two languages, or correc
 
 ## Keeping the tables up to date
 
-`update_esef` is the call a job scheduler makes, and `python -m fincommons.financialreport.esef` the command:
+`update_esef` is the call a job scheduler makes:
 
-```
-python -m fincommons.financialreport.esef --config paths.yaml --country AT --country DE --contact me@example.org
+```python
+outcome = esef.update_esef(spark, "paths.yaml", ["AT", "DE"],
+                           contact="me@example.org")
 ```
 
-It takes no argument saying what changed: that is read from the repository and from what the lake already holds, so the same command is right on the first day, when it collects every report of the countries, and on every day after it. `--year` restricts the reports collected to filings whose period ends in a year, `--packages` collects the report packages as well, and `--full` rebuilds every country of the table of facts, which is how the table follows a new version of the reader. A report that fails, in either layer, is set aside with its traceback and the run carries on; the exit code is 1 where one was set aside.
+It takes no argument saying what changed: that is read from the repository and from what the lake already holds, so the same call is right on the first day, when it collects every report of the countries, and on every day after it. `years` restricts the reports collected to filings whose period ends in those years, `packages=True` collects the report packages as well, and `full=True` rebuilds every country of the table of facts, which is how the table follows a new version of the reader. A report that fails, in either layer, is set aside with its traceback and the run carries on, and the outcome counts it in `failed`.
+
+No module of the package opens a Spark session, so a job scheduler runs a script around that call rather than the module itself. The session belongs to whoever starts the run -- a cluster has one already, a workstation has to say how much of itself to give it -- and a pipeline that opened its own would be deciding that for every caller:
+
+```python
+# update-esef.py -- the script a job scheduler runs
+# Spark launches its Python workers with whatever `python3` resolves to on
+# the PATH, which need not be the interpreter running this script. This has
+# to be settled before the session is built.
+import os
+import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+
+from delta import configure_spark_with_delta_pip
+from pyspark.sql import SparkSession
+
+from fincommons.financialreport import esef
+from fincommons.log import configure
+
+# The log goes to standard error. The script writes nothing to standard
+# output: what it did is the log, and whether it did all of it is the exit
+# code.
+configure("INFO")
+
+builder = (SparkSession.builder
+           .master("local[4]")
+           .appName("fincommons-esef")
+           .config("spark.driver.memory", "4g")
+           .config("spark.local.dir", "/data/spark-tmp")
+           .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+           .config("spark.sql.catalog.spark_catalog",
+                   "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
+try:
+    outcome = esef.update_esef(spark, "paths.yaml", ["AT", "DE"],
+                               contact="me@example.org")
+finally:
+    spark.stop()
+
+# A report set aside is not a failure of the run, which is why the library
+# returns rather than raises for it -- but it is a job that did less than it
+# was scheduled to do, and a scheduler only sees the exit code.
+sys.exit(1 if outcome["failed"] else 0)
+```
+
+A report is read whole before its facts are handed back and some are tens of megabytes of JSON, so the cores and the heap are chosen together: in local mode the executors live in the driver, and the unified pool is divided among the tasks running at once. `spark.local.dir` is named because Spark's own default is `/tmp`, which on a good many Linux installations is a tmpfs sized at half the machine's memory rather than a directory on a disk: a shuffle that outgrows it ends the run in `No space left on device` while the disk the lake sits on is all but empty. The README of `fincommons.firds` says more about both.
 
 A country is the unit a run collects because the reports are large: between a few hundred kilobytes and some tens of megabytes each, most of it the notes as text blocks. A year of the repository is a few thousand filings.
 

@@ -80,13 +80,41 @@ mp.update_marketpricedata(spark, config_path)
 The call writes nothing to standard output. It records what it does in the log of `fincommons.log` — each source as it is collected and merged, at `INFO`, a source that failed with its traceback at `ERROR`, and a closing `WARNING` that counts the sources set aside — so call `fincommons.log.configure()` first to see it. It returns the outcome of the run, whose `failed` entry is the number of sources set aside and `failed_sources` their names.
 
 
-It creates the directory tree if it is missing, collects every source into the Bronze layer, and folds the whole Bronze layer into the Silver table. It takes no argument saying what to collect, because what a run has to collect is read from what the data lake already holds: the same call is correct on the first morning, when it collects the whole history, and on every morning after, when it collects a day. From a job scheduler it is easier to run the module than to write a script around it:
+It creates the directory tree if it is missing, collects every source into the Bronze layer, and folds the whole Bronze layer into the Silver table. It takes no argument saying what to collect, because what a run has to collect is read from what the data lake already holds: the same call is correct on the first morning, when it collects the whole history, and on every morning after, when it collects a day. No module of the package opens a Spark session, so a job scheduler runs a short script around the call rather than the module itself. The session belongs to whoever starts the run -- a cluster has one already, a workstation has to say how much of itself to give it -- and a pipeline that opened its own would be deciding that for every caller:
 
-```
-python -m fincommons.marketpricedata --config /path/to/paths.yaml --log-level INFO
+```python
+# update-marketpricedata.py -- the script a job scheduler runs
+# Spark launches its Python workers with whatever `python3` resolves to on
+# the PATH, which need not be the interpreter running this script. This has
+# to be settled before the session is built.
+import os
+import sys
+
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+
+from fincommons import marketpricedata as mp
+from fincommons.log import configure
+
+# The log goes to standard error. The script writes nothing to standard
+# output: what it did is the log, and whether it did all of it is the exit
+# code.
+configure("INFO")
+
+spark = ...  # the session of "Setting up" above
+
+try:
+    outcome = mp.update_marketpricedata(spark, "/path/to/paths.yaml")
+finally:
+    spark.stop()
+
+# A source set aside is not a failure of the run, which is why the library
+# returns rather than raises for it -- but it is a job that did less than it
+# was scheduled to do, and a scheduler only sees the exit code.
+sys.exit(1 if outcome["failed"] else 0)
 ```
 
-`--min-date` decides where the history of a **new** data lake begins and defaults to the 1st of January 2000. It applies only to a source whose Bronze layer is still empty, so passing it to a lake that already holds data changes nothing; collecting a history again is done by calling that one source with a `min_date` of its own.
+`min_date` decides where the history of a **new** data lake begins and defaults to the 1st of January 2000. It applies only to a source whose Bronze layer is still empty, so passing it to a lake that already holds data changes nothing; collecting a history again is done by calling that one source with a `min_date` of its own.
 
 ### What "only new data" means, by source
 
