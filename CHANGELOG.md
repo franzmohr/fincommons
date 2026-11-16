@@ -6,30 +6,13 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ## 0.4.0
 
-The combined tables of `financialreport` carry a catalogue of eight measures
-asked of three regimes, `edinet` being the third source beside ESEF and the
-Commission, and `dataquality` is a new module the checks are built on. A set
-of Quarto templates comes with them: a factsheet per filer for each of the
-three regimes, a factsheet on a sector, and the coverage and quality reports.
-`firds` can start a history in 2018 and imports several files at a time. Two
-changes break: `frenchdatalibrary` is renamed `famafrenchdata`, and no module
-of the package opens a Spark session any more, so the three `python -m` entry
-points and the `build_session` they exported are gone.
-
-### Changed
-
-- No module of the package opens a Spark session. The three entry points that
-  did -- `python -m fincommons.marketpricedata`, `python -m
-  fincommons.famafrenchdata` and `python -m fincommons.financialreport.esef`
-  -- are gone, with the `build_session` each of them exported. The session is
-  the caller's: a cluster has one already, a workstation has to say how much
-  of itself to give it, and a pipeline that opened its own was deciding that
-  for every caller. What the commands did is now a script of a dozen lines
-  that the operator owns -- the session, `fincommons.log.configure`, the one
-  `update_*` call, and an exit code taken from the outcome's `failed` entry --
-  and each module's README shows it, as the README of `firds`, which never
-  had an entry point, already did. The pipelines themselves are unchanged:
-  they took a session as their first argument before and they take one now.
+The combined tables of `financialreport` answer eight measures of a
+catalogue, `edinet` is a third source beside ESEF and the Commission, and a
+Japanese filer has a factsheet of its own. `esef` gains a factsheet on a
+sector, which reaches past one regime. Two changes break: no module of the
+package opens a Spark session any more, so the three `python -m` entry points
+and the `build_session` they exported are gone, and the combined tables carry
+a `MEASURE` column.
 
 ### New
 
@@ -225,6 +208,7 @@ points and the `build_session` they exported are gone.
   issues, all five being Fujitsu's mis-tagged ratio. Calibrating them against
   those reports removed four false positives, every one of them a line a
   filing legitimately does not state.
+
 - `edinet`: a section of the module's README on the checks, and
   `connect_to_edinet(..., "issues")` to read the table they write.
 
@@ -320,189 +304,6 @@ points and the `build_session` they exported are gone.
   in both; `cjk_fonts` names the fallback typst reaches for the Japanese
   characters, without which it sets them as empty boxes and says nothing.
   The last page is a disclaimer, which the cover points at.
-
-- `dataquality`, `esef.quality` and `sec.quality`: the checks the two
-  regimes' figures are held to, and a table of the issues they find.
-  `fincommons/dataquality.py` holds what does not depend on the data set --
-  how a check is described, how its rows are gathered, which partitions a run
-  still has to look at, what is written where it looked at part of the table
-  only, and how the issues are counted and joined back onto the records --
-  and each module holds its own checks and declares its own issue table,
-  because the record a check points at is identified differently in each.
-  `update_silver_esef_quality` and `update_silver_sec_quality` write a
-  third Silver table, `issues`, beside the tables they are derived from; no
-  section of the configuration file has to be added for it, and a lake that
-  never runs the checks has no such table. Nothing is dropped and nothing is
-  corrected: a check writes a row and leaves the figure where it is, and a
-  filing with nothing wrong with it has no row at all.
-  Thirty-four checks, eighteen for ESEF and sixteen for the Commission. The
-  valuable ones are the relations a statement states on both sides -- the
-  balance sheet, revenue against the cost and the gross profit, the result
-  before tax against the tax and the result, the three cash flows against the
-  movement in cash -- because the scale of a number is an attribute of the tag
-  and invisible on the page. The rest are structural. One check belongs to the
-  Commission alone: a company file carries every filing's account of every
-  period, so `RESTATED_MATERIALLY` can set what a year's own report said
-  beside what a later report says, which found 149 restatements across
-  NVIDIA's 69 filings; share counts and per-share amounts are passed over,
-  a split restating those by arithmetic. Two belong to the repository alone,
-  which validates what it publishes and lists what it could not convert.
-  What a code means, how severe it is and what to do about it are rows of
-  `data/dataquality_checks.csv` rather than branches in the code, as the
-  measures of `financialreport` are, so that the people most able to find a
-  check wrong can read it; `describe_check` prints one, and a deployment that
-  keeps checks of its own ships a catalogue of the same shape and names it.
-  The checks were run over NVIDIA's 69 filings and six real voestalpine
-  reports, which corrected three of them: mezzanine equity belongs to the
-  balance sheet identity, the discontinued operations belong between the
-  result before tax and the result, and whether the repository published any
-  facts is a question for the index rather than for the table of facts -- the
-  last reporting 24,174 filings nobody had downloaded instead of the 192 the
-  repository could not convert.
-- `esef` and `sec`: a template for a data quality report, one per
-  regime, in R and Quarto, which reads the table of issues over the whole
-  record rather than filing by filing. Sixteen pages for ESEF and fifteen for
-  the Commission, built as a pair in the same way the factsheets are: what
-  was checked and what the checks have not run over, every check ranked by
-  the share of filings it named, the bands of findings per filing, the share
-  of the record free of errors, the five identities read together, and every
-  entry of the catalogue with what it found here. No number in either is an
-  amount out of a filing.
-  Two distinctions carry both reports and neither is left to be inferred. A
-  share is only readable against the right denominator, so each report takes
-  every rate over the one population every check was asked of -- the filings
-  the table of facts holds facts for, the annual reports -- and the per-check
-  table keeps each check's own. And a check names the records that failed it,
-  the filing where the fault is the report's and the fact where one figure is
-  at fault, so findings are rows and filings are the filings those rows name;
-  no table adds one to the other, and the headline of each report is the share
-  of the record free of errors rather than a count of findings. A partition
-  the checks have never run over and one in which every check passed look the
-  same in the two tables, and both reports name the former rather than count
-  it as sound.
-  The catalogue of checks is read from `data/dataquality_checks.csv`, the same
-  file the module reads, so a check added to a module appears in the report
-  without the template being touched; a code in the table of issues the
-  catalogue does not describe is refused rather than printed bare, as is a
-  Delta Silver layer. The sec report gives `RESTATED_MATERIALLY` a
-  section of its own, it being the one check without a counterpart in the
-  other regime and the one that needs reading rather than counting.
-- `sec`: a template for a factsheet on one registrant, in R and Quarto,
-  with NVIDIA Corporation as its example:
-  `src/fincommons/sec/templates/sec-analyst-factsheet.qmd`. It is
-  the counterpart of the esef factsheet and renders a PDF of some twenty
-  pages from the facts of the registrant's own annual reports and from
-  nothing else: the statement of operations, the balance sheet and the cash
-  flow statement as filed and as a share of revenue, the margins and the cost
-  structure, the growth, the net debt and the leverage, the liquidity and the
-  cover of the debt, the working capital and the cash conversion cycle, the
-  returns on assets, equity, capital employed and invested capital with the
-  decomposition of the return on equity, the quality of the cash flow against
-  the result, the comprehensive income, the per-share figures and what was
-  returned to the holders of the shares, Piotroski's F-score and Altman's
-  Z''-score, the coverage of the tags with checks that the statements add up,
-  and the reports it was built from. Four things differ from the esef
-  factsheet, and each follows from what the Commission publishes. `basis`
-  decides which filing a figure is taken from where several report the same
-  year: the year's own report, as the esef factsheet does, or the most
-  recently filed one, which shows a restatement restated and fills a line the
-  year's own report did not tag under a concept of the taxonomy -- a choice
-  the company files allow because they carry every filing's account of every
-  period. The per-share figures are brought onto the share basis of the
-  latest year by a factor read out of the filings themselves, since a
-  registrant that splits its stock restates its share count and NVIDIA's
-  earnings per share as each report states them run 4.52, 6.90, 3.85, 1.74,
-  11.93, 2.94, 4.90. A financial year is found by a window of 340 to 380 days
-  rather than a fixed 364 or 365, because a registrant on a 52/53-week
-  calendar does not close on the same date every year. EBITDA is derived,
-  which the esef factsheet cannot do, depreciation being a line of the US
-  GAAP cash flow statement under a concept of the taxonomy. There is no mark
-  for a figure read from a concept of the registrant's own making and no page
-  of the issuer's own prose, both being absent from the company files
-  altogether. The last page is a disclaimer, which the cover points at.
-- `sec`: a README for the module, which it did not have:
-  `src/fincommons/sec/README.md`. It sets out what a company file
-  carries and what it leaves out, the terms the Commission publishes under,
-  the two Silver tables, and the factsheet.
-- `financialreport`: a README for the module, which it did not have:
-  `src/fincommons/financialreport/README.md`. It sets out the three things
-  the module deliberately does not do -- take anything away from the two
-  source modules, join the regimes by entity, or reconcile the vocabularies
-  in the tables -- what each source covers and cannot, the two combined
-  tables column by column, and the catalogue of measures: what its columns
-  mean, that nothing in it is authoritative since the two boards published
-  no correspondence, how a deployment keeps its own judgements beside it,
-  and that the catalogue resolves a measure over either source table on its
-  own, so an ESEF-only lake can use it without building anything here.
-- `esef`: a template for a factsheet on one issuer, in R and Quarto, with
-  voestalpine AG as its example:
-  `src/fincommons/financialreport/esef/templates/esef-analyst-factsheet.qmd`. It renders a
-  PDF of some twenty pages from the facts of the issuer's own reports and
-  from nothing else: the income statement, the statement of financial
-  position and the cash flow statement as filed and as a share of revenue,
-  the margins, the growth, the capital structure and the net debt, the
-  liquidity and the cover of the debt, the working capital and the cash
-  conversion cycle, the returns on equity, assets, capital employed and
-  invested capital with the decomposition of the return on equity, the
-  quality of the cash flow against the result, the comprehensive income and
-  the equity by component, the per-share figures, Piotroski's F-score and
-  Altman's Z''-score, the coverage of the tags with checks that the
-  statements add up, and the filings it was built from. A figure read from
-  a concept of the issuer's own taxonomy, such as its capital expenditure,
-  carries a dagger and is listed with the years it was found in; no EBITDA
-  is derived, because depreciation is not a line of the statements under a
-  concept of the IFRS taxonomy. The charts use the ten colours of Tableau,
-  so that the lines of a balance sheet in one chart can be told apart. The
-  last page is a disclaimer, which the cover points at: the document is
-  produced by a template and the issuer is an example, no warranty is given
-  for the correctness or the completeness of a figure, nobody who made it is
-  associated with the issuer or with any other body named on the pages,
-  nothing in it is advice, and liability is disclaimed as far as the law
-  allows, in the terms of Articles 7 and 8 of the licence.
-- `esef`: a template for a coverage report on the record, the counterpart of
-  the factsheet, in R and Quarto:
-  `src/fincommons/financialreport/esef/templates/esef-coverage-report.qmd`. It renders a PDF
-  of some sixteen pages that counts what the repository lists and what the
-  issuers tagged, and no amount out of a report: the filings, issuers,
-  second filings of a year and filings without facts per country, the days
-  from the period end to publication against the four months Article 4 of
-  the Transparency Directive allows, what the repository's own validation
-  found, the facts of a median report, the taxonomies the facts are tagged
-  against, how much of a report sits under concepts of the issuer's own
-  making, the concepts of the taxonomy that the most issuers tag, the local
-  names the most issuers invent a concept for, the share of issuers tagging
-  each line of the three primary statements, how many of those lines an
-  issuer tags, and the share of issuers each indicator of the factsheet
-  could be computed for. The lines looked for are the lines the factsheet
-  reads, so the coverage of a line is the answer to how many issuers the
-  factsheet could be built for, and the share for an indicator is the size
-  of the panel a cross-sectional analysis of it could rest on. Where the
-  configuration file names the `firds` module's Silver layer, the report
-  also puts the record against the issuers of the shares FIRDS holds a
-  record for, counted over the whole record the lake holds rather than over
-  the countries and years of the report, since a report narrowed to one
-  country would otherwise read as though the rest of the market had never
-  filed. A page of its own states what the facts do not carry and what each
-  absence puts out of reach: no presentation role, so the statements it
-  groups its lines into are its own grouping; no anchoring and no
-  calculation relationships, which live in the extension taxonomy of the
-  report package, so it counts extensions without saying what they were
-  anchored to and checks no statement for adding up; no labels, so two
-  issuers count as having invented the same thing only where they spelt the
-  local name the same way; and no text blocks, so nothing in it measures the
-  tagging of the notes. The countries and the years are set in the first
-  chunk and default to every country the lake holds and the last five years
-  in it; the facts are read through four queries that arrow answers over the
-  parquet files, so the table of facts is never collected.
-- `firds`: a history can start in 2018. The full and the delta files ESMA
-  published up to 2019-09-21 under drafts of their message definitions,
-  `DRAFT13auth.017.001.01` and `DRAFT6auth.036.001.01`, are imported into
-  folders of their own instead of being set aside as unrecognised, and the
-  history starts from a full file of either definition;
-  `update_landing_import(config_path, start_date="2018-12-29")` starts it
-  from the last full file of 2018. The drafts state their timestamps without
-  a time zone and are read in UTC, and they do not state the relevant
-  trading venue.
 
 - `financialreport`: the catalogue of measures reaches Japan. Sixteen rows
   added, eight under `JP-GAAP` against the `jppfs_cor` taxonomy and eight
@@ -763,6 +564,7 @@ points and the `build_session` they exported are gone.
   residue stays and is named in the code: the five-year summary of an IFRS
   filer states the parent's Japan GAAP series under the same disclosure
   taxonomy as the group's IFRS one.
+
 - `financialreport`: `measure_values` no longer returns nothing for a filer
   that prepares no consolidated statements. It excludes a fact reported under
   a dimension, because a figure broken down by segment or by class is a part
@@ -779,6 +581,19 @@ points and the `build_session` they exported are gone.
   pointing one directory too high.
 
 ### Changed
+
+- No module of the package opens a Spark session. The three entry points that
+  did -- `python -m fincommons.marketpricedata`, `python -m
+  fincommons.famafrenchdata` and `python -m fincommons.financialreport.esef`
+  -- are gone, with the `build_session` each of them exported. The session is
+  the caller's: a cluster has one already, a workstation has to say how much
+  of itself to give it, and a pipeline that opened its own was deciding that
+  for every caller. What the commands did is now a script of a dozen lines
+  that the operator owns -- the session, `fincommons.log.configure`, the one
+  `update_*` call, and an exit code taken from the outcome's `failed` entry --
+  and each module's README shows it, as the README of `firds`, which never
+  had an entry point, already did. The pipelines themselves are unchanged:
+  they took a session as their first argument before and they take one now.
 
 - `firds`: `update_from_landing_to_bronze` takes `workers`, how many files it
   reads at a time, one by default as the stage has always worked. A file is
@@ -847,6 +662,221 @@ points and the `build_session` they exported are gone.
   accounting of the same kind the existing rows record, and a harder one.
   Both READMEs say so.
 
+### Project
+
+- The READMEs no longer point at a `docker` directory. The repository holds
+  none: the worked run of the FIRDS README named `docker/tools/run_firds.py`
+  and a compose file, and the test section of the `marketpricedata` README
+  sent a Windows workstation to a container described in `docker/README.md`,
+  and neither has ever been in the tree. The FIRDS section is gone and the
+  `marketpricedata` one now gives the one command that works. The two schema
+  tools said they run on the workstation "and not in the Docker image"; they
+  say "without Spark", which is the part of it that is true and useful.
+
+## 0.3.0
+
+Quarto templates are new: a factsheet on one filer and a report on
+the coverage of the record for `esef`, a factsheet for `sec`, and a data
+quality report for both, built on `dataquality`, a new module that holds the
+checks. `firds` can start a history in 2018, from the drafts of the message
+definitions ESMA published then. Two changes break: `frenchdatalibrary` is
+renamed `famafrenchdata`, after the name the data is known by, and the regimes
+that require a financial report to be tagged are stated anew.
+
+### New
+
+- `dataquality`, `esef.quality` and `sec.quality`: the checks the two
+  regimes' figures are held to, and a table of the issues they find.
+  `fincommons/dataquality.py` holds what does not depend on the data set --
+  how a check is described, how its rows are gathered, which partitions a run
+  still has to look at, what is written where it looked at part of the table
+  only, and how the issues are counted and joined back onto the records --
+  and each module holds its own checks and declares its own issue table,
+  because the record a check points at is identified differently in each.
+  `update_silver_esef_quality` and `update_silver_sec_quality` write a
+  third Silver table, `issues`, beside the tables they are derived from; no
+  section of the configuration file has to be added for it, and a lake that
+  never runs the checks has no such table. Nothing is dropped and nothing is
+  corrected: a check writes a row and leaves the figure where it is, and a
+  filing with nothing wrong with it has no row at all.
+  Thirty-four checks, eighteen for ESEF and sixteen for the Commission. The
+  valuable ones are the relations a statement states on both sides -- the
+  balance sheet, revenue against the cost and the gross profit, the result
+  before tax against the tax and the result, the three cash flows against the
+  movement in cash -- because the scale of a number is an attribute of the tag
+  and invisible on the page. The rest are structural. One check belongs to the
+  Commission alone: a company file carries every filing's account of every
+  period, so `RESTATED_MATERIALLY` can set what a year's own report said
+  beside what a later report says, which found 149 restatements across
+  NVIDIA's 69 filings; share counts and per-share amounts are passed over,
+  a split restating those by arithmetic. Two belong to the repository alone,
+  which validates what it publishes and lists what it could not convert.
+  What a code means, how severe it is and what to do about it are rows of
+  `data/dataquality_checks.csv` rather than branches in the code, as the
+  measures of `financialreport` are, so that the people most able to find a
+  check wrong can read it; `describe_check` prints one, and a deployment that
+  keeps checks of its own ships a catalogue of the same shape and names it.
+  The checks were run over NVIDIA's 69 filings and six real voestalpine
+  reports, which corrected three of them: mezzanine equity belongs to the
+  balance sheet identity, the discontinued operations belong between the
+  result before tax and the result, and whether the repository published any
+  facts is a question for the index rather than for the table of facts -- the
+  last reporting 24,174 filings nobody had downloaded instead of the 192 the
+  repository could not convert.
+
+- `esef` and `sec`: a template for a data quality report, one per
+  regime, in R and Quarto, which reads the table of issues over the whole
+  record rather than filing by filing. Sixteen pages for ESEF and fifteen for
+  the Commission, built as a pair in the same way the factsheets are: what
+  was checked and what the checks have not run over, every check ranked by
+  the share of filings it named, the bands of findings per filing, the share
+  of the record free of errors, the five identities read together, and every
+  entry of the catalogue with what it found here. No number in either is an
+  amount out of a filing.
+  Two distinctions carry both reports and neither is left to be inferred. A
+  share is only readable against the right denominator, so each report takes
+  every rate over the one population every check was asked of -- the filings
+  the table of facts holds facts for, the annual reports -- and the per-check
+  table keeps each check's own. And a check names the records that failed it,
+  the filing where the fault is the report's and the fact where one figure is
+  at fault, so findings are rows and filings are the filings those rows name;
+  no table adds one to the other, and the headline of each report is the share
+  of the record free of errors rather than a count of findings. A partition
+  the checks have never run over and one in which every check passed look the
+  same in the two tables, and both reports name the former rather than count
+  it as sound.
+  The catalogue of checks is read from `data/dataquality_checks.csv`, the same
+  file the module reads, so a check added to a module appears in the report
+  without the template being touched; a code in the table of issues the
+  catalogue does not describe is refused rather than printed bare, as is a
+  Delta Silver layer. The sec report gives `RESTATED_MATERIALLY` a
+  section of its own, it being the one check without a counterpart in the
+  other regime and the one that needs reading rather than counting.
+
+- `sec`: a template for a factsheet on one registrant, in R and Quarto,
+  with NVIDIA Corporation as its example:
+  `src/fincommons/sec/templates/sec-analyst-factsheet.qmd`. It is
+  the counterpart of the esef factsheet and renders a PDF of some twenty
+  pages from the facts of the registrant's own annual reports and from
+  nothing else: the statement of operations, the balance sheet and the cash
+  flow statement as filed and as a share of revenue, the margins and the cost
+  structure, the growth, the net debt and the leverage, the liquidity and the
+  cover of the debt, the working capital and the cash conversion cycle, the
+  returns on assets, equity, capital employed and invested capital with the
+  decomposition of the return on equity, the quality of the cash flow against
+  the result, the comprehensive income, the per-share figures and what was
+  returned to the holders of the shares, Piotroski's F-score and Altman's
+  Z''-score, the coverage of the tags with checks that the statements add up,
+  and the reports it was built from. Four things differ from the esef
+  factsheet, and each follows from what the Commission publishes. `basis`
+  decides which filing a figure is taken from where several report the same
+  year: the year's own report, as the esef factsheet does, or the most
+  recently filed one, which shows a restatement restated and fills a line the
+  year's own report did not tag under a concept of the taxonomy -- a choice
+  the company files allow because they carry every filing's account of every
+  period. The per-share figures are brought onto the share basis of the
+  latest year by a factor read out of the filings themselves, since a
+  registrant that splits its stock restates its share count and NVIDIA's
+  earnings per share as each report states them run 4.52, 6.90, 3.85, 1.74,
+  11.93, 2.94, 4.90. A financial year is found by a window of 340 to 380 days
+  rather than a fixed 364 or 365, because a registrant on a 52/53-week
+  calendar does not close on the same date every year. EBITDA is derived,
+  which the esef factsheet cannot do, depreciation being a line of the US
+  GAAP cash flow statement under a concept of the taxonomy. There is no mark
+  for a figure read from a concept of the registrant's own making and no page
+  of the issuer's own prose, both being absent from the company files
+  altogether. The last page is a disclaimer, which the cover points at.
+
+- `sec`: a README for the module, which it did not have:
+  `src/fincommons/sec/README.md`. It sets out what a company file
+  carries and what it leaves out, the terms the Commission publishes under,
+  the two Silver tables, and the factsheet.
+
+- `financialreport`: a README for the module, which it did not have:
+  `src/fincommons/financialreport/README.md`. It sets out the three things
+  the module deliberately does not do -- take anything away from the two
+  source modules, join the regimes by entity, or reconcile the vocabularies
+  in the tables -- what each source covers and cannot, the two combined
+  tables column by column, and the catalogue of measures: what its columns
+  mean, that nothing in it is authoritative since the two boards published
+  no correspondence, how a deployment keeps its own judgements beside it,
+  and that the catalogue resolves a measure over either source table on its
+  own, so an ESEF-only lake can use it without building anything here.
+
+- `esef`: a template for a factsheet on one issuer, in R and Quarto, with
+  voestalpine AG as its example:
+  `src/fincommons/financialreport/esef/templates/esef-analyst-factsheet.qmd`. It renders a
+  PDF of some twenty pages from the facts of the issuer's own reports and
+  from nothing else: the income statement, the statement of financial
+  position and the cash flow statement as filed and as a share of revenue,
+  the margins, the growth, the capital structure and the net debt, the
+  liquidity and the cover of the debt, the working capital and the cash
+  conversion cycle, the returns on equity, assets, capital employed and
+  invested capital with the decomposition of the return on equity, the
+  quality of the cash flow against the result, the comprehensive income and
+  the equity by component, the per-share figures, Piotroski's F-score and
+  Altman's Z''-score, the coverage of the tags with checks that the
+  statements add up, and the filings it was built from. A figure read from
+  a concept of the issuer's own taxonomy, such as its capital expenditure,
+  carries a dagger and is listed with the years it was found in; no EBITDA
+  is derived, because depreciation is not a line of the statements under a
+  concept of the IFRS taxonomy. The charts use the ten colours of Tableau,
+  so that the lines of a balance sheet in one chart can be told apart. The
+  last page is a disclaimer, which the cover points at: the document is
+  produced by a template and the issuer is an example, no warranty is given
+  for the correctness or the completeness of a figure, nobody who made it is
+  associated with the issuer or with any other body named on the pages,
+  nothing in it is advice, and liability is disclaimed as far as the law
+  allows, in the terms of Articles 7 and 8 of the licence.
+
+- `esef`: a template for a coverage report on the record, the counterpart of
+  the factsheet, in R and Quarto:
+  `src/fincommons/financialreport/esef/templates/esef-coverage-report.qmd`. It renders a PDF
+  of some sixteen pages that counts what the repository lists and what the
+  issuers tagged, and no amount out of a report: the filings, issuers,
+  second filings of a year and filings without facts per country, the days
+  from the period end to publication against the four months Article 4 of
+  the Transparency Directive allows, what the repository's own validation
+  found, the facts of a median report, the taxonomies the facts are tagged
+  against, how much of a report sits under concepts of the issuer's own
+  making, the concepts of the taxonomy that the most issuers tag, the local
+  names the most issuers invent a concept for, the share of issuers tagging
+  each line of the three primary statements, how many of those lines an
+  issuer tags, and the share of issuers each indicator of the factsheet
+  could be computed for. The lines looked for are the lines the factsheet
+  reads, so the coverage of a line is the answer to how many issuers the
+  factsheet could be built for, and the share for an indicator is the size
+  of the panel a cross-sectional analysis of it could rest on. Where the
+  configuration file names the `firds` module's Silver layer, the report
+  also puts the record against the issuers of the shares FIRDS holds a
+  record for, counted over the whole record the lake holds rather than over
+  the countries and years of the report, since a report narrowed to one
+  country would otherwise read as though the rest of the market had never
+  filed. A page of its own states what the facts do not carry and what each
+  absence puts out of reach: no presentation role, so the statements it
+  groups its lines into are its own grouping; no anchoring and no
+  calculation relationships, which live in the extension taxonomy of the
+  report package, so it counts extensions without saying what they were
+  anchored to and checks no statement for adding up; no labels, so two
+  issuers count as having invented the same thing only where they spelt the
+  local name the same way; and no text blocks, so nothing in it measures the
+  tagging of the notes. The countries and the years are set in the first
+  chunk and default to every country the lake holds and the last five years
+  in it; the facts are read through four queries that arrow answers over the
+  parquet files, so the table of facts is never collected.
+
+- `firds`: a history can start in 2018. The full and the delta files ESMA
+  published up to 2019-09-21 under drafts of their message definitions,
+  `DRAFT13auth.017.001.01` and `DRAFT6auth.036.001.01`, are imported into
+  folders of their own instead of being set aside as unrecognised, and the
+  history starts from a full file of either definition;
+  `update_landing_import(config_path, start_date="2018-12-29")` starts it
+  from the last full file of 2018. The drafts state their timestamps without
+  a time zone and are read in UTC, and they do not state the relevant
+  trading venue.
+
+### Changed
+
 - **Breaking.** The regimes that require a financial report tagged are now
   sub-modules of one namespace package, and `secfiling` is `sec`:
 
@@ -897,6 +927,7 @@ points and the `build_session` they exported are gone.
   register instead -- NVIDIA's at Delaware, by a file number that is not its
   central index key. The decision is unchanged; the reason for it is now
   stated as what it is.
+
 - The corporate design the Quarto templates draw with is one file for the
   whole package, `src/fincommons/templates/r-corporate-design-functions-ggplot2.R`,
   rather than a copy beside the templates of each module. The three templates
@@ -904,6 +935,7 @@ points and the `build_session` they exported are gone.
   template where there is one, so that a template taken out of the package
   can carry a design of its own; where neither is there they stop and say so.
   A change to the design is now made once.
+
 - `exchangerate`: `check_internal_rates` takes the base currency the rows of
   the internal file are held against as a `base` argument, so that a file
   kept against another base can be checked against that one. It defaults to
@@ -918,6 +950,7 @@ points and the `build_session` they exported are gone.
   newest one in the Bronze layer, so that a history rebuilt after such a run
   starts from the earlier full file; a data lake without that record still
   starts from the newest.
+
 - `firds`: `update_from_bronze_to_silver_main` builds the history again by
   itself where such a run has moved the start back. It used to apply only the
   reference dates after its watermark, and since the earlier full file and the
@@ -932,6 +965,7 @@ points and the `build_session` they exported are gone.
   full file is cleaned out once it is older than the log retention. A history
   built before that record existed is left alone, with a warning that a start
   date moved back cannot be noticed until it is recorded.
+
 - `firds`: the weekly `OPTIMIZE` of the historical database fills a file to
   `silver.OPTIMIZE_FILE_SIZE`, 128 MB, rather than to the gigabyte Delta aims
   at by default, which left the table holding gigabyte files beside the small
@@ -944,6 +978,7 @@ points and the `build_session` they exported are gone.
   and restores them afterwards. Files already written at the old size are not
   eligible for a smaller bin and stay as they are until something rewrites
   them.
+
 - `frenchdatalibrary` is renamed `famafrenchdata`, after the name the data
   is known by. Its functions follow: `update_famafrenchdata`,
   `connect_to_famafrenchdata`, `update_bronze_famafrenchdata`,
@@ -965,15 +1000,6 @@ points and the `build_session` they exported are gone.
   request that fits and that nobody has time for stays open and labelled
   rather than being closed, so that the next person who needs the same thing
   finds it. Asking obliges nobody to write it.
-
-- The READMEs no longer point at a `docker` directory. The repository holds
-  none: the worked run of the FIRDS README named `docker/tools/run_firds.py`
-  and a compose file, and the test section of the `marketpricedata` README
-  sent a Windows workstation to a container described in `docker/README.md`,
-  and neither has ever been in the tree. The FIRDS section is gone and the
-  `marketpricedata` one now gives the one command that works. The two schema
-  tools said they run on the workstation "and not in the Docker image"; they
-  say "without Spark", which is the part of it that is true and useful.
 
 ## 0.2.0
 
