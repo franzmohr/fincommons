@@ -4,7 +4,17 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
-## Unreleased
+## 0.4.0
+
+The combined tables of `financialreport` carry a catalogue of eight measures
+asked of three regimes, `edinet` being the third source beside ESEF and the
+Commission, and `dataquality` is a new module the checks are built on. A set
+of Quarto templates comes with them: a factsheet per filer for each of the
+three regimes, a factsheet on a sector, and the coverage and quality reports.
+`firds` can start a history in 2018 and imports several files at a time. Two
+changes break: `frenchdatalibrary` is renamed `famafrenchdata`, and no module
+of the package opens a Spark session any more, so the three `python -m` entry
+points and the `build_session` they exported are gone.
 
 ### Changed
 
