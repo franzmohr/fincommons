@@ -266,7 +266,9 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
 
     Reads the public exchange rate data from the BIS and the ECB from the Bronze layer
     and combines them. After dropping duplicate entries and interpolating values over weekends
-    the result is saved in the silver layer.
+    the result is saved in the silver layer. Where the BIS is used, the table
+    ends on the last day the BIS reaches rather than on the last day of the
+    source that is furthest ahead.
 
     Parameters
     ----------
@@ -277,6 +279,10 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
         The code must be contained in the EZB reference rate data set.
     use_bis : bool
         Whether the BIS rates in the Bronze layer are combined in as well.
+        A run that uses them also ends the table on the last day the BIS
+        reaches, so that no day of the table is described without them. The
+        BIS lags a few days behind the other sources, and the newest days it
+        does not cover yet are picked up by the next run once it has.
     file_format: str, optional
         Format the table is written in, ``'parquet'`` or ``'delta'``. Where it
         is left out the configuration file decides: a Silver layer addressed
@@ -339,6 +345,17 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
         
         bis_max_date = bis.select(func.max("REFDATE")).first()[0]
 
+        # The table ends on the BIS's last day, so there has to be one. A
+        # Bronze file without a single daily average -- a download that
+        # brought an empty or a changed file -- would otherwise cut every row
+        # away and replace the table with an empty one without a word.
+        if bis_max_date is None:
+            raise ValueError(
+                "Cannot combine the BIS rates: the BIS data in the Bronze "
+                "layer holds no daily average rate, so there is no last day "
+                "to cut the table back to. The table was left as it was."
+            )
+
     internal_file = os.path.join(path_bronze_internal_exchangerate(config_path), "exchangerate.csv")
     use_internal = os.path.exists(internal_file)
 
@@ -357,13 +374,17 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
                 extra=context(module="exchangerate", layer="silver", file=internal_file),
             )
 
-    # Every source counts up to its own last day. Where they overlap the rank
-    # below decides, and a day only some of them quote is described by those
-    # that do, which is what happens on any day a source is silent. Cutting
-    # every source back to the day the last of them reaches would only throw
-    # the newest rates of the others away. The last day of each source is
-    # logged, so that a source that has fallen behind is visible.
+    # How far the table reaches. Where the sources overlap the rank below
+    # decides, and a day only some of them quote is described by those that
+    # do, which is what happens on any day a source is silent. Without the
+    # BIS every source counts up to its own last day: cutting them all back to
+    # the day the last of them reaches would only throw the newest rates of
+    # the others away. A run with the BIS ends on the BIS's last day instead,
+    # see the cut further down. The last day of each source is logged, so that
+    # a source that has fallen behind is visible.
     logger.info(
+        "Combining the sources, the table ending on the BIS's last day"
+        if use_bis else
         "Combining the sources, each up to its own last day",
         extra=context(
             module="exchangerate",
@@ -371,6 +392,7 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
             ecb=ecb_max_date,
             bis=bis_max_date if use_bis else None,
             internal=internal_max_date if use_internal else None,
+            cutoff=bis_max_date if use_bis else None,
         ),
     )
 
@@ -438,6 +460,21 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
         .withColumn("IMPUTED", func.col("POS") > 0) \
         .drop("POS")
 
+    # A run that uses the BIS ends where the BIS ends. The BIS publishes with
+    # a lag of a few days, and the days beyond it would be described by the
+    # ECB and the proprietary source alone: a pair only the BIS quotes would
+    # stop days before the rest, and the day a caller converts an amount on
+    # would decide which currencies the table covers. Cutting the table back
+    # to the BIS's last day keeps the whole of it on the same footing, at the
+    # price of the few newest days of the other sources, which the next run
+    # picks up once the BIS has caught up.
+    #
+    # The cut is made after the fill, so a day before it still carries the
+    # last quote on or before it rather than losing its fill along with the
+    # quote beyond the cut that opened the run it belongs to.
+    if use_bis:
+        result = result.filter(func.col("REFDATE") <= func.to_date(func.lit(bis_max_date)))
+
     if rebase is not None:
 
         eur = result \
@@ -490,7 +527,9 @@ def update_exchangerate(spark, config_path, rebase = None, use_bis = False,
         ISO currency code of the currency that should become the new base currency instead of EUR.
         The code must be contained in the EZB reference rate data set.
     use_bis : bool
-        Whether the BIS rates are downloaded and combined in as well.
+        Whether the BIS rates are downloaded and combined in as well. A run
+        that uses them ends the table on the last day the BIS reaches; see
+        :func:`update_silver_exchangerate`.
     file_format: str, optional
         Format the Silver table is written in, ``'parquet'`` or ``'delta'``.
         Where it is left out the configuration file decides, so that moving

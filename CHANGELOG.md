@@ -577,6 +577,17 @@ a `MEASURE` column.
   that did not exist. The years are a dash with a sentence saying why, the
   list is the European issuers alone, and each carries its own last year.
 
+- `esef`: the benchmark's read of the measures is bounded by the years the
+  factsheet shows. The fact table is partitioned by `SOURCE` and
+  `PERIODYEAR` and the read used neither, so it scanned 2.7 million rows for
+  the 1.3 million of years any page shows: 5.7 seconds against 2.2. The
+  bound is the first year shown and not one less, because `PERIODYEAR` is
+  the calendar year the period ends in and the financial year of the page is
+  that year or the one before. The second read, the one that finds the banks
+  and insurers, is deliberately left unbounded: 788 of the 2,144 it finds
+  are only visible in a filing older than the years shown, and bounding it
+  would move those into the population the panel is compared with.
+
 - `esef`: the sector factsheet renders about four times faster -- 3m45s to
   56s for the cross-regime panel, 2m17s to 30s for the Austrian one. Three
   `group_by(...) %>% slice(1)` dedupes were the whole of it: dplyr builds a

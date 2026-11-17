@@ -711,8 +711,20 @@ if (has_combined) {
   # wanted, the undimensioned rows and the period the filing reports on are
   # therefore filters arrow applies to the files, not conditions R applies
   # to a frame already pulled into memory.
+  # `PERIODYEAR` is the calendar year the filing's period ends in and the
+  # fact table is partitioned on it, so the first condition is a choice of
+  # directories rather than a filter over rows: half of this table is of
+  # years no page below shows. The financial year of the factsheet is that
+  # calendar year or the one before it -- `period_year` moves a period
+  # ending in the first half of a year back one -- so the bound is the
+  # first year shown and not one less, and nothing the pages use is
+  # outside it. No row of this table has a null `PERIODYEAR`.
+  # Computed here and not inside the filter: arrow translates `min` as an
+  # aggregate of a column and refuses it over an R vector.
+  first_year_wanted <- min(years_shown)
   bench_facts <- open_dataset(file.path(path_combined, "fact")) %>%
-    filter(MEASURE %in% measures_wanted, is.na(DIMENSIONS), !is.na(VALUE),
+    filter(PERIODYEAR >= first_year_wanted,
+           MEASURE %in% measures_wanted, is.na(DIMENSIONS), !is.na(VALUE),
            PRDEND == PERIODEND, FILING %in% bench_filings$FILING) %>%
     select(SOURCE, FILING, LEI, CIK, PERIODEND, PERIODYEAR, MEASURE, VALUE) %>%
     collect()
@@ -721,6 +733,14 @@ if (has_combined) {
   # statements carry a line only a financial undertaking has. It is a
   # separate read because these concepts carry no measure, which is what
   # `bench_facts` is filtered on.
+  #
+  # Deliberately not bounded by `years_shown`, unlike the read above. A
+  # bank is a bank in the benchmark whenever it ever stated an interest
+  # revenue or an insurance liability, and 788 of the 2,144 this test finds
+  # are only visible in a filing older than the years shown. Bounding the
+  # read would move those into the population the panel is held against,
+  # which is the one thing this test exists to stop. It reads two columns
+  # of a concept filter and costs under five seconds.
   financial_by_statement <- open_dataset(file.path(path_combined, "fact")) %>%
     filter(CONCEPT %in% financial_concepts,
            FILING %in% bench_filings$FILING) %>%

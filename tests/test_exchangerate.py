@@ -317,8 +317,9 @@ def test_the_gap_between_two_sources_is_closed(spark, data_lake):
 
 
 def test_each_source_counts_up_to_its_own_last_day(spark, data_lake):
-    """A source that lags behind must not take the newest rates of the others
-    out of the table. Where it is silent, the others describe the day."""
+    """Without the BIS, a source that lags behind must not take the newest
+    rates of the others out of the table. Where it is silent, the others
+    describe the day."""
     write_ecb(data_lake, ["2020-01-01", "2020-01-02", "2020-01-03"], USD=[1.10, 1.11, 1.12])
     write_internal(data_lake, [("2020-01-01", "EUR", "USD", 9.99)])
 
@@ -920,6 +921,67 @@ def test_the_ecb_takes_precedence_over_the_bis(spark, data_lake):
     frame = silver(spark, data_lake)
 
     assert rate(frame, "2020-01-02", "EUR", "GBP").SOURCE == "ECB"
+
+
+def test_a_run_with_the_bis_ends_on_the_last_day_the_bis_reaches(spark, data_lake):
+    """The BIS publishes a few days late. Were the table to run on past it,
+    a pair only the BIS quotes would stop days before the rest, and the day
+    an amount is converted on would decide which currencies are covered."""
+    write_ecb(data_lake, ["2020-01-02", "2020-01-03", "2020-01-06"],
+              USD=[1.10, 1.11, 1.12])
+    write_internal(data_lake, [("2020-01-06", "EUR", "GBP", 0.90)])
+    write_bis(data_lake, [(DAILY, AVERAGE, "ARS: Argentine peso", "2020-01-03", 60.0)])
+
+    ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
+    frame = silver(spark, data_lake)
+
+    assert max(frame.REFDATE) == "2020-01-03"
+    # The ECB quote of 3 January is kept; the ones beyond the cut are not,
+    # and neither is the internal quote of 6 January.
+    assert rate(frame, "2020-01-03", "EUR", "USD").VALUE == pytest.approx(1.11)
+    assert "GBP" not in set(frame.QUOTE)
+
+
+def test_the_days_up_to_the_cut_are_still_filled(spark, data_lake):
+    """The cut takes the quotes beyond it away, not the fill of the days
+    before it: 4 January carries the quote of 3 January, as it would in a
+    table that reached further."""
+    write_ecb(data_lake, ["2020-01-03", "2020-01-08"], USD=[1.10, 1.20])
+    write_bis(data_lake, [(DAILY, AVERAGE, "ARS: Argentine peso", day, 60.0)
+                          for day in ("2020-01-03", "2020-01-04")])
+
+    ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
+    frame = silver(spark, data_lake)
+
+    assert max(frame.REFDATE) == "2020-01-04"
+    assert rate(frame, "2020-01-04", "EUR", "USD").VALUE == pytest.approx(1.10)
+    assert imputed(frame, "2020-01-04", "EUR", "USD") is True
+
+
+def test_the_cut_holds_when_the_table_is_rebased(spark, data_lake):
+    """The rebase is computed from the cut table, so it reaches no further."""
+    write_ecb(data_lake, ["2020-01-02", "2020-01-03"], USD=[1.10, 1.11])
+    write_bis(data_lake, [(DAILY, AVERAGE, "ARS: Argentine peso", "2020-01-02", 60.0)])
+
+    ex.update_silver_exchangerate(spark, data_lake, rebase="USD", use_bis=True)
+    frame = silver(spark, data_lake)
+
+    assert max(frame.REFDATE) == "2020-01-02"
+
+
+def test_the_table_is_left_as_it_was_where_the_bis_holds_no_day(spark, data_lake):
+    """With no daily average in the Bronze layer there is no day to cut back
+    to, and cutting to none of them would replace the table with an empty
+    one."""
+    write_ecb(data_lake, ["2020-01-02"], USD=[1.10])
+    ex.update_silver_exchangerate(spark, data_lake)
+    write_bis(data_lake, [("M: Monthly", AVERAGE, "ARS: Argentine peso", "2020-01", 60.0)])
+
+    with pytest.raises(ValueError, match="no daily average"):
+        ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
+
+    assert rate(silver(spark, data_lake), "2020-01-02", "EUR", "USD").VALUE \
+        == pytest.approx(1.10)
 
 
 @pytest.mark.parametrize("frequency, collection", [
