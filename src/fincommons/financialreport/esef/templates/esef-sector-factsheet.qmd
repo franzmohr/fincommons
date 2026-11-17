@@ -502,6 +502,26 @@ wrap_caption <- function(text, width = 125) {
   paste(strwrap(text, width = width), collapse = "\n")
 }
 
+# A table and the note that says how to read it.
+#
+# The caption argument of knitr::kable does not survive this format. kable
+# writes the caption as a `Table:` line above a pipe table, pandoc reads
+# that into the caption of a float, and the typst writer emits the float as
+# a bare `#table(...)` with the caption dropped -- silently, in every one of
+# the tables below. The captions here are not titles but reading
+# instructions: which unit an amount is in, what the count in brackets
+# counts, that a figure was not converted. Losing those without a trace is
+# the worst of the three outcomes, so the note is written under the table as
+# its own paragraph, which no writer can drop.
+#
+# Emphasis is marked with asterisks and not underscores, because a note may
+# name a measure of the catalogue and those have underscores in them.
+kable_note <- function(x, note, ...) {
+  knitr::asis_output(paste0(
+    paste(knitr::kable(x, ...), collapse = "\n"),
+    "\n\n*", note, "*\n"))
+}
+
 # Escape what typst reads as its own syntax, for the text that goes into the
 # raw blocks of the cover and of the running head.
 typst_string <- function(x) {
@@ -575,9 +595,14 @@ filings <- filings_all %>%
           coalesce(LANG, "") != lang,
           coalesce(ERRORS, 0L),
           desc(PROCESSED)) %>%
-  group_by(LEI, PERIODEND) %>%
-  slice(1) %>%
-  ungroup()
+  # `distinct(..., .keep_all = TRUE)` and not `group_by %>% slice(1)`. The
+  # two keep the same row -- the first in the order just arranged -- but
+  # dplyr builds a group index per group for the second, and over the
+  # hundreds of thousands of groups the combined table has that costs
+  # ninety seconds against half of one. Every dedupe below is written this
+  # way for that reason, and each is preceded by the arrange that decides
+  # which row "first" means.
+  distinct(LEI, PERIODEND, .keep_all = TRUE)
 
 if (nrow(filings) == 0) {
   stop("No filing of any issuer of the panel has facts in the Silver layer. ",
@@ -959,10 +984,16 @@ latest <- shown %>% filter(FY == latest_year)
 
 # An issuer that has stopped filing has no row in the latest year, and the
 # page says so rather than dropping it without a word.
+# The issuers of the panel whose last ESEF report is for an earlier year
+# than the latest one shown. Keyed on the LEI and restricted to issuers the
+# ESEF tables hold a report for at all: a member of the panel that files
+# with the Commission has no LEI and never had an ESEF year to stop filing,
+# and listing it here would read as a filer that went quiet.
 absent_latest <- panel %>%
-  filter(!LEI %in% latest$LEI) %>%
+  filter(!is.na(LEI), LEI %in% wide$LEI, !LEI %in% latest$LEI) %>%
   left_join(wide %>% group_by(LEI) %>%
-              summarise(last_year = max(FY), .groups = "drop"), by = "LEI")
+              summarise(last_year = max(FY), .groups = "drop"), by = "LEI") %>%
+  arrange(desc(last_year), SHORT)
 
 # --------------------------------------------------------------------------
 # The sector totals
@@ -1062,9 +1093,7 @@ by_group <- shown %>%
 if (has_combined) {
   bench_values <- bench_facts %>%
     distinct(SOURCE, FILING, LEI, CIK, PERIODEND, PERIODYEAR, MEASURE, VALUE) %>%
-    group_by(FILING, PERIODEND, MEASURE) %>%
-    slice(1) %>%
-    ungroup() %>%
+    distinct(FILING, PERIODEND, MEASURE, .keep_all = TRUE) %>%
     pivot_wider(names_from = "MEASURE", values_from = "VALUE") %>%
     mutate(FY = period_year(PERIODEND))
   for (key in setdiff(measures_wanted, names(bench_values))) {
@@ -1081,9 +1110,7 @@ if (has_combined) {
     mutate(KEY = paste0(coalesce(LEI, ""), "|", coalesce(CIK, "")),
            filled = rowSums(!is.na(across(all_of(measures_wanted))))) %>%
     arrange(KEY, FY, desc(filled), FILING) %>%
-    group_by(KEY, FY) %>%
-    slice(1) %>%
-    ungroup() %>%
+    distinct(KEY, FY, .keep_all = TRUE) %>%
     mutate(
       financial = LEI %in% financial_leis
                   | LEI %in% financial_by_statement
@@ -1267,27 +1294,101 @@ group_colours <- setNames(
 # The countries the panel actually filed in decide what the cover may
 # claim. One of them and a name set above: the name. Several: how many,
 # counted rather than named, and the subtitle lists the codes.
+# The countries of the ESEF filings alone, because `filings` is the ESEF
+# table and a report filed with the Commission carries no country in it.
+# A panel of two regimes is therefore not named by this list, and does not
+# use it.
 panel_countries <- sort(unique(filings$COUNTRY[!is.na(filings$COUNTRY)]))
-where <- if (length(panel_countries) == 1 && !is.null(country_name)) {
+
+# What a panel of two regimes may be called. The countries of the panel
+# file, not of the filings: a US registrant has a country in the panel and
+# none in its report, and a cover that counted only the second would say
+# seventeen of a panel that spans eighteen.
+cover_countries <- sort(unique(c(panel_countries,
+                                 panel$COUNTRY[!is.na(panel$COUNTRY)])))
+where <- if (length(cover_countries) == 1 && !is.null(country_name)) {
   country_name[[lang]]
-} else if (length(panel_countries) == 1) {
-  panel_countries
+} else if (length(cover_countries) == 1) {
+  cover_countries
 } else {
-  tr(paste(length(panel_countries), "countries"),
-     paste(length(panel_countries), "Ländern"))
+  tr(paste(length(cover_countries), "countries"),
+     paste(length(cover_countries), "Ländern"))
 }
 title <- tr(paste0(sector_name[["en"]], " in ", where),
             paste0(sector_name[["de"]], " in ", where))
-subtitle <- tr(
-  paste0("A factsheet on ", nrow(panel), " issuers, from their ESEF annual ",
-         "financial reports",
-         if (length(panel_countries) > 1)
-           paste0(" filed in ", paste(panel_countries, collapse = ", ")) else ""),
-  paste0("Ein Factsheet zu ", nrow(panel), " Emittenten, aus deren ",
-         "ESEF-Jahresfinanzberichten",
-         if (length(panel_countries) > 1)
-           paste0(", eingereicht in ", paste(panel_countries, collapse = ", "))
+
+# A panel that reaches past ESEF is not a panel of ESEF reports, and the
+# cover is the first place that must stop saying it is. It names the
+# regimes and how many issuers file under each instead of listing
+# eighteen country codes, which at this width wraps to three lines and
+# tells a reader nothing the panel table does not.
+regime_counts <- c(ESEF = sum(!is.na(panel$LEI)), SEC = sum(is.na(panel$LEI)))
+subtitle <- if (is_cross_regime) {
+  tr(paste0("A factsheet on ", nrow(panel), " issuers across two reporting ",
+            "regimes: ", regime_counts[["ESEF"]], " filing an ESEF annual ",
+            "financial report in Europe and ", regime_counts[["SEC"]],
+            " filing with the Securities and Exchange Commission"),
+     paste0("Ein Factsheet zu ", nrow(panel), " Emittenten aus zwei ",
+            "Berichtsregimen: ", regime_counts[["ESEF"]],
+            " mit ESEF-Jahresfinanzbericht in Europa und ",
+            regime_counts[["SEC"]], " mit Bericht bei der Securities and ",
+            "Exchange Commission"))
+} else {
+  tr(paste0("A factsheet on ", nrow(panel), " issuers, from their ESEF annual ",
+            "financial reports",
+            if (length(panel_countries) > 1)
+              paste0(" filed in ", paste(panel_countries, collapse = ", "))
+            else ""),
+     paste0("Ein Factsheet zu ", nrow(panel), " Emittenten, aus deren ",
+            "ESEF-Jahresfinanzberichten",
+            if (length(panel_countries) > 1)
+              paste0(", eingereicht in ", paste(panel_countries, collapse = ", "))
+            else ""))
+}
+# What the pages that follow are read from, which a panel of two regimes
+# cannot state in one sentence. Everything up to the cross-regime section
+# is the ESEF tables; the section itself is the combined table, and saying
+# so here is the difference between a reader who knows why an American
+# issuer has no operating margin and one who thinks the page lost it.
+provenance_note <- tr(
+  paste0("Every figure on this page is a fact an issuer tagged in its own ",
+         "annual financial report, read from the ESEF tables of fincommons. ",
+         "A report is filed in Inline XBRL with the officially appointed ",
+         "mechanism of its member state and collected by filings.xbrl.org, ",
+         "which is where the pipeline reads it from. Nothing here is ",
+         "estimated, interpolated or converted: a line an issuer did not tag ",
+         "is shown as a dash, and a ratio whose two figures were not both ",
+         "stated is not computed.",
+         if (is_cross_regime)
+           paste0(" This panel also holds ", regime_counts[["SEC"]],
+                  " issuers that file with the Securities and Exchange ",
+                  "Commission rather than under ESEF. They are read from the ",
+                  "combined table of fincommons.financialreport, which holds ",
+                  "the measures the two frameworks have been agreed to tag ",
+                  "alike, and they appear in the benchmark and in the ",
+                  "cross-regime section at the end. The tables between here ",
+                  "and there are read from the ESEF concepts and show the ",
+                  "European members alone.") else "")
+  ,
+  paste0("Jede Zahl auf dieser Seite ist ein Fakt, den ein Emittent in ",
+         "seinem eigenen Jahresfinanzbericht ausgezeichnet hat, gelesen aus ",
+         "den ESEF-Tabellen von fincommons. Ein Bericht wird in Inline XBRL ",
+         "beim Speichersystem seines Mitgliedstaats eingereicht und von ",
+         "filings.xbrl.org gesammelt, von wo die Pipeline ihn liest. Nichts ",
+         "ist geschätzt, interpoliert oder umgerechnet: eine Zeile, die ein ",
+         "Emittent nicht ausgezeichnet hat, steht als Strich, und eine ",
+         "Kennzahl, deren beide Größen nicht beide angegeben wurden, wird ",
+         "nicht berechnet.",
+         if (is_cross_regime)
+           paste0(" Dieses Panel enthält zusätzlich ", regime_counts[["SEC"]],
+                  " Emittenten, die bei der Securities and Exchange ",
+                  "Commission und nicht unter ESEF einreichen. Sie stammen ",
+                  "aus der kombinierten Tabelle von ",
+                  "fincommons.financialreport und erscheinen im Benchmark ",
+                  "und im Abschnitt über die Regime hinweg; die Tabellen ",
+                  "dazwischen zeigen allein die europäischen Mitglieder.")
          else ""))
+
 cat('```{=typst}\n')
 cat('#text(size: 20pt, weight: "bold", fill: rgb("#C10016"))[',
     typst_string(title), ']\\\n', sep = "")
@@ -1304,7 +1405,7 @@ cat('```\n')
 
 ### `r tr("How the figures are put together", "Wie die Zahlen zustande kommen")`
 
-`r tr(paste0("Every figure on this page is a fact an issuer tagged in its own annual financial report, read from the ESEF tables of fincommons. A report is filed in Inline XBRL with the officially appointed mechanism of its member state and collected by filings.xbrl.org, which is where the pipeline reads it from. Nothing here is estimated, interpolated or converted: a line an issuer did not tag is shown as a dash, and a ratio whose two figures were not both stated is not computed."), paste0("Jede Zahl auf dieser Seite ist ein Fakt, den ein Emittent in seinem eigenen Jahresfinanzbericht ausgezeichnet hat, gelesen aus den ESEF-Tabellen von fincommons. Ein Bericht wird in Inline XBRL beim Speichersystem seines Mitgliedstaats eingereicht und von filings.xbrl.org gesammelt, von wo die Pipeline ihn liest. Nichts ist geschätzt, interpoliert oder umgerechnet: eine Zeile, die ein Emittent nicht ausgezeichnet hat, steht als Strich, und eine Kennzahl, deren beide Größen nicht beide angegeben wurden, wird nicht berechnet."))`
+`r provenance_note`
 
 `r tr("The sector is a stated list. ESEF carries no sector code, so which issuer belongs to a construction sector is a judgement, and it is made in the panel below rather than anywhere in the data. Each issuer is shown with the group it was put in, so that a reader who would draw the boundary elsewhere can see what moving it would do.", "Der Sektor ist eine gesetzte Liste. ESEF enthält keinen Branchencode, daher ist die Zuordnung eines Emittenten zur Bauwirtschaft eine Setzung, und sie wird im Panel unten getroffen und nirgends in den Daten. Jeder Emittent wird mit seiner Gruppe gezeigt, damit erkennbar bleibt, was eine andere Abgrenzung ändern würde.")`
 
@@ -1318,7 +1419,12 @@ if (!needs_fx) {
                 "; es wird nichts umgerechnet.")), "\n")
 } else {
   cat(tr(
-    paste0("The issuers of this panel report in ", length(currencies),
+    # `currencies` comes from the ESEF filings, so in a panel of two
+    # regimes it is the currencies of the European members and not of the
+    # panel; the dollar is not in it. Saying "the issuers of this panel"
+    # over that list would be a count short.
+    paste0("The ", if (is_cross_regime) "European " else "",
+           "issuers of this panel report in ", length(currencies),
            " currencies (", paste(currencies, collapse = ", "), "). Every ",
            "amount on these pages is therefore shown converted into ",
            target_ccy, ", at the reference rates of ",
@@ -1335,7 +1441,8 @@ if (!needs_fx) {
            "from the figures as filed. That is why an issuer whose currency ",
            "the rate table does not reach can still stand in the ",
            "benchmark while its amounts are missing from the sums."),
-    paste0("Die Emittenten dieses Panels berichten in ", length(currencies),
+    paste0("Die ", if (is_cross_regime) "europäischen " else "",
+           "Emittenten dieses Panels berichten in ", length(currencies),
            " Währungen (", paste(currencies, collapse = ", "), "). Jeder ",
            "Betrag auf diesen Seiten wird daher in ", target_ccy,
            " umgerechnet gezeigt, zu den Referenzkursen von ",
@@ -1369,6 +1476,31 @@ if (nrow(unconverted) > 0) {
            "werden; die Anzahl neben den Summen ist entsprechend kleiner.")),
       "\n")
 }
+
+# The one place in the document where an amount is shown unconverted. The
+# cross-regime table adds up the eight agreed measures as filed, because
+# the rate table of this lake is the reference rates of the European
+# Central Bank and does not reach a dollar amount filed with the
+# Commission. The table says so in its own note; this says it where a
+# reader is told what the currency rules of the page are.
+if (is_cross_regime) {
+  cat("\n\n", tr(
+    paste0("One table is outside this rule. The cross-regime table at the ",
+           "end adds up the agreed measures as filed and converts nothing, ",
+           "because a report filed with the Commission is in dollars and ",
+           "the reference rates this lake holds are the euro rates of the ",
+           "European Central Bank. Its revenue column is an order of ",
+           "magnitude and not a sum in one currency; the medians beside it ",
+           "are ratios, which need no conversion."),
+    paste0("Eine Tabelle steht ausserhalb dieser Regel. Die Tabelle über ",
+           "die Regime hinweg am Ende addiert die vereinbarten Measures wie ",
+           "eingereicht und rechnet nichts um, weil ein Bericht bei der ",
+           "Commission in Dollar lautet und dieser Lake die Eurokurse der ",
+           "Europäischen Zentralbank hält. Ihre Umsatzspalte ist eine ",
+           "Größenordnung und keine Summe in einer Währung; die Mediane ",
+           "daneben sind Kennzahlen und brauchen keine Umrechnung.")),
+      "\n")
+}
 ```
 
 {{< pagebreak >}}
@@ -1398,8 +1530,15 @@ temp <- panel %>%
     !!tr("Country", "Land") := COUNTRY,
     !!tr("What it does", "Tätigkeit") :=
       if (lang == "de") ACTIVITY_DE else ACTIVITY_EN,
-    !!tr("Years", "Jahre") := paste0(first_year, "–", last_year),
-    !!tr("Reports", "Berichte") := filings)
+    # `filings` is the ESEF table, so an issuer that files with the
+    # Commission has no row in it and no year to show. A dash says that,
+    # where NA–NA said the issuer filed nothing at all -- which is the
+    # opposite of true for the eighty-six whose reports the cross-regime
+    # section counts.
+    !!tr("Years", "Jahre") := ifelse(is.na(first_year), "–",
+                                     paste0(first_year, "–", last_year)),
+    !!tr("Reports", "Berichte") := ifelse(is.na(filings), "–",
+                                          as.character(filings)))
 
 # A column every row leaves empty is dropped rather than printed as a
 # column of dashes: a panel file that names no activity should not cost the
@@ -1409,7 +1548,9 @@ temp <- temp[, vapply(temp, function(x) any(!is.na(x) & x != ""), logical(1)),
 knitr::kable(temp, align = paste(rep("l", ncol(temp)), collapse = ""))
 ```
 
-`r if (nrow(absent_latest) > 0) tr(paste0("Not every issuer of the panel filed for ", fy_label(max(latest$PERIODEND)), ". ", paste(absent_latest$SHORT, collapse = ", "), " last filed for ", paste(absent_latest$last_year, collapse = ", "), ", and the totals of the later years are over the issuers that did file. The counts beside every total say how many those were."), paste0("Nicht jeder Emittent des Panels hat für ", fy_label(max(latest$PERIODEND)), " eingereicht. ", paste(absent_latest$SHORT, collapse = ", "), " hat zuletzt für ", paste(absent_latest$last_year, collapse = ", "), " eingereicht; die Summen der späteren Jahre umfassen nur die Emittenten, die eingereicht haben. Die Anzahl steht neben jeder Summe.")) else ""`
+`r if (is_cross_regime) tr(paste0("The years and the report count are read from the ESEF tables, so they are a dash for the ", regime_counts[["SEC"]], " issuers that file with the Securities and Exchange Commission. Their reports are counted in the cross-regime section, which reads the combined table."), paste0("Jahre und Berichtsanzahl stammen aus den ESEF-Tabellen und stehen daher als Strich für die ", regime_counts[["SEC"]], " Emittenten, die bei der Securities and Exchange Commission einreichen. Ihre Berichte werden im Abschnitt über die Regime hinweg gezählt.")) else ""`
+
+`r if (nrow(absent_latest) > 0) tr(paste0("Not every issuer of the panel filed for ", latest_year, ". ", paste0(absent_latest$SHORT, " (", absent_latest$last_year, ")", collapse = ", "), " last filed for the year in brackets, and the totals of the later years are over the issuers that did file. The counts beside every total say how many those were."), paste0("Nicht jeder Emittent des Panels hat für ", latest_year, " eingereicht. ", paste0(absent_latest$SHORT, " (", absent_latest$last_year, ")", collapse = ", "), " hat zuletzt für das Jahr in Klammern eingereicht; die Summen der späteren Jahre umfassen nur die Emittenten, die eingereicht haben. Die Anzahl steht neben jeder Summe.")) else ""`
 
 {{< pagebreak >}}
 
@@ -1431,13 +1572,13 @@ temp <- totals %>%
     !!tr("Equity", "Eigenkapital") :=
       paste0(fmt_num(equity_sum / scale), " (", equity_n, ")"))
 
-knitr::kable(temp, align = "lrrrrrr",
-             caption = tr(paste0("Sums over the issuers that stated the ",
+kable_note(temp, tr(paste0("Sums over the issuers that stated the ",
                                  "figure, in ", amount_label,
                                  "; the number that did is in brackets."),
                           paste0("Summen über die Emittenten, die die Größe ",
                                  "angegeben haben, in ", amount_label,
-                                 "; deren Anzahl in Klammern.")))
+                                 "; deren Anzahl in Klammern.")),
+           align = "lrrrrrr")
 ```
 
 ### `r tr("Revenue and result of the sector", "Umsatz und Ergebnis des Sektors")`
@@ -1531,8 +1672,7 @@ temp <- by_group %>%
     !!tr("Equity % med.", "EK % Md.") :=
       fmt_num(equity_ratio_median, 1))
 
-knitr::kable(temp, align = paste0("ll", strrep("r", ncol(temp) - 2)),
-             caption = tr(
+kable_note(temp, tr(
                paste0("Sums over the issuers of the group that stated the ",
                       "figure, in ", amount_label, ". A group whose issuer ",
                       "count changes from one year to the next is a group ",
@@ -1545,7 +1685,8 @@ knitr::kable(temp, align = paste0("ll", strrep("r", ncol(temp) - 2)),
                paste0("Summen über die Emittenten der Gruppe, die die Größe ",
                       "angegeben haben, in ", amount_label, ". Ändert sich ",
                       "die Zahl der Emittenten einer Gruppe von Jahr zu ",
-                      "Jahr, so ändert sich ihre Summe auch deshalb.")))
+                      "Jahr, so ändert sich ihre Summe auch deshalb.")),
+           align = paste0("ll", strrep("r", ncol(temp) - 2)))
 ```
 
 ```{r group-chart, fig.height = 2.6}
@@ -1587,12 +1728,12 @@ temp <- shown %>%
 # A4 it is a column another one needed.
 if (!needs_fx) temp[[tr("Ccy", "Whg")]] <- NULL
 
-knitr::kable(temp, align = paste0("lll", strrep("r", ncol(temp) - 3)),
-             caption = tr(paste0("Amounts in ", amount_label,
+kable_note(temp, tr(paste0("Amounts in ", amount_label,
                                  ". A dash is a figure the issuer did not tag."),
                           paste0("Beträge in ", amount_label,
                                  ". Ein Strich ist eine Größe, die der ",
-                                 "Emittent nicht ausgezeichnet hat.")))
+                                 "Emittent nicht ausgezeichnet hat.")),
+           align = paste0("lll", strrep("r", ncol(temp) - 3)))
 ```
 
 {{< pagebreak >}}
@@ -1762,8 +1903,7 @@ if (!is.null(bench_table)) {
       !!tr("Median", "Median") := fmt_num(median, 1),
       !!tr("Upper quartile", "Oberes Quartil") := fmt_num(q3, 1),
       !!tr("Filings", "Berichte") := n)
-  knitr::kable(temp, align = "llrrrr",
-               caption = tr(
+  kable_note(temp, tr(
                  paste0("The latest financial year. Every ratio is read from ",
                         "the materialised measures of the combined table, so ",
                         "a filing that stated a figure under a concept the ",
@@ -1773,7 +1913,8 @@ if (!is.null(bench_table)) {
                         "den materialisierten Measures der kombinierten ",
                         "Tabelle; ein Bericht, der eine Größe unter einem ",
                         "nachrangigen Konzept ausgezeichnet hat, trägt kein ",
-                        "Measure und wird nicht gezählt.")))
+                        "Measure und wird nicht gezählt.")),
+             align = "llrrrr")
 }
 ```
 
@@ -1832,7 +1973,11 @@ if (!is.null(market_band)) {
 ```{r cross-regime-note, results = "asis"}
 if (is_cross_regime) {
   cat(tr(
-    paste0("The panel reaches past one regime: ",
+    # Counted over the issuers the combined table holds a measure for in
+    # the years shown, which is not the same as the panel: an issuer the
+    # panel names and the lake has no annual report for is in neither
+    # count. The panel's own size is on the cover.
+    paste0("The combined table holds figures for ",
            paste(sprintf("%d issuer(s) under %s",
                          tapply(cross_regime$KEY, cross_regime$REGIME,
                                 function(x) length(unique(x))),
@@ -1844,7 +1989,7 @@ if (is_cross_regime) {
            "measures. What crosses the frameworks is the eight measures that ",
            "catalogue has agreed, and the tables here are built from those ",
            "and from nothing else."),
-    paste0("Das Panel reicht über ein Regime hinaus: ",
+    paste0("Die kombinierte Tabelle enthält Werte für ",
            paste(sprintf("%d Emittent(en) unter %s",
                          tapply(cross_regime$KEY, cross_regime$REGIME,
                                 function(x) length(unique(x))),
@@ -1877,14 +2022,14 @@ if (is_cross_regime) {
       !!tr("Equity %, median", "EK-Quote, Median") := fmt_num(equity_ratio, 1),
       !!tr("ROE %, median", "EKR, Median") := fmt_num(roe, 1))
 
-  knitr::kable(temp, align = "llrrrrr",
-    caption = tr(
+  kable_note(temp, tr(
       paste0("Financial year ", latest_year, ". Amounts are added up as ",
              "filed and are not converted, so read the revenue column as an ",
              "order of magnitude; a median of ratios needs no conversion, ",
              "the currency cancelling in a quotient of one filing."),
       paste0("Geschäftsjahr ", latest_year, ". Beträge werden wie ",
-             "eingereicht addiert und nicht umgerechnet.")))
+             "eingereicht addiert und nicht umgerechnet.")),
+             align = "llrrrrr")
 }
 ```
 
@@ -1906,8 +2051,7 @@ if (is_cross_regime && !is.null(composition)) {
       !!tr("Equity: parent", "EK: Mutter") := equity_attributable,
       !!tr("Revenue stated", "Umsatz angegeben") := revenue_stated)
 
-  knitr::kable(temp, align = "llrrrrrr",
-    caption = tr(
+  kable_note(temp, tr(
       paste0("What a pooled median is made of. The first concept of ",
              "`profit_loss` is the total including the non-controlling ",
              "interests, and the regimes do not tag it alike: many filings ",
@@ -1918,7 +2062,8 @@ if (is_cross_regime && !is.null(composition)) {
              "not one population either."),
       paste0("Woraus ein gepoolter Median besteht. Das erste Konzept von ",
              "`profit_loss` ist der Gesamtwert einschliesslich der ",
-             "Minderheiten, und die Regime zeichnen ihn nicht gleich aus.")))
+             "Minderheiten, und die Regime zeichnen ihn nicht gleich aus.")),
+             align = "llrrrrrr")
 }
 ```
 
@@ -1951,8 +2096,7 @@ for (key in wanted) {
   out[[unname(wanted_labels[key])]] <- temp[[key]]
 }
 
-knitr::kable(out, align = paste0("lc", strrep("c", length(wanted))),
-             caption = tr(
+kable_note(out, tr(
                paste0("In how many of the ", length(years_shown),
                       " years shown each line was tagged. A nought is a line ",
                       "the issuer never tagged under a concept of the IFRS ",
@@ -1964,7 +2108,8 @@ knitr::kable(out, align = paste0("lc", strrep("c", length(wanted))),
                       "Null ist eine Zeile, die der Emittent nie unter einem ",
                       "Konzept der IFRS-Taxonomie ausgezeichnet hat; sie kann ",
                       "im Bericht unter einem eigenen Konzept stehen, das ",
-                      "diese Seite nicht liest.")))
+                      "diese Seite nicht liest.")),
+           align = paste0("lc", strrep("c", length(wanted))))
 ```
 
 `r if (nrow(approximate) > 0) tr(paste0("Some figures rest on a concept the catalogue of measures ranks below the first of its framework. ", nrow(approximate), " of the revenue figures above are tagged as IFRS 15 revenue rather than as the total, which excludes revenue outside that standard. The benchmark does not use those facts at all, so an issuer may appear in the tables of this page and not in the quartiles."), paste0("Einige Größen beruhen auf einem Konzept, das der Measure-Katalog unter das erste seines Frameworks reiht. ", nrow(approximate), " der obigen Umsatzgrößen sind als IFRS-15-Umsatz ausgezeichnet und nicht als Gesamtumsatz, der Erlöse außerhalb dieses Standards einschließen kann. Die Vergleichswerte verwenden diese Fakten gar nicht, daher kann ein Emittent in den Tabellen dieser Seite stehen und in den Quartilen fehlen.")) else ""`

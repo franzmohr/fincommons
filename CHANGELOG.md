@@ -553,6 +553,38 @@ a `MEASURE` column.
 
 ### Fixed
 
+- `esef`: the captions of the sector factsheet's tables now reach the page.
+  `knitr::kable` writes a caption as a `Table:` line above a pipe
+  table, pandoc reads it into the caption of a float, and the Typst writer
+  emits the float as a bare `#table(...)` -- so all seven captions were
+  dropped, in silence, in every render since the template was written. They
+  are not titles but reading instructions: which unit an amount is in, what
+  the count in brackets counts, that one table's amounts are not converted
+  at all. They are now written under the table as their own paragraph.
+
+- `esef`: the sector factsheet reads as a two-regime document where it is
+  one. A cover that said "a factsheet on 231 issuers, from their ESEF annual
+  financial reports" over 86 American registrants, and listed the seventeen
+  European countries of a panel spanning eighteen; a provenance paragraph
+  that named only the ESEF tables; a currency note that counted eight
+  currencies without the dollar and claimed every amount was converted when
+  the cross-regime table converts none. Each now says what it is of. In the
+  panel table an issuer that files with the Commission showed `NA-NA` years
+  and `NA` reports, which reads as a filer that never filed rather than one
+  this lake keys differently, and it put all 86 of them in the list of
+  issuers that had stopped filing -- 127 names against 127 years, the reader
+  left to zip the two lists together by position, and `NA` for the years
+  that did not exist. The years are a dash with a sentence saying why, the
+  list is the European issuers alone, and each carries its own last year.
+
+- `esef`: the sector factsheet renders about four times faster -- 3m45s to
+  56s for the cross-regime panel, 2m17s to 30s for the Austrian one. Three
+  `group_by(...) %>% slice(1)` dedupes were the whole of it: dplyr builds a
+  group index per group, and over the hundreds of thousands of groups the
+  combined table has, one of the three took 95 seconds against 0.5 for the
+  `distinct(..., .keep_all = TRUE)` that keeps the same row. The arrow scans
+  the slowness was blamed on cost eleven seconds together.
+
 - `financialreport`: a Japanese filing's framework is now decided per fact
   and not per filing. The consolidated statements of a Japanese group that
   has adopted IFRS are IFRS and the parent company's own statements are Japan
