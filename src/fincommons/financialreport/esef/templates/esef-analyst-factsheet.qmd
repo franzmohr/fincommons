@@ -763,7 +763,14 @@ format_line <- function(values, unit, digits) {
 # its goodwill is one this page cannot see, and a reader who is reconciling
 # the page against the report in front of them needs to know which lines
 # were looked for.
-lines_dropped <- function(spec, data, core_only) {
+# Each of the two reasons for leaving a line out answers to its own
+# argument, so that a caller may ask for one without the other: `core_only`
+# drops a line the issuer tagged under a concept of its own, `drop_empty` a
+# line the report states nowhere in the window. Both are passed rather than
+# only `core_only`, which dropped the untagged lines whatever the caller
+# asked -- harmless while every caller asks for both, and wrong the moment
+# one does not.
+lines_dropped <- function(spec, data, drop_empty, core_only) {
   label <- if (report_lang == "de") spec$de else spec$en
   keep <- rep(TRUE, nrow(spec))
   reason <- rep(NA_character_, nrow(spec))
@@ -773,19 +780,24 @@ lines_dropped <- function(spec, data, core_only) {
     if (core_only && is_extension(key)) {
       keep[j] <- FALSE
       reason[j] <- "extension"
-    } else if (!key %in% names(data) || all(is.na(data[[key]]))) {
+    } else if (drop_empty &&
+               (!key %in% names(data) || all(is.na(data[[key]])))) {
       keep[j] <- FALSE
       reason[j] <- "untagged"
     }
   }
   # A heading stands for the lines under it, which run to the next heading.
-  # With none of them left it has nothing to head.
+  # With none of them left it has nothing to head. A heading that is the last
+  # row of a spec, or that is followed straight by another, heads no lines at
+  # all: `seq.int(h + 1L, last)` counts *down* where `last` is below the
+  # first, which is a block of two rows rather than the empty one the test
+  # below reads it as.
   heads <- which(spec$style == "head")
   for (h in heads) {
     next_head <- heads[heads > h]
     last <- if (length(next_head)) min(next_head) - 1L else nrow(spec)
-    block <- seq.int(h + 1L, last)
-    if (length(block) && !any(keep[block])) keep[h] <- FALSE
+    block <- if (last > h) seq.int(h + 1L, last) else integer(0)
+    if (length(block) == 0 || !any(keep[block])) keep[h] <- FALSE
   }
   list(keep = keep,
        untagged = label[!is.na(reason) & reason == "untagged"],
@@ -802,7 +814,7 @@ render_lines <- function(spec, data = wide, unit_header = NULL,
   # a different table every year, and the dash is the point there.
   omitted <- list(untagged = character(0), extension = character(0))
   if (drop_empty || core_only) {
-    verdict <- lines_dropped(spec, data, core_only)
+    verdict <- lines_dropped(spec, data, drop_empty, core_only)
     omitted <- verdict[c("untagged", "extension")]
     spec <- spec[verdict$keep, , drop = FALSE]
   }
