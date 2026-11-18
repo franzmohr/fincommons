@@ -8,7 +8,59 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 The columns of the Silver layer are renamed from the compressed upper case of
 ISO 20022 to snake_case in English words. Every module is converted, which
-breaks every Silver table the package writes.
+breaks every Silver table the package writes. Building the FIRDS history also
+costs a great deal less per reference date, which is the other half of the
+release and changes no table at all.
+
+### Faster
+
+- `firds`: `update_from_bronze_to_silver_main` applies a reference date for
+  less. Four things it did per date cost more than what they did was worth.
+  The plan of a file no longer shuffles the history. `history.plan_changes`
+  joins one day's records against the versions in force, and the versions in
+  force are most of the table: far too large to be the broadcast side of that
+  join, so Spark sorted and shuffled the whole of them, every date, to be met
+  by a few thousand records. The open versions are now cut down first, by a
+  semi-join against the keys the file carries, which a left semi-join may
+  broadcast -- so the history is read once, three columns of it, probed
+  against a hash table of the day's keys, and never shuffled. What survives is
+  at most one row per key of the file and is broadcast in turn, which leaves
+  the plan with no shuffle of the history in it at all. It is the same plan:
+  the join could only ever have used an open version whose instrument the file
+  names.
+  `history.prepare_incoming` costs one shuffle instead of three. It opened
+  with a `dropDuplicates` over every column of every record, and the step
+  after it already kept one record per instrument and day -- which an exact
+  duplicate cannot survive either -- so a full-width shuffle was finding what
+  was removed anyway. That step and the chaining that follows are now taken on
+  one window, and share its exchange and its sort -- the latter because the
+  order the window reads the records in is a column of its own rather than an
+  expression each use of the window computes again under a name of its own,
+  which left Spark unable to see that two uses asked for the same order and
+  sorting the records once per use. One exchange and one sort, against three
+  of each.
+  The two checks of a file's records are one pass. Each counted on its own,
+  and a file was flattened into the analytics schema once per count and again
+  for the plan; `check_incoming_records` counts both at once, the flattened
+  records are held while the date is applied, and a file is refused with the
+  message it was refused with before. The two checks remain, for a caller that
+  wants one of them.
+  Resuming a date reads the end of the transaction log rather than all of it.
+  `committed_steps` asks for the tags of a date that a previous run left
+  applied in part, and such a date is the one the table was written by last;
+  it asked Delta for the whole history of the table, which reads every commit
+  file in the log. The log grows by a few commits for every date applied, so a
+  run that builds the history from the start of the sample read a log of
+  thousands of commit files once per date and the reading of it alone grew
+  with the square of the dates. It now reads a window of the most recent
+  commits, `RESUME_COMMITS` of them, which cannot mistake a tag of a replaced
+  history for one of the history as it stands: either the commit that wrote
+  the table from scratch is in the window, and the walk stops at it as it did
+  before, or it is older than every commit in the window. `tagged_commits`
+  takes the window as `limit` and looks at the whole log without one, which is
+  what `watermark_from_commits` still does.
+  None of this changes the history a file produces, and the tests of section
+  4.2 are unchanged.
 
 ### Changed
 
@@ -753,54 +805,6 @@ a `MEASURE` column.
   Which of two copies of a file is kept is settled before any file is read, in
   the order the names sort in, so that it does not turn on the order the reads
   finish in.
-
-- `firds`: `update_from_bronze_to_silver_main` applies a reference date for
-  less. Four things it did per date cost more than what they did was worth.
-  The plan of a file no longer shuffles the history. `history.plan_changes`
-  joins one day's records against the versions in force, and the versions in
-  force are most of the table: far too large to be the broadcast side of that
-  join, so Spark sorted and shuffled the whole of them, every date, to be met
-  by a few thousand records. The open versions are now cut down first, by a
-  semi-join against the keys the file carries, which a left semi-join may
-  broadcast -- so the history is read once, three columns of it, probed
-  against a hash table of the day's keys, and never shuffled. What survives is
-  at most one row per key of the file and is broadcast in turn, which leaves
-  the plan with no shuffle of the history in it at all. It is the same plan:
-  the join could only ever have used an open version whose instrument the file
-  names.
-  `history.prepare_incoming` costs one shuffle instead of three. It opened
-  with a `dropDuplicates` over every column of every record, and the step
-  after it already kept one record per instrument and day -- which an exact
-  duplicate cannot survive either -- so a full-width shuffle was finding what
-  was removed anyway. That step and the chaining that follows are now taken on
-  one window, and share its exchange and its sort -- the latter because the
-  order the window reads the records in is a column of its own rather than an
-  expression each use of the window computes again under a name of its own,
-  which left Spark unable to see that two uses asked for the same order and
-  sorting the records once per use. One exchange and one sort, against three
-  of each.
-  The two checks of a file's records are one pass. Each counted on its own,
-  and a file was flattened into the analytics schema once per count and again
-  for the plan; `check_incoming_records` counts both at once, the flattened
-  records are held while the date is applied, and a file is refused with the
-  message it was refused with before. The two checks remain, for a caller that
-  wants one of them.
-  Resuming a date reads the end of the transaction log rather than all of it.
-  `committed_steps` asks for the tags of a date that a previous run left
-  applied in part, and such a date is the one the table was written by last;
-  it asked Delta for the whole history of the table, which reads every commit
-  file in the log. The log grows by a few commits for every date applied, so a
-  run that builds the history from the start of the sample read a log of
-  thousands of commit files once per date and the reading of it alone grew
-  with the square of the dates. It now reads a window of the most recent
-  commits, `RESUME_COMMITS` of them, which cannot mistake a tag of a replaced
-  history for one of the history as it stands: either the commit that wrote
-  the table from scratch is in the window, and the walk stops at it as it did
-  before, or it is older than every commit in the window. `tagged_commits`
-  takes the window as `limit` and looks at the whole log without one, which is
-  what `watermark_from_commits` still does.
-  None of this changes the history a file produces, and the tests of section
-  4.2 are unchanged.
 
 - `financialreport`: `edinet` is a third source of the combined tables.
   `SOURCES` names it, `facts_from_edinet` and `filings_from_edinet` reduce it
