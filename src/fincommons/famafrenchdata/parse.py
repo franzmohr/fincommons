@@ -62,7 +62,7 @@ _FREQUENCY_BY_LENGTH = {4: "A", 6: "M", 8: "D"}
 
 #: The codes a table is filed under, and what each of them stands for. The
 #: frequency is not part of the code: the monthly and the annual returns of a
-#: file are both ``RET_VW``, told apart by the column ``FREQUENCY``. Nor is
+#: file are both ``RET_VW``, told apart by the column ``frequency``. Nor is
 #: the treatment of dividends, which the library publishes as files of their
 #: own (``..._Wout_Div``), so it is told apart by ``DATASET``.
 TABLE_CODES = {
@@ -415,8 +415,8 @@ def parse_lines(dataset: str, lines) -> pandas.DataFrame:
     Returns
     -------
     pandas.DataFrame
-        The columns of :data:`COLUMNS`: ``REFDT`` (``datetime64``), ``TABLE``,
-        ``FREQUENCY``, ``SERIES``, ``VALUE`` as published and ``TITLE``.
+        The columns of :data:`COLUMNS`: ``ref_date`` (``datetime64``), ``table``,
+        ``frequency``, ``series``, ``value`` as published and ``title``.
         Missing values (:data:`MISSING_VALUES`) are left out, and so is every
         row without a value.
 

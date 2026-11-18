@@ -21,7 +21,7 @@ knows what it need not download again.
 The Silver layer holds two tables. ``filings`` lists every filing of the
 indexes, one row per filing, and is rebuilt in full on every run: it is a
 few tens of thousands of rows. ``facts`` holds the facts of the reports
-collected, one row per fact, partitioned by ``COUNTRY``, and is rebuilt
+collected, one row per fact, partitioned by ``country``, and is rebuilt
 country by country, for the countries whose reports changed.
 """
 
@@ -99,7 +99,7 @@ filings_schema = StructType() \
     .add("package_sha256", StringType(), True)
 """The shape of the table of filings: one row per filing of the indexes.
 
-A filing without ``JSONURL`` is one the repository could not convert to
+A filing without ``json_url`` is one the repository could not convert to
 xBRL-JSON, usually because of a technical error in the filing; it has no
 facts. The addresses are those of the repository, relative to
 :data:`BASE_URL`.
@@ -123,9 +123,9 @@ facts_schema = StructType() \
     .add("lang", StringType(), True)
 """The shape of the table of facts: one row per fact of a report.
 
-A numeric fact has ``VALUE`` and ``UNIT``, any other fact ``TEXT``. A fact
-of a duration has ``PRDSTART``; one of an instant has none, and ``PRDEND``
-is the day it stands for. ``COUNTRY`` is the partition column.
+A numeric fact has ``value`` and ``unit``, any other fact ``text``. A fact
+of a duration has ``prd_start``; one of an instant has none, and ``prd_end``
+is the day it stands for. ``country`` is the partition column.
 """
 
 
@@ -313,7 +313,7 @@ def connect_to_esef_issues(spark, config_path):
     One row per issue the checks of :mod:`fincommons.financialreport.esef.quality` found: the
     filing, the fact where the issue is about one, and the code, which
     :func:`fincommons.dataquality.describe_check` turns into a sentence.
-    Filter on ``COUNTRY`` first: the table is partitioned by it.
+    Filter on ``country`` first: the table is partitioned by it.
 
     Parameters
     ----------
@@ -328,11 +328,11 @@ def connect_to_esef_issues(spark, config_path):
 def connect_to_esef(spark, config_path):
     """Opens the table of facts in the Silver layer.
 
-    One row per fact of a report: the filing (``FILING``, ``LEI``,
-    ``COUNTRY``, ``PERIODEND``), the concept (``ifrs-full:Revenue``), the
-    period (``PRDSTART``, ``PRDEND``), ``UNIT``, ``DIMENSIONS`` and the
-    value, ``VALUE`` for a number and ``TEXT`` otherwise. Filter on
-    ``COUNTRY`` first: the table is partitioned by it.
+    One row per fact of a report: the filing (``filing``, ``lei``,
+    ``country``, ``period_end``), the concept (``ifrs-full:Revenue``), the
+    period (``prd_start``, ``prd_end``), ``unit``, ``dimensions`` and the
+    value, ``value`` for a number and ``text`` otherwise. Filter on
+    ``country`` first: the table is partitioned by it.
 
     Parameters
     ----------
@@ -348,8 +348,8 @@ def connect_to_esef_filings(spark, config_path):
     """Opens the table of filings in the Silver layer.
 
     One row per filing the indexes of the repository list, whether or not its
-    report was collected: who filed it (``LEI``, ``NAME``), where
-    (``COUNTRY``), for which period (``PERIODEND``), when it was processed,
+    report was collected: who filed it (``lei``, ``name``), where
+    (``country``), for which period (``period_end``), when it was processed,
     how its validation went and where its files are.
 
     Parameters

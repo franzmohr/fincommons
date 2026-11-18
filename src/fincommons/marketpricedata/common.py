@@ -387,8 +387,8 @@ def ref_silver_dse_corporate_actions(config_path):
 def connect_to_dse_corporate_actions(spark, config_path):
     """Opens the corporate actions of the DSE shares.
 
-    One row per event: ``INSTRID`` as the price table names the share,
-    ``EXDATE``, ``KIND`` (``bonus``, ``cash`` or ``rights``) and ``FACTOR``,
+    One row per event: ``instr_id`` as the price table names the share,
+    ``ex_date``, ``kind`` (``bonus``, ``cash`` or ``rights``) and ``factor``,
     the number a close before the ex-date is multiplied by to be comparable
     with one on or after it. Multiplying by the ``bonus`` and ``rights``
     factors gives a price history, and by all three a total return.

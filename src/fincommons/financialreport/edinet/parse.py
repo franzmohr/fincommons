@@ -399,7 +399,7 @@ def facts_from_archive(data, filing, period_start=None, period_end=None,
     """Return the facts of one collected archive, as rows of ``facts_schema``.
 
     Every converted document in the archive is read, the report and the audit
-    report alike, and ``DOCFORM`` says which a fact came from.
+    report alike, and ``doc_form`` says which a fact came from.
 
     Parameters
     ----------

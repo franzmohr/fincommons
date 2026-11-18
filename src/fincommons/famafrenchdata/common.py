@@ -15,7 +15,7 @@ file; ``collections`` holds, per file, a small record of when it was collected
 and what the server said about it, which is how the next run knows that a file
 has not changed and need not be downloaded again. The Silver layer holds one
 table, ``famafrenchdata``, with every value of every file in long form,
-also partitioned by ``DATASET``, and beside it the marks that say which
+also partitioned by ``dataset``, and beside it the marks that say which
 collection of each file the table was last built from.
 
 The library is kept apart from :mod:`fincommons.marketpricedata` on purpose.
@@ -250,12 +250,12 @@ def write_watermark(config_path, dataset, collection):
 def connect_to_famafrenchdata(spark, config_path):
     """Opens the table of the library in the Silver layer.
 
-    One row per file, table, series and period: ``REFDT``, ``DATASET`` (the
-    name of the file, ``F-F_Research_Data_Factors``), ``TABLE`` (a code such
+    One row per file, table, series and period: ``ref_date``, ``dataset`` (the
+    name of the file, ``F-F_Research_Data_Factors``), ``table`` (a code such
     as ``RET_VW``, see :data:`fincommons.famafrenchdata.parse.TABLE_CODES`),
-    ``FREQUENCY`` (``D``, ``W``, ``M`` or ``A``), ``SERIES`` (the column as
-    the file names it), ``VALUE`` as published -- returns in percent -- and
-    ``TITLE``, the title of the table in the file. Filter on ``DATASET``
+    ``frequency`` (``D``, ``W``, ``M`` or ``A``), ``series`` (the column as
+    the file names it), ``value`` as published -- returns in percent -- and
+    ``title``, the title of the table in the file. Filter on ``dataset``
     first: the table is partitioned by it.
 
     Parameters

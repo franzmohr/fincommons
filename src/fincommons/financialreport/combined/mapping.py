@@ -216,7 +216,7 @@ FIRST_CONCEPT = 1
 #: the parent falling back to the total where there are no minorities to
 #: separate, and that is a judgement per filing rather than per concept. It
 #: is what :func:`measure_values` does with the priorities, and it is the
-#: thing a column cannot do. Filter on ``MEASURE`` to ask a precise question
+#: thing a column cannot do. Filter on ``measure`` to ask a precise question
 #: of named facts; resolve through ``measure_values`` to ask about a
 #: population.
 #: The equity attributable to the parent is eighth and last, and it names
@@ -540,19 +540,19 @@ def caveats(measure=None, packages=("fincommons",)):
 def with_measures(facts, framework=None, packages=("fincommons",)):
     """Label facts with the measures they are taken to be.
 
-    Adds ``MEASURE`` and ``MEASURE_PRIORITY``. A fact that no row of the
+    Adds ``measure`` and ``measure_priority``. A fact that no row of the
     catalogue names keeps a null in both, which is the great majority of them:
     a filing states thousands of facts and the catalogue defines a handful of
     measures.
 
-    A table that already carries ``MEASURE`` has it replaced rather than
+    A table that already carries ``measure`` has it replaced rather than
     doubled. The combined table of facts stores one, for the measures
     :data:`MATERIALISED_MEASURES` covers; resolving here answers the wider
     question -- every measure the catalogue defines, under a framework the
     caller may name -- so what it works out supersedes what was stored, for
     that query and no further. The stored column is untouched on disk.
 
-    The join is on ``CONCEPT`` as the tables carry it -- the prefix and the
+    The join is on ``concept`` as the tables carry it -- the prefix and the
     element name -- which is what both the ESEF table and the SEC table hold.
     It therefore works on the combined table and, just as well, on either of
     the two source tables on its own: an ESEF-only lake can resolve a measure
@@ -562,7 +562,7 @@ def with_measures(facts, framework=None, packages=("fincommons",)):
     Parameters
     ----------
     facts: pyspark.sql.DataFrame
-        Any table carrying a ``CONCEPT`` column spelled that way: the
+        Any table carrying a ``concept`` column spelled that way: the
         combined table, the ESEF table, or the SEC table.
     framework: str, optional
         Resolve as though every fact came from a filing under this framework.

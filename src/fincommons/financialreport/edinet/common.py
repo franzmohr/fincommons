@@ -109,7 +109,7 @@ DOCUMENT_KINDS = {
 #: worth naming. Every report is accompanied by a 確認書, the management
 #: confirmation, which the index codes ``'135'``; of the 2,118 documents filed
 #: on 13 November 2026, 868 were those and 894 were semi-annual reports. And
-#: a report filed for an investment fund carries a ``FUNDCODE`` and reports on
+#: a report filed for an investment fund carries a ``fund_code`` and reports on
 #: the fund rather than on the filer, which is most of the semi-annual reports
 #: of any given day. A lake after the statements of operating companies wants
 #: these codes *and* an empty fund code.
@@ -184,24 +184,24 @@ filings_schema = StructType() \
     .add("has_english", StringType(), True)
 """The shape of the table of filings: one row per document the indexes name.
 
-``FILING`` is the 書類管理番号, the document management number the API
-addresses a filing by, and the key of everything else here. ``INDEXDATE`` is
+``filing`` is the 書類管理番号, the document management number the API
+addresses a filing by, and the key of everything else here. ``index_date`` is
 the calendar day whose index the row came from, which is what a run collects
-by; ``FILEDYEAR`` is its year and the partition column, as it is on the table
+by; ``filed_year`` is its year and the partition column, as it is on the table
 of facts of the other two regimes.
 
-``HASCSV`` is the column the module turns on. The agency converts the XBRL of
+``has_csv`` is the column the module turns on. The agency converts the XBRL of
 a filing to CSV where it can, and says per filing whether it did; a filing
 whose flag is not ``'1'`` contributes nothing to the table of facts, exactly
-as an ESEF filing with no ``JSONURL`` does. ``HASXBRL`` says the same of the
-XBRL itself, and ``HASENGLISH`` whether the filer lodged an English version,
+as an ESEF filing with no ``json_url`` does. ``has_xbrl`` says the same of the
+XBRL itself, and ``has_english`` whether the filer lodged an English version,
 which is not a translation of the Japanese one but a document in its own
 right.
 
 Four states travel with a filing and all four are carried rather than acted
-on. ``WITHDRAWN`` marks a filing taken back and the document that took it
-back; ``EDITED`` a filing an official of a finance bureau has corrected;
-``DISCLOSED`` one withheld from disclosure; and ``LEGAL`` whether it is on
+on. ``withdrawn`` marks a filing taken back and the document that took it
+back; ``edited`` a filing an official of a finance bureau has corrected;
+``disclosed`` one withheld from disclosure; and ``legal`` whether it is on
 public view, in the extension period, or past both. A filing in the last
 state is still named by an index collected earlier and can no longer be
 fetched, which is the thing this module's Bronze layer exists to survive.
@@ -214,7 +214,7 @@ empty on every document this module is about: a column that is always empty
 would say nothing, while an absent one says it to anyone who looks at the
 table. ``seqNumber`` numbers a row within the day's index and means nothing
 once two days are in one table; ``opeDateTime`` is when an official of a
-finance bureau touched the record, which ``EDITED`` already says; and
+finance bureau touched the record, which ``edited`` already says; and
 ``pdfFlag`` and ``attachDocFlag`` offer forms of the filing this module does
 not read.
 """
@@ -240,8 +240,8 @@ facts_schema = StructType() \
 """The shape of the table of facts: one row per fact of the agency's CSV.
 
 The columns a fact shares with the other regimes are spelled as they spell
-them -- ``FILING``, ``FACT``, ``CONCEPT``, ``PRDSTART``, ``PRDEND``,
-``DIMENSIONS``, ``UNIT``, ``VALUE``, ``TEXT`` -- so that a module combining
+them -- ``filing``, ``fact``, ``concept``, ``prd_start``, ``prd_end``,
+``dimensions``, ``unit``, ``value``, ``text`` -- so that a module combining
 them is combining tables of one shape rather than translating between them.
 
 **The period is resolved rather than reported, and this is the one thing to
@@ -260,14 +260,14 @@ one that moved its year end, has years that are not a whole number of years
 apart. A report stating five years of net sales is therefore anchored for two
 of them and shifted for three.
 
-``CONTEXT`` and ``RELATIVE`` are carried verbatim beside the dates so that
+``context`` and ``relative`` are carried verbatim beside the dates so that
 what each one rested on can always be read, and a context whose shape is not
 recognised leaves both dates null rather than taking a guess. The XBRL
 instance of the filing carries the true dates for every context; a lake that
 needs them for the older years needs the instance and a parser, which is not
 this module.
 
-``CONCEPT`` is the element identifier as the conversion writes it, prefix and
+``concept`` is the element identifier as the conversion writes it, prefix and
 name. Four prefixes appear: ``jppfs_cor`` is the financial statements
 taxonomy, ``jpcrp_cor`` the disclosure ordinance, ``jpdei_cor`` the document
 and entity information, and a prefix built from the form and the filer's own
@@ -275,23 +275,23 @@ EDINET code -- ``jpcrp030000-asr_E03270-000`` -- marks a concept the filer
 created for its own report, which is how an extension is told from the
 taxonomy here.
 
-``LABEL`` is the Japanese name of the element, which the conversion states
+``label`` is the Japanese name of the element, which the conversion states
 beside it. Neither of the other two regimes carries a label: the ESEF labels
 live in the extension taxonomy the module does not read, and the Commission
 publishes none. It is kept because it is the only thing in these tables that
 says what a concept means to a reader who does not know the taxonomy.
 
-``VALUE`` holds a number and ``TEXT`` everything else, and a fact can have a
+``value`` holds a number and ``text`` everything else, and a fact can have a
 unit and no number all the same: the conversion writes ``－`` where a figure
 does not apply, forty-eight times in one report of 1,086 facts, and that
-becomes a null ``VALUE`` rather than a zero or an error.
+becomes a null ``value`` rather than a zero or an error.
 
-``DOCFORM`` says which member of the archive a fact came from, by the form
+``doc_form`` says which member of the archive a fact came from, by the form
 that names it: the report itself (``jpcrp030000-asr``) or the audit report
 (``jpaud-aai-cn``), which the agency converts as well and which is where the
 auditor and the opinion are.
 
-``FACT`` is an identifier made for the fact, the conversion giving it none.
+``fact`` is an identifier made for the fact, the conversion giving it none.
 The element and the context do not identify one: a figure is often tagged in
 several places in a report, and the number of employees appears three times
 under one context in that same report. An occurrence number is therefore part
@@ -320,15 +320,15 @@ It is the counterpart of the Commission's list of registrants and, like it,
 is how a lake that wants companies by name or by ticker finds the codes to
 collect them by. It needs no API key.
 
-``YEAREND`` is carried as the agency writes it -- ``'5月31日'`` for a filer
+``year_end`` is carried as the agency writes it -- ``'5月31日'`` for a filer
 closing on 31 May -- and not as a date, there being no year in it. It is
 worth having all the same: it says which filers close on a day other than
 31 March, and a comparison that assumes the Japanese financial year ends in
-March is wrong for every one of them. ``CAPITAL`` is likewise the figure as
+March is wrong for every one of them. ``capital`` is likewise the figure as
 published, in millions of yen.
 
-``SECCODE`` is the securities code: the four-digit ticker of a listed filer
-with a check digit appended, so ``'13760'`` is ticker 1376. ``JCN`` is the
+``sec_code`` is the securities code: the four-digit ticker of a listed filer
+with a check digit appended, so ``'13760'`` is ticker 1376. ``jcn`` is the
 corporate number of the National Tax Agency, thirteen digits, which every
 Japanese legal person has and which is the identifier a register outside
 EDINET is most likely to share.

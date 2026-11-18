@@ -11,7 +11,7 @@ it for one name::
     trading_venue in firds -- tables firds.silver
       ...
 
-A name can mean different things in different data sets -- ``ACTNTP`` is the
+A name can mean different things in different data sets -- ``action_type`` is the
 action type of a FIRDS record and of a report under a reporting regime, each
 read from its own XML path -- so every data set that has the column is
 returned, unless ``dataset`` narrows it to one.
@@ -252,8 +252,8 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES,
     tables named as ``module.file`` without the extension.
 
     A column named through a module-level constant counts as named. The
-    history of the FIRDS database writes ``VLDFROM``, ``VLDTO`` and
-    ``LATESTRECORD`` as ``withColumn(VALID_FROM, ...)`` and so on, so that the
+    history of the FIRDS database writes ``valid_from``, ``valid_to`` and
+    ``latest_record`` as ``withColumn(VALID_FROM, ...)`` and so on, so that the
     merge condition cannot drift away from the columns it matches on, and
     reading literals alone left the three columns the historical database
     exists for out of the catalogue -- and out of what this function can hold

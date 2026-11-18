@@ -71,7 +71,7 @@ fact_schema = StructType() \
     .add("dimensions", StringType(), True)
 """The shape of the combined table of facts: one row per fact of a filing.
 
-``SOURCE`` says which module the row came from and is the first partition
+``source`` says which module the row came from and is the first partition
 column, so that a question scoped to one regime passes over the other.
 
 Four identifier columns are carried, one regime's own in each, and a row has
@@ -79,7 +79,7 @@ the column of its source filled and the others empty. ESEF prescribes the
 legal entity identifier, which is the key of
 :mod:`fincommons.entitymasterdata` as well; a filing with the Commission
 states a central index key; a filing with Japan's agency states an EDINET
-code, and ``JCN`` beside it is the corporate number of the National Tax
+code, and ``jcn`` beside it is the corporate number of the National Tax
 Agency.
 
 Nothing here is derived from anything else here, and for two of the three
@@ -89,7 +89,7 @@ is registered, and for some tens of thousands of records that register is
 EDGAR, but nearly all of those are funds named by a series identifier, while
 an operating company's record points at its state register instead.
 
-``JCN`` is the exception and is the reason it is carried. The corporate
+``jcn`` is the exception and is the reason it is carried. The corporate
 number is a check digit followed by the twelve-digit register number of the
 commercial register, and GLEIF records that same register number against an
 LEI issued to a Japanese company, so the two can be joined by arithmetic
@@ -99,7 +99,7 @@ not made here: it needs GLEIF, which this module does not read, and the
 column is carried so that whoever has GLEIF can make it. See the edinet
 module's README for the check and what it found.
 
-``FRAMEWORK`` is IFRS, US-GAAP or JP-GAAP, taken from what the filing reports
+``framework`` is IFRS, US-GAAP or JP-GAAP, taken from what the filing reports
 under rather than from the regime it was filed under. That is what makes the
 population where the regimes genuinely meet usable: a foreign private issuer
 reporting under IFRS files with the Commission and tags against the IFRS
@@ -110,12 +110,12 @@ no counterpart in either of the other two regimes and is not comparable with
 them line by line; a Japanese profit and loss account has two results where
 an IFRS one has a single operating line.
 
-``CONCEPT`` is the concept as the filing tagged it, prefix and name, and is
+``concept`` is the concept as the filing tagged it, prefix and name, and is
 never altered: ``ifrs-full:Revenue``, ``us-gaap:Revenues`` and
 ``jppfs_cor:NetSales`` stand as they were filed, so that what a filer said
 is always in the table.
 
-``MEASURE`` is the other half of that, and the one a question is put to. It
+``measure`` is the other half of that, and the one a question is put to. It
 is the identifier of what the fact *is*, the same for every regime that
 states the same figure, and it is filled only for the concepts
 :data:`fincommons.financialreport.combined.mapping.MATERIALISED_MEASURES`
@@ -198,7 +198,7 @@ That is the limit of this column, and it is where
 right tool instead. The figure a population-level comparison wants is the
 result attributable to the parent falling back to the total where there are
 no minorities to separate, which is a judgement per filing and not per
-concept. Filter on ``MEASURE`` to ask a precise question of named facts;
+concept. Filter on ``measure`` to ask a precise question of named facts;
 resolve through ``measure_values`` to ask about a population.
 
 One gap is of a third kind and is the only one. Every absence described
@@ -217,10 +217,10 @@ one filer's liabilities short by 244,695 million. A count of the rows
 carrying a measure is a count of what was stated and named, never a
 population.
 
-``TEXT`` and ``DIMENSIONS`` are filled for the rows that came from ESEF and
+``text`` and ``dimensions`` are filled for the rows that came from ESEF and
 from EDINET, and empty for every row the Commission contributes -- not
 because this module drops them, but because the company files carry no
-narrative facts and no breakdowns at all. An empty ``DIMENSIONS`` means the
+narrative facts and no breakdowns at all. An empty ``dimensions`` means the
 fact is for the entity as a whole, which is true of every row from the
 Commission and of only some of the rows from the other two.
 
@@ -248,9 +248,9 @@ filing_schema = StructType() \
     .add("facts", IntegerType(), False)
 """The shape of the combined table of filings: one row per filing.
 
-``COUNTRY`` is filled for an ESEF filing, which is filed with the mechanism of
+``country`` is filled for an ESEF filing, which is filed with the mechanism of
 one member state, and empty for a filing with the Commission or with Japan's
-agency, neither of which states one. ``FORM`` is the other way round: the
+agency, neither of which states one. ``form`` is the other way round: the
 Commission names the form a filing was made on and the agency gives it a
 numeric document type, while the ESEF regime has one kind of report and names
 none. Each is empty where its regime states nothing, rather than being given
