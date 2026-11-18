@@ -333,15 +333,15 @@ def write_yahoo_commodity_bronze(path, lastdt, rows):
 def silver(spark, config_path):
     """Read the Silver table back with the reference dates as text."""
     frame = mp.connect_to_marketpricedata(spark, config_path).toPandas()
-    frame["REFDT"] = frame["REFDT"].astype(str)
+    frame["ref_date"] = frame["ref_date"].astype(str)
     return frame
 
 
 def value_of(frame, instrid, refdt):
     """The single value quoted for one instrument on one day."""
-    rows = frame[(frame.INSTRID == instrid) & (frame.REFDT == refdt)]
+    rows = frame[(frame.instr_id == instrid) & (frame.ref_date == refdt)]
     assert len(rows) == 1, f"expected one {instrid} on {refdt}, got {len(rows)}"
-    return rows.iloc[0].VALUE
+    return rows.iloc[0].value
 
 
 # The data lake
@@ -880,8 +880,8 @@ def test_an_exchange_rate_that_leaves_for_a_day_and_comes_back_is_left_out(
     mp.update_silver_yahoo_fx(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    vnd = frame[frame.INSTRID == "EUR/VND"]
-    assert sorted(vnd.REFDT) == ["2019-11-07", "2019-11-12", "2019-11-13"]
+    vnd = frame[frame.instr_id == "EUR/VND"]
+    assert sorted(vnd.ref_date) == ["2019-11-07", "2019-11-12", "2019-11-13"]
     assert value_of(frame, "EUR/BDT", "2019-11-08") == pytest.approx(150.0)
 
 
@@ -906,7 +906,7 @@ def test_a_misprint_merged_on_the_last_day_is_removed_when_its_next_day_comes(
     mp.update_silver_yahoo_fx(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    assert sorted(frame.REFDT) == ["2019-11-06", "2019-11-07", "2019-11-12"]
+    assert sorted(frame.ref_date) == ["2019-11-06", "2019-11-07", "2019-11-12"]
 
 
 def test_the_commodities_carry_on_from_their_own_partitions(data_lake):
@@ -1054,8 +1054,8 @@ def test_a_monthly_series_says_so_in_its_identifier(monkeypatch, spark, data_lak
     mp.update_silver_ecb_fm_monthly_us(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    assert sorted(frame.INSTRID) == ["SPR-US10Y1Y-M", "YLD-US10Y-M", "YLD-US10YZ-M"]
-    assert all(i.endswith("-M") for i in frame.INSTRID)
+    assert sorted(frame.instr_id) == ["SPR-US10Y1Y-M", "YLD-US10Y-M", "YLD-US10YZ-M"]
+    assert all(i.endswith("-M") for i in frame.instr_id)
     assert value_of(frame, "SPR-US10Y1Y-M", "2026-08-31") == pytest.approx(0.68)
 
 
@@ -1126,7 +1126,7 @@ def test_the_euro_area_curve_and_money_market_reach_the_table(
     assert value_of(frame, "YLD-EA2Y-M", "2026-08-31") == pytest.approx(2.924)
     assert value_of(frame, "IBOR-EUR3M-M", "2026-08-31") == pytest.approx(2.513)
     assert value_of(frame, "EQ-ESTOXX-M", "2026-08-31") == pytest.approx(682.132)
-    assert all(i.endswith("-M") for i in frame.INSTRID)
+    assert all(i.endswith("-M") for i in frame.instr_id)
 
 
 def test_a_monthly_copy_of_a_daily_series_is_left_out(
@@ -1152,7 +1152,7 @@ def test_a_monthly_copy_of_a_daily_series_is_left_out(
     mp.update_silver_ecb_fm_monthly_ea(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    assert list(frame.INSTRID) == ["YLD-EA10Y-M"]
+    assert list(frame.instr_id) == ["YLD-EA10Y-M"]
 
 
 def test_the_euro_area_block_is_filtered_by_area_as_well(
@@ -1211,8 +1211,8 @@ def test_a_reference_date_of_the_fm_flow_arrives_as_a_date(
     mp.update_silver_ecb_fm(spark, data_lake)
 
     table = mp.connect_to_marketpricedata(spark, data_lake)
-    assert isinstance(table.schema["REFDT"].dataType, DateType)
-    assert str(table.first()["REFDT"]) == "2024-01-02"
+    assert isinstance(table.schema["ref_date"].dataType, DateType)
+    assert str(table.first()["ref_date"]) == "2024-01-02"
 
 
 def test_an_exchange_rate_becomes_a_currency_pair(monkeypatch, spark, data_lake):
@@ -1220,7 +1220,8 @@ def test_an_exchange_rate_becomes_a_currency_pair(monkeypatch, spark, data_lake)
     between is what identifies it in the table."""
     rates = spark.createDataFrame(
         [(date(2024, 1, 2), "EUR", "USD", 1.10, "ref", "ECB")],
-        "REFDATE date, BASE string, QUOTE string, VALUE double, TYPE string, SOURCE string",
+        "ref_date date, base string, quote string, value double, type string, "
+        "source string",
     )
     monkeypatch.setattr(
         "fincommons.marketpricedata.silver_exchangerate.ex.connect_to_exchangerate",
@@ -1255,7 +1256,7 @@ def test_the_proprietary_quotes_keep_the_types_of_the_table(spark, data_lake):
 
     table = mp.connect_to_marketpricedata(spark, data_lake)
     assert dict(table.dtypes) == {
-        "REFDT": "date", "INSTRID": "string", "VALUE": "double",
+        "ref_date": "date", "instr_id": "string", "value": "double",
     }
 
 
@@ -1298,7 +1299,7 @@ def test_a_source_that_has_delivered_nothing_leaves_the_table_alone(spark, data_
     mp.update_silver_lbma(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    assert list(frame.INSTRID) == ["OWN-1"]
+    assert list(frame.instr_id) == ["OWN-1"]
 
 
 def test_a_source_that_has_delivered_nothing_says_so_in_the_log(
@@ -1698,7 +1699,7 @@ def test_a_day_that_is_new_is_added_beside_the_others(spark, data_lake):
     mp.update_silver_internal(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    assert sorted(frame.REFDT) == ["2024-01-02", "2024-01-03"]
+    assert sorted(frame.ref_date) == ["2024-01-02", "2024-01-03"]
 
 
 def test_the_same_day_of_two_instruments_is_two_rows(spark, data_lake):
@@ -1727,13 +1728,13 @@ def test_only_the_three_columns_reach_the_table(spark, data_lake):
     would notice the projection going."""
     bronze = spark.createDataFrame(
         [(date(2024, 1, 2), "OWN-1", 12.5, "rates", "a note the module knows nothing about")],
-        "REFDT date, INSTRID string, VALUE double, DESK string, COMMENT string",
+        "ref_date date, instr_id string, value double, DESK string, COMMENT string",
     )
 
     mp.standard_upsert(spark, data_lake, bronze)
 
     frame = silver(spark, data_lake)
-    assert list(frame.columns) == ["REFDT", "INSTRID", "VALUE"]
+    assert list(frame.columns) == ["ref_date", "instr_id", "value"]
 
 
 # The pipeline
@@ -1865,10 +1866,15 @@ def test_the_mapping_table_pairs_each_instrument_exactly_once():
 
 
 def rows_of(spark, data_lake, refdt, instrid, value):
-    """One row, in the three columns the Silver table holds."""
+    """One row, in the three columns the Silver table holds.
+
+    Not ``mp.internal_schema``: that is the proprietary input file, which
+    keeps the upper-case names it always had, while the Silver table these
+    rows are merged into is snake_case.
+    """
     return spark.createDataFrame(
         [(date.fromisoformat(refdt), instrid, float(value))],
-        schema = mp.internal_schema)
+        schema = "ref_date date, instr_id string, value double")
 
 
 def count_merges(monkeypatch):
@@ -1975,7 +1981,7 @@ def test_a_source_that_fails_leaves_the_others_to_be_merged(
                            rows_of(spark, data_lake, "2024-01-31", "KR-DFR", 4.0))
 
     frame = silver(spark, data_lake)
-    assert sorted(frame.INSTRID) == ["KR-DFR", "ON-ESTR"]
+    assert sorted(frame.instr_id) == ["KR-DFR", "ON-ESTR"]
 
 
 def test_two_batches_at_once_are_refused(spark, data_lake):
@@ -2165,7 +2171,7 @@ def test_a_yahoo_price_reaches_the_table_under_its_isin(spark, data_lake):
     mp.update_silver_yahoo(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    assert list(frame.INSTRID) == ["IE00B4L5Y983"]
+    assert list(frame.instr_id) == ["IE00B4L5Y983"]
     assert value_of(frame, "IE00B4L5Y983", "2024-01-31") == pytest.approx(98.5)
 
 
@@ -2179,7 +2185,7 @@ def test_the_day_a_price_was_fetched_does_not_reach_the_table(spark, data_lake):
     mp.update_silver_yahoo(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    assert sorted(frame.columns) == ["INSTRID", "REFDT", "VALUE"]
+    assert sorted(frame.columns) == ["instr_id", "ref_date", "value"]
 
 
 def test_the_most_recent_download_of_a_day_is_the_one_that_is_kept(spark, data_lake):
@@ -2210,7 +2216,7 @@ def test_a_yahoo_layer_that_has_never_been_downloaded_leaves_the_table_alone(
     mp.update_silver_yahoo(spark, data_lake)
 
     frame = silver(spark, data_lake)
-    assert list(frame.INSTRID) == ["OWN-1"]
+    assert list(frame.instr_id) == ["OWN-1"]
 
 
 def test_the_silver_layer_runs_the_yahoo_source(spark, data_lake):

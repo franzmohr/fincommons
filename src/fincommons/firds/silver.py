@@ -169,7 +169,7 @@ def commit_tag(datadt, step):
     return f"{COMMIT_TAG_PREFIX}:{datadt}:{step}"
 
 
-def tagged_commits(spark, ref):
+def tagged_commits(spark, ref, limit=None):
     """The commits of the table since it was last written from scratch.
 
     Returned newest first, as pairs of version and tag, where the tag is the
@@ -177,13 +177,33 @@ def tagged_commits(spark, ref):
     none. The walk stops after the commit that wrote the table from scratch,
     so that a history built again does not inherit the tags of the one it
     replaced.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    ref:
+        Where the table lives, from
+        :func:`fincommons.firds.common.ref_silver_main` and the like.
+    limit: int or None
+        How many of the most recent commits to look at, all of them by
+        default. Delta reads the commit files of that window and no others, so
+        a caller that knows the commits it is after are among the most recent
+        pays a cost that does not grow with the log; see
+        :data:`RESUME_COMMITS`.
+
+        A window cannot make a tag of a replaced history look like one of the
+        history as it stands. Either the commit that wrote the table from
+        scratch is inside the window, and the walk stops at it as it would
+        without one, or it is older than every commit in the window and every
+        tag in the window therefore belongs to the history as it stands.
     """
     commits = (
-        common.delta_table(spark, ref).history()
+        common.delta_table(spark, ref).history(limit)
         .select(
             "version",
             "operation",
-            func.col("operationParameters").getItem("mode").alias("mode"),
+            func.col("operationParameters").getItem("mode").alias("_mode"),
             "userMetadata",
         )
         .collect()
@@ -193,7 +213,7 @@ def tagged_commits(spark, ref):
         walked.append((commit["version"], commit["userMetadata"]))
         rewritten = (
             commit["operation"].startswith(REWRITING_OPERATIONS)
-            or (commit["operation"] == "WRITE" and commit["mode"] == "Overwrite")
+            or (commit["operation"] == "WRITE" and commit["_mode"] == "Overwrite")
         )
         if rewritten:
             break
@@ -229,6 +249,27 @@ def watermark_from_commits(spark, ref):
     return None
 
 
+#: How many of the most recent commits of the historical database
+#: :func:`committed_steps` looks at.
+#:
+#: The tags it looks for are those of a date that a previous run left applied
+#: in part, and such a date is the one the table was written by last: the
+#: update applies one date at a time and writes nothing else to the table
+#: between them, so a date contributes a merge, an append and, on the day of
+#: the week the compaction falls on, an ``OPTIMIZE``. A handful of commits is
+#: therefore enough, and the window is set well above that handful rather
+#: than at it.
+#:
+#: What the window is for is the cost. Asked for the whole log, Delta reads
+#: every commit file in it, and the log of the historical database grows by
+#: those few commits for every date applied. A run that builds the history
+#: from the start of the sample applies some hundreds of dates and would read
+#: a log of some thousands of commit files once per date, so the reading of
+#: the log alone would grow with the square of the dates applied. Within a
+#: window it is a fixed cost per date.
+RESUME_COMMITS = 50
+
+
 def committed_steps(spark, ref, datadt):
     """Return the versions at which the steps of ``datadt`` were committed.
 
@@ -240,6 +281,10 @@ def committed_steps(spark, ref, datadt):
     from scratch count, so a history built again does not inherit the tags of
     the one it replaced.
 
+    Only the most recent commits are looked at, as many as
+    :data:`RESUME_COMMITS` names, because a date applied in part is the one
+    the table was written by last.
+
     Returns
     -------
     dict
@@ -248,7 +293,7 @@ def committed_steps(spark, ref, datadt):
         table is at.
     """
     wanted = {commit_tag(datadt, step): step for step in ("merge", "append")}
-    commits = tagged_commits(spark, ref)
+    commits = tagged_commits(spark, ref, limit=RESUME_COMMITS)
     found = {"current": commits[0][0]}
     for version, tag in commits:
         step = wanted.get(tag)
@@ -610,7 +655,7 @@ def declare_silver_main_layout(spark, config_path):
     """Declare how the historical database lays its files out.
 
     The table is clustered by the instrument key rather than partitioned by
-    trading venue. Partitioning by ``TRADGVN`` puts the table into one
+    trading venue. Partitioning by ``trading_venue`` puts the table into one
     directory per venue, which is far too fine a grain for its size -- the
     partitions average well under a megabyte -- and it buys no pruning, because
     a delta file touches most venues at once and the merge therefore reads
@@ -858,8 +903,8 @@ def initialise_firds_database(spark, config_path):
     """Register the full file as the first state of the historical database.
 
     This is paragraph 27.a of the instructions. The records of the FULINS file
-    are registered with the start of their publication period as ``VLDFROM``,
-    an empty ``VLDTO`` and ``LATESTRECORD`` set, see
+    are registered with the start of their publication period as ``valid_from``,
+    an empty ``valid_to`` and ``latest_record`` set, see
     :func:`fincommons.firds.history.initialise_history`.
 
     Parameters
@@ -1057,10 +1102,10 @@ SOURCE_FIELDS = {
 #: The columns of the historical database that carry a money or rate field,
 #: with the ``decimal`` type :data:`SOURCE_FIELDS` reads it as.
 DECIMAL_COLUMNS = {
-    "TOTALISSUEDNOMINALAMT": SOURCE_FIELDS["DebtInstrmAttrbts.TtlIssdNmnlAmt._VALUE"],
-    "NMNLVALPERUNITAMT": SOURCE_FIELDS["DebtInstrmAttrbts.NmnlValPerUnit._VALUE"],
-    "INTRSTRATEFXD": SOURCE_FIELDS["DebtInstrmAttrbts.IntrstRate.Fxd"],
-    "PRICMLTPLR": SOURCE_FIELDS["DerivInstrmAttrbts.PricMltplr"],
+    "total_issued_nominal_amount": SOURCE_FIELDS["DebtInstrmAttrbts.TtlIssdNmnlAmt._VALUE"],
+    "nominal_value_per_unit_amount": SOURCE_FIELDS["DebtInstrmAttrbts.NmnlValPerUnit._VALUE"],
+    "interest_rate_fixed": SOURCE_FIELDS["DebtInstrmAttrbts.IntrstRate.Fxd"],
+    "price_multiplier": SOURCE_FIELDS["DerivInstrmAttrbts.PricMltplr"],
 }
 
 #: The element whose absence says that a record is not of the type the column
@@ -1247,7 +1292,7 @@ def read_daily_changes(incoming):
     ``<ModfdRcrd>``, ``<CancRcrd>`` and ``<TermntdRcrd>`` -- which are separate
     columns of the Bronze layer. The element a record was reported in is what
     determines how it changes the history, so it is carried along in
-    ``ACTNTP``.
+    ``action_type``.
 
     Three of the four carry a full reference data record and are translated
     the same way. ``<CancRcrd>`` does not: the schema types it as a reduced
@@ -1268,7 +1313,7 @@ def read_daily_changes(incoming):
             func.col("TechAttrbts").isNotNull()
         )
         df = translate_xml_to_analytics_schema_036_001_03(df)
-        df = df.withColumn("ACTNTP", func.lit(colname))
+        df = df.withColumn("action_type", func.lit(colname))
         dfs.append(df)
     return functools.reduce(DataFrame.unionByName, dfs)
 
@@ -1301,30 +1346,30 @@ def read_cancellations(incoming):
         ).dtypes
     )
     stated = {
-        "ISIN": func.col(f"{CANCELLATION}.FinInstrmGnlAttrbts.Id"),
-        "TRADGVN": func.col(f"{CANCELLATION}.TradgVnRltdAttrbts.Id"),
-        "TECH_PBLCTNPRD_FRDT": func.to_date(func.col("DATADT")),
+        "isin": func.col(f"{CANCELLATION}.FinInstrmGnlAttrbts.Id"),
+        "trading_venue": func.col(f"{CANCELLATION}.TradgVnRltdAttrbts.Id"),
+        "tech_publication_period_from_date": func.to_date(func.col("DATADT")),
     }
     return incoming.select(
         *[
             stated.get(name, func.lit(None)).cast(typed[name]).alias(name)
             for name in ANALYTICS_COLUMNS
         ],
-        func.lit(CANCELLATION).alias("ACTNTP"),
-    ).filter(func.col("ISIN").isNotNull())
+        func.lit(CANCELLATION).alias("action_type"),
+    ).filter(func.col("isin").isNotNull())
 
 
 def check_publication_period(records, source):
     """Refuse records whose publication period could not be read.
 
     The validity of a version is derived from the start of its publication
-    period: ``VLDFROM`` is that date, and the version a record supersedes is
+    period: ``valid_from`` is that date, and the version a record supersedes is
     closed on the day before it. Where the date is missing the closing date is
     ``date_sub(NULL, 1)``, which is null as well, so the superseded version is
     never closed and the instrument comes to have two versions in force.
 
     Nothing fails at that point, which is what makes it worth refusing here.
-    The history goes on building, ``LATESTRECORD`` becomes ambiguous, and the
+    The history goes on building, ``latest_record`` becomes ambiguous, and the
     fault surfaces days later as a merge that matches several source rows
     against one target row -- an error that points at the merge rather than at
     the record that caused it.
@@ -1340,7 +1385,7 @@ def check_publication_period(records, source):
     Parameters
     ----------
     records: pyspark.sql.DataFrame
-        Records in the analytics schema, carrying ``TECH_PBLCTNPRD_FRDT``.
+        Records in the analytics schema, carrying ``tech_publication_period_from_date``.
     source: str
         What was being read, for the message.
 
@@ -1354,14 +1399,26 @@ def check_publication_period(records, source):
     ValueError
         If any record states no publication start date.
     """
-    missing = records.filter(func.col("TECH_PBLCTNPRD_FRDT").isNull())
-    count = missing.count()
+    count = records.filter(_period_is_missing()).count()
     if not count:
         return records
+    raise _no_publication_period(records, source, count)
 
-    columns = [c for c in ("ISIN", "TRADGVN", "ACTNTP") if c in records.columns]
-    examples = [tuple(row) for row in missing.select(*columns).limit(3).collect()]
-    raise ValueError(
+
+def _period_is_missing():
+    """The condition a record stating no publication start date meets."""
+    return func.col("tech_publication_period_from_date").isNull()
+
+
+def _no_publication_period(records, source, count):
+    """The error :func:`check_publication_period` refuses ``count`` records with."""
+    columns = [c for c in ("isin", "trading_venue", "action_type") if c in records.columns]
+    examples = [
+        tuple(row)
+        for row in records.filter(_period_is_missing())
+        .select(*columns).limit(3).collect()
+    ]
+    return ValueError(
         f"{count} records of {source} state no publication start date. The "
         f"validity of a version is derived from it, so the versions these "
         f"supersede could not be closed and their instruments would come to "
@@ -1373,7 +1430,7 @@ def check_publication_period(records, source):
 def check_instrument_key(records, source):
     """Refuse records that do not say which instrument they are about.
 
-    An instrument is identified by the pair ``(ISIN, TRADGVN)``, and every
+    An instrument is identified by the pair ``(isin, trading_venue)``, and every
     comparison the history makes on it is an equality: the join of
     :func:`fincommons.firds.history.plan_changes` against the versions in
     force, and the condition the merge of
@@ -1383,7 +1440,7 @@ def check_instrument_key(records, source):
     A record missing either half of the key is therefore never found to
     supersede anything, and is inserted again by every file that carries it.
     The instrument comes to have one version in force per delivery,
-    ``LATESTRECORD`` is set on all of them, and the compact table counts the
+    ``latest_record`` is set on all of them, and the compact table counts the
     instrument once per version. As with
     :func:`check_publication_period`, nothing fails while this happens, which
     is why it is refused here rather than left to be noticed.
@@ -1410,22 +1467,32 @@ def check_instrument_key(records, source):
     ValueError
         If any record leaves either half of the key empty.
     """
-    missing = records.filter(
-        functools.reduce(
-            lambda left, right: left | right,
-            [func.col(name).isNull() for name in history.KEY_COLUMNS],
-        )
-    )
-    count = missing.count()
+    count = records.filter(_key_is_missing()).count()
     if not count:
         return records
+    raise _no_instrument_key(records, source, count)
 
+
+def _key_is_missing():
+    """The condition a record leaving either half of the key empty meets."""
+    return functools.reduce(
+        lambda left, right: left | right,
+        [func.col(name).isNull() for name in history.KEY_COLUMNS],
+    )
+
+
+def _no_instrument_key(records, source, count):
+    """The error :func:`check_instrument_key` refuses ``count`` records with."""
     columns = [
-        c for c in (*history.KEY_COLUMNS, "ACTNTP", "TECH_PBLCTNPRD_FRDT")
+        c for c in (*history.KEY_COLUMNS, "action_type", "tech_publication_period_from_date")
         if c in records.columns
     ]
-    examples = [tuple(row) for row in missing.select(*columns).limit(3).collect()]
-    raise ValueError(
+    examples = [
+        tuple(row)
+        for row in records.filter(_key_is_missing())
+        .select(*columns).limit(3).collect()
+    ]
+    return ValueError(
         f"{count} records of {source} state no "
         f"{' or '.join(history.KEY_COLUMNS)}. The history identifies an "
         f"instrument by that pair and matches on it with an equality, which "
@@ -1434,6 +1501,51 @@ def check_instrument_key(records, source):
         f"version in force per delivery. Examples, as "
         f"({', '.join(columns)}): {examples}."
     )
+
+
+def check_incoming_records(records, source):
+    """Refuse the records of a file that neither check accepts, in one pass.
+
+    What :func:`check_instrument_key` and :func:`check_publication_period`
+    refuse, refused together. Each of them counts on its own, which is a pass
+    over the records apiece, and the records of a delta file are read again by
+    the plan afterwards; counting both at once leaves the update of a date
+    with one pass for the checks instead of two. The records are examined for
+    the examples of the message only where there is something to refuse, so
+    the ordinary case is the one aggregate and nothing else.
+
+    The checks are reported in the order they are made in separately -- the
+    key first, the publication period second -- so that a file refused by
+    both is refused with the same message as before.
+
+    Parameters
+    ----------
+    records: pyspark.sql.DataFrame
+        Records in the analytics schema, carrying the key columns and
+        ``tech_publication_period_from_date``.
+    source: str
+        What was being read, for the message.
+
+    Returns
+    -------
+    pyspark.sql.DataFrame
+        ``records`` unchanged, so the check can stand in a chain of reads.
+
+    Raises
+    ------
+    ValueError
+        If any record leaves either half of the key empty, or states no
+        publication start date.
+    """
+    counted = records.agg(
+        func.count(func.when(_key_is_missing(), 1)).alias("_key"),
+        func.count(func.when(_period_is_missing(), 1)).alias("_period"),
+    ).first()
+    if counted["_key"]:
+        raise _no_instrument_key(records, source, counted["_key"])
+    if counted["_period"]:
+        raise _no_publication_period(records, source, counted["_period"])
+    return records
 
 
 def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
@@ -1473,14 +1585,20 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
         ),
     )
 
-    # The reference to the cached frame is kept, because read_daily_changes
-    # reads it once per action type and the blocks are of no use afterwards.
-    # Rebinding the name would leave them in the cache for the rest of the
-    # session, and a backfill applies one file after another.
+    # The references to the cached frames are kept, because the blocks are of
+    # no use once the date is applied. Rebinding the names would leave them in
+    # the cache for the rest of the session, and a backfill applies one file
+    # after another.
+    #
+    # Both frames are held: read_daily_changes reads the partition once per
+    # action type, and what it returns is read again by the checks, for the
+    # keys of the plan and by the plan itself. Of the two it is the second
+    # that saves the most, since it is the flattening of the four action types
+    # into the analytics schema that would otherwise be computed four times
+    # over.
     daily = bronze.filter(func.col("DATADT") == datadt).cache()
-    incoming = read_daily_changes(daily)
-    incoming = check_instrument_key(incoming, f"the delta file of {datadt}")
-    incoming = check_publication_period(incoming, f"the delta file of {datadt}")
+    incoming = read_daily_changes(daily).cache()
+    incoming = check_incoming_records(incoming, f"the delta file of {datadt}")
 
     ref = common.ref_silver_main(config_path)
     committed = committed_steps(spark, ref, datadt)
@@ -1492,6 +1610,7 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
                 module="firds", layer="silver", table="MAIN", datadt=datadt
             ),
         )
+        incoming.unpersist()
         daily.unpersist()
         common.update_metadata_maxdate(spark, config_path, table="MAIN", maxdate=datadt)
         return
@@ -1541,7 +1660,7 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
         try:
             table.alias("tgt").merge(changing.alias("src"), condition).whenMatchedUpdate(
                 condition=tag == func.lit(history.CLOSE_AND_INSERT),
-                set={"VLDTO": "src.VLDTO", "LATESTRECORD": func.lit(False)},
+                set={"valid_to": "src.valid_to", "latest_record": func.lit(False)},
             ).whenMatchedUpdate(
                 condition=tag == func.lit(history.REPLACE),
                 set={name: func.col(f"src.`{name}`") for name in columns},
@@ -1561,6 +1680,7 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     )
 
     planned.unpersist()
+    incoming.unpersist()
     daily.unpersist()
     common.update_metadata_maxdate(spark, config_path, table="MAIN", maxdate=datadt)
 
@@ -1672,21 +1792,21 @@ def _update_from_silver_main_to_silver_compact(spark, config_path, file_format):
     altogether, which is the same statement one row further out.
     """
     compact = common.read_delta(spark, common.ref_silver_main(config_path)) \
-        .filter(func.col("LATESTRECORD")) \
+        .filter(func.col("latest_record")) \
         .filter(~func.col(history.ACTION_TYPE).eqNullSafe(CANCELLATION)) \
-        .groupBy("ISIN") \
+        .groupBy("isin") \
         .agg(
-            _joined_values("CFI").alias("CFI"),
-            _joined_values("ISSUER").alias("ISSUER"),
-            _joined_values("TRADGVN").alias("TRADGVN"),
-            _joined_values("SHORTNAME").alias("SHORTNAME"),
-            _only_value("MTRTYDT").alias("MTRTYDT"),
-            _only_value("XPRYDT").alias("XPRYDT"),
-            _only_value("PRICMLTPLR").alias("PRICMLTPLR"),
+            _joined_values("cfi").alias("cfi"),
+            _joined_values("issuer").alias("issuer"),
+            _joined_values("trading_venue").alias("trading_venue"),
+            _joined_values("short_name").alias("short_name"),
+            _only_value("maturity_date").alias("maturity_date"),
+            _only_value("expiry_date").alias("expiry_date"),
+            _only_value("price_multiplier").alias("price_multiplier"),
         ) \
-        .withColumn("MTRTYDT", func.to_date(func.col("MTRTYDT"))) \
-        .withColumn("XPRYDT", func.to_date(func.col("XPRYDT"))) \
-        .withColumn("PRICMLTPLR", func.col("PRICMLTPLR").cast(DECIMAL_COLUMNS["PRICMLTPLR"]))
+        .withColumn("maturity_date", func.to_date(func.col("maturity_date"))) \
+        .withColumn("expiry_date", func.to_date(func.col("expiry_date"))) \
+        .withColumn("price_multiplier", func.col("price_multiplier").cast(DECIMAL_COLUMNS["price_multiplier"]))
 
     common.write_silver(
         compact, common.ref_silver_compact(config_path), file_format = file_format
@@ -1697,15 +1817,20 @@ def _update_from_silver_main_to_silver_compact(spark, config_path, file_format):
 #: them. The full file and the delta files state the same fields, so one
 #: translation serves both.
 ANALYTICS_COLUMNS = [
-    "ISIN", "FULLNAME", "CFI", "COMMDERIVIND",
-    "ISSUER", "TRADGVN", "SHORTNAME", "ISSRREQ",
-    "APPRVLDTBYISSR", "REQFORADMSSNDT", "FRSTTRADDT", "TERMNTNDT",
-    "NTNLCCY", "TOTALISSUEDNOMINALAMT", "TOTALISSUEDNOMINALCCY", "MTRTYDT",
-    "NMNLVALPERUNITAMT", "NMNLVALPERUNITCCY", "INTRSTRATEFXD", "INTRSTRATEFLTGIDTP",
-    "INTRSTRATEFLTGID", "INTRSTRATEFLTGTERMVAL", "INTRSTRATEFLTGTERMUNIT", "INTRSTRATEFLTGSPRD",
-    "DEBTSNRTY", "XPRYDT", "PRICMLTPLR", "OPTNTP",
-    "OPTNEXRCSTYLE", "DLVRYTP", "TECH_PBLCTNPRD_FRDT", "TECH_PBLCTNPRD_TODT",
-    "TECH_RLVNTCMPTNTAUTHRTY", "TECH_RLVNTTRADGVN",
+    "isin", "full_name", "cfi", "commodity_derivative_indicator", "issuer",
+    "trading_venue", "short_name", "issuer_request",
+    "admission_approval_date_by_issuer", "request_for_admission_date",
+    "first_trade_date", "termination_date", "notional_currency",
+    "total_issued_nominal_amount", "total_issued_nominal_currency",
+    "maturity_date", "nominal_value_per_unit_amount",
+    "nominal_value_per_unit_currency", "interest_rate_fixed",
+    "interest_rate_floating_id_type", "interest_rate_floating_id",
+    "interest_rate_floating_term_value",
+    "interest_rate_floating_term_unit", "interest_rate_floating_spread",
+    "debt_seniority", "expiry_date", "price_multiplier", "option_type",
+    "option_exercise_style", "delivery_type",
+    "tech_publication_period_from_date", "tech_publication_period_to_date",
+    "tech_relevant_competent_authority", "tech_relevant_trading_venue",
 ]
 
 
@@ -1766,47 +1891,47 @@ def translate_xml_to_analytics_schema(df):
     """
 
     df = df \
-    .withColumn("ISIN", func.col("FinInstrmGnlAttrbts.Id")) \
-    .withColumn("FULLNAME", func.col("FinInstrmGnlAttrbts.FullNm")) \
-    .withColumn("CFI", func.col("FinInstrmGnlAttrbts.ClssfctnTp")) \
-    .withColumn("COMMDERIVIND", func.col("FinInstrmGnlAttrbts.CmmdtyDerivInd")) \
-    .withColumn("ISSUER", func.col("Issr")) \
-    .withColumn("TRADGVN", func.col("TradgVnRltdAttrbts.Id")) \
-    .withColumn("SHORTNAME", func.col("FinInstrmGnlAttrbts.ShrtNm")) \
-    .withColumn("ISSRREQ", func.col("TradgVnRltdAttrbts.IssrReq")) \
-    .withColumn("APPRVLDTBYISSR", func.col("TradgVnRltdAttrbts.AdmssnApprvlDtByIssr")) \
-    .withColumn("REQFORADMSSNDT", func.col("TradgVnRltdAttrbts.ReqForAdmssnDt")) \
-    .withColumn("FRSTTRADDT", func.col("TradgVnRltdAttrbts.FrstTradDt")) \
-    .withColumn("TERMNTNDT", func.col("TradgVnRltdAttrbts.TermntnDt")) \
-    .withColumn("NTNLCCY", func.col("FinInstrmGnlAttrbts.NtnlCcy")) \
-    .withColumn("TOTALISSUEDNOMINALAMT", func.col("DebtInstrmAttrbts.TtlIssdNmnlAmt._VALUE")) \
-    .withColumn("TOTALISSUEDNOMINALCCY", func.col("DebtInstrmAttrbts.TtlIssdNmnlAmt._Ccy")) \
-    .withColumn("MTRTYDT", func.col("DebtInstrmAttrbts.MtrtyDt")) \
-    .withColumn("NMNLVALPERUNITAMT", func.col("DebtInstrmAttrbts.NmnlValPerUnit._VALUE")) \
-    .withColumn("NMNLVALPERUNITCCY", func.col("DebtInstrmAttrbts.NmnlValPerUnit._Ccy")) \
-    .withColumn("INTRSTRATEFXD", func.col("DebtInstrmAttrbts.IntrstRate.Fxd")) \
-    .withColumn("INTRSTRATEFLTGIDTP", func.when(func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.ISIN").isNotNull(), "ISIN")
+    .withColumn("isin", func.col("FinInstrmGnlAttrbts.Id")) \
+    .withColumn("full_name", func.col("FinInstrmGnlAttrbts.FullNm")) \
+    .withColumn("cfi", func.col("FinInstrmGnlAttrbts.ClssfctnTp")) \
+    .withColumn("commodity_derivative_indicator", func.col("FinInstrmGnlAttrbts.CmmdtyDerivInd")) \
+    .withColumn("issuer", func.col("Issr")) \
+    .withColumn("trading_venue", func.col("TradgVnRltdAttrbts.Id")) \
+    .withColumn("short_name", func.col("FinInstrmGnlAttrbts.ShrtNm")) \
+    .withColumn("issuer_request", func.col("TradgVnRltdAttrbts.IssrReq")) \
+    .withColumn("admission_approval_date_by_issuer", func.col("TradgVnRltdAttrbts.AdmssnApprvlDtByIssr")) \
+    .withColumn("request_for_admission_date", func.col("TradgVnRltdAttrbts.ReqForAdmssnDt")) \
+    .withColumn("first_trade_date", func.col("TradgVnRltdAttrbts.FrstTradDt")) \
+    .withColumn("termination_date", func.col("TradgVnRltdAttrbts.TermntnDt")) \
+    .withColumn("notional_currency", func.col("FinInstrmGnlAttrbts.NtnlCcy")) \
+    .withColumn("total_issued_nominal_amount", func.col("DebtInstrmAttrbts.TtlIssdNmnlAmt._VALUE")) \
+    .withColumn("total_issued_nominal_currency", func.col("DebtInstrmAttrbts.TtlIssdNmnlAmt._Ccy")) \
+    .withColumn("maturity_date", func.col("DebtInstrmAttrbts.MtrtyDt")) \
+    .withColumn("nominal_value_per_unit_amount", func.col("DebtInstrmAttrbts.NmnlValPerUnit._VALUE")) \
+    .withColumn("nominal_value_per_unit_currency", func.col("DebtInstrmAttrbts.NmnlValPerUnit._Ccy")) \
+    .withColumn("interest_rate_fixed", func.col("DebtInstrmAttrbts.IntrstRate.Fxd")) \
+    .withColumn("interest_rate_floating_id_type", func.when(func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.ISIN").isNotNull(), "ISIN")
                                           .when(func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Indx").isNotNull(), "Index")
                                           .when(func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Nm").isNotNull(), "Name")) \
-    .withColumn("INTRSTRATEFLTGID", func.when(func.col("INTRSTRATEFLTGIDTP") == "ISIN" ,func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.ISIN"))
-                                           .when(func.col("INTRSTRATEFLTGIDTP") == "Index", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Indx")) \
-                                           .when(func.col("INTRSTRATEFLTGIDTP") == "Name", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Nm"))) \
-    .withColumn("INTRSTRATEFLTGTERMVAL", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.Term.Val")) \
-    .withColumn("INTRSTRATEFLTGTERMUNIT", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.Term.Unit")) \
-    .withColumn("INTRSTRATEFLTGSPRD", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.BsisPtSprd")) \
-    .withColumn("DEBTSNRTY", func.col("DebtInstrmAttrbts.DebtSnrty")) \
-    .withColumn("XPRYDT", func.col("DerivInstrmAttrbts.XpryDt")) \
-    .withColumn("PRICMLTPLR", func.col("DerivInstrmAttrbts.PricMltplr")) \
-    .withColumn("OPTNTP", func.col("DerivInstrmAttrbts.OptnTp")) \
-    .withColumn("OPTNEXRCSTYLE", func.col("DerivInstrmAttrbts.OptnExrcStyle")) \
-    .withColumn("DLVRYTP", func.col("DerivInstrmAttrbts.DlvryTp")) \
-    .withColumn("TECH_PBLCTNPRD_FRDT", func.coalesce(*_period_start(df))) \
-    .withColumn("TECH_PBLCTNPRD_TODT", func.coalesce(
+    .withColumn("interest_rate_floating_id", func.when(func.col("interest_rate_floating_id_type") == "ISIN" ,func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.ISIN"))
+                                           .when(func.col("interest_rate_floating_id_type") == "Index", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Indx")) \
+                                           .when(func.col("interest_rate_floating_id_type") == "Name", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Nm"))) \
+    .withColumn("interest_rate_floating_term_value", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.Term.Val")) \
+    .withColumn("interest_rate_floating_term_unit", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.Term.Unit")) \
+    .withColumn("interest_rate_floating_spread", func.col("DebtInstrmAttrbts.IntrstRate.Fltg.BsisPtSprd")) \
+    .withColumn("debt_seniority", func.col("DebtInstrmAttrbts.DebtSnrty")) \
+    .withColumn("expiry_date", func.col("DerivInstrmAttrbts.XpryDt")) \
+    .withColumn("price_multiplier", func.col("DerivInstrmAttrbts.PricMltplr")) \
+    .withColumn("option_type", func.col("DerivInstrmAttrbts.OptnTp")) \
+    .withColumn("option_exercise_style", func.col("DerivInstrmAttrbts.OptnExrcStyle")) \
+    .withColumn("delivery_type", func.col("DerivInstrmAttrbts.DlvryTp")) \
+    .withColumn("tech_publication_period_from_date", func.coalesce(*_period_start(df))) \
+    .withColumn("tech_publication_period_to_date", func.coalesce(
         func.col("TechAttrbts.PblctnPrd.ToDt"),
         func.col("TechAttrbts.PblctnPrd.FrDtToDt.ToDt"),
         func.col("TechAttrbts.PblctnPrd.Dt"))) \
-    .withColumn("TECH_RLVNTCMPTNTAUTHRTY", func.col("TechAttrbts.RlvntCmptntAuthrty")) \
-    .withColumn("TECH_RLVNTTRADGVN", func.col("TechAttrbts.RlvntTradgVn")) \
+    .withColumn("tech_relevant_competent_authority", func.col("TechAttrbts.RlvntCmptntAuthrty")) \
+    .withColumn("tech_relevant_trading_venue", func.col("TechAttrbts.RlvntTradgVn")) \
     .select(*ANALYTICS_COLUMNS)
 
     return df
@@ -1827,9 +1952,11 @@ __all__ = [
     "OPTIMIZE_SIZE_CONFS",
     "PARTITION_PREFIX",
     "REFERENCE_DATE_FORMAT",
+    "RESUME_COMMITS",
     "REWRITING_OPERATIONS",
     "SOURCE_FIELDS",
     "USER_METADATA_CONF",
+    "check_incoming_records",
     "check_instrument_key",
     "check_publication_period",
     "commit_tag",

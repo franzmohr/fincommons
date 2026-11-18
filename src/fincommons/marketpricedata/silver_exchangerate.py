@@ -52,8 +52,7 @@ def update_silver_exchangerate(spark, config_path):
 
         # Bring into the correct format
         bronze = bronze \
-            .withColumn("INSTRID", concat_ws("/", col("BASE"), col("QUOTE"))) \
-            .withColumnRenamed("REFDATE", "REFDT") \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumn("instr_id", concat_ws("/", col("base"), col("quote"))) \
+            .select("ref_date", "instr_id", "value")
 
         standard_upsert(spark, config_path, bronze)

@@ -176,7 +176,7 @@ where it takes one. Each module's README shows the script for its pipeline.
 ## Looking up what a column or a series is
 
 The tables name their columns in the compressed style of ISO 20022 --
-`TRADGVN`, `NTNLCCY`, `BUYRDCSNMAKRFRSTNM` -- and the market price table names
+`trading_venue`, `notional_currency`, `BUYRDCSNMAKRFRSTNM` -- and the market price table names
 its series by identifiers such as `EUR/VND` or `YLD-EA10Y-M`. Two functions say
 what they are, and neither needs Spark or a data lake:
 
@@ -184,8 +184,8 @@ what they are, and neither needs Spark or a data lake:
 import fincommons
 from fincommons import marketpricedata as mp
 
-print(fincommons.describe_column("TRADGVN"))           # every data set with that column
-fincommons.describe_column("ACTNTP", dataset="firds")  # one data set
+print(fincommons.describe_column("trading_venue"))     # every data set with that column
+fincommons.describe_column("action_type", dataset="firds")  # one data set
 fincommons.column_catalogue("exchangerate")            # all columns of a data set
 
 print(mp.describe_instrument("EUR/VND"))               # one series of the price table
@@ -218,14 +218,14 @@ registers of the ECB, EIOPA and ESMA say what it does.
 
 | Column | Meaning |
 |--------|---------|
-| `ID` | running number over the table, reassigned by every rebuild |
-| `LEI` | the LEI of the entity, where it has one |
-| `INTERNALID_1` .. `INTERNALID_4` | the identifiers of the proprietary list |
-| `NAME`, `CTRY` | legal name and country of the legal address, from GLEIF |
-| `SECTOR`, `SUBSECTOR` | what the entity does, from the sectoral registers |
-| `ULTPAR_LEI` | the entity that ultimately consolidates it |
-| `AMC` | for a fund, the company that manages it |
-| `IF_POLICY`, `IF_TYPE`, `IF_UCITS_COMPL` | for a fund, its characteristics |
+| `id` | running number over the table, reassigned by every rebuild |
+| `lei` | the LEI of the entity, where it has one |
+| `internal_id_1` .. `internal_id_4` | the identifiers of the proprietary list |
+| `name`, `country` | legal name and country of the legal address, from GLEIF |
+| `sector`, `subsector` | what the entity does, from the sectoral registers |
+| `ultimate_parent_lei` | the entity that ultimately consolidates it |
+| `amc` | for a fund, the company that manages it |
+| `if_policy`, `if_type`, `if_ucits_compl` | for a fund, its characteristics |
 
 ```yaml
 entitymasterdata:
@@ -272,12 +272,12 @@ a refresh cannot be observed half-written.
 
 | Column    | Meaning                                           |
 |-----------|---------------------------------------------------|
-| `REFDATE` | calendar day the rate applies to                  |
-| `BASE`    | base currency, `EUR` unless the table was rebased |
-| `QUOTE`   | quoted currency                                   |
-| `VALUE`   | units of `QUOTE` per one unit of `BASE`           |
-| `TYPE`    | kind of rate, e.g. `ref` for a reference rate     |
-| `SOURCE`  | source the quote came from                        |
+| `ref_date` | calendar day the rate applies to                 |
+| `base`     | base currency, `EUR` unless the table was rebased |
+| `quote`    | quoted currency                                  |
+| `value`    | units of `quote` per one unit of `base`          |
+| `type`     | kind of rate, e.g. `ref` for a reference rate    |
+| `source`   | source the quote came from                       |
 
 ```python
 from fincommons import exchangerate as ex
@@ -311,13 +311,13 @@ them every month; the module reads every one of them into one long table.
 
 | Column | Meaning |
 |--------|---------|
-| `REFDT` | the date of the period: the day, the last day of the month, or 31 December |
-| `DATASET` | the file, e.g. `F-F_Research_Data_Factors` |
-| `TABLE` | the kind of table in the file, e.g. `FACTORS`, `RET_VW`, `NFIRMS`, `BREAKPOINTS` |
-| `FREQUENCY` | `D`, `W`, `M` or `A` |
-| `SERIES` | the column as the file names it, e.g. `HML`, `SMALL LoBM` |
-| `VALUE` | the value as published, returns in percent |
-| `TITLE` | the title of the table as published |
+| `ref_date` | the date of the period: the day, the last day of the month, or 31 December |
+| `dataset` | the file, e.g. `F-F_Research_Data_Factors` |
+| `table` | the kind of table in the file, e.g. `FACTORS`, `RET_VW`, `NFIRMS`, `BREAKPOINTS` |
+| `frequency` | `D`, `W`, `M` or `A` |
+| `series` | the column as the file names it, e.g. `HML`, `SMALL LoBM` |
+| `value` | the value as published, returns in percent |
+| `title` | the title of the table as published |
 
 ```python
 from fincommons import famafrenchdata as ffd
@@ -347,8 +347,8 @@ into two tables:
 
 | Table | One row per |
 |--------|---------|
-| `filings` | filing of the repository: `FILING`, `LEI`, `NAME`, `COUNTRY`, `PERIODEND`, when it was processed, how its validation went, where its files are |
-| `facts` | fact of a report collected: `FILING`, `LEI`, `CONCEPT` (e.g. `ifrs-full:Revenue`), `PRDSTART`, `PRDEND`, `UNIT`, `DIMENSIONS`, `VALUE` or `TEXT` |
+| `filings` | filing of the repository: `filing`, `lei`, `name`, `country`, `period_end`, when it was processed, how its validation went, where its files are |
+| `facts` | fact of a report collected: `filing`, `lei`, `concept` (e.g. `ifrs-full:Revenue`), `prd_start`, `prd_end`, `unit`, `dimensions`, `value` or `text` |
 
 ```python
 from fincommons.financialreport import esef

@@ -78,11 +78,11 @@ def deliveries_to_merge(spark, parquet_path, config_path, source, full=False):
         grown = seen is not None and \
             partition_files(parquet_path, merged) > seen
         cut = func.to_date(func.lit(merged))
-        bronze = bronze.filter(func.col("LASTDT") >= cut if grown
-                               else func.col("LASTDT") > cut)
+        bronze = bronze.filter(func.col("last_date") >= cut if grown
+                               else func.col("last_date") > cut)
 
-    deliveries = [row["LASTDT"] for row in
-                  bronze.select("LASTDT").distinct().collect()]
+    deliveries = [row["last_date"] for row in
+                  bronze.select("last_date").distinct().collect()]
     if not deliveries:
         return None, None
 
@@ -139,14 +139,14 @@ def update_silver_yahoo(spark, config_path, full=False):
     # merely tidy: it matches on the instrument and the reference date, and
     # a merge whose source holds the same pair twice fails outright instead
     # of choosing between them.
-    downloads = Window.partitionBy("ISIN", "REFDT") \
-                      .orderBy(func.col("LASTDT").desc())
+    downloads = Window.partitionBy("isin", "ref_date") \
+                      .orderBy(func.col("last_date").desc())
 
     bronze = bronze \
         .withColumn("DELIVERY", func.row_number().over(downloads)) \
         .filter(func.col("DELIVERY") == 1) \
-        .withColumnRenamed("ISIN", "INSTRID") \
-        .select("REFDT", "INSTRID", "VALUE")
+        .withColumnRenamed("isin", "instr_id") \
+        .select("ref_date", "instr_id", "value")
 
     standard_upsert(spark, config_path, bronze)
     write_watermark(config_path, "YAHOO", watermark)
@@ -172,18 +172,18 @@ def isolated_prints(frame, factor=YAHOO_FX_ISOLATED_FACTOR):
     Returns the rows of ``frame`` that are isolated prints, with the values
     before and after them as ``BEFORE`` and ``AFTER``.
     """
-    days = Window.partitionBy("INSTRID").orderBy("REFDT")
+    days = Window.partitionBy("instr_id").orderBy("ref_date")
     limit = math.log(factor)
 
     def apart(a, b):
         return func.abs(func.log(func.col(a) / func.col(b))) > limit
 
     return frame \
-        .filter(func.col("VALUE") > 0) \
-        .withColumn("BEFORE", func.lag("VALUE").over(days)) \
-        .withColumn("AFTER", func.lead("VALUE").over(days)) \
+        .filter(func.col("value") > 0) \
+        .withColumn("BEFORE", func.lag("value").over(days)) \
+        .withColumn("AFTER", func.lead("value").over(days)) \
         .filter(func.col("BEFORE").isNotNull() & func.col("AFTER").isNotNull()) \
-        .filter(apart("VALUE", "BEFORE") & apart("VALUE", "AFTER")
+        .filter(apart("value", "BEFORE") & apart("value", "AFTER")
                 & ~apart("BEFORE", "AFTER"))
 
 
@@ -204,20 +204,20 @@ def _drop_isolated_prints(spark, config_path, frame, source):
         logger.warning(
             "An isolated print is left out of the Silver table",
             extra=context(module="marketpricedata", layer="silver",
-                          source=source, instrid=row["INSTRID"],
-                          refdt=str(row["REFDT"]), value=row["VALUE"],
+                          source=source, instrid=row["instr_id"],
+                          refdt=str(row["ref_date"]), value=row["value"],
                           before=row["BEFORE"], after=row["AFTER"]))
 
-    keys = spark.createDataFrame([(row["REFDT"], row["INSTRID"]) for row in found],
-                                 "REFDT date, INSTRID string")
+    keys = spark.createDataFrame([(row["ref_date"], row["instr_id"]) for row in found],
+                                 "ref_date date, instr_id string")
     ref = ref_silver_marketpricedata(config_path)
     if delta_table_exists(spark, ref):
         delta_table(spark, ref).alias("s") \
-            .merge(keys.alias("k"), "s.INSTRID = k.INSTRID AND s.REFDT = k.REFDT") \
+            .merge(keys.alias("k"), "s.instr_id = k.instr_id AND s.ref_date = k.ref_date") \
             .whenMatchedDelete() \
             .execute()
 
-    return frame.join(keys, ["REFDT", "INSTRID"], "left_anti")
+    return frame.join(keys, ["ref_date", "instr_id"], "left_anti")
 
 
 def _update_silver_named_yahoo(spark, config_path, parquet_path, source,
@@ -243,13 +243,13 @@ def _update_silver_named_yahoo(spark, config_path, parquet_path, source,
     # As for the instruments: the Bronze layer is appended to one download
     # at a time, so a reference date delivered twice is held twice, and the
     # merge fails on a source that carries the same key twice.
-    downloads = Window.partitionBy("INSTRID", "REFDT") \
-                      .orderBy(func.col("LASTDT").desc())
+    downloads = Window.partitionBy("instr_id", "ref_date") \
+                      .orderBy(func.col("last_date").desc())
 
     bronze = bronze \
         .withColumn("DELIVERY", func.row_number().over(downloads)) \
         .filter(func.col("DELIVERY") == 1) \
-        .select("REFDT", "INSTRID", "VALUE")
+        .select("ref_date", "instr_id", "value")
 
     if guard:
         bronze = _drop_isolated_prints(spark, config_path, bronze, source)

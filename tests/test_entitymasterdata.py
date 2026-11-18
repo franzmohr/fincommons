@@ -239,7 +239,7 @@ def main(spark, config_path, catch_all=False):
     frame = em.connect_to_entitymasterdata(spark, config_path).toPandas()
     if catch_all:
         return frame
-    return frame[~frame.LEI.isin(list(em.CATCH_ALL_ENTITIES))].reset_index(drop=True)
+    return frame[~frame.lei.isin(list(em.CATCH_ALL_ENTITIES))].reset_index(drop=True)
 
 
 def public(spark, config_path):
@@ -248,7 +248,7 @@ def public(spark, config_path):
 
 def entity(frame, lei):
     """The single row describing one LEI."""
-    rows = frame[frame.LEI == lei]
+    rows = frame[frame.lei == lei]
     assert len(rows) == 1, f"expected one row for {lei}, got {len(rows)}"
     return rows.iloc[0]
 
@@ -998,7 +998,7 @@ def test_the_lists_of_psris_are_unpacked_and_imported_as_text(monkeypatch, data_
     assert sorted(os.listdir(folder)) == ["2021-12-31.parquet", "2026-06-30.parquet"]
     frame = pandas.read_parquet(os.path.join(folder, "2021-12-31.parquet"))
     assert frame["Postal Code"].tolist() == ["1070"]
-    assert frame["REFDATE"].tolist() == ["2021-12-31"]
+    assert frame["REFDT"].tolist() == ["2021-12-31"]
     # Held in the Bronze layer, the lists are not unpacked again.
     assert em.download_ecb_psri(data_lake) == []
 
@@ -1036,7 +1036,7 @@ def test_the_list_of_mfis_of_the_day_is_downloaded_and_read_as_text(
                                              "20261027.parquet"))
     assert list(frame["POSTAL"]) == ["00187", "1012 AB"]
     assert frame["LEI"].isna().tolist() == [False, True]
-    assert set(frame["REFDATE"]) == {"2026-10-27"}
+    assert set(frame["REFDT"]) == {"2026-10-27"}
 
 
 def test_the_list_of_mfis_the_bronze_layer_holds_is_not_downloaded_again(
@@ -1154,8 +1154,8 @@ def test_a_gleif_file_is_imported_under_its_reference_date(data_lake):
     folder = em.path_bronze_gleif_level_1(data_lake)
     assert os.listdir(folder) == ["20260724.parquet"]
     written = pandas.read_parquet(os.path.join(folder, "20260724.parquet"))
-    assert list(written.columns) == ["LEI", "NAME", "CTRY", "REFDATE"]
-    assert written["REFDATE"].iloc[0] == "2026-07-24"
+    assert list(written.columns) == ["LEI", "NAME", "CTRY", "REFDT"]
+    assert written["REFDT"].iloc[0] == "2026-07-24"
 
 
 def test_an_imported_file_leaves_the_landing_zone(data_lake):
@@ -1399,8 +1399,8 @@ def test_gleif_supplies_the_name_and_the_country(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").NAME == "Entity LEI1"
-    assert entity(frame, "LEI1").CTRY == "AT"
+    assert entity(frame, "LEI1")["name"] == "Entity LEI1"
+    assert entity(frame, "LEI1").country == "AT"
 
 
 def test_an_entity_no_register_covers_has_no_sector(spark, data_lake):
@@ -1409,7 +1409,7 @@ def test_an_entity_no_register_covers_has_no_sector(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert pandas.isna(entity(frame, "LEI1").SECTOR)
+    assert pandas.isna(entity(frame, "LEI1").sector)
 
 
 def test_each_register_contributes_its_sector(spark, data_lake):
@@ -1430,13 +1430,13 @@ def test_each_register_contributes_its_sector(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").SECTOR == "CCP"
-    assert entity(frame, "LEI2").SECTOR == "INUN"
-    assert entity(frame, "LEI3").SECTOR == "CDTI"
-    assert entity(frame, "LEI4").SECTOR == "UCIT"
-    assert entity(frame, "LEI5").SECTOR == "ORPI"
-    assert entity(frame, "LEI4").IF_TYPE == "ETF"
-    assert entity(frame, "LEI4").IF_UCITS_COMPL == "UCITS"
+    assert entity(frame, "LEI1").sector == "CCP"
+    assert entity(frame, "LEI2").sector == "INUN"
+    assert entity(frame, "LEI3").sector == "CDTI"
+    assert entity(frame, "LEI4").sector == "UCIT"
+    assert entity(frame, "LEI5").sector == "ORPI"
+    assert entity(frame, "LEI4").if_type == "ETF"
+    assert entity(frame, "LEI4").if_ucits_compl == "UCITS"
 
 
 def test_an_mfi_category_the_module_does_not_know_still_yields_a_sector(spark, data_lake):
@@ -1458,7 +1458,7 @@ def test_an_mfi_category_the_module_does_not_know_still_yields_a_sector(spark, d
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").SECTOR == em.MFI_SECTOR_OTHER
+    assert entity(frame, "LEI1").sector == em.MFI_SECTOR_OTHER
 
 
 def test_an_unknown_mfi_category_is_logged_with_the_spelling_it_carried(spark, data_lake, caplog):
@@ -1515,8 +1515,8 @@ def test_an_institution_on_the_mfi_register_is_never_read_as_uncovered(spark, da
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").SECTOR == em.MFI_SECTOR_OTHER
-    assert pandas.isna(entity(frame, "LEI2").SECTOR)
+    assert entity(frame, "LEI1").sector == em.MFI_SECTOR_OTHER
+    assert pandas.isna(entity(frame, "LEI2").sector)
 
 
 @pytest.mark.parametrize(
@@ -1549,8 +1549,8 @@ def test_a_register_carrying_an_lei_twice_answers_the_same_way_either_way(spark,
     em.update_silver_entitymasterdata_public(spark, data_lake)
     row = entity(public(spark, data_lake), "LEI1")
 
-    assert row.SECTOR == "CCP"
-    assert row.SUBSECTOR == "EUCCP"
+    assert row.sector == "CCP"
+    assert row.subsector == "EUCCP"
 
 
 def test_a_row_that_states_a_subsector_beats_one_that_does_not(spark, data_lake):
@@ -1568,7 +1568,7 @@ def test_a_row_that_states_a_subsector_beats_one_that_does_not(spark, data_lake)
 
     em.update_silver_entitymasterdata_public(spark, data_lake)
 
-    assert entity(public(spark, data_lake), "LEI1").SUBSECTOR == "EUCCP"
+    assert entity(public(spark, data_lake), "LEI1").subsector == "EUCCP"
 
 
 def test_a_money_market_fund_keeps_what_the_fund_register_says_about_it(spark, data_lake):
@@ -1588,10 +1588,10 @@ def test_a_money_market_fund_keeps_what_the_fund_register_says_about_it(spark, d
     em.update_silver_entitymasterdata_public(spark, data_lake)
     row = entity(public(spark, data_lake), "LEI1")
 
-    assert row.SECTOR == "MMF"
-    assert row.IF_UCITS_COMPL == "UCITS"
-    assert row.IF_TYPE == "ETF"
-    assert row.IF_POLICY == "Bond funds"
+    assert row.sector == "MMF"
+    assert row.if_ucits_compl == "UCITS"
+    assert row.if_type == "ETF"
+    assert row.if_policy == "Bond funds"
 
 
 def test_the_subsector_stays_the_statement_of_the_register_that_won(spark, data_lake):
@@ -1617,11 +1617,11 @@ def test_the_subsector_stays_the_statement_of_the_register_that_won(spark, data_
 
     # The MFI register has no subsector, and the fund register does not supply
     # one in its place.
-    assert pandas.isna(entity(frame, "LEI1").SUBSECTOR)
-    assert entity(frame, "LEI1").IF_POLICY == "Bond funds"
+    assert pandas.isna(entity(frame, "LEI1").subsector)
+    assert entity(frame, "LEI1").if_policy == "Bond funds"
     # The CCP register does have one, and it is the one that stands.
-    assert entity(frame, "LEI2").SUBSECTOR == "EUCCP"
-    assert entity(frame, "LEI2").IF_POLICY == "Bond funds"
+    assert entity(frame, "LEI2").subsector == "EUCCP"
+    assert entity(frame, "LEI2").if_policy == "Bond funds"
 
 
 def test_a_fund_on_no_other_register_is_described_by_the_fund_register_alone(spark, data_lake):
@@ -1639,9 +1639,9 @@ def test_a_fund_on_no_other_register_is_described_by_the_fund_register_alone(spa
     em.update_silver_entitymasterdata_public(spark, data_lake)
     row = entity(public(spark, data_lake), "LEI1")
 
-    assert row.SECTOR == "UCIT"
-    assert row.SUBSECTOR == "Bond funds"
-    assert row.IF_POLICY == "Bond funds"
+    assert row.sector == "UCIT"
+    assert row.subsector == "Bond funds"
+    assert row.if_policy == "Bond funds"
 
 
 def test_an_entity_on_no_fund_register_has_no_fund_characteristics(spark, data_lake):
@@ -1657,10 +1657,10 @@ def test_an_entity_on_no_fund_register_has_no_fund_characteristics(spark, data_l
     em.update_silver_entitymasterdata_public(spark, data_lake)
     row = entity(public(spark, data_lake), "LEI1")
 
-    assert row.SECTOR == "CDTI"
-    assert pandas.isna(row.IF_POLICY)
-    assert pandas.isna(row.IF_TYPE)
-    assert pandas.isna(row.IF_UCITS_COMPL)
+    assert row.sector == "CDTI"
+    assert pandas.isna(row.if_policy)
+    assert pandas.isna(row.if_type)
+    assert pandas.isna(row.if_ucits_compl)
 
 
 def test_an_iorp_is_described_as_one_rather_than_as_the_fund_it_also_stands_in(spark, data_lake):
@@ -1679,7 +1679,7 @@ def test_an_iorp_is_described_as_one_rather_than_as_the_fund_it_also_stands_in(s
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").SECTOR == "ORPI"
+    assert entity(frame, "LEI1").sector == "ORPI"
 
 
 def test_an_insurer_running_a_pension_scheme_is_described_by_its_authorisation(spark, data_lake):
@@ -1700,7 +1700,7 @@ def test_an_insurer_running_a_pension_scheme_is_described_by_its_authorisation(s
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").SECTOR == "INUN"
+    assert entity(frame, "LEI1").sector == "INUN"
 
 
 def test_a_fund_is_described_by_its_ucits_status(spark, data_lake):
@@ -1729,14 +1729,14 @@ def test_a_fund_is_described_by_its_ucits_status(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").SECTOR == "UCIT"
-    assert entity(frame, "LEI2").SECTOR == "AIFD"
-    assert entity(frame, "LEI3").SECTOR == "INVF"
+    assert entity(frame, "LEI1").sector == "UCIT"
+    assert entity(frame, "LEI2").sector == "AIFD"
+    assert entity(frame, "LEI3").sector == "INVF"
     # The compliance column itself keeps its own vocabulary, which is not the
     # sector: the sector says what the entity is, the column what the register
     # reported about it.
-    assert entity(frame, "LEI1").IF_UCITS_COMPL == "UCITS"
-    assert entity(frame, "LEI2").IF_UCITS_COMPL == "AIF"
+    assert entity(frame, "LEI1").if_ucits_compl == "UCITS"
+    assert entity(frame, "LEI2").if_ucits_compl == "AIF"
 
 
 def test_the_narrower_register_wins_where_two_describe_the_same_entity(spark, data_lake):
@@ -1756,8 +1756,8 @@ def test_the_narrower_register_wins_where_two_describe_the_same_entity(spark, da
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").SECTOR == "CCP"
-    assert entity(frame, "LEI1").SUBSECTOR == "EUCCP"
+    assert entity(frame, "LEI1").sector == "CCP"
+    assert entity(frame, "LEI1").subsector == "EUCCP"
 
 
 def test_the_ultimate_parent_and_the_manager_come_from_different_relationships(spark, data_lake):
@@ -1782,8 +1782,8 @@ def test_the_ultimate_parent_and_the_manager_come_from_different_relationships(s
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").ULTPAR_LEI == "PARENT"
-    assert entity(frame, "LEI1").AMC == "MANAGER"
+    assert entity(frame, "LEI1").ultimate_parent_lei == "PARENT"
+    assert entity(frame, "LEI1").amc == "MANAGER"
 
 
 def test_an_entity_without_relationships_keeps_them_empty(spark, data_lake):
@@ -1792,8 +1792,8 @@ def test_an_entity_without_relationships_keeps_them_empty(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert pandas.isna(entity(frame, "LEI1").ULTPAR_LEI)
-    assert pandas.isna(entity(frame, "LEI1").AMC)
+    assert pandas.isna(entity(frame, "LEI1").ultimate_parent_lei)
+    assert pandas.isna(entity(frame, "LEI1").amc)
 
 
 def test_a_relationship_that_has_ended_is_not_the_current_one(spark, data_lake):
@@ -1821,8 +1821,8 @@ def test_a_relationship_that_has_ended_is_not_the_current_one(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").ULTPAR_LEI == "ZZNEWPARENT"
-    assert entity(frame, "LEI1").AMC == "ZZNEWMANAGER"
+    assert entity(frame, "LEI1").ultimate_parent_lei == "ZZNEWPARENT"
+    assert entity(frame, "LEI1").amc == "ZZNEWMANAGER"
 
 
 def test_an_entity_whose_only_relationship_has_ended_has_no_parent(spark, data_lake):
@@ -1843,7 +1843,7 @@ def test_an_entity_whose_only_relationship_has_ended_has_no_parent(spark, data_l
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert pandas.isna(entity(frame, "LEI1").ULTPAR_LEI)
+    assert pandas.isna(entity(frame, "LEI1").ultimate_parent_lei)
 
 
 def test_the_most_recent_register_is_the_one_that_is_used(spark, data_lake):
@@ -1861,7 +1861,7 @@ def test_the_most_recent_register_is_the_one_that_is_used(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").NAME == "Entity renamed"
+    assert entity(frame, "LEI1")["name"] == "Entity renamed"
 
 
 # The entity master data set
@@ -1880,15 +1880,15 @@ def test_the_public_data_passes_through_where_there_is_no_internal_list(spark, b
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built)
 
-    assert sorted(frame.LEI) == ["LEI1", "LEI2"]
-    assert frame["INTERNALID_1"].isna().all()
+    assert sorted(frame.lei) == ["LEI1", "LEI2"]
+    assert frame["internal_id_1"].isna().all()
 
 
 def test_the_entities_are_numbered_from_one(spark, built):
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built)
 
-    assert sorted(frame.ID) == [1, 2]
+    assert sorted(frame.id) == [1, 2]
 
 
 @pytest.mark.parametrize("names", [["Beta", "Alpha"], ["Alpha", "Beta"]])
@@ -1902,8 +1902,8 @@ def test_entities_without_an_lei_are_numbered_the_same_way_whatever_the_file_ord
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built)
 
-    without_lei = frame[frame.LEI.isna()].sort_values("ID")
-    assert list(without_lei.NAME) == ["Alpha", "Beta"]
+    without_lei = frame[frame.lei.isna()].sort_values("id")
+    assert list(without_lei["name"]) == ["Alpha", "Beta"]
 
 
 def test_the_columns_are_the_ones_the_module_promises(spark, built):
@@ -1929,11 +1929,11 @@ def test_the_internal_list_replaces_the_public_description(spark, built):
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built)
 
-    assert entity(frame, "LEI1").NAME == "As we call it"
-    assert entity(frame, "LEI1").SECTOR == "CDTI"
-    assert entity(frame, "LEI1").INTERNALID_1 == "A1"
+    assert entity(frame, "LEI1")["name"] == "As we call it"
+    assert entity(frame, "LEI1").sector == "CDTI"
+    assert entity(frame, "LEI1").internal_id_1 == "A1"
     # The entity the internal list is silent about keeps its public description.
-    assert entity(frame, "LEI2").NAME == "Entity LEI2"
+    assert entity(frame, "LEI2")["name"] == "Entity LEI2"
 
 
 def test_entities_the_internal_list_does_not_cover_are_kept(spark, built):
@@ -1943,7 +1943,7 @@ def test_entities_the_internal_list_does_not_cover_are_kept(spark, built):
 
     em.update_silver_entitymasterdata(spark, built)
 
-    assert sorted(main(spark, built).LEI) == ["LEI1", "LEI2"]
+    assert sorted(main(spark, built).lei) == ["LEI1", "LEI2"]
 
 
 def test_internal_entities_without_an_lei_are_all_kept(spark, built):
@@ -1964,7 +1964,7 @@ def test_internal_entities_without_an_lei_are_all_kept(spark, built):
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built)
 
-    assert sorted(frame[frame.LEI.isna()].INTERNALID_1) == ["A1", "A2"]
+    assert sorted(frame[frame.lei.isna()].internal_id_1) == ["A1", "A2"]
     assert len(frame) == 4
 
 
@@ -1977,7 +1977,7 @@ def test_an_internal_identifier_keeps_its_leading_zeros(spark, built):
 
     em.update_silver_entitymasterdata(spark, built)
 
-    assert entity(main(spark, built), "LEI1").INTERNALID_1 == "007"
+    assert entity(main(spark, built), "LEI1").internal_id_1 == "007"
 
 
 def test_the_silver_tables_are_parquet_unless_delta_is_asked_for(spark, built):
@@ -2012,7 +2012,7 @@ def test_a_table_is_read_back_in_the_format_it_was_written_in(spark, data_lake):
     # A second run leaves the first version of the table behind on disk.
     em.update_silver_entitymasterdata(spark, data_lake, file_format="delta")
 
-    assert sorted(main(spark, data_lake).LEI) == ["LEI1", "LEI2"]
+    assert sorted(main(spark, data_lake).lei) == ["LEI1", "LEI2"]
 
 
 def test_the_two_tables_need_not_be_stored_in_the_same_format(spark, data_lake):
@@ -2022,7 +2022,7 @@ def test_the_two_tables_need_not_be_stored_in_the_same_format(spark, data_lake):
 
     assert os.path.isdir(os.path.join(em.path_silver_public(data_lake), "_delta_log"))
     assert not os.path.isdir(os.path.join(em.path_silver_main(data_lake), "_delta_log"))
-    assert sorted(main(spark, data_lake).LEI) == ["LEI1", "LEI2"]
+    assert sorted(main(spark, data_lake).lei) == ["LEI1", "LEI2"]
 
 
 @pytest.mark.parametrize(
@@ -2126,8 +2126,8 @@ def test_the_silver_layer_is_written_into_the_catalogue_where_the_configuration_
         name = f"{schema}.{table}"
         assert spark.catalog.tableExists(name)
         assert spark.sql(f"DESCRIBE DETAIL {name}").first()["format"] == "delta"
-    assert sorted(main(spark, config_path).LEI) == ["LEI1", "LEI2"]
-    assert sorted(public(spark, config_path).LEI) == ["LEI1", "LEI2"]
+    assert sorted(main(spark, config_path).lei) == ["LEI1", "LEI2"]
+    assert sorted(public(spark, config_path).lei) == ["LEI1", "LEI2"]
 
 
 def test_a_table_missing_from_the_catalogue_is_reported_as_such(spark, tmp_path, schema):
@@ -2166,7 +2166,7 @@ def test_an_lei_with_a_trailing_space_still_finds_its_entity(spark, data_lake):
 
     em.update_silver_entitymasterdata_public(spark, data_lake)
 
-    assert entity(public(spark, data_lake), KDPW).SECTOR == "CCP"
+    assert entity(public(spark, data_lake), KDPW).sector == "CCP"
 
 
 def test_an_lei_in_lower_case_still_finds_its_entity(spark, data_lake):
@@ -2175,7 +2175,7 @@ def test_an_lei_in_lower_case_still_finds_its_entity(spark, data_lake):
 
     em.update_silver_entitymasterdata_public(spark, data_lake)
 
-    assert entity(public(spark, data_lake), FUND).SECTOR == "ORPI"
+    assert entity(public(spark, data_lake), FUND).sector == "ORPI"
 
 
 def test_a_non_breaking_space_is_removed_as_well(spark, data_lake):
@@ -2184,7 +2184,7 @@ def test_a_non_breaking_space_is_removed_as_well(spark, data_lake):
 
     em.update_silver_entitymasterdata_public(spark, data_lake)
 
-    assert entity(public(spark, data_lake), KDPW).SECTOR == "CDTI"
+    assert entity(public(spark, data_lake), KDPW).sector == "CDTI"
 
 
 def test_a_parent_written_differently_is_written_as_gleif_writes_it(spark, data_lake):
@@ -2196,7 +2196,7 @@ def test_a_parent_written_differently_is_written_as_gleif_writes_it(spark, data_
 
     em.update_silver_entitymasterdata_public(spark, data_lake)
 
-    assert entity(public(spark, data_lake), KDPW).ULTPAR_LEI == FUND
+    assert entity(public(spark, data_lake), KDPW).ultimate_parent_lei == FUND
 
 
 def test_an_lei_that_is_malformed_even_so_is_named_with_its_register(spark, data_lake, caplog):
@@ -2225,7 +2225,7 @@ def test_an_internal_lei_with_a_trailing_space_displaces_the_public_row(spark, b
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built)
 
-    assert entity(frame, "LEI1").NAME == "As we call it"
+    assert entity(frame, "LEI1")["name"] == "As we call it"
     assert len(frame) == 2
 
 
@@ -2264,7 +2264,7 @@ def test_internal_entities_without_an_lei_are_not_duplicates_of_one_another(spar
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built)
 
-    assert sorted(frame[frame.LEI.isna()].INTERNALID_1) == ["A1", "A2"]
+    assert sorted(frame[frame.lei.isna()].internal_id_1) == ["A1", "A2"]
 
 
 # The catch-all entities
@@ -2290,8 +2290,8 @@ def test_the_catch_all_entities_are_in_the_table(spark, built):
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built, catch_all=True)
 
-    assert entity(frame, em.LEI_OTHER).NAME == "Other"
-    assert entity(frame, em.LEI_UNKNOWN).NAME == "Unknown"
+    assert entity(frame, em.LEI_OTHER)["name"] == "Other"
+    assert entity(frame, em.LEI_UNKNOWN)["name"] == "Unknown"
     assert len(frame) == 4
 
 
@@ -2302,7 +2302,7 @@ def test_a_catch_all_entity_the_internal_list_describes_is_described_by_it(spark
     em.update_silver_entitymasterdata(spark, built)
     frame = main(spark, built, catch_all=True)
 
-    assert entity(frame, em.LEI_OTHER).NAME == "Rest of the market"
+    assert entity(frame, em.LEI_OTHER)["name"] == "Rest of the market"
 
 
 def test_the_catch_all_entities_are_not_named_as_malformed(spark, built, caplog):

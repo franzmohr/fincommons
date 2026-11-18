@@ -64,40 +64,40 @@ def test_an_accession_number_is_recognised_by_its_shape():
 def test_a_filing_is_reconstructed_from_the_accession_numbers():
     filings = rows(parse.filings_from_company(US), filings_schema)
 
-    assert {f["FILING"] for f in filings} == {ANNUAL, QUARTERLY}
+    assert {f["filing"] for f in filings} == {ANNUAL, QUARTERLY}
 
 
 def test_a_filing_says_what_it_stated_and_how_much():
-    filings = {f["FILING"]: f for f in rows(parse.filings_from_company(US),
+    filings = {f["filing"]: f for f in rows(parse.filings_from_company(US),
                                             filings_schema)}
 
     annual = filings[ANNUAL]
-    assert annual["FORM"] == "10-K"
-    assert annual["FILED"] == date(2026, 1, 20)
-    assert annual["FACTS"] == 2
-    assert annual["NAME"] == "Demo Registrant Inc."
-    assert annual["CIK"] == "0001177394"
+    assert annual["form"] == "10-K"
+    assert annual["filed"] == date(2026, 1, 20)
+    assert annual["facts"] == 2
+    assert annual["name"] == "Demo Registrant Inc."
+    assert annual["cik"] == "0001177394"
 
 
 def test_the_period_is_not_taken_from_the_cover_page():
     """The cover page states the shares outstanding at a date after the
     period closed -- here 23 September for a period ending 31 August -- so
     counting it would make the filing look as though it reported on it."""
-    filings = {f["FILING"]: f for f in rows(parse.filings_from_company(US),
+    filings = {f["filing"]: f for f in rows(parse.filings_from_company(US),
                                             filings_schema)}
 
-    assert filings[QUARTERLY]["PERIODEND"] == date(2026, 8, 31)
+    assert filings[QUARTERLY]["period_end"] == date(2026, 8, 31)
 
 
 def test_the_period_is_the_latest_the_filing_reports_on():
     """The quarterly report states the prior year end as a comparative; the
     period it is about is the later of the two."""
     quarterly = [f for f in rows(parse.filings_from_company(US), filings_schema)
-                 if f["FILING"] == QUARTERLY][0]
+                 if f["filing"] == QUARTERLY][0]
 
-    assert quarterly["PERIODEND"] == date(2026, 8, 31)
-    assert quarterly["FP"] == "Q3"
-    assert quarterly["FY"] == 2026
+    assert quarterly["period_end"] == date(2026, 8, 31)
+    assert quarterly["fp"] == "Q3"
+    assert quarterly["fy"] == 2026
 
 
 # The framework
@@ -107,8 +107,8 @@ def test_the_period_is_the_latest_the_filing_reports_on():
 def test_the_framework_comes_from_the_taxonomies_the_filing_tagged_against():
     filings = rows(parse.filings_from_company(US), filings_schema)
 
-    assert {f["FRAMEWORK"] for f in filings} == {"US-GAAP"}
-    assert "dei;us-gaap" in {f["TAXONOMIES"] for f in filings}
+    assert {f["framework"] for f in filings} == {"US-GAAP"}
+    assert "dei;us-gaap" in {f["taxonomies"] for f in filings}
 
 
 def test_a_foreign_private_issuer_reporting_under_ifrs_is_recognised():
@@ -117,7 +117,7 @@ def test_a_foreign_private_issuer_reporting_under_ifrs_is_recognised():
     make it incomparable with the European reports it is comparable to."""
     filings = rows(parse.filings_from_company(IFRS), filings_schema)
 
-    assert [f["FRAMEWORK"] for f in filings] == ["IFRS"]
+    assert [f["framework"] for f in filings] == ["IFRS"]
 
 
 def test_the_cover_page_taxonomy_says_nothing_about_the_framework():
@@ -132,8 +132,8 @@ def test_the_cover_page_taxonomy_says_nothing_about_the_framework():
 def test_a_fact_carries_the_filing_it_came_from():
     facts = rows(parse.facts_from_company(US), facts_schema)
 
-    assert all(parse.is_accession(f["FILING"]) for f in facts)
-    assert {f["CIK"] for f in facts} == {"0001177394"}
+    assert all(parse.is_accession(f["filing"]) for f in facts)
+    assert {f["cik"] for f in facts} == {"0001177394"}
 
 
 def test_a_restated_figure_appears_under_both_filings():
@@ -141,26 +141,26 @@ def test_a_restated_figure_appears_under_both_filings():
     the reconstruction exact: each filing says what it said."""
     facts = rows(parse.facts_from_company(US), facts_schema)
     assets = [f for f in facts
-              if f["CONCEPT"] == "us-gaap:Assets" and f["PRDEND"] == date(2025, 11, 30)]
+              if f["concept"] == "us-gaap:Assets" and f["prd_end"] == date(2025, 11, 30)]
 
-    assert {f["FILING"] for f in assets} == {ANNUAL, QUARTERLY}
-    assert sorted(f["VALUE"] for f in assets) == [100.0, 101.0]
+    assert {f["filing"] for f in assets} == {ANNUAL, QUARTERLY}
+    assert sorted(f["value"] for f in assets) == [100.0, 101.0]
 
 
 def test_a_duration_and_an_instant_are_told_apart():
-    facts = {f["CONCEPT"]: f for f in rows(parse.facts_from_company(US),
+    facts = {f["concept"]: f for f in rows(parse.facts_from_company(US),
                                            facts_schema)}
 
-    assert facts["us-gaap:Revenues"]["PRDSTART"] == date(2024, 12, 1)
-    assert facts["us-gaap:Revenues"]["PRDEND"] == date(2025, 11, 30)
-    assert facts["dei:EntityCommonStockSharesOutstanding"]["PRDSTART"] is None
+    assert facts["us-gaap:Revenues"]["prd_start"] == date(2024, 12, 1)
+    assert facts["us-gaap:Revenues"]["prd_end"] == date(2025, 11, 30)
+    assert facts["dei:EntityCommonStockSharesOutstanding"]["prd_start"] is None
 
 
 def test_a_fact_gets_an_identifier_that_is_the_same_on_a_second_reading():
     """A company file is republished whole and read again, and the table must
     not grow when it is."""
-    first = [f[facts_schema.names.index("FACT")] for f in parse.facts_from_company(US)]
-    again = [f[facts_schema.names.index("FACT")] for f in parse.facts_from_company(US)]
+    first = [f[facts_schema.names.index("fact")] for f in parse.facts_from_company(US)]
+    again = [f[facts_schema.names.index("fact")] for f in parse.facts_from_company(US)]
 
     assert first == again
     assert len(set(first)) == len(first)
@@ -171,7 +171,7 @@ def test_the_partition_is_the_year_the_filing_was_made():
     one filing states several of them."""
     facts = rows(parse.facts_from_company(US), facts_schema)
 
-    assert all(f["FILEDYEAR"] == f["FILED"].year for f in facts)
+    assert all(f["filed_year"] == f["filed"].year for f in facts)
 
 
 # Which forms are kept
@@ -183,14 +183,14 @@ def test_only_the_periodic_reports_are_kept_by_default():
     an 8-K announcing a result among them."""
     facts = rows(parse.facts_from_company(US), facts_schema)
 
-    assert "8-K" not in {f["FORM"] for f in facts}
-    assert "us-gaap:AnnouncedResult" not in {f["CONCEPT"] for f in facts}
+    assert "8-K" not in {f["form"] for f in facts}
+    assert "us-gaap:AnnouncedResult" not in {f["concept"] for f in facts}
 
 
 def test_every_form_is_kept_where_the_run_asks_for_it():
     facts = rows(parse.facts_from_company(US, forms=None), facts_schema)
 
-    assert "8-K" in {f["FORM"] for f in facts}
+    assert "8-K" in {f["form"] for f in facts}
 
 
 def test_an_amendment_counts_as_the_form_it_amends():
@@ -206,12 +206,12 @@ def test_an_amendment_counts_as_the_form_it_amends():
 
 def test_the_counts_of_a_filing_match_the_facts_it_yields():
     filings, facts = parse.read_company(US)
-    counted = {f[filings_schema.names.index("FILING")]:
-               f[filings_schema.names.index("FACTS")] for f in filings}
+    counted = {f[filings_schema.names.index("filing")]:
+               f[filings_schema.names.index("facts")] for f in filings}
 
     actual = {}
     for fact in facts:
-        key = fact[facts_schema.names.index("FILING")]
+        key = fact[facts_schema.names.index("filing")]
         actual[key] = actual.get(key, 0) + 1
 
     assert counted == actual

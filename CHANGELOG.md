@@ -4,6 +4,79 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
+## 0.5.0
+
+The columns of the Silver layer are renamed from the compressed upper case of
+ISO 20022 to snake_case in English words. Every module is converted, which
+breaks every Silver table the package writes.
+
+### Changed
+
+- The Silver columns of `exchangerate`, `entitymasterdata`, `famafrenchdata`,
+  `marketpricedata`, `esef`, `sec`, `edinet`, `financialreport` and `firds` are
+  snake_case: `ref_date`, `instr_id`, `value`, `period_end`, `prd_start`,
+  `maturity_date`, `trading_venue`, `nominal_value_per_unit_currency` and so
+  on. `docs/column_rename.csv` is the table of decisions, one row per column,
+  with the state of each: 215 columns renamed, and 5 names kept because they
+  belong to the Bronze layer.
+- The Bronze layer does not follow. A Bronze table records what a publisher
+  sent and keeps the names it sent, so the rename happens where Bronze is read
+  into Silver: `entitymasterdata.with_silver_names` and
+  `marketpricedata.with_silver_names` do it for the registers and the price
+  deliveries, `esef.FILING_RECORD_KEYS` for the filing index, and the Silver
+  stages of `exchangerate` and `marketpricedata` for the proprietary files.
+- The files kept by hand keep upper case, because their header is an input
+  contract: `exchangerate.csv`, `marketpricedata_internal.csv` and the
+  proprietary entity list. So do the mapping tables shipped in `data/`
+  (`isin_yahoo.csv` and the others, whose header is `ISIN` or `INSTRID`), and
+  the Bronze partition columns `DATASET`, `LASTDT` and `DATADT`.
+  The reference date of `exchangerate.csv` is now `REFDT` rather than
+  `REFDATE`, so a file kept by hand needs that one header changed.
+- `columns`: `SNAKE_CASE_MODULES` says which modules are converted, and
+  `defined_columns` reads lower-case names as columns only for those. Upper
+  case had been doing a second job -- marking a name as a column at all -- and
+  in a converted module only the leading underscore is left to do it, so the
+  intermediates are now `_next_date`, `_source_rank`, `_rows`, `_error`,
+  `_count`, `_leis`, `_rn`, `_dates`, `_POS` and `_DELIVERY`.
+- The column catalogue states a Bronze input and the Silver table it feeds as
+  separate rows, since the two no longer share a name. It has 198 rows where
+  it had 192.
+- `entitymasterdata`: `INTERNAL_COLUMNS` and `INTERNAL_ID_COLUMNS` no longer
+  follow `COLUMNS`, because the proprietary list keeps upper case while the
+  table does not; `INTERNAL_ID_SILVER` is the same four columns as the table
+  names them. `warn_of_malformed_leis` takes the name of the LEI column, so
+  that the proprietary list can still be checked on its normalised value
+  before it is read into the Silver names.
+- The Quarto templates read the new names. Three of them set a parameter by
+  hand whose name the rename would have collided with -- the issuer's LEI, a
+  registrant's CIK, a filer's EDINET code -- and a collision there is silent:
+  `filter(LEI == lei)` would have become `filter(lei == lei)`, which is true
+  of every row. They are now `issuer_lei`, `issuer_cik` and
+  `filer_edinet_code`, and the report language is `report_lang` for the same
+  reason.
+- The handbook argues the convention in section *Naming conventions*: why the
+  ISO 20022 spelling was there, why provenance belongs in the catalogue's
+  `source` column rather than in the name, why Bronze does not follow, and why
+  the conversion is a reviewed table of decisions rather than a lowering of
+  case.
+
+- `firds` is converted too: `isin`, `trading_venue`, `maturity_date`,
+  `notional_currency`, `valid_from`, `valid_to`, `latest_record` and the rest,
+  including `ANALYTICS_COLUMNS` and the constants of `history`. `DATADT` keeps
+  its name: it is the partition directory of the Bronze layer
+  (`DATADT=<date>`), and although `silver.py` attaches it to the frame it
+  reads, no Silver table carries it. The value `"ISIN"` of
+  `interest_rate_floating_id_type` also keeps its case, being data rather than
+  a column, and so stays beside its siblings `Index` and `Name`.
+- `describe_column` folds case instead of upper-casing what it is asked for,
+  since a snake_case column could never be found by upper-casing it, and
+  `defined_columns` takes a `snake_case` argument so that a package built on
+  this one can say how far its own modules have been converted.
+- `NOT_COLUMNS` names the three lower-case aliases that are not columns of any
+  table and cannot be marked with an underscore: `src` and `tgt`, the two
+  sides of a Delta MERGE, and `checksum`, which belongs to the landing
+  register and is read with Polars.
+
 ## 0.4.0
 
 The combined tables of `financialreport` answer eight measures of a
@@ -625,6 +698,22 @@ a `MEASURE` column.
 
 ### Changed
 
+- `exchangerate`: a Silver update with `use_bis = True` ends the table on the
+  latest date for which BIS data is available. The BIS publishes its bulk
+  statistics several days late, and the days beyond it were described by the
+  ECB and the proprietary source alone: a pair only the BIS quotes stopped
+  days before the rest, and the day an amount was converted on decided which
+  currencies the table covered. The cut keeps the whole table on the same
+  footing, at the price of the few newest days of the other sources, which the
+  next run picks up once the BIS has caught up. It is applied after the days
+  without a quote are filled, so a day before the cut still carries the last
+  rate quoted on or before it. A run without the BIS is unchanged: every
+  source counts up to its own last day. Where the BIS data in the Bronze layer
+  holds no daily average at all there is no day to cut back to, and the update
+  is refused before anything is written rather than replacing the table with
+  an empty one. The log line of the combination names the cut-off beside the
+  last day of each source.
+
 - No module of the package opens a Spark session. The three entry points that
   did -- `python -m fincommons.marketpricedata`, `python -m
   fincommons.famafrenchdata` and `python -m fincommons.financialreport.esef`
@@ -664,6 +753,54 @@ a `MEASURE` column.
   Which of two copies of a file is kept is settled before any file is read, in
   the order the names sort in, so that it does not turn on the order the reads
   finish in.
+
+- `firds`: `update_from_bronze_to_silver_main` applies a reference date for
+  less. Four things it did per date cost more than what they did was worth.
+  The plan of a file no longer shuffles the history. `history.plan_changes`
+  joins one day's records against the versions in force, and the versions in
+  force are most of the table: far too large to be the broadcast side of that
+  join, so Spark sorted and shuffled the whole of them, every date, to be met
+  by a few thousand records. The open versions are now cut down first, by a
+  semi-join against the keys the file carries, which a left semi-join may
+  broadcast -- so the history is read once, three columns of it, probed
+  against a hash table of the day's keys, and never shuffled. What survives is
+  at most one row per key of the file and is broadcast in turn, which leaves
+  the plan with no shuffle of the history in it at all. It is the same plan:
+  the join could only ever have used an open version whose instrument the file
+  names.
+  `history.prepare_incoming` costs one shuffle instead of three. It opened
+  with a `dropDuplicates` over every column of every record, and the step
+  after it already kept one record per instrument and day -- which an exact
+  duplicate cannot survive either -- so a full-width shuffle was finding what
+  was removed anyway. That step and the chaining that follows are now taken on
+  one window, and share its exchange and its sort -- the latter because the
+  order the window reads the records in is a column of its own rather than an
+  expression each use of the window computes again under a name of its own,
+  which left Spark unable to see that two uses asked for the same order and
+  sorting the records once per use. One exchange and one sort, against three
+  of each.
+  The two checks of a file's records are one pass. Each counted on its own,
+  and a file was flattened into the analytics schema once per count and again
+  for the plan; `check_incoming_records` counts both at once, the flattened
+  records are held while the date is applied, and a file is refused with the
+  message it was refused with before. The two checks remain, for a caller that
+  wants one of them.
+  Resuming a date reads the end of the transaction log rather than all of it.
+  `committed_steps` asks for the tags of a date that a previous run left
+  applied in part, and such a date is the one the table was written by last;
+  it asked Delta for the whole history of the table, which reads every commit
+  file in the log. The log grows by a few commits for every date applied, so a
+  run that builds the history from the start of the sample read a log of
+  thousands of commit files once per date and the reading of it alone grew
+  with the square of the dates. It now reads a window of the most recent
+  commits, `RESUME_COMMITS` of them, which cannot mistake a tag of a replaced
+  history for one of the history as it stands: either the commit that wrote
+  the table from scratch is in the window, and the walk stops at it as it did
+  before, or it is older than every commit in the window. `tagged_commits`
+  takes the window as `limit` and looks at the whole log without one, which is
+  what `watermark_from_commits` still does.
+  None of this changes the history a file produces, and the tests of section
+  4.2 are unchanged.
 
 - `financialreport`: `edinet` is a third source of the combined tables.
   `SOURCES` names it, `facts_from_edinet` and `filings_from_edinet` reduce it

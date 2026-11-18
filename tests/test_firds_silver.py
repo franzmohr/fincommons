@@ -132,14 +132,14 @@ def test_a_failure_to_read_the_table_is_not_taken_for_an_empty_database(
 
 
 def history_row(isin, tradgvn, cfi="ESVUFR", issuer="ISSUER1", actntp="ModfdRcrd"):
-    return (isin, tradgvn, cfi, issuer, "NAME", "2030-01-01", "2030-01-01", "1.0",
+    return (isin, tradgvn, cfi, issuer, "name", "2030-01-01", "2030-01-01", "1.0",
             True, actntp)
 
 
 HISTORY_SCHEMA = (
-    "ISIN string, TRADGVN string, CFI string, ISSUER string, SHORTNAME string, "
-    "MTRTYDT string, XPRYDT string, PRICMLTPLR string, LATESTRECORD boolean, "
-    "ACTNTP string"
+    "isin string, trading_venue string, cfi string, issuer string, short_name string, "
+    "maturity_date string, expiry_date string, price_multiplier string, latest_record boolean, "
+    "action_type string"
 )
 
 
@@ -162,14 +162,14 @@ def test_the_compact_table_holds_one_row_per_isin(spark, config):
 
     compact = common.connect_to_firds(spark, config, "compact")
     assert compact.count() == 2
-    trading_venues = {r["ISIN"]: r["TRADGVN"] for r in compact.collect()}
+    trading_venues = {r["isin"]: r["trading_venue"] for r in compact.collect()}
     assert sorted(trading_venues["ISIN1"].split("+")) == ["MIC1", "MIC2"]
 
 
 TYPED_HISTORY_SCHEMA = (
-    "ISIN string, TRADGVN string, CFI string, ISSUER string, SHORTNAME string, "
-    "MTRTYDT date, XPRYDT date, PRICMLTPLR decimal(35,17), LATESTRECORD boolean, "
-    "ACTNTP string"
+    "isin string, trading_venue string, cfi string, issuer string, short_name string, "
+    "maturity_date date, expiry_date date, price_multiplier decimal(35,17), latest_record boolean, "
+    "action_type string"
 )
 
 
@@ -187,15 +187,15 @@ def test_venues_that_disagree_leave_the_typed_columns_empty(spark, config):
 
     silver.update_from_silver_main_to_silver_compact(spark, config)
 
-    rows = {r["ISIN"]: r for r in common.connect_to_firds(spark, config, "compact").collect()}
-    assert rows["ISIN1"]["MTRTYDT"] is None
-    assert rows["ISIN1"]["XPRYDT"] == date(2027, 1, 1)
-    assert rows["ISIN1"]["PRICMLTPLR"] is None
-    assert rows["ISIN2"]["MTRTYDT"] == date(2029, 1, 1)
-    assert rows["ISIN2"]["XPRYDT"] is None
-    assert rows["ISIN2"]["PRICMLTPLR"] == Decimal("5")
+    rows = {r["isin"]: r for r in common.connect_to_firds(spark, config, "compact").collect()}
+    assert rows["ISIN1"]["maturity_date"] is None
+    assert rows["ISIN1"]["expiry_date"] == date(2027, 1, 1)
+    assert rows["ISIN1"]["price_multiplier"] is None
+    assert rows["ISIN2"]["maturity_date"] == date(2029, 1, 1)
+    assert rows["ISIN2"]["expiry_date"] is None
+    assert rows["ISIN2"]["price_multiplier"] == Decimal("5")
     assert dict(common.connect_to_firds(spark, config, "compact").dtypes)[
-        "PRICMLTPLR"] == "decimal(35,17)"
+        "price_multiplier"] == "decimal(35,17)"
 
 
 def test_a_cancelled_record_is_left_out_of_the_compact_table(spark, config):
@@ -211,8 +211,8 @@ def test_a_cancelled_record_is_left_out_of_the_compact_table(spark, config):
 
     silver.update_from_silver_main_to_silver_compact(spark, config)
 
-    rows = {r["ISIN"]: r for r in common.connect_to_firds(spark, config, "compact").collect()}
-    assert rows["ISIN1"]["TRADGVN"] == "MIC_LIVE"
+    rows = {r["isin"]: r for r in common.connect_to_firds(spark, config, "compact").collect()}
+    assert rows["ISIN1"]["trading_venue"] == "MIC_LIVE"
     # Every venue of ISIN2 was cancelled, so it trades nowhere and leaves the
     # table rather than standing in it with no venue.
     assert "ISIN2" not in rows
@@ -228,7 +228,7 @@ def test_the_venues_of_an_isin_are_joined_in_order(spark, config):
     silver.update_from_silver_main_to_silver_compact(spark, config)
 
     row = common.connect_to_firds(spark, config, "compact").first()
-    assert row["TRADGVN"] == "+".join(venues)
+    assert row["trading_venue"] == "+".join(venues)
 
 
 def test_a_field_no_venue_states_is_empty_rather_than_blank(spark, config):
@@ -243,9 +243,9 @@ def test_a_field_no_venue_states_is_empty_rather_than_blank(spark, config):
     silver.update_from_silver_main_to_silver_compact(spark, config)
 
     row = common.connect_to_firds(spark, config, "compact").first()
-    assert row["CFI"] is None
-    assert row["ISSUER"] is None
-    assert row["TRADGVN"] == "MIC1+MIC2"
+    assert row["cfi"] is None
+    assert row["issuer"] is None
+    assert row["trading_venue"] == "MIC1+MIC2"
 
 
 def test_a_value_one_venue_states_alone_is_kept(spark, config):
@@ -257,7 +257,7 @@ def test_a_value_one_venue_states_alone_is_kept(spark, config):
 
     silver.update_from_silver_main_to_silver_compact(spark, config)
 
-    assert common.connect_to_firds(spark, config, "compact").first()["CFI"] == "ESVUFR"
+    assert common.connect_to_firds(spark, config, "compact").first()["cfi"] == "ESVUFR"
 
 
 def test_the_compact_table_keeps_the_format_it_is_stored_in(spark, config):
@@ -307,7 +307,7 @@ def test_the_compact_table_is_read_back_in_the_format_it_was_written_in(spark, c
     silver.update_from_silver_main_to_silver_compact(spark, config, file_format="delta")
 
     compact = common.connect_to_firds(spark, config, "compact")
-    assert [r["ISIN"] for r in compact.collect()] == ["ISIN2"]
+    assert [r["isin"] for r in compact.collect()] == ["ISIN2"]
 
 
 def test_an_unknown_file_format_is_reported_as_such(config):
@@ -325,7 +325,7 @@ def test_rebuilding_the_compact_table_replaces_it(spark, config):
     silver.update_from_silver_main_to_silver_compact(spark, config)
 
     compact = common.connect_to_firds(spark, config, "compact")
-    assert [r["ISIN"] for r in compact.collect()] == ["ISIN3"]
+    assert [r["isin"] for r in compact.collect()] == ["ISIN3"]
 
 
 # What the run leaves behind in the log
@@ -393,7 +393,7 @@ BRONZE_SCHEMA = types.StructType(
 #: carries the whole analytics schema; the algorithm touches the key, the
 #: publication date it derives the validity dates from, and the flags.
 FULL_SCHEMA = (
-    "ISIN string, TRADGVN string, FULLNAME string, TECH_PBLCTNPRD_FRDT date"
+    "isin string, trading_venue string, full_name string, tech_publication_period_from_date date"
 )
 
 
@@ -478,8 +478,8 @@ def through_reference(spark, full, files):
 
 def versions(built):
     """The history as comparable rows, in a fixed order."""
-    columns = ["ISIN", "TRADGVN", "FULLNAME", "VLDFROM", "VLDTO",
-               "LATESTRECORD", "ACTNTP"]
+    columns = ["isin", "trading_venue", "full_name", "valid_from", "valid_to",
+               "latest_record", "action_type"]
     return sorted(
         tuple(str(row[name]) for name in columns)
         for row in built.select(*columns).collect()
@@ -581,20 +581,20 @@ def test_a_cancellation_of_a_delta_file_reaches_the_history(spark):
 
     assert incoming.count() == 1, "the cancellation did not reach the history"
     cancellation = incoming.first()
-    assert cancellation["ACTNTP"] == "CancRcrd"
-    assert (cancellation["ISIN"], cancellation["TRADGVN"]) == ("ISIN1", "MIC1")
+    assert cancellation["action_type"] == "CancRcrd"
+    assert (cancellation["isin"], cancellation["trading_venue"]) == ("ISIN1", "MIC1")
     # The reduced record carries no publication period, so the version begins
     # on the reference date of the file that cancels the combination.
-    assert cancellation["TECH_PBLCTNPRD_FRDT"] == date(2016, 9, 4)
+    assert cancellation["tech_publication_period_from_date"] == date(2016, 9, 4)
     # It states nothing about the instrument itself.
-    assert cancellation["FULLNAME"] is None
+    assert cancellation["full_name"] is None
 
     built = history.apply_changes(history.initialise_history(full), incoming)
-    rows = sorted(built.collect(), key=lambda row: row["VLDFROM"])
+    rows = sorted(built.collect(), key=lambda row: row["valid_from"])
 
-    assert [row["VLDTO"] for row in rows] == [date(2016, 9, 3), None]
-    assert [row["LATESTRECORD"] for row in rows] == [False, True]
-    assert rows[1]["ACTNTP"] == "CancRcrd"
+    assert [row["valid_to"] for row in rows] == [date(2016, 9, 3), None]
+    assert [row["latest_record"] for row in rows] == [False, True]
+    assert rows[1]["action_type"] == "CancRcrd"
 
 
 @pytest.mark.parametrize(
@@ -686,7 +686,7 @@ def test_reapplying_a_file_leaves_the_history_unchanged(spark, config):
     built = spark.read.format("delta").load(path)
 
     assert versions(built) == once
-    assert built.where(func.col("VLDTO") < func.col("VLDFROM")).count() == 0
+    assert built.where(func.col("valid_to") < func.col("valid_from")).count() == 0
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-06"
 
 
@@ -722,6 +722,28 @@ def test_a_run_that_died_between_merge_and_append_is_resumed(monkeypatch, spark,
     )
 
 
+def test_the_tags_a_date_is_resumed_by_are_at_the_end_of_the_log(spark, config):
+    """What the window of committed_steps rests on. The update writes nothing
+    to the table between one date and the next, so the tags of the date the
+    table was written by last are its newest commits, and a window of the log
+    reaches them without the whole of it having to be read."""
+    full = full_file(spark, RESUMED_FULL)
+    start_history(spark, config, full)
+    apply_day(spark, config, *RESUMED_FILE)
+    ref = common.ref_silver_main(config)
+
+    windowed = silver.tagged_commits(spark, ref, limit=2)
+    assert len(windowed) == 2
+    assert windowed == silver.tagged_commits(spark, ref)[:2]
+    assert [tag for _, tag in windowed] == [
+        silver.commit_tag("2016-09-06", "append"),
+        silver.commit_tag("2016-09-06", "merge"),
+    ]
+    assert silver.committed_steps(spark, ref, "2016-09-06").keys() == {
+        "current", "merge", "append",
+    }
+
+
 def test_a_history_built_again_does_not_inherit_the_tags_of_the_old_one(spark, config):
     """Writing the history from scratch starts its commits afresh; a date
     applied to the old history is applied to the new one again."""
@@ -743,10 +765,10 @@ def test_a_history_built_again_does_not_inherit_the_tags_of_the_old_one(spark, c
 #: Amounts as a history of doubles holds them, chosen so that each has an
 #: exact decimal of its column's type.
 LEGACY_AMOUNTS = {
-    "TOTALISSUEDNOMINALAMT": 1500000.25,
-    "NMNLVALPERUNITAMT": 1000.0,
-    "INTRSTRATEFXD": 0.0375,
-    "PRICMLTPLR": 100.5,
+    "total_issued_nominal_amount": 1500000.25,
+    "nominal_value_per_unit_amount": 1000.0,
+    "interest_rate_fixed": 0.0375,
+    "price_multiplier": 100.5,
 }
 
 
@@ -770,10 +792,10 @@ def test_the_amounts_are_read_as_the_decimals_of_the_xml_schema():
     """The types the history carries are the decimals the XSD states, not
     doubles."""
     assert silver.DECIMAL_COLUMNS == {
-        "TOTALISSUEDNOMINALAMT": "decimal(23,5)",
-        "NMNLVALPERUNITAMT": "decimal(23,5)",
-        "INTRSTRATEFXD": "decimal(21,10)",
-        "PRICMLTPLR": "decimal(35,17)",
+        "total_issued_nominal_amount": "decimal(23,5)",
+        "nominal_value_per_unit_amount": "decimal(23,5)",
+        "interest_rate_fixed": "decimal(21,10)",
+        "price_multiplier": "decimal(35,17)",
     }
 
 
@@ -787,10 +809,10 @@ def test_a_history_of_doubles_is_rewritten_as_decimals(spark, config):
         silver.DECIMAL_COLUMNS
     assert built.count() == len(RESUMED_FULL)
     row = built.first()
-    assert row["TOTALISSUEDNOMINALAMT"] == Decimal("1500000.25")
-    assert row["NMNLVALPERUNITAMT"] == Decimal("1000")
-    assert row["INTRSTRATEFXD"] == Decimal("0.0375")
-    assert row["PRICMLTPLR"] == Decimal("100.5")
+    assert row["total_issued_nominal_amount"] == Decimal("1500000.25")
+    assert row["nominal_value_per_unit_amount"] == Decimal("1000")
+    assert row["interest_rate_fixed"] == Decimal("0.0375")
+    assert row["price_multiplier"] == Decimal("100.5")
 
 
 def test_the_rewrite_keeps_the_watermark_and_the_layout(spark, config):
@@ -820,13 +842,13 @@ def test_a_history_of_decimals_is_left_alone(spark, config):
 def test_a_value_that_does_not_fit_its_decimal_stops_the_rewrite(spark, config):
     """The cast would make it a null, and an amount lost that way is found
     much later if at all."""
-    path = legacy_history(spark, config, dict(LEGACY_AMOUNTS, TOTALISSUEDNOMINALAMT=1e30))
+    path = legacy_history(spark, config, dict(LEGACY_AMOUNTS, total_issued_nominal_amount=1e30))
 
-    with pytest.raises(RuntimeError, match=r"2 in TOTALISSUEDNOMINALAMT \(decimal\(23,5\)\)"):
+    with pytest.raises(RuntimeError, match=r"2 in total_issued_nominal_amount \(decimal\(23,5\)\)"):
         silver.migrate_silver_main_to_decimal(spark, config)
 
     assert dict(spark.read.format("delta").load(path).dtypes)[
-        "TOTALISSUEDNOMINALAMT"] == "double"
+        "total_issued_nominal_amount"] == "double"
 
 
 def test_a_half_committed_update_stops_the_rewrite(monkeypatch, spark, config):
@@ -854,7 +876,7 @@ def test_the_daily_update_rewrites_a_history_of_doubles_first(spark, config):
     built = spark.read.format("delta").load(path)
     assert {c: t for c, t in built.dtypes if c in silver.DECIMAL_COLUMNS} == \
         silver.DECIMAL_COLUMNS
-    assert sorted(r["ISIN"] for r in built.collect()) == ["ISIN1", "ISIN2", "ISIN3"]
+    assert sorted(r["isin"] for r in built.collect()) == ["ISIN1", "ISIN2", "ISIN3"]
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-06"
 
 
@@ -893,7 +915,7 @@ def test_the_update_stops_at_the_first_incomplete_day(spark, config):
 
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-04"
     built = spark.read.format("delta").load(path)
-    assert sorted(r["FULLNAME"] for r in built.collect()) == ["A", "Company X"]
+    assert sorted(r["full_name"] for r in built.collect()) == ["A", "Company X"]
 
     # Once the part has arrived, the update carries on from there.
     finished(config, "DLTINS_20160905_01of02.zip")
@@ -964,7 +986,7 @@ def test_the_newest_full_file_is_taken_whichever_definition_it_has(spark, config
     silver.update_from_bronze_to_silver_main(spark, config)
 
     rows = common.connect_to_firds(spark, config, "main").collect()
-    assert [row["ISIN"] for row in rows] == ["NEW"]
+    assert [row["isin"] for row in rows] == ["NEW"]
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2019-09-28"
 
 
@@ -1067,7 +1089,7 @@ def test_the_history_starts_from_the_newest_full_file(spark, config):
     silver.update_from_bronze_to_silver_main(spark, config)
 
     built = common.connect_to_firds(spark, config, "main")
-    assert [r["ISIN"] for r in built.collect()] == ["NEW"]
+    assert [r["isin"] for r in built.collect()] == ["NEW"]
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-09"
 
 
@@ -1086,7 +1108,7 @@ def test_the_history_starts_from_the_full_file_the_landing_zone_records(spark, c
     silver.update_from_bronze_to_silver_main(spark, config)
 
     built = common.connect_to_firds(spark, config, "main")
-    assert [r["ISIN"] for r in built.collect()] == ["OLD"]
+    assert [r["isin"] for r in built.collect()] == ["OLD"]
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-02"
 
 
@@ -1266,7 +1288,7 @@ def test_a_history_whose_start_was_moved_back_is_built_again(spark, config):
     silver.update_from_bronze_to_silver_main(spark, config)
 
     built = common.connect_to_firds(spark, config, "main")
-    assert sorted(r["ISIN"] for r in built.collect()) == ["ISIN9", "OLD"]
+    assert sorted(r["isin"] for r in built.collect()) == ["ISIN9", "OLD"]
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-05"
     assert landing.read_landing_state(config)["history_from"] == "2016-09-02"
 
@@ -1635,7 +1657,7 @@ def test_a_partition_written_with_two_schemas_is_read_as_one(spark, config, capl
 
     with caplog.at_level(logging.WARNING):
         read = read_partition(spark, config, day)
-    rates = {r["ISIN"]: r["INTRSTRATEFXD"] for r in
+    rates = {r["isin"]: r["interest_rate_fixed"] for r in
              silver.read_daily_changes(read).collect()}
 
     assert rates == {"ISIN1": 1.5, "ISIN2": 2.5}
@@ -1655,7 +1677,7 @@ def test_a_field_the_pipeline_does_not_use_may_change_its_type(spark, config):
 
     read = read_partition(spark, config, day)
 
-    assert sorted(r["ISIN"] for r in silver.read_daily_changes(read).collect()) == [
+    assert sorted(r["isin"] for r in silver.read_daily_changes(read).collect()) == [
         "ISIN1", "ISIN2"
     ]
 
@@ -1689,7 +1711,7 @@ def test_a_field_the_file_does_not_state_is_read_as_empty(spark, config):
 
     rows = silver.read_daily_changes(read_partition(spark, config, day)).collect()
 
-    assert [(r["ISIN"], r["INTRSTRATEFXD"], r["FULLNAME"]) for r in rows] == [
+    assert [(r["isin"], r["interest_rate_fixed"], r["full_name"]) for r in rows] == [
         ("ISIN1", None, None)
     ]
 
@@ -1727,7 +1749,7 @@ def test_a_publication_period_stated_as_a_range_is_read(spark, config):
 
     rows = silver.read_daily_changes(read_partition(spark, config, day)).collect()
 
-    assert [(r["ISIN"], r["TECH_PBLCTNPRD_FRDT"], r["TECH_PBLCTNPRD_TODT"])
+    assert [(r["isin"], r["tech_publication_period_from_date"], r["tech_publication_period_to_date"])
             for r in rows] == [("ISIN1", day, day)]
 
 
@@ -1759,7 +1781,7 @@ def test_a_termination_without_a_publication_period_takes_the_file_date(spark, c
 
     rows = silver.read_daily_changes(read_partition(spark, config, day)).collect()
 
-    assert [(r["ISIN"], r["ACTNTP"], r["TECH_PBLCTNPRD_FRDT"]) for r in rows] == [
+    assert [(r["isin"], r["action_type"], r["tech_publication_period_from_date"]) for r in rows] == [
         ("ISIN1", "TermntdRcrd", day)
     ]
 
@@ -1771,7 +1793,7 @@ def test_a_record_without_a_publication_period_is_refused(spark, config):
     a merge matching several rows at once."""
     records = spark.createDataFrame(
         [("ISIN1", "MIC1", None, "NewRcrd"), ("ISIN2", "MIC1", date(2016, 9, 4), "NewRcrd")],
-        "ISIN string, TRADGVN string, TECH_PBLCTNPRD_FRDT date, ACTNTP string",
+        "isin string, trading_venue string, tech_publication_period_from_date date, action_type string",
     )
 
     with pytest.raises(ValueError, match="state no publication start date"):
@@ -1779,23 +1801,64 @@ def test_a_record_without_a_publication_period_is_refused(spark, config):
 
 
 def test_a_record_without_an_instrument_key_is_refused(spark, config):
-    """Every comparison on (ISIN, TRADGVN) is an equality, which no null meets,
+    """Every comparison on (isin, trading_venue) is an equality, which no null meets,
     so such a record is never found to supersede anything and is inserted again
     by every file that carries it."""
     records = spark.createDataFrame(
         [("ISIN1", None, date(2016, 9, 4), "NewRcrd"),
          ("ISIN2", "MIC1", date(2016, 9, 4), "NewRcrd")],
-        "ISIN string, TRADGVN string, TECH_PBLCTNPRD_FRDT date, ACTNTP string",
+        "isin string, trading_venue string, tech_publication_period_from_date date, action_type string",
     )
 
-    with pytest.raises(ValueError, match="state no ISIN or TRADGVN"):
+    with pytest.raises(ValueError, match="state no isin or trading_venue"):
         silver.check_instrument_key(records, "the delta file of 2016-09-04")
+
+
+def test_both_checks_of_a_file_are_made_in_one_pass(spark, config):
+    """What each of them refuses on its own, refused together."""
+    records = spark.createDataFrame(
+        [("ISIN1", "MIC1", None, "NewRcrd"),
+         ("ISIN2", "MIC1", date(2016, 9, 4), "NewRcrd")],
+        "isin string, trading_venue string, tech_publication_period_from_date date, action_type string",
+    )
+
+    with pytest.raises(ValueError, match="state no publication start date"):
+        silver.check_incoming_records(records, "the delta file of 2016-09-04")
+
+    records = spark.createDataFrame(
+        [("ISIN1", None, date(2016, 9, 4), "NewRcrd")],
+        "isin string, trading_venue string, tech_publication_period_from_date date, action_type string",
+    )
+
+    with pytest.raises(ValueError, match="state no isin or trading_venue"):
+        silver.check_incoming_records(records, "the delta file of 2016-09-04")
+
+
+def test_a_file_that_fails_both_checks_is_refused_for_the_key(spark, config):
+    """The order the checks were made in separately, so that the message of a
+    file refused by both does not turn on how they are now counted."""
+    records = spark.createDataFrame(
+        [("ISIN1", None, None, "NewRcrd")],
+        "isin string, trading_venue string, tech_publication_period_from_date date, action_type string",
+    )
+
+    with pytest.raises(ValueError, match="state no isin or trading_venue"):
+        silver.check_incoming_records(records, "the delta file of 2016-09-04")
+
+
+def test_records_both_checks_accept_are_passed_on(spark, config):
+    records = spark.createDataFrame(
+        [("ISIN1", "MIC1", date(2016, 9, 4), "NewRcrd")],
+        "isin string, trading_venue string, tech_publication_period_from_date date, action_type string",
+    )
+
+    assert silver.check_incoming_records(records, "a file") is records
 
 
 def test_records_that_all_state_an_instrument_key_are_passed_on(spark, config):
     records = spark.createDataFrame(
         [("ISIN1", "MIC1", date(2016, 9, 4), "NewRcrd")],
-        "ISIN string, TRADGVN string, TECH_PBLCTNPRD_FRDT date, ACTNTP string",
+        "isin string, trading_venue string, tech_publication_period_from_date date, action_type string",
     )
 
     assert silver.check_instrument_key(records, "the full file of 2016-09-04") is records
@@ -1804,7 +1867,7 @@ def test_records_that_all_state_an_instrument_key_are_passed_on(spark, config):
 def test_records_that_all_state_a_publication_period_are_passed_on(spark, config):
     records = spark.createDataFrame(
         [("ISIN1", "MIC1", date(2016, 9, 4), "NewRcrd")],
-        "ISIN string, TRADGVN string, TECH_PBLCTNPRD_FRDT date, ACTNTP string",
+        "isin string, trading_venue string, tech_publication_period_from_date date, action_type string",
     )
 
     assert silver.check_publication_period(records, "a file").count() == 1
@@ -1824,7 +1887,7 @@ def test_an_element_a_file_leaves_empty_is_not_read_as_a_record(spark, config):
 
     rows = silver.read_daily_changes(read_partition(spark, config, day)).collect()
 
-    assert [(r["ISIN"], r["ACTNTP"]) for r in rows] == [("ISIN1", "CancRcrd")]
+    assert [(r["isin"], r["action_type"]) for r in rows] == [("ISIN1", "CancRcrd")]
 
 
 def test_a_day_whose_partition_holds_two_vintages_is_applied(spark, config):
@@ -1847,8 +1910,8 @@ def test_a_day_whose_partition_holds_two_vintages_is_applied(spark, config):
     # rate itself is read back in the test of the read above.
     built = spark.read.format("delta").load(path)
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-02"
-    assert {(r["ISIN"], r["FULLNAME"]) for r in
-            built.filter(func.col("LATESTRECORD")).collect()} == {
+    assert {(r["isin"], r["full_name"]) for r in
+            built.filter(func.col("latest_record")).collect()} == {
         ("ISIN1", "ISIN1"), ("ISIN2", "ISIN2")
     }
 
@@ -1876,7 +1939,7 @@ def test_the_full_file_is_read_through_the_same_paths(spark, config):
 
     silver.update_from_bronze_to_silver_main(spark, config)
 
-    assert sorted(r["ISIN"] for r in
+    assert sorted(r["isin"] for r in
                   common.connect_to_firds(spark, config, "main").collect()) == [
         "ISIN1", "ISIN2"
     ]

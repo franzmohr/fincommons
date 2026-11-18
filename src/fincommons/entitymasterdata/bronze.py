@@ -83,7 +83,7 @@ def reference_date_from_file_name(file_name):
 
     Every register is stored under a name whose first eight characters are the
     reference date as ``YYYYMMDD``. The date is returned as ``YYYY-MM-DD``,
-    which is the spelling the ``REFDATE`` column carries.
+    which is the spelling the ``REFDT`` column carries.
 
     Parameters
     ----------
@@ -252,7 +252,7 @@ def import_registers(path_landing, path_bronze, extensions, read, reference_date
     for name, refdate in files:
         path_i = os.path.join(path_landing, name)
         raw = read(path_i)
-        raw['REFDATE'] = refdate
+        raw['REFDT'] = refdate
 
         write_parquet(raw, os.path.join(path_bronze, bronze_name(name, refdate) + ".parquet"))
         os.remove(path_i)

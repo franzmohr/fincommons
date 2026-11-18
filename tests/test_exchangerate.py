@@ -56,7 +56,7 @@ def write_ecb(config_path, dates, **quotes):
 
 def write_internal(config_path, rows):
     """Write the optional proprietary source as the CSV the module expects."""
-    lines = ["REFDATE,BASE,QUOTE,VALUE,TYPE,SOURCE"]
+    lines = ["ref_date,base,quote,value,type,source"]
     lines += [f"{d},{base},{quote},{value},ref,internal" for d, base, quote, value in rows]
     with open(ex.path_bronze_internal_exchangerate(config_path) + "/exchangerate.csv", "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -65,13 +65,13 @@ def write_internal(config_path, rows):
 def silver(spark, config_path):
     """Read the Silver table back with the reference dates as text."""
     frame = ex.connect_to_exchangerate(spark, config_path).toPandas()
-    frame["REFDATE"] = frame["REFDATE"].astype(str)
+    frame["ref_date"] = frame["ref_date"].astype(str)
     return frame
 
 
 def rate(frame, refdate, base, quote):
     """The single rate quoted for one pair on one day."""
-    rows = frame[(frame.REFDATE == refdate) & (frame.BASE == base) & (frame.QUOTE == quote)]
+    rows = frame[(frame.ref_date == refdate) & (frame.base == base) & (frame.quote == quote)]
     assert len(rows) == 1, f"expected one {base}/{quote} rate on {refdate}, got {len(rows)}"
     return rows.iloc[0]
 
@@ -231,10 +231,10 @@ def test_the_ecb_table_is_unpivoted_into_one_row_per_pair(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
 
-    assert set(frame.QUOTE) == {"USD", "GBP"}
-    assert set(frame.BASE) == {"EUR"}
-    assert rate(frame, "2020-01-01", "EUR", "USD").VALUE == pytest.approx(1.10)
-    assert rate(frame, "2020-01-01", "EUR", "GBP").VALUE == pytest.approx(0.90)
+    assert set(frame.quote) == {"USD", "GBP"}
+    assert set(frame.base) == {"EUR"}
+    assert rate(frame, "2020-01-01", "EUR", "USD").value == pytest.approx(1.10)
+    assert rate(frame, "2020-01-01", "EUR", "GBP").value == pytest.approx(0.90)
 
 
 def test_quotes_that_are_missing_for_a_currency_are_dropped(spark, data_lake):
@@ -245,8 +245,8 @@ def test_quotes_that_are_missing_for_a_currency_are_dropped(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
 
-    assert frame[(frame.QUOTE == "HRK") & (frame.REFDATE == "2020-01-01")].empty
-    assert rate(frame, "2020-01-02", "EUR", "HRK").VALUE == pytest.approx(7.5)
+    assert frame[(frame.quote == "HRK") & (frame.ref_date == "2020-01-01")].empty
+    assert rate(frame, "2020-01-02", "EUR", "HRK").value == pytest.approx(7.5)
 
 
 def test_the_days_between_two_quotes_carry_the_earlier_rate(spark, data_lake):
@@ -257,10 +257,10 @@ def test_the_days_between_two_quotes_carry_the_earlier_rate(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
 
-    assert sorted(frame.REFDATE) == ["2020-01-03", "2020-01-04", "2020-01-05", "2020-01-06"]
-    assert rate(frame, "2020-01-04", "EUR", "USD").VALUE == pytest.approx(1.10)
-    assert rate(frame, "2020-01-05", "EUR", "USD").VALUE == pytest.approx(1.10)
-    assert rate(frame, "2020-01-06", "EUR", "USD").VALUE == pytest.approx(1.20)
+    assert sorted(frame.ref_date) == ["2020-01-03", "2020-01-04", "2020-01-05", "2020-01-06"]
+    assert rate(frame, "2020-01-04", "EUR", "USD").value == pytest.approx(1.10)
+    assert rate(frame, "2020-01-05", "EUR", "USD").value == pytest.approx(1.10)
+    assert rate(frame, "2020-01-06", "EUR", "USD").value == pytest.approx(1.20)
 
 
 def test_the_internal_source_takes_precedence_over_the_ecb(spark, data_lake):
@@ -273,8 +273,8 @@ def test_the_internal_source_takes_precedence_over_the_ecb(spark, data_lake):
     frame = silver(spark, data_lake)
 
     overlapping = rate(frame, "2020-01-02", "EUR", "USD")
-    assert overlapping.VALUE == pytest.approx(9.99)
-    assert overlapping.SOURCE == "internal"
+    assert overlapping.value == pytest.approx(9.99)
+    assert overlapping.source == "internal"
 
 
 def test_the_ecb_is_kept_where_the_internal_source_is_silent(spark, data_lake):
@@ -285,8 +285,8 @@ def test_the_ecb_is_kept_where_the_internal_source_is_silent(spark, data_lake):
     frame = silver(spark, data_lake)
 
     uncontested = rate(frame, "2020-01-01", "EUR", "USD")
-    assert uncontested.VALUE == pytest.approx(1.10)
-    assert uncontested.SOURCE == "ECB"
+    assert uncontested.value == pytest.approx(1.10)
+    assert uncontested.source == "ECB"
 
 
 def test_the_gap_between_two_sources_is_closed(spark, data_lake):
@@ -302,7 +302,7 @@ def test_the_gap_between_two_sources_is_closed(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
 
-    assert sorted(frame.REFDATE) == [
+    assert sorted(frame.ref_date) == [
         "2020-01-01",
         "2020-01-02",
         "2020-01-03",
@@ -312,8 +312,8 @@ def test_the_gap_between_two_sources_is_closed(spark, data_lake):
     ]
     # 2 January stands on the ECB quote of 1 January, the last one before it,
     # even though the next quote of the pair is an internal one.
-    assert rate(frame, "2020-01-02", "EUR", "USD").VALUE == pytest.approx(1.10)
-    assert rate(frame, "2020-01-04", "EUR", "USD").VALUE == pytest.approx(9.99)
+    assert rate(frame, "2020-01-02", "EUR", "USD").value == pytest.approx(1.10)
+    assert rate(frame, "2020-01-04", "EUR", "USD").value == pytest.approx(9.99)
 
 
 def test_each_source_counts_up_to_its_own_last_day(spark, data_lake):
@@ -326,8 +326,8 @@ def test_each_source_counts_up_to_its_own_last_day(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
 
-    assert rate(frame, "2020-01-01", "EUR", "USD").SOURCE == "internal"
-    assert rate(frame, "2020-01-03", "EUR", "USD").VALUE == pytest.approx(1.12)
+    assert rate(frame, "2020-01-01", "EUR", "USD").source == "internal"
+    assert rate(frame, "2020-01-03", "EUR", "USD").value == pytest.approx(1.12)
 
 
 def test_a_rate_is_carried_for_a_week_at_most(spark, data_lake):
@@ -339,11 +339,11 @@ def test_a_rate_is_carried_for_a_week_at_most(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
 
-    carried = sorted(frame[frame.VALUE == 130.0].REFDATE)
+    carried = sorted(frame[frame.value == 130.0].ref_date)
     assert carried[0] == "2020-01-01"
     assert carried[-1] == "2020-01-08"
     assert len(carried) == 1 + ex.MAX_FILL_DAYS
-    assert frame[frame.REFDATE == "2020-01-12"].empty
+    assert frame[frame.ref_date == "2020-01-12"].empty
 
 
 def test_an_internal_file_without_rows_leaves_the_public_sources(spark, data_lake):
@@ -353,7 +353,7 @@ def test_an_internal_file_without_rows_leaves_the_public_sources(spark, data_lak
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
 
-    assert rate(frame, "2020-01-01", "EUR", "USD").SOURCE == "ECB"
+    assert rate(frame, "2020-01-01", "EUR", "USD").source == "ECB"
 
 
 def test_the_silver_layer_is_parquet_unless_delta_is_asked_for(spark, data_lake):
@@ -392,7 +392,7 @@ def test_the_table_is_read_back_in_the_format_it_was_written_in(spark, data_lake
 
     frame = silver(spark, data_lake)
     assert len(frame) == 1
-    assert rate(frame, "2020-01-01", "EUR", "USD").VALUE == pytest.approx(1.20)
+    assert rate(frame, "2020-01-01", "EUR", "USD").value == pytest.approx(1.20)
 
 
 def test_an_unknown_file_format_is_reported_as_such(data_lake):
@@ -481,7 +481,7 @@ def test_the_silver_layer_is_written_into_the_catalogue_where_the_configuration_
     assert spark.sql(f"DESCRIBE DETAIL {name}").first()["format"] == "delta"
     frame = silver(spark, config_path)
     assert len(frame) == 1
-    assert rate(frame, "2020-01-01", "EUR", "USD").VALUE == pytest.approx(1.20)
+    assert rate(frame, "2020-01-01", "EUR", "USD").value == pytest.approx(1.20)
 
 
 def test_a_second_update_replaces_the_table_rather_than_adding_to_it(spark, data_lake):
@@ -493,7 +493,7 @@ def test_a_second_update_replaces_the_table_rather_than_adding_to_it(spark, data
 
     frame = silver(spark, data_lake)
     assert len(frame) == 1
-    assert rate(frame, "2020-01-01", "EUR", "USD").VALUE == pytest.approx(1.20)
+    assert rate(frame, "2020-01-01", "EUR", "USD").value == pytest.approx(1.20)
 
 
 def test_rebasing_expresses_the_table_in_another_currency(spark, data_lake):
@@ -502,11 +502,11 @@ def test_rebasing_expresses_the_table_in_another_currency(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake, rebase="USD")
     frame = silver(spark, data_lake)
 
-    assert set(frame.BASE) == {"USD"}
+    assert set(frame.base) == {"USD"}
     # A cross rate is the quotient of the two euro legs.
-    assert rate(frame, "2020-01-01", "USD", "GBP").VALUE == pytest.approx(0.90 / 1.10)
+    assert rate(frame, "2020-01-01", "USD", "GBP").value == pytest.approx(0.90 / 1.10)
     # The euro itself becomes a quote, at the reciprocal of the old rate.
-    assert rate(frame, "2020-01-01", "USD", "EUR").VALUE == pytest.approx(1 / 1.10)
+    assert rate(frame, "2020-01-01", "USD", "EUR").value == pytest.approx(1 / 1.10)
 
 
 def test_rebasing_does_not_quote_the_new_base_against_itself(spark, data_lake):
@@ -515,7 +515,7 @@ def test_rebasing_does_not_quote_the_new_base_against_itself(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake, rebase="USD")
     frame = silver(spark, data_lake)
 
-    assert frame[frame.BASE == frame.QUOTE].empty
+    assert frame[frame.base == frame.quote].empty
 
 
 @pytest.mark.parametrize("rebase", ["EUR", "XXX"], ids=["euro", "unquoted"])
@@ -545,7 +545,7 @@ def converted(spark, data_lake):
         (date(2022, 3, 1), "EUR", "RUB", 120.0, "ref", "ECB"),
     ]
     spark.createDataFrame(
-        rows, "REFDATE date, BASE string, QUOTE string, VALUE double, TYPE string, SOURCE string"
+        rows, "ref_date date, base string, quote string, value double, type string, source string"
     ).write.format("delta").mode("overwrite").save(
         ex.path_silver_exchangerate_table(data_lake)
     )
@@ -618,10 +618,10 @@ def test_a_rate_is_only_used_on_the_day_it_was_quoted(spark, converted):
 
 def test_the_date_column_may_carry_any_name(spark, converted):
     data = spark.createDataFrame(
-        [("2020-01-01", "USD", 110.0)], "REFDT string, ccy string, notional double"
+        [("2020-01-01", "USD", 110.0)], "ref_date string, ccy string, notional double"
     )
 
-    result = amounts(converted, data, date="REFDT", amount="notional", currency="ccy")
+    result = amounts(converted, data, date="ref_date", amount="notional", currency="ccy")
 
     assert result.first()["notional_EUR"] == pytest.approx(100.0)
 
@@ -823,8 +823,8 @@ def test_amounts_already_in_the_target_currency_need_no_rate(spark, converted):
 
 
 @pytest.mark.parametrize("row, problem", [
-    (("2020-1-2", "EUR", "USD", 9.99), "REFDATE"),
-    (("2020-01-02 00:00:00", "EUR", "USD", 9.99), "REFDATE"),
+    (("2020-1-2", "EUR", "USD", 9.99), "REFDT"),
+    (("2020-01-02 00:00:00", "EUR", "USD", 9.99), "REFDT"),
     (("2020-01-02", "USD", "GBP", 0.80), "BASE other than EUR"),
     (("2020-01-02", "EUR", "USD", 0.0), "not positive"),
 ], ids=["short date", "date with a time", "dollar base", "zero rate"])
@@ -893,8 +893,8 @@ def test_a_bis_rate_is_turned_into_a_euro_rate_through_the_dollar(spark, data_la
     frame = silver(spark, data_lake)
 
     quote = rate(frame, "2020-01-02", "EUR", "ARS")
-    assert quote.VALUE == pytest.approx(66.0)
-    assert quote.SOURCE == "BIS"
+    assert quote.value == pytest.approx(66.0)
+    assert quote.source == "BIS"
 
 
 @pytest.mark.parametrize("values", [(60.0, 61.0), (61.0, 60.0)], ids=["ascending", "descending"])
@@ -910,7 +910,7 @@ def test_two_bis_rows_for_one_day_and_pair_answer_the_same_way_either_way(
     ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
     frame = silver(spark, data_lake)
 
-    assert rate(frame, "2020-01-02", "EUR", "ARS").VALUE == pytest.approx(60.0 * 1.10)
+    assert rate(frame, "2020-01-02", "EUR", "ARS").value == pytest.approx(60.0 * 1.10)
 
 
 def test_the_ecb_takes_precedence_over_the_bis(spark, data_lake):
@@ -920,7 +920,7 @@ def test_the_ecb_takes_precedence_over_the_bis(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
     frame = silver(spark, data_lake)
 
-    assert rate(frame, "2020-01-02", "EUR", "GBP").SOURCE == "ECB"
+    assert rate(frame, "2020-01-02", "EUR", "GBP").source == "ECB"
 
 
 def test_a_run_with_the_bis_ends_on_the_last_day_the_bis_reaches(spark, data_lake):
@@ -935,11 +935,11 @@ def test_a_run_with_the_bis_ends_on_the_last_day_the_bis_reaches(spark, data_lak
     ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
     frame = silver(spark, data_lake)
 
-    assert max(frame.REFDATE) == "2020-01-03"
+    assert max(frame.ref_date) == "2020-01-03"
     # The ECB quote of 3 January is kept; the ones beyond the cut are not,
     # and neither is the internal quote of 6 January.
-    assert rate(frame, "2020-01-03", "EUR", "USD").VALUE == pytest.approx(1.11)
-    assert "GBP" not in set(frame.QUOTE)
+    assert rate(frame, "2020-01-03", "EUR", "USD").value == pytest.approx(1.11)
+    assert "GBP" not in set(frame.quote)
 
 
 def test_the_days_up_to_the_cut_are_still_filled(spark, data_lake):
@@ -953,8 +953,8 @@ def test_the_days_up_to_the_cut_are_still_filled(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
     frame = silver(spark, data_lake)
 
-    assert max(frame.REFDATE) == "2020-01-04"
-    assert rate(frame, "2020-01-04", "EUR", "USD").VALUE == pytest.approx(1.10)
+    assert max(frame.ref_date) == "2020-01-04"
+    assert rate(frame, "2020-01-04", "EUR", "USD").value == pytest.approx(1.10)
     assert imputed(frame, "2020-01-04", "EUR", "USD") is True
 
 
@@ -966,7 +966,7 @@ def test_the_cut_holds_when_the_table_is_rebased(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake, rebase="USD", use_bis=True)
     frame = silver(spark, data_lake)
 
-    assert max(frame.REFDATE) == "2020-01-02"
+    assert max(frame.ref_date) == "2020-01-02"
 
 
 def test_the_table_is_left_as_it_was_where_the_bis_holds_no_day(spark, data_lake):
@@ -980,7 +980,7 @@ def test_the_table_is_left_as_it_was_where_the_bis_holds_no_day(spark, data_lake
     with pytest.raises(ValueError, match="no daily average"):
         ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
 
-    assert rate(silver(spark, data_lake), "2020-01-02", "EUR", "USD").VALUE \
+    assert rate(silver(spark, data_lake), "2020-01-02", "EUR", "USD").value \
         == pytest.approx(1.10)
 
 
@@ -995,7 +995,7 @@ def test_only_daily_averages_are_taken_from_the_bis(spark, data_lake, frequency,
     ex.update_silver_exchangerate(spark, data_lake, use_bis=True)
     frame = silver(spark, data_lake)
 
-    assert "BRL" not in set(frame.QUOTE)
+    assert "BRL" not in set(frame.quote)
 
 
 # One row per day and pair
@@ -1018,19 +1018,19 @@ def test_the_table_holds_one_rate_per_day_and_pair(spark, data_lake, rebase):
     ex.update_silver_exchangerate(spark, data_lake, rebase=rebase, use_bis=True)
     frame = silver(spark, data_lake)
 
-    assert not frame.duplicated(["REFDATE", "BASE", "QUOTE"]).any()
+    assert not frame.duplicated(["ref_date", "base", "quote"]).any()
 
 
 # Which days carry a rate from an earlier day
 # --------------------------------------------------------------------------
 #
-# IMPUTED is true on a day whose rate was not quoted on it but carried from
+# imputed is true on a day whose rate was not quoted on it but carried from
 # the last quote before it -- a weekend or a TARGET closing day wherever the
 # ECB is the source, and any other day without a quote as well.
 
 
 def imputed(frame, refdate, base, quote):
-    return bool(rate(frame, refdate, base, quote).IMPUTED)
+    return bool(rate(frame, refdate, base, quote).imputed)
 
 
 def test_a_day_carried_from_an_earlier_quote_is_marked_imputed(spark, data_lake):
@@ -1094,5 +1094,5 @@ def test_the_imputed_column_is_boolean_and_never_empty(spark, data_lake):
     ex.update_silver_exchangerate(spark, data_lake)
     table = ex.connect_to_exchangerate(spark, data_lake)
 
-    assert isinstance(table.schema["IMPUTED"].dataType, BooleanType)
-    assert table.filter("IMPUTED IS NULL").count() == 0
+    assert isinstance(table.schema["imputed"].dataType, BooleanType)
+    assert table.filter("imputed IS NULL").count() == 0

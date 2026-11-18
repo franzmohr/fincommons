@@ -52,25 +52,51 @@ FIRST_YEAR = 2018
 SOURCE = "filings.xbrl.org"
 
 
+#: The key a column of :data:`filings_schema` has in the filing records of the
+#: Bronze layer. A Bronze record keeps the names the index was read into, so
+#: the Silver names are taken on where the table is built; see
+#: :func:`~fincommons.financialreport.esef.silver.build_filings`.
+FILING_RECORD_KEYS = {
+    "filing": "FILING",
+    "lei": "LEI",
+    "name": "NAME",
+    "country": "COUNTRY",
+    "system": "SYSTEM",
+    "period_end": "PERIODEND",
+    "lang": "LANG",
+    "published": "PUBLISHED",
+    "added": "ADDED",
+    "processed": "PROCESSED",
+    "errors": "ERRORS",
+    "warnings": "WARNINGS",
+    "inconsistencies": "INCONSISTENCIES",
+    "package_url": "PACKAGEURL",
+    "report_url": "REPORTURL",
+    "viewer_url": "VIEWERURL",
+    "json_url": "JSONURL",
+    "package_sha256": "PACKAGESHA256",
+}
+
+
 filings_schema = StructType() \
-    .add("FILING", StringType(), False) \
-    .add("LEI", StringType(), False) \
-    .add("NAME", StringType(), True) \
-    .add("COUNTRY", StringType(), False) \
-    .add("SYSTEM", StringType(), True) \
-    .add("PERIODEND", DateType(), False) \
-    .add("LANG", StringType(), True) \
-    .add("PUBLISHED", TimestampType(), True) \
-    .add("ADDED", TimestampType(), True) \
-    .add("PROCESSED", TimestampType(), True) \
-    .add("ERRORS", IntegerType(), True) \
-    .add("WARNINGS", IntegerType(), True) \
-    .add("INCONSISTENCIES", IntegerType(), True) \
-    .add("PACKAGEURL", StringType(), True) \
-    .add("REPORTURL", StringType(), True) \
-    .add("VIEWERURL", StringType(), True) \
-    .add("JSONURL", StringType(), True) \
-    .add("PACKAGESHA256", StringType(), True)
+    .add("filing", StringType(), False) \
+    .add("lei", StringType(), False) \
+    .add("name", StringType(), True) \
+    .add("country", StringType(), False) \
+    .add("system", StringType(), True) \
+    .add("period_end", DateType(), False) \
+    .add("lang", StringType(), True) \
+    .add("published", TimestampType(), True) \
+    .add("added", TimestampType(), True) \
+    .add("processed", TimestampType(), True) \
+    .add("errors", IntegerType(), True) \
+    .add("warnings", IntegerType(), True) \
+    .add("inconsistencies", IntegerType(), True) \
+    .add("package_url", StringType(), True) \
+    .add("report_url", StringType(), True) \
+    .add("viewer_url", StringType(), True) \
+    .add("json_url", StringType(), True) \
+    .add("package_sha256", StringType(), True)
 """The shape of the table of filings: one row per filing of the indexes.
 
 A filing without ``JSONURL`` is one the repository could not convert to
@@ -81,20 +107,20 @@ facts. The addresses are those of the repository, relative to
 
 
 facts_schema = StructType() \
-    .add("COUNTRY", StringType(), False) \
-    .add("FILING", StringType(), False) \
-    .add("LEI", StringType(), False) \
-    .add("PERIODEND", DateType(), False) \
-    .add("FACT", StringType(), False) \
-    .add("CONCEPT", StringType(), False) \
-    .add("PRDSTART", DateType(), True) \
-    .add("PRDEND", DateType(), False) \
-    .add("UNIT", StringType(), True) \
-    .add("DIMENSIONS", StringType(), True) \
-    .add("VALUE", DoubleType(), True) \
-    .add("TEXT", StringType(), True) \
-    .add("DECIMALS", IntegerType(), True) \
-    .add("LANG", StringType(), True)
+    .add("country", StringType(), False) \
+    .add("filing", StringType(), False) \
+    .add("lei", StringType(), False) \
+    .add("period_end", DateType(), False) \
+    .add("fact", StringType(), False) \
+    .add("concept", StringType(), False) \
+    .add("prd_start", DateType(), True) \
+    .add("prd_end", DateType(), False) \
+    .add("unit", StringType(), True) \
+    .add("dimensions", StringType(), True) \
+    .add("value", DoubleType(), True) \
+    .add("text", StringType(), True) \
+    .add("decimals", IntegerType(), True) \
+    .add("lang", StringType(), True)
 """The shape of the table of facts: one row per fact of a report.
 
 A numeric fact has ``VALUE`` and ``UNIT``, any other fact ``TEXT``. A fact
@@ -368,6 +394,7 @@ def create_directory_tree(config_path):
 #: What this module offers. The layout of the data lake, the schemas of the
 #: two tables, and the tables the result is read from.
 __all__ = [
+    "FILING_RECORD_KEYS",
     "BASE_URL",
     "FIRST_YEAR",
     "INDEX_URL",

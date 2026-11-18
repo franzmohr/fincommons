@@ -80,11 +80,11 @@ def records(spark):
 def test_a_check_contributes_its_rows_under_its_code(spark, records):
     found = dq.run_checks(
         records,
-        [("MISS_ASSETS", lambda df: df.where("VALUE = 1")),
+        [("MISS_ASSETS", lambda df: df.where("value = 1")),
          ("MISS_REVENUE", lambda df: df.where("VALUE >= 2"))],
         keys=["KEY"])
 
-    assert sorted((row["KEY"], row["ISSUE"]) for row in found.collect()) == [
+    assert sorted((row["KEY"], row["issue"]) for row in found.collect()) == [
         ("a", "MISS_ASSETS"), ("b", "MISS_REVENUE"), ("c", "MISS_REVENUE")]
 
 
@@ -103,14 +103,14 @@ def test_a_check_cannot_widen_the_table(spark, records):
         [("MISS_ASSETS", lambda df: df.withColumn("EXTRA", df.VALUE))],
         keys=["KEY"])
 
-    assert found.columns == ["KEY", "ISSUE"]
+    assert found.columns == ["KEY", "issue"]
 
 
 def test_two_checks_objecting_to_one_record_give_two_rows(spark, records):
     found = dq.run_checks(
         records,
-        [("MISS_ASSETS", lambda df: df.where("VALUE = 1")),
-         ("MISS_REVENUE", lambda df: df.where("VALUE = 1"))],
+        [("MISS_ASSETS", lambda df: df.where("value = 1")),
+         ("MISS_REVENUE", lambda df: df.where("value = 1"))],
         keys=["KEY"])
 
     assert found.count() == 2
@@ -137,7 +137,7 @@ def issues(spark):
     return spark.createDataFrame(
         [("AT", "a", "MISS_ASSETS"), ("AT", "b", "MISS_REVENUE"),
          ("DE", "c", "MISS_ASSETS")],
-        "COUNTRY string, FILING string, ISSUE string")
+        "COUNTRY string, FILING string, issue string")
 
 
 def test_a_partition_the_issue_table_does_not_mention_is_outstanding(spark, issues):
@@ -151,10 +151,10 @@ def test_a_partition_the_issue_table_does_not_mention_is_outstanding(spark, issu
 def test_a_run_over_one_partition_keeps_what_is_known_about_the_others(spark, issues):
     found = spark.createDataFrame(
         [("AT", "a", "MIXED_UNIT")],
-        "COUNTRY string, FILING string, ISSUE string")
+        "COUNTRY string, FILING string, issue string")
 
     merged = dq.merged_issues(found, issues, "COUNTRY", ["AT"])
-    rows = sorted((r["COUNTRY"], r["FILING"], r["ISSUE"]) for r in merged.collect())
+    rows = sorted((r["COUNTRY"], r["FILING"], r["issue"]) for r in merged.collect())
 
     # Austria is replaced whole, which is how a fixed problem stops being
     # reported; Germany is left exactly as it was.
@@ -164,7 +164,7 @@ def test_a_run_over_one_partition_keeps_what_is_known_about_the_others(spark, is
 def test_with_no_table_yet_a_run_writes_only_what_it_found(spark):
     found = spark.createDataFrame(
         [("AT", "a", "MIXED_UNIT")],
-        "COUNTRY string, FILING string, ISSUE string")
+        "COUNTRY string, FILING string, issue string")
 
     assert dq.merged_issues(found, None, "COUNTRY", ["AT"]).count() == 1
 
@@ -174,19 +174,19 @@ def test_with_no_table_yet_a_run_writes_only_what_it_found(spark):
 
 
 def test_the_issues_are_counted_with_the_sentence_behind_each_code(spark, issues):
-    counted = {row["ISSUE"]: row for row in
+    counted = {row["issue"]: row for row in
                dq.issue_counts(issues, dataset="esef").collect()}
 
-    assert counted["MISS_ASSETS"]["RECORDS"] == 2
-    assert counted["MISS_REVENUE"]["RECORDS"] == 1
-    assert counted["MISS_ASSETS"]["SEVERITY"] == "warning"
-    assert counted["MISS_ASSETS"]["TITLE"]
+    assert counted["MISS_ASSETS"]["records"] == 2
+    assert counted["MISS_REVENUE"]["records"] == 1
+    assert counted["MISS_ASSETS"]["severity"] == "warning"
+    assert counted["MISS_ASSETS"]["title"]
 
 
 def test_the_counts_can_be_broken_down_further(spark, issues):
     counted = dq.issue_counts(issues, by=["COUNTRY"], dataset="esef")
 
-    assert sorted((r["COUNTRY"], r["ISSUE"], r["RECORDS"]) for r in counted.collect()) == [
+    assert sorted((r["COUNTRY"], r["issue"], r["records"]) for r in counted.collect()) == [
         ("AT", "MISS_ASSETS", 1), ("AT", "MISS_REVENUE", 1),
         ("DE", "MISS_ASSETS", 1)]
 
@@ -196,7 +196,7 @@ def test_a_record_with_two_issues_carries_both_codes(spark, issues):
         [("AT", "a"), ("AT", "b"), ("DE", "c"), ("FR", "d")],
         "COUNTRY string, FILING string")
 
-    labelled = {row["FILING"]: row["ISSUE"] for row in
+    labelled = {row["FILING"]: row["issue"] for row in
                 dq.with_issues(records, issues, ["COUNTRY", "FILING"]).collect()}
 
     assert labelled["a"] == "MISS_ASSETS"
@@ -209,10 +209,10 @@ def test_a_record_failing_two_checks_joins_the_codes(spark):
     records = spark.createDataFrame([("a",)], "FILING string")
     issues = spark.createDataFrame(
         [("a", "MISS_ASSETS"), ("a", "MISS_REVENUE")],
-        "FILING string, ISSUE string")
+        "FILING string, issue string")
 
     row = dq.with_issues(records, issues, ["FILING"]).collect()[0]
-    assert row["ISSUE"] == "MISS_ASSETS+MISS_REVENUE"
+    assert row["issue"] == "MISS_ASSETS+MISS_REVENUE"
 
 
 # Taking known issues out on the way to a report
@@ -221,9 +221,9 @@ def test_a_record_failing_two_checks_joins_the_codes(spark):
 
 def test_a_known_issue_can_be_left_out_of_a_report(spark, issues):
     exceptions = spark.createDataFrame(
-        [("AT", "MISS_ASSETS")], "COUNTRY string, ISSUE string")
+        [("AT", "MISS_ASSETS")], "COUNTRY string, issue string")
 
-    remaining = sorted((r["FILING"], r["ISSUE"])
+    remaining = sorted((r["FILING"], r["issue"])
                        for r in dq.suppressed(issues, exceptions).collect())
 
     # Austria's missing assets are taken out; Germany's are not, and Austria's
@@ -233,7 +233,7 @@ def test_a_known_issue_can_be_left_out_of_a_report(spark, issues):
 
 def test_the_issue_table_itself_is_not_changed(spark, issues):
     exceptions = spark.createDataFrame(
-        [("AT", "MISS_ASSETS")], "COUNTRY string, ISSUE string")
+        [("AT", "MISS_ASSETS")], "COUNTRY string, issue string")
 
     dq.suppressed(issues, exceptions)
 
@@ -251,6 +251,6 @@ def test_an_exception_has_to_name_the_check_it_excepts(spark, issues):
 def test_exceptions_may_be_given_as_a_pandas_frame(spark, issues):
     import pandas as pd
 
-    exceptions = pd.DataFrame({"COUNTRY": ["AT"], "ISSUE": ["MISS_ASSETS"]})
+    exceptions = pd.DataFrame({"COUNTRY": ["AT"], "issue": ["MISS_ASSETS"]})
 
     assert dq.suppressed(issues, exceptions).count() == 2

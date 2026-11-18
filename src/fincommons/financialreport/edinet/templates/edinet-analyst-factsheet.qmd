@@ -60,7 +60,7 @@ config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
 # other filer whose annual report the edinet pipeline has collected can be
 # put here. The securities code is not it: Kojima is 7513 on the exchange and
 # E03270 in EDINET.
-edinet_code <- "E03270"
+filer_edinet_code <- "E03270"
 
 # The number of financial years shown. The Japanese annual securities report
 # carries a five-year summary of the headline figures in its own front
@@ -519,18 +519,18 @@ for (table in c("filings", "facts")) {
   }
 }
 
-if (!grepl("^E[0-9]{5}$", edinet_code)) {
+if (!grepl("^E[0-9]{5}$", filer_edinet_code)) {
   stop("The filer is named by its EDINET code, the letter E and five ",
-       "digits: ", edinet_code, " is not one. Kojima is E03270, and 7513 ",
+       "digits: ", filer_edinet_code, " is not one. Kojima is E03270, and 7513 ",
        "is its securities code rather than its EDINET code.")
 }
 
 filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
-  filter(EDINETCODE == edinet_code) %>%
+  filter(edinet_code == filer_edinet_code) %>%
   collect()
 
 if (nrow(filings_all) == 0) {
-  stop("The table of filings lists no filing of ", edinet_code, ". Collect ",
+  stop("The table of filings lists no filing of ", filer_edinet_code, ". Collect ",
        "the indexes of the days the filer submitted on with the edinet ",
        "pipeline first; the table of filings is built from the indexes and ",
        "an index covers one calendar day.")
@@ -541,16 +541,16 @@ if (nrow(filings_all) == 0) {
 # is the figure of the report that was filed first. A withdrawn filing is
 # left out altogether -- the agency marks it and the filer took it back.
 annual_all <- filings_all %>%
-  filter(DOCTYPE %in% annual_doctypes, HASCSV == "1",
-         is.na(WITHDRAWN) | WITHDRAWN == "0",
-         !is.na(PERIODEND)) %>%
-  arrange(PERIODEND, SUBMITTED)
+  filter(doc_type %in% annual_doctypes, has_csv == "1",
+         is.na(withdrawn) | withdrawn == "0",
+         !is.na(period_end)) %>%
+  arrange(period_end, submitted)
 
 if (nrow(annual_all) == 0) {
   stop("The filer has no annual securities report with a conversion in the ",
        "Silver layer. The table of filings lists ", nrow(filings_all),
-       " filing(s) of ", edinet_code, ", of document types ",
-       paste(sort(unique(filings_all$DOCTYPE)), collapse = ", "),
+       " filing(s) of ", filer_edinet_code, ", of document types ",
+       paste(sort(unique(filings_all$doc_type)), collapse = ", "),
        "; this factsheet reads ", paste(annual_doctypes, collapse = " and "),
        " with a conversion the agency published.")
 }
@@ -560,28 +560,28 @@ if (nrow(annual_all) == 0) {
 # holding a single report covers two years of statements and five of the
 # summary of the front matter.
 annual <- annual_all %>%
-  group_by(PERIODEND) %>%
+  group_by(period_end) %>%
   slice(1) %>%
   ungroup() %>%
-  arrange(PERIODEND) %>%
+  arrange(period_end) %>%
   slice_tail(n = n_years)
 
 facts_all <- open_dataset(file.path(path_silver, "facts")) %>%
-  filter(EDINETCODE == edinet_code, FILING %in% annual_all$FILING) %>%
+  filter(edinet_code == filer_edinet_code, filing %in% annual_all$filing) %>%
   collect()
 
 if (nrow(facts_all) == 0) {
   stop("The Silver layer holds no fact of any annual report of ",
-       edinet_code, ". The agency's conversion of the report has to be in ",
+       filer_edinet_code, ". The agency's conversion of the report has to be in ",
        "the Bronze layer for the facts to be read from it; a run of ",
        "update_edinet over the day the report was filed collects it.")
 }
 
-latest_filing <- tail(annual$FILING, 1)
+latest_filing <- tail(annual$filing, 1)
 filers <- NULL
 if (dir.exists(file.path(path_silver, "filers"))) {
   filers <- open_dataset(file.path(path_silver, "filers")) %>%
-    filter(EDINETCODE == edinet_code) %>%
+    filter(edinet_code == filer_edinet_code) %>%
     collect()
   if (nrow(filers) == 0) filers <- NULL
 }
@@ -590,8 +590,8 @@ if (dir.exists(file.path(path_silver, "filers"))) {
 # kept beside it, because whether a concept is the filer's own extension or
 # the taxonomy's is read off the prefix and the coverage page says which.
 facts_all <- facts_all %>%
-  mutate(prefix = sub(":.*", "", CONCEPT),
-         local = sub(".*:", "", CONCEPT),
+  mutate(prefix = sub(":.*", "", concept),
+         local = sub(".*:", "", concept),
          extension = !prefix %in% c("jppfs_cor", "jpcrp_cor", "jpdei_cor",
                                     "jpigp_cor", "jpctl_cor", "jpsps_cor",
                                     "jppsp_cor", "jpaud_cor"))
@@ -615,13 +615,13 @@ facts_all <- facts_all %>%
 # agency's own list of filers for Kojima: the list says the filer has
 # consolidated accounts, the filing says it prepared none, and the filing is
 # the thing the figures come from.
-dei <- facts_all %>% filter(FILING == latest_filing, prefix == "jpdei_cor")
+dei <- facts_all %>% filter(filing == latest_filing, prefix == "jpdei_cor")
 
 dei_of <- function(key) {
   names <- profile_concepts[[key]]
   row <- dei %>% filter(local %in% names)
   if (nrow(row) == 0) return(NA_character_)
-  value <- coalesce(row$TEXT[1], as.character(row$VALUE[1]))
+  value <- coalesce(row$text[1], as.character(row$value[1]))
   # The conversion writes a full-width dash where a field does not apply.
   if (is.na(value) || value == "―" || value == "－" ||
       value == "−" || trimws(value) == "-") NA_character_ else value
@@ -629,7 +629,7 @@ dei_of <- function(key) {
 
 standards <- dei_of("standards")
 consolidated_flag <- dei_of("consolidated_flag")
-filer_name_ja <- coalesce(dei_of("name_ja"), annual$NAME[nrow(annual)])
+filer_name_ja <- coalesce(dei_of("name_ja"), annual$name[nrow(annual)])
 filer_name_en <- dei_of("name_en")
 
 # Whether the consolidated series exists at all is decided by the data and
@@ -638,10 +638,10 @@ filer_name_en <- dei_of("name_en")
 # column. The consolidated series is the facts with no dimension; it is held
 # to exist where the filing states a revenue or a total of assets under none.
 has_group <- facts_all %>%
-  filter(FILING == latest_filing, is.na(DIMENSIONS),
+  filter(filing == latest_filing, is.na(dimensions),
          local %in% c(summary_concepts$revenue, summary_concepts$assets,
                       statement_concepts$revenue, statement_concepts$assets),
-         !is.na(VALUE)) %>%
+         !is.na(value)) %>%
   nrow() > 0
 
 if (!consolidation %in% c("auto", "consolidated", "nonconsolidated")) {
@@ -735,9 +735,9 @@ on_basis <- function(data, member) {
   if (identical(member, "any")) {
     data
   } else if (is.na(member)) {
-    data %>% filter(is.na(DIMENSIONS))
+    data %>% filter(is.na(dimensions))
   } else {
-    data %>% filter(!is.na(DIMENSIONS), DIMENSIONS == member)
+    data %>% filter(!is.na(dimensions), dimensions == member)
   }
 }
 
@@ -755,8 +755,8 @@ dimension_depth <- function(dimensions) {
 }
 
 # Which report a period is taken from, and the order that decides it.
-own_filing <- setNames(annual$FILING, as.character(annual$PERIODEND))
-filed_at <- setNames(as.numeric(annual_all$SUBMITTED), annual_all$FILING)
+own_filing <- setNames(annual$filing, as.character(annual$period_end))
+filed_at <- setNames(as.numeric(annual_all$submitted), annual_all$filing)
 
 if (!basis %in% c("as-reported", "latest")) {
   stop("basis is \"as-reported\" or \"latest\", not ", basis)
@@ -786,19 +786,19 @@ pick <- function(concepts, units, data = facts_all, periods = NULL,
   }))
 
   candidates <- data %>%
-    filter(!is.na(VALUE)) %>%
+    filter(!is.na(value)) %>%
     inner_join(lookup, by = "local", relationship = "many-to-many") %>%
     mutate(class = units[key],
            ok_unit = mapply(function(u, cl) {
              if (is.na(cl)) TRUE else identical(u, unit_classes[[cl]])
-           }, UNIT, class))
+           }, unit, class))
 
   refused <<- bind_rows(refused, candidates %>% filter(!ok_unit) %>%
-                          select("key", "CONCEPT", "UNIT", "class", "VALUE"))
+                          select("key", "concept", "unit", "class", "value"))
   candidates <- candidates %>% filter(ok_unit)
 
   if (!is.null(periods)) {
-    candidates <- candidates %>% filter(PRDEND %in% periods)
+    candidates <- candidates %>% filter(prd_end %in% periods)
   }
 
   chosen <- bind_rows(
@@ -808,17 +808,17 @@ pick <- function(concepts, units, data = facts_all, periods = NULL,
       mutate(source_basis = "other")
   )
   if (nrow(chosen) == 0) {
-    return(tibble(key = character(), PRDEND = as.Date(character()),
-                  VALUE = numeric(), source_basis = character(),
+    return(tibble(key = character(), prd_end = as.Date(character()),
+                  value = numeric(), source_basis = character(),
                   source_filing = character(), own = logical(),
                   held = logical(), superseded = logical(),
                   extension = logical()))
   }
 
   chosen %>%
-    mutate(depth = dimension_depth(DIMENSIONS),
-           held = as.character(PRDEND) %in% names(own_filing),
-           own = FILING == coalesce(own_filing[as.character(PRDEND)], ""),
+    mutate(depth = dimension_depth(dimensions),
+           held = as.character(prd_end) %in% names(own_filing),
+           own = filing == coalesce(own_filing[as.character(prd_end)], ""),
            # A figure the year's own report would have given differently is
            # one thing; a year whose own report the lake does not hold at all
            # is another, and only the first is a restatement. The five-year
@@ -826,17 +826,17 @@ pick <- function(concepts, units, data = facts_all, periods = NULL,
            # nowhere in the lake, and marking those as restated would say
            # something false about every one of them.
            superseded = held & !own,
-           ord_filing = direction * coalesce(filed_at[FILING], 0),
+           ord_filing = direction * coalesce(filed_at[filing], 0),
            ord_basis = if_else(source_basis == "chosen", 0L, 1L)) %>%
     # One row per key and period: the basis asked for before the other, then
     # the report the basis points to, then the first name of the key the
     # filer states.
-    arrange(key, PRDEND, ord_basis, ord_filing, preference, depth) %>%
-    group_by(key, PRDEND) %>%
+    arrange(key, prd_end, ord_basis, ord_filing, preference, depth) %>%
+    group_by(key, prd_end) %>%
     slice(1) %>%
     ungroup() %>%
-    select("key", "PRDEND", "PRDSTART", "VALUE", "UNIT", "LABEL", "CONCEPT",
-           "source_basis", "source_filing" = "FILING", "own", "held",
+    select("key", "prd_end", "prd_start", "value", "unit", "label", "concept",
+           "source_basis", "source_filing" = "filing", "own", "held",
            "superseded", "extension")
 }
 
@@ -871,17 +871,17 @@ statement_facts <- pick(statement_concepts, statement_units)
 # The facts of the latest report that are not figures of the accounts, taken
 # on whatever dimension they carry.
 stated <- pick(stated_concepts, stated_units,
-               data = facts_all %>% filter(FILING == latest_filing),
+               data = facts_all %>% filter(filing == latest_filing),
                member = "any", fallback = "any")
 
 count_of <- function(key) {
-  value <- stated$VALUE[stated$key == key]
+  value <- stated$value[stated$key == key]
   if (length(value) == 0) NA_real_ else tail(value, 1)
 }
 
 if (nrow(summary_facts) == 0 && nrow(statement_facts) == 0) {
   stop("No figure of the concept lists was found on the ",
-       tolower(basis_label), " basis in any annual report of ", edinet_code,
+       tolower(basis_label), " basis in any annual report of ", filer_edinet_code,
        ". The filing states its accounting standard as \"", standards,
        "\"; if that is not Japan GAAP or IFRS the concept lists do not fit ",
        "it.")
@@ -889,31 +889,31 @@ if (nrow(summary_facts) == 0 && nrow(statement_facts) == 0) {
 
 widen <- function(chosen, keys) {
   if (nrow(chosen) == 0) {
-    out <- tibble(PERIODEND = as.Date(character()))
+    out <- tibble(period_end = as.Date(character()))
   } else {
     out <- chosen %>%
-      select("PERIODEND" = "PRDEND", "key", "VALUE") %>%
-      pivot_wider(names_from = "key", values_from = "VALUE") %>%
-      arrange(PERIODEND)
+      select("period_end" = "prd_end", "key", "value") %>%
+      pivot_wider(names_from = "key", values_from = "value") %>%
+      arrange(period_end)
   }
   for (key in setdiff(keys, names(out))) out[[key]] <- NA_real_
   out
 }
 
 # The years of the summary, counted back from the latest the filer states.
-summary_years_all <- sort(unique(summary_facts$PRDEND))
+summary_years_all <- sort(unique(summary_facts$prd_end))
 summary_years_all <- tail(summary_years_all, n_years)
-wide <- widen(summary_facts %>% filter(PRDEND %in% summary_years_all),
+wide <- widen(summary_facts %>% filter(prd_end %in% summary_years_all),
               names(summary_concepts)) %>%
-  filter(PERIODEND %in% summary_years_all)
+  filter(period_end %in% summary_years_all)
 
 # The years the statements cover, which are the period ends of the reports
 # read and the comparative of the earliest of them.
-statement_years_all <- sort(unique(statement_facts$PRDEND))
+statement_years_all <- sort(unique(statement_facts$prd_end))
 statement_years_all <- tail(statement_years_all, n_years + 1)
-stmt <- widen(statement_facts %>% filter(PRDEND %in% statement_years_all),
+stmt <- widen(statement_facts %>% filter(prd_end %in% statement_years_all),
               names(statement_concepts)) %>%
-  filter(PERIODEND %in% statement_years_all)
+  filter(period_end %in% statement_years_all)
 
 # The name of a financial year. A Japanese filer names its years by their
 # ordinal -- Kojima's report is of its 64th term, 第64期 -- and the ordinal is
@@ -924,12 +924,12 @@ stmt <- widen(statement_facts %>% filter(PRDEND %in% statement_years_all),
 year_name <- function(dates) {
   ifelse(is.na(dates), "–",
          ifelse(format(dates, "%m") == "03",
-                paste0("FY", format(dates, "%Y")),
-                paste0("FY", format(dates, "%Y"), " (", format(dates, "%b"),
+                paste0("fy", format(dates, "%Y")),
+                paste0("fy", format(dates, "%Y"), " (", format(dates, "%b"),
                        ")")))
 }
-wide$year <- year_name(wide$PERIODEND)
-stmt$year <- year_name(stmt$PERIODEND)
+wide$year <- year_name(wide$period_end)
+stmt$year <- year_name(stmt$period_end)
 
 # --------------------------------------------------------------------------
 # What the figures are turned into
@@ -1106,7 +1106,7 @@ stmt <- stmt %>%
 shown <- wide
 n_shown <- nrow(shown)
 years <- shown$year
-max_date <- max(c(shown$PERIODEND, stmt$PERIODEND))
+max_date <- max(c(shown$period_end, stmt$period_end))
 
 shown_stmt <- stmt %>% slice_tail(n = max(1, nrow(stmt) - 1))
 if (nrow(stmt) == 1) shown_stmt <- stmt
@@ -1157,9 +1157,9 @@ amount_label <- "JPY million"
 
 # The x-axis of a chart of the summary has one break per financial year,
 # named as the tables name it.
-year_labels <- setNames(shown$year, as.character(shown$PERIODEND))
+year_labels <- setNames(shown$year, as.character(shown$period_end))
 scale_x_years <- function(...) {
-  scale_x_date(expand = c(.02, 0), breaks = shown$PERIODEND,
+  scale_x_date(expand = c(.02, 0), breaks = shown$period_end,
                labels = function(d) year_labels[as.character(d)], ...)
 }
 
@@ -1214,9 +1214,9 @@ line_spec <- function(...) {
 # Where each key's figures came from, over the years shown, which the marks
 # and the coverage page both read.
 provenance <- bind_rows(
-  summary_facts %>% filter(PRDEND %in% shown$PERIODEND) %>%
+  summary_facts %>% filter(prd_end %in% shown$period_end) %>%
     mutate(table = "summary"),
-  statement_facts %>% filter(PRDEND %in% shown_stmt$PERIODEND) %>%
+  statement_facts %>% filter(prd_end %in% shown_stmt$period_end) %>%
     mutate(table = "statements")
 )
 
@@ -1239,9 +1239,9 @@ label_of <- function(spec, table = NULL) {
     provenance %>% filter(table == !!table)
   japanese <- vapply(spec$key, function(key) {
     if (!nzchar(key)) return(NA_character_)
-    found <- rows %>% filter(key == !!key, !is.na(LABEL))
+    found <- rows %>% filter(key == !!key, !is.na(label))
     if (nrow(found) == 0) return(NA_character_)
-    trim_label(found$LABEL[1], c("、経営指標等", "、提出会社の状況、従業員の状況"))
+    trim_label(found$label[1], c("、経営指標等", "、提出会社の状況、従業員の状況"))
   }, character(1))
   if (labels == "ja") {
     ifelse(is.na(japanese), spec$en, japanese)
@@ -1341,8 +1341,8 @@ chart_data <- function(keys, labels, scale_by = scale, data = shown) {
   present <- keys[keys %in% names(data)]
   labels <- labels[keys %in% names(data)]
   data %>%
-    select(all_of(c("PERIODEND", present))) %>%
-    pivot_longer(-"PERIODEND", names_to = "var") %>%
+    select(all_of(c("period_end", present))) %>%
+    pivot_longer(-"period_end", names_to = "var") %>%
     mutate(value = value / scale_by,
            var = factor(var, levels = present,
                         labels = wrap_labels(labels, 34)))
@@ -1352,7 +1352,7 @@ chart_stacked <- function(keys, labels, subtitle = amount_label,
                           scale_by = scale, ncol = 2, data = shown,
                           width = 250) {
   ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = PERIODEND, y = value, fill = var)) +
+         aes(x = period_end, y = value, fill = var)) +
     geom_col(width = width) +
     geom_zeroline() +
     scale_x_years() +
@@ -1368,7 +1368,7 @@ chart_bars <- function(keys, labels, subtitle = amount_label,
                        scale_by = scale, digits = 0, ncol = 3, data = shown,
                        width = 240) {
   ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = PERIODEND, y = value, fill = var)) +
+         aes(x = period_end, y = value, fill = var)) +
     geom_col(position = position_dodge(width = width + 20), width = width) +
     geom_zeroline() +
     scale_x_years() +
@@ -1384,7 +1384,7 @@ chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
                         digits = 0, zero = TRUE, ncol = 3, data = shown) {
   g <- ggplot(chart_data(keys, labels, scale_by, data) %>%
                 filter(!is.na(value)),
-              aes(x = PERIODEND, y = value, colour = var)) +
+              aes(x = period_end, y = value, colour = var)) +
     geom_line(linewidth = linewidth_corporate_design) +
     geom_point(size = 1.4) +
     scale_x_years() +
@@ -1427,25 +1427,25 @@ period_range <- if (n_shown > 1) paste0(years[1], " – ", years[n_shown]) else
   years[n_shown]
 
 filer_row <- if (is.null(filers)) NULL else as.list(filers[1, ])
-display_name <- coalesce(filer_name_en, filer_row$NAMEEN, filer_name_ja)
+display_name <- coalesce(filer_name_en, filer_row$name_en, filer_name_ja)
 subtitle_name <- if (!is.na(filer_name_ja) &&
                      !identical(filer_name_ja, display_name))
   filer_name_ja else NA_character_
 
 identity_items <- list()
-identity_items[["EDINET code"]] <- edinet_code
+identity_items[["EDINET code"]] <- filer_edinet_code
 identity_items[["Securities code"]] <- coalesce(dei_of("security_code"),
-                                                annual$SECCODE[nrow(annual)],
+                                                annual$sec_code[nrow(annual)],
                                                 "–")
-identity_items[["Corporate number"]] <- coalesce(annual$JCN[nrow(annual)], "–")
-identity_items[["Industry"]] <- coalesce(filer_row$INDUSTRY, "–")
+identity_items[["Corporate number"]] <- coalesce(annual$jcn[nrow(annual)], "–")
+identity_items[["Industry"]] <- coalesce(filer_row$industry, "–")
 identity_items[["Accounting standard"]] <- coalesce(standards, "–")
 identity_items[["Basis of these figures"]] <-
   paste0(basis_label, " (", basis_label_ja, ")")
-identity_items[["Financial year ends"]] <- coalesce(filer_row$YEAREND,
+identity_items[["Financial year ends"]] <- coalesce(filer_row$year_end,
                                                     format(max_date, "%d %B"))
 identity_items[["Latest report"]] <- paste(
-  "filed", format(as.Date(tail(annual$SUBMITTED, 1)), "%d %b %Y"))
+  "filed", format(as.Date(tail(annual$submitted, 1)), "%d %b %Y"))
 identity_items[["Reports read"]] <- as.character(nrow(annual))
 
 summary_items <- list()
@@ -1638,7 +1638,7 @@ marks_note <- paste(
 # a restatement and is not marked as one. It is worth saying how many of the
 # columns stand on that footing, which is a property of the lake rather than
 # of the filer.
-held_years <- sum(as.character(shown$PERIODEND) %in% names(own_filing))
+held_years <- sum(as.character(shown$period_end) %in% names(own_filing))
 coverage_note <- if (held_years >= n_shown) NULL else paste(
   "**The lake holds", nrow(annual), "annual",
   if (nrow(annual) == 1) "report" else "reports", "of this filer, covering",
@@ -1740,19 +1740,19 @@ chart_bars(c("operating_cash_flow", "investing_cash_flow",
 # the others.
 profile_items <- list()
 if (!is.null(filer_row)) {
-  profile_items[["Name"]] <- coalesce(filer_row$NAME, filer_name_ja)
-  profile_items[["Name in English"]] <- coalesce(filer_row$NAMEEN,
+  profile_items[["Name"]] <- coalesce(filer_row$name, filer_name_ja)
+  profile_items[["Name in English"]] <- coalesce(filer_row$name_en,
                                                  filer_name_en, "–")
-  profile_items[["Address"]] <- coalesce(filer_row$ADDRESS, "–")
-  profile_items[["Industry"]] <- coalesce(filer_row$INDUSTRY, "–")
-  profile_items[["Kind of filer"]] <- coalesce(filer_row$KIND, "–")
-  profile_items[["Listed"]] <- coalesce(filer_row$LISTED, "–")
-  profile_items[["Stated capital"]] <- if (is.na(filer_row$CAPITAL)) {
+  profile_items[["Address"]] <- coalesce(filer_row$address, "–")
+  profile_items[["Industry"]] <- coalesce(filer_row$industry, "–")
+  profile_items[["Kind of filer"]] <- coalesce(filer_row$kind, "–")
+  profile_items[["Listed"]] <- coalesce(filer_row$listed, "–")
+  profile_items[["Stated capital"]] <- if (is.na(filer_row$capital)) {
     "–"
   } else {
-    paste(fmt(as.numeric(filer_row$CAPITAL)), "JPY million")
+    paste(fmt(as.numeric(filer_row$capital)), "JPY million")
   }
-  profile_items[["Financial year ends"]] <- coalesce(filer_row$YEAREND, "–")
+  profile_items[["Financial year ends"]] <- coalesce(filer_row$year_end, "–")
 }
 
 report_items <- list()
@@ -1775,8 +1775,8 @@ report_items[["Correction"]] <- if (is.na(dei_of("amended"))) {
   "no"
 }
 report_items[["Latest period"]] <-
-  paste(format(tail(annual$PERIODSTART, 1), "%d %b %Y"), "–",
-        format(tail(annual$PERIODEND, 1), "%d %b %Y"))
+  paste(format(tail(annual$period_start, 1), "%d %b %Y"), "–",
+        format(tail(annual$period_end, 1), "%d %b %Y"))
 report_items[["Document number"]] <- latest_filing
 
 # Two tables rather than one: what the agency's list of filers says and what
@@ -1801,9 +1801,9 @@ kv_rows(report_items, "As the report describes itself")
 # The agency's list and the filing can disagree about the one thing that
 # decides which accounts these are, and for Kojima they do. It is worth
 # saying so rather than quietly preferring one.
-if (!is.null(filer_row) && !is.na(filer_row$CONSOLIDATED) &&
+if (!is.null(filer_row) && !is.na(filer_row$consolidated) &&
     !is.na(consolidated_flag)) {
-  listed_says <- filer_row$CONSOLIDATED == "有"
+  listed_says <- filer_row$consolidated == "有"
   filing_says <- consolidated_flag == "true"
   if (listed_says != filing_says) {
     cat("\n**The two sources disagree.** The agency's list of filers says",
@@ -2225,11 +2225,11 @@ for the parent company whatever basis the rest of the report is on.
 
 ```{r workforce-table}
 workforce <- pick(workforce_concepts, workforce_units)
-workforce_latest <- workforce %>% arrange(key, desc(PRDEND)) %>%
+workforce_latest <- workforce %>% arrange(key, desc(prd_end)) %>%
   group_by(key) %>% slice(1) %>% ungroup()
 
 workforce_of <- function(key) {
-  value <- workforce_latest$VALUE[workforce_latest$key == key]
+  value <- workforce_latest$value[workforce_latest$key == key]
   if (length(value) == 0) NA_real_ else value
 }
 
@@ -2280,22 +2280,22 @@ render_lines(
 # and so on -- so the two are joined on it rather than on their order in the
 # file.
 holder_facts <- facts_all %>%
-  filter(FILING == latest_filing,
-         grepl("^No[0-9]+MajorShareholdersMember$", DIMENSIONS))
+  filter(filing == latest_filing,
+         grepl("^No[0-9]+MajorShareholdersMember$", dimensions))
 
 rank_of <- function(dimension) {
   as.integer(sub("^No([0-9]+)MajorShareholdersMember$", "\\1", dimension))
 }
 
 names_held <- holder_facts %>%
-  filter(local == "NameMajorShareholders", !is.na(TEXT)) %>%
-  transmute(rank = rank_of(DIMENSIONS), name = TEXT)
+  filter(local == "NameMajorShareholders", !is.na(text)) %>%
+  transmute(rank = rank_of(dimensions), name = text)
 shares_held <- holder_facts %>%
-  filter(local == "NumberOfSharesHeld", !is.na(VALUE)) %>%
-  transmute(rank = rank_of(DIMENSIONS), shares = VALUE)
+  filter(local == "NumberOfSharesHeld", !is.na(value)) %>%
+  transmute(rank = rank_of(dimensions), shares = value)
 share_of <- holder_facts %>%
-  filter(local == "ShareholdingRatio", !is.na(VALUE)) %>%
-  transmute(rank = rank_of(DIMENSIONS), ratio = 100 * VALUE)
+  filter(local == "ShareholdingRatio", !is.na(value)) %>%
+  transmute(rank = rank_of(dimensions), ratio = 100 * value)
 
 holders <- names_held %>%
   full_join(shares_held, by = "rank") %>%
@@ -2327,17 +2327,17 @@ if (nrow(holders) > 0) {
 # element of its own per class rather than against a dimension. The figures
 # are fractions and are brought onto percentages here.
 classes <- facts_all %>%
-  filter(FILING == latest_filing, local %in% holder_classes, !is.na(VALUE)) %>%
-  arrange(desc(PRDEND)) %>%
+  filter(filing == latest_filing, local %in% holder_classes, !is.na(value)) %>%
+  arrange(desc(prd_end)) %>%
   group_by(local) %>%
   slice(1) %>%
   ungroup()
 
 structure_table <- tibble(class = names(holder_classes),
                           local = unname(holder_classes)) %>%
-  left_join(classes %>% select("local", "VALUE"), by = "local") %>%
-  filter(!is.na(VALUE)) %>%
-  mutate(share = 100 * VALUE)
+  left_join(classes %>% select("local", "value"), by = "local") %>%
+  filter(!is.na(value)) %>%
+  mutate(share = 100 * value)
 
 if (nrow(structure_table) > 0) {
   out <- tibble(Class = structure_table$class,
@@ -2403,22 +2403,22 @@ coverage_of <- function(concepts, chosen, periods, what) {
   tibble(
     List = what,
     `Keys` = length(concepts),
-    `Found` = length(unique(chosen$key[chosen$PRDEND %in% periods])),
+    `Found` = length(unique(chosen$key[chosen$prd_end %in% periods])),
     `Years` = length(periods),
-    `Figures` = sum(chosen$PRDEND %in% periods))
+    `Figures` = sum(chosen$prd_end %in% periods))
 }
 
 coverage <- bind_rows(
-  coverage_of(summary_concepts, summary_facts, shown$PERIODEND,
+  coverage_of(summary_concepts, summary_facts, shown$period_end,
               "Five-year summary"),
-  coverage_of(statement_concepts, statement_facts, shown_stmt$PERIODEND,
+  coverage_of(statement_concepts, statement_facts, shown_stmt$period_end,
               "Statements"))
 knitr::kable(coverage, align = "lrrrr")
 ```
 
 ```{r coverage-detail, results='asis'}
 missing_of <- function(concepts, chosen, periods) {
-  setdiff(names(concepts), unique(chosen$key[chosen$PRDEND %in% periods]))
+  setdiff(names(concepts), unique(chosen$key[chosen$prd_end %in% periods]))
 }
 
 report_missing <- function(concepts, chosen, periods, what) {
@@ -2438,9 +2438,9 @@ report_missing <- function(concepts, chosen, periods, what) {
   cat("\n")
 }
 
-report_missing(summary_concepts, summary_facts, shown$PERIODEND,
+report_missing(summary_concepts, summary_facts, shown$period_end,
                "The five-year summary")
-report_missing(statement_concepts, statement_facts, shown_stmt$PERIODEND,
+report_missing(statement_concepts, statement_facts, shown_stmt$period_end,
                "The statements")
 ```
 
@@ -2457,10 +2457,10 @@ if (nrow(refused) == 0) {
       "a pure number for a ratio.\n\n")
 } else {
   out <- refused %>%
-    distinct(key, CONCEPT, UNIT, class) %>%
+    distinct(key, concept, unit, class) %>%
     arrange(key) %>%
-    transmute(Key = key, Element = paste0("`", CONCEPT, "`"),
-              `Unit stated` = UNIT,
+    transmute(Key = key, Element = paste0("`", concept, "`"),
+              `Unit stated` = unit,
               `Unit expected` = vapply(class, function(cl)
                 unit_classes[[cl]], character(1)))
   print(knitr::kable(out, align = "llll"))
@@ -2494,13 +2494,13 @@ knitr::kable(origin, align = "lrrrrr")
 ```
 
 ```{r extensions, results='asis'}
-ext <- provenance %>% filter(extension) %>% distinct(key, CONCEPT)
+ext <- provenance %>% filter(extension) %>% distinct(key, concept)
 if (nrow(ext) > 0) {
   cat("\nThe figures taken from a concept the filer created for its own",
       "report, marked § in the tables:\n\n")
   cat("| Key | Element |\n|:---|:---|\n")
   for (i in seq_len(nrow(ext))) {
-    cat("| ", ext$key[i], " | `", ext$CONCEPT[i], "` |\n", sep = "")
+    cat("| ", ext$key[i], " | `", ext$concept[i], "` |\n", sep = "")
   }
   cat("\nAn element under a prefix built from the form and the filer's own",
       "EDINET code is one the filer created. The core taxonomy has no",
@@ -2597,12 +2597,12 @@ checks <- bind_rows(
   # Across the two spans: the summary and the statements must agree about the
   # year they share, and this is the one check that tests the reading of both.
   check("The summary and the statements agree on revenue",
-        list(shown$revenue[match(tail(shown_stmt$PERIODEND, 1),
-                                 shown$PERIODEND)]),
+        list(shown$revenue[match(tail(shown_stmt$period_end, 1),
+                                 shown$period_end)]),
         cur_stmt$revenue),
   check("The summary and the statements agree on total assets",
-        list(shown$assets[match(tail(shown_stmt$PERIODEND, 1),
-                                shown$PERIODEND)]),
+        list(shown$assets[match(tail(shown_stmt$period_end, 1),
+                                shown$period_end)]),
         cur_stmt$assets),
   # Against the equity of the parent's own holders and not the total: a
   # filer computes its equity per share on what belongs to them, so a group
@@ -2646,17 +2646,17 @@ if (nrow(differ) > 0) {
 
 ```{r filings-table}
 reports <- annual_all %>%
-  arrange(desc(SUBMITTED)) %>%
+  arrange(desc(submitted)) %>%
   transmute(
-    Document = FILING,
-    Type = recode(DOCTYPE, "120" = "Annual report",
-                  "130" = "Correction", .default = DOCTYPE),
-    Period = ifelse(is.na(PERIODEND), "–",
-                    paste(format(PERIODSTART, "%d %b %Y"), "–",
-                          format(PERIODEND, "%d %b %Y"))),
-    Filed = format(as.Date(SUBMITTED), "%d %b %Y"),
-    `In this factsheet` = ifelse(FILING %in% annual$FILING, "yes", "no"),
-    `English version` = ifelse(HASENGLISH == "1", "yes", "no"))
+    Document = filing,
+    Type = recode(doc_type, "120" = "Annual report",
+                  "130" = "Correction", .default = doc_type),
+    Period = ifelse(is.na(period_end), "–",
+                    paste(format(period_start, "%d %b %Y"), "–",
+                          format(period_end, "%d %b %Y"))),
+    Filed = format(as.Date(submitted), "%d %b %Y"),
+    `In this factsheet` = ifelse(filing %in% annual$filing, "yes", "no"),
+    `English version` = ifelse(has_english == "1", "yes", "no"))
 knitr::kable(reports, align = "lllllc")
 ```
 
@@ -2668,7 +2668,7 @@ cat("A document number is the 書類管理番号, which is how the API addresses
 
 # The one deadline in this regime, and it is worth saying on the document
 # rather than only in the module's documentation.
-oldest <- min(as.Date(annual_all$SUBMITTED))
+oldest <- min(as.Date(annual_all$submitted))
 if (as.numeric(Sys.Date() - oldest) / 365.25 > 8) {
   cat("**The oldest report read here was filed", format(oldest, "%B %Y"),
       "**, which is within two years of the ten the agency keeps a filing",

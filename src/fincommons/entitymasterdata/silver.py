@@ -38,17 +38,43 @@ logger = logging.getLogger(__name__)
 
 
 #: The columns of the entity master data set, in the order they are stored in.
-COLUMNS = ["ID", "LEI",
-           "INTERNALID_1", "INTERNALID_2", "INTERNALID_3", "INTERNALID_4",
-           "NAME", "CTRY", "SECTOR", "SUBSECTOR", "ULTPAR_LEI", "AMC",
-           "IF_POLICY", "IF_TYPE", "IF_UCITS_COMPL"]
+COLUMNS = ["id", "lei",
+           "internal_id_1", "internal_id_2", "internal_id_3", "internal_id_4",
+           "name", "country", "sector", "subsector", "ultimate_parent_lei", "amc",
+           "if_policy", "if_type", "if_ucits_compl"]
+
+#: What a column of a Bronze register, or of the proprietary list, is called
+#: in the Silver table. A Bronze table records what a publisher sent and keeps
+#: the names it sent, so the Silver names are taken on where Bronze is read;
+#: see :func:`with_silver_names`.
+SILVER_NAMES = {
+    "LEI": "lei", "NAME": "name", "CTRY": "country", "REFDT": "ref_date",
+    "SECTOR": "sector", "SUBSECTOR": "subsector",
+    "ULTPAR_LEI": "ultimate_parent_lei", "AMC": "amc",
+    "IF_POLICY": "if_policy", "IF_TYPE": "if_type",
+    "IF_UCITS_COMPL": "if_ucits_compl",
+    "INTERNALID_1": "internal_id_1", "INTERNALID_2": "internal_id_2",
+    "INTERNALID_3": "internal_id_3", "INTERNALID_4": "internal_id_4",
+}
 
 #: The columns a proprietary list contributes that the public sources do not.
-INTERNAL_ID_COLUMNS = ["INTERNALID_1", "INTERNALID_2", "INTERNALID_3", "INTERNALID_4"]
+#: The list is an input kept by hand, so it carries the upper-case names it
+#: always has: it is read into the Silver names rather than written in them,
+#: which is why these no longer follow :data:`COLUMNS`.
+INTERNAL_ID_COLUMNS = ["INTERNALID_1", "INTERNALID_2", "INTERNALID_3",
+                       "INTERNALID_4"]
+
+#: The same four columns as the Silver table names them. The proprietary list
+#: is held to :data:`INTERNAL_ID_COLUMNS`, which is what its header says; the
+#: columns a frame is given are these, because by then it has been read into
+#: the Silver names.
+INTERNAL_ID_SILVER = [SILVER_NAMES[column] for column in INTERNAL_ID_COLUMNS]
 
 #: The columns a proprietary list may carry: those of the entity master data
 #: set except ``ID``, which the update assigns. ``LEI`` is the one it must.
-INTERNAL_COLUMNS = [column for column in COLUMNS if column != "ID"]
+INTERNAL_COLUMNS = ["LEI"] + INTERNAL_ID_COLUMNS + [
+    "NAME", "CTRY", "SECTOR", "SUBSECTOR", "ULTPAR_LEI", "AMC",
+    "IF_POLICY", "IF_TYPE", "IF_UCITS_COMPL"]
 
 #: What a well-formed LEI looks like after :func:`normalised_lei`: eighteen
 #: letters or digits and two check digits (ISO 17442).
@@ -166,7 +192,7 @@ def with_internal_id_columns(data):
     data: pyspark.sql.DataFrame
         The data frame the columns are added to.
     """
-    for column in INTERNAL_ID_COLUMNS:
+    for column in INTERNAL_ID_SILVER:
         if column not in data.columns:
             data = data.withColumn(column, func.lit(None).cast("string"))
     return data
@@ -200,7 +226,7 @@ def normalised_lei(column):
     return func.when(cleaned != "", cleaned)
 
 
-def with_normalised_lei(data, source, columns = ("LEI",)):
+def with_normalised_lei(data, source, columns = ("lei",), lei="lei"):
     """Normalise the LEI columns of a register and log the ones still malformed.
 
     See :func:`normalised_lei` for what is normalised. An LEI that does not
@@ -221,34 +247,38 @@ def with_normalised_lei(data, source, columns = ("LEI",)):
     for column in columns:
         if column in data.columns:
             data = data.withColumn(column, normalised_lei(column))
-    warn_of_malformed_leis(data, source)
+    warn_of_malformed_leis(data, source, lei)
     return data
 
 
-def warn_of_malformed_leis(data, source):
+def warn_of_malformed_leis(data, source, lei="lei"):
     """Log the LEIs of a register that do not match :data:`LEI_PATTERN`.
 
     Parameters
     ----------
     data: pyspark.sql.DataFrame
-        A data frame with a normalised ``LEI`` column.
+        A data frame with a normalised LEI column.
     source: str
         Name of the register, for the log.
+    lei: str
+        Name of that column. It is the Silver name, except for the
+        proprietary list, which is checked before it is read into the Silver
+        names so that a duplicate is found on the normalised value.
     """
     # The count and the examples are taken in one pass over the register,
     # which for the GLEIF golden copy is some millions of rows.
     found = data.filter(
-        func.col("LEI").isNotNull() & ~func.col("LEI").rlike(LEI_PATTERN)
+        func.col(lei).isNotNull() & ~func.col(lei).rlike(LEI_PATTERN)
     ).agg(
-        func.countDistinct("LEI").alias("count"),
-        func.sort_array(func.collect_set("LEI")).alias("leis"),
+        func.countDistinct(lei).alias("_count"),
+        func.sort_array(func.collect_set(lei)).alias("_leis"),
     ).first()
-    if not found["count"]:
+    if not found["_count"]:
         return
     logger.warning(
         "LEIs of the register are malformed and will not match GLEIF",
         extra=context(module="entitymasterdata", layer="silver", source=source,
-                      count=found["count"], leis="|".join(found["leis"][:5])),
+                      count=found["_count"], leis="|".join(found["_leis"][:5])),
     )
 
 
@@ -301,6 +331,26 @@ def check_internal_list(internal, source):
         )
 
 
+def with_silver_names(data):
+    """Rename the Bronze columns of ``data`` to the Silver names.
+
+    Whichever of :data:`SILVER_NAMES` the frame carries is renamed and the
+    rest is left alone, so the same call serves a register that holds only an
+    LEI and the GLEIF file that holds four of them. This is the one place the
+    two layers meet: everything before it is spelled as the publisher spelled
+    it, everything after it as the Silver table does.
+
+    Parameters
+    ----------
+    data: pyspark.sql.DataFrame
+        A frame read from the Bronze layer, or the proprietary list.
+    """
+    for bronze in SILVER_NAMES:
+        if bronze in data.columns:
+            data = data.withColumnRenamed(bronze, SILVER_NAMES[bronze])
+    return data
+
+
 def read_internal_list(spark, path):
     """Read, normalise and check the proprietary list.
 
@@ -320,10 +370,10 @@ def read_internal_list(spark, path):
     """
     internal = spark.read.options(header="True", inferSchema="False").csv(path)
     internal = with_normalised_lei(
-        internal, "INTERNAL", columns=("LEI", "ULTPAR_LEI", "AMC")
+        internal, "INTERNAL", columns=("LEI", "ULTPAR_LEI", "AMC"), lei="LEI"
     ) if "LEI" in internal.columns else internal
     check_internal_list(internal, path)
-    return with_internal_id_columns(internal)
+    return with_internal_id_columns(with_silver_names(internal))
 
 
 def first_per_lei(data, order):
@@ -353,11 +403,11 @@ def first_per_lei(data, order):
         The columns the rows of one LEI are ordered by. The first of them is
         kept.
     """
-    window_spec = Window.partitionBy("LEI").orderBy(*order)
+    window_spec = Window.partitionBy("lei").orderBy(*order)
     return data \
-        .withColumn("rn", func.row_number().over(window_spec)) \
-        .filter(func.col("rn") == 1) \
-        .drop("rn")
+        .withColumn("_rn", func.row_number().over(window_spec)) \
+        .filter(func.col("_rn") == 1) \
+        .drop("_rn")
 
 
 def active_relationship(data, relationship_type, column):
@@ -386,7 +436,7 @@ def active_relationship(data, relationship_type, column):
         The value of ``Relationship.RelationshipType`` to select, such as
         ``'IS_ULTIMATELY_CONSOLIDATED_BY'``.
     column: str
-        Name the counterpart is returned under, such as ``'ULTPAR_LEI'``.
+        Name the counterpart is returned under, such as ``'ultimate_parent_lei'``.
 
     Returns
     -------
@@ -396,10 +446,10 @@ def active_relationship(data, relationship_type, column):
     related = data \
         .filter(func.col("`Relationship.RelationshipType`") == relationship_type) \
         .filter(func.col("`Relationship.RelationshipStatus`") == ACTIVE_RELATIONSHIP) \
-        .withColumnRenamed("Relationship.StartNode.NodeID", "LEI") \
+        .withColumnRenamed("Relationship.StartNode.NodeID", "lei") \
         .withColumnRenamed("Relationship.EndNode.NodeID", column) \
-        .transform(lambda frame: text_columns(frame, ["LEI", column])) \
-        .withColumn("LEI", normalised_lei("LEI")) \
+        .transform(lambda frame: text_columns(frame, ["lei", column])) \
+        .withColumn("lei", normalised_lei("lei")) \
         .withColumn(column, normalised_lei(column))
     return first_per_lei(related, [func.col(column).asc_nulls_last()])
 
@@ -498,36 +548,36 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     # GLEIF Level 1 data, which says who the entity is
     gleif_1 = spark.read.parquet(
         latest_bronze_file(common.path_bronze_gleif_level_1(config_path))
-    )
+    ).transform(with_silver_names)
     gleif_1 = with_normalised_lei(gleif_1, "GLEIF_L1")
 
     # GLEIF Level 2 data, which says how entities are related to one another
     gleif_2 = spark.read.parquet(
         latest_bronze_file(common.path_bronze_gleif_level_2(config_path))
-    )
+    ).transform(with_silver_names)
 
     # ECB investment funds
     invfund = spark.read.parquet(
             latest_bronze_file(common.path_bronze_ecb_investment_fund(config_path))
-        ) \
+        ).transform(with_silver_names) \
         .transform(lambda data: with_normalised_lei(data, "ECB_IF")) \
-        .filter(func.col("LEI").isNotNull()) \
-        .withColumn("SECTOR", func.when(func.col("UCITS compliance") == "Non-UCITS compliant, AIF", "AIFD") \
+        .filter(func.col("lei").isNotNull()) \
+        .withColumn("sector", func.when(func.col("UCITS compliance") == "Non-UCITS compliant, AIF", "AIFD") \
                                   .when(func.col("UCITS compliance") == "UCITS compliant", "UCIT") \
                                   .otherwise(func.lit("INVF"))) \
-        .withColumn("SUBSECTOR", func.col("Investment policy")) \
-        .withColumn("IF_POLICY", func.col("Investment policy")) \
-        .withColumnRenamed("Type of investment fund", "IF_TYPE") \
-        .withColumn("IF_TYPE", func.when(func.col("IF_TYPE") == "Exchange traded fund (ETF)", "ETF") \
-                                   .when(func.col("IF_TYPE") == "Private equity fund (PEF)", "PEF") \
-                                   .when(func.col("IF_TYPE") == "Investment fund other than an Exchange traded fund (ETF) and a Private equity fund (PEF)", "Neither ETF nor PEF") \
-                                   .otherwise(func.col("IF_TYPE"))) \
-        .withColumnRenamed("UCITS compliance", "IF_UCITS_COMPL") \
-        .withColumn("IF_UCITS_COMPL", func.when(func.col("IF_UCITS_COMPL") == "Non-UCITS compliant, AIF", "AIF") \
-                                          .when(func.col("IF_UCITS_COMPL") == "UCITS compliant", "UCITS") \
-                                          .otherwise(func.col("IF_UCITS_COMPL"))) \
+        .withColumn("subsector", func.col("Investment policy")) \
+        .withColumn("if_policy", func.col("Investment policy")) \
+        .withColumnRenamed("Type of investment fund", "if_type") \
+        .withColumn("if_type", func.when(func.col("if_type") == "Exchange traded fund (ETF)", "ETF") \
+                                   .when(func.col("if_type") == "Private equity fund (PEF)", "PEF") \
+                                   .when(func.col("if_type") == "Investment fund other than an Exchange traded fund (ETF) and a Private equity fund (PEF)", "Neither ETF nor PEF") \
+                                   .otherwise(func.col("if_type"))) \
+        .withColumnRenamed("UCITS compliance", "if_ucits_compl") \
+        .withColumn("if_ucits_compl", func.when(func.col("if_ucits_compl") == "Non-UCITS compliant, AIF", "AIF") \
+                                          .when(func.col("if_ucits_compl") == "UCITS compliant", "UCITS") \
+                                          .otherwise(func.col("if_ucits_compl"))) \
         .transform(lambda data: text_columns(
-            data, ["LEI", "SECTOR", "SUBSECTOR", "IF_POLICY", "IF_TYPE", "IF_UCITS_COMPL"]
+            data, ["lei", "sector", "subsector", "if_policy", "if_type", "if_ucits_compl"]
         ))
 
     # The fund register makes two different kinds of statement, and only one of
@@ -543,52 +593,52 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     # contributed, and that row has no such columns. A money market fund is the
     # case that matters, because it stands on the list of MFIs by definition.
     fund_characteristics = first_per_lei(
-        invfund.select("LEI", "IF_POLICY", "IF_TYPE", "IF_UCITS_COMPL"),
-        [func.col("IF_UCITS_COMPL").asc_nulls_last(),
-         func.col("IF_TYPE").asc_nulls_last(),
-         func.col("IF_POLICY").asc_nulls_last()],
+        invfund.select("lei", "if_policy", "if_type", "if_ucits_compl"),
+        [func.col("if_ucits_compl").asc_nulls_last(),
+         func.col("if_type").asc_nulls_last(),
+         func.col("if_policy").asc_nulls_last()],
     )
-    invfund = invfund.select("LEI", "SECTOR", "SUBSECTOR")
+    invfund = invfund.select("lei", "sector", "subsector")
 
     # ECB MFIs. The register is read before the sector is derived from it, so
     # that a category the module does not know can be named in the log.
     mfi_register = spark.read.parquet(
             latest_bronze_file(common.path_bronze_ecb_mfi(config_path))
-        ) \
+        ).transform(with_silver_names) \
         .transform(lambda data: with_normalised_lei(data, "ECB_MFI")) \
-        .filter(func.col("LEI").isNotNull())
+        .filter(func.col("lei").isNotNull())
     warn_of_unknown_mfi_categories(mfi_register)
     mfi = mfi_register \
-        .withColumn("SECTOR", mfi_sector()) \
-        .transform(lambda data: text_columns(data, ["LEI", "SECTOR"]))
+        .withColumn("sector", mfi_sector()) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
 
     # EIOPA insurance undertakings
     inun = spark.read.parquet(
             latest_bronze_file(common.path_bronze_eiopa_insurance_undertaking(config_path))
-        ) \
+        ).transform(with_silver_names) \
         .transform(lambda data: with_normalised_lei(data, "EIOPA_INUN")) \
-        .filter(func.col("LEI").isNotNull()) \
-        .withColumn("SECTOR", func.lit("INUN")) \
-        .transform(lambda data: text_columns(data, ["LEI", "SECTOR"]))
+        .filter(func.col("lei").isNotNull()) \
+        .withColumn("sector", func.lit("INUN")) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
 
     # EIOPA institutions for occupational retirement provision
     orpi = spark.read.parquet(
             latest_bronze_file(common.path_bronze_eiopa_iorp(config_path))
-        ) \
+        ).transform(with_silver_names) \
         .transform(lambda data: with_normalised_lei(data, "EIOPA_IORP")) \
-        .filter(func.col("LEI").isNotNull()) \
-        .withColumn("SECTOR", func.lit("ORPI")) \
-        .transform(lambda data: text_columns(data, ["LEI", "SECTOR"]))
+        .filter(func.col("lei").isNotNull()) \
+        .withColumn("sector", func.lit("ORPI")) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
 
     # ESMA CCPs. The list is not kept per reference date, so the folder holds
     # the one file, but it is looked up the same way as the others so that a
     # Bronze layer the list has never reached says so in the same words.
     ccp = spark.read.parquet(
             latest_bronze_file(common.path_bronze_esma_ccp(config_path))
-        ) \
+        ).transform(with_silver_names) \
         .transform(lambda data: with_normalised_lei(data, "ESMA_CCP")) \
-        .filter(func.col("LEI").isNotNull()) \
-        .transform(lambda data: text_columns(data, ["LEI", "SECTOR", "SUBSECTOR"]))
+        .filter(func.col("lei").isNotNull()) \
+        .transform(lambda data: text_columns(data, ["lei", "sector", "subsector"]))
 
     # An entity can appear in more than one register: a central counterparty is
     # licensed as a credit institution in several member states, and a fund can
@@ -610,11 +660,11 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     # the entity holds, while the IORP register states an activity carried on
     # under it. An organisation that would rather see the activity should swap
     # the two ranks.
-    sector = ccp.withColumn("source_rank", func.lit(1)) \
-        .unionByName(inun.withColumn("source_rank", func.lit(2)), allowMissingColumns=True) \
-        .unionByName(orpi.withColumn("source_rank", func.lit(3)), allowMissingColumns=True) \
-        .unionByName(mfi.withColumn("source_rank", func.lit(4)), allowMissingColumns=True) \
-        .unionByName(invfund.withColumn("source_rank", func.lit(5)), allowMissingColumns=True)
+    sector = ccp.withColumn("_source_rank", func.lit(1)) \
+        .unionByName(inun.withColumn("_source_rank", func.lit(2)), allowMissingColumns=True) \
+        .unionByName(orpi.withColumn("_source_rank", func.lit(3)), allowMissingColumns=True) \
+        .unionByName(mfi.withColumn("_source_rank", func.lit(4)), allowMissingColumns=True) \
+        .unionByName(invfund.withColumn("_source_rank", func.lit(5)), allowMissingColumns=True)
 
     # The rank settles which register describes the entity. Within one register
     # it settles nothing, and a register can carry an LEI twice: a central
@@ -635,13 +685,13 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     # afresh on every run.
     sector = first_per_lei(
         sector,
-        [func.col("source_rank"),
-         func.col("SECTOR").asc_nulls_last(),
-         func.col("SUBSECTOR").asc_nulls_last()],
-    ).drop("source_rank")
+        [func.col("_source_rank"),
+         func.col("sector").asc_nulls_last(),
+         func.col("subsector").asc_nulls_last()],
+    ).drop("_source_rank")
 
     # Enrich GLEIF Level 1 data with sector information
-    result = gleif_1.join(sector, on = "LEI", how = "leftouter")
+    result = gleif_1.join(sector, on = "lei", how = "leftouter")
 
     # And with what the fund register says about a fund, whichever register
     # ended up describing it. SUBSECTOR is not among these columns: it is the
@@ -649,7 +699,7 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     # statement rather than being filled in from another taxonomy. For a fund
     # that wins nothing is lost by that, because the investment policy the
     # sector step would have put in SUBSECTOR is what IF_POLICY carries.
-    result = result.join(fund_characteristics, on = "LEI", how = "leftouter")
+    result = result.join(fund_characteristics, on = "lei", how = "leftouter")
 
     # Generate information on the ultimate parent based on GLEIF Level 2 data,
     # and on a fund's asset management company, which is the same reading of
@@ -657,12 +707,12 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     # :func:`active_relationship`, so that neither can be read without the
     # status of the relationship being taken into account.
     result = result.join(
-        active_relationship(gleif_2, "IS_ULTIMATELY_CONSOLIDATED_BY", "ULTPAR_LEI"),
-        on = "LEI", how = "leftouter",
+        active_relationship(gleif_2, "IS_ULTIMATELY_CONSOLIDATED_BY", "ultimate_parent_lei"),
+        on = "lei", how = "leftouter",
     )
     result = result.join(
-        active_relationship(gleif_2, "IS_FUND-MANAGED_BY", "AMC"),
-        on = "LEI", how = "leftouter",
+        active_relationship(gleif_2, "IS_FUND-MANAGED_BY", "amc"),
+        on = "lei", how = "leftouter",
     )
 
     common.write_silver(
@@ -730,19 +780,19 @@ def _update_silver_entitymasterdata(spark, config_path, file_format, outcome):
     if os.path.exists(path_internal):
         internal = read_internal_list(spark, path_internal)
 
-        described_internally = internal.filter(func.col("LEI").isNotNull()).select("LEI").distinct()
-        public = public.join(described_internally, on = "LEI", how = "left_anti")
+        described_internally = internal.filter(func.col("lei").isNotNull()).select("lei").distinct()
+        public = public.join(described_internally, on = "lei", how = "left_anti")
 
-        result = internal.withColumn("source_rank", func.lit(1)) \
-            .unionByName(public.withColumn("source_rank", func.lit(2)), allowMissingColumns=True)
+        result = internal.withColumn("_source_rank", func.lit(1)) \
+            .unionByName(public.withColumn("_source_rank", func.lit(2)), allowMissingColumns=True)
     else:
-        result = with_internal_id_columns(public.withColumn("source_rank", func.lit(2)))
+        result = with_internal_id_columns(public.withColumn("_source_rank", func.lit(2)))
 
     # The catch-all entities come last, so that a proprietary list that
     # describes one of them -- with a sector of its own, say -- has its way.
     catch_all = spark.createDataFrame(
-        list(CATCH_ALL_ENTITIES.items()), "LEI string, NAME string"
-    ).withColumn("source_rank", func.lit(3))
+        list(CATCH_ALL_ENTITIES.items()), "lei string, name string"
+    ).withColumn("_source_rank", func.lit(3))
     result = result.unionByName(catch_all, allowMissingColumns=True)
 
     # An LEI describes one entity, so it may appear once. Rows without an LEI
@@ -752,12 +802,12 @@ def _update_silver_entitymasterdata(spark, config_path, file_format, outcome):
     # LEI twice, and the public rows it describes are gone already, so this
     # finds one row per LEI in every table the update accepts; it stays as the
     # guarantee that the table is keyed by the LEI.
-    without_lei = result.filter(func.col("LEI").isNull())
+    without_lei = result.filter(func.col("lei").isNull())
     with_lei = first_per_lei(
-        result.filter(func.col("LEI").isNotNull()),
-        [func.col("source_rank"), func.col("INTERNALID_1").desc_nulls_last()],
+        result.filter(func.col("lei").isNotNull()),
+        [func.col("_source_rank"), func.col("internal_id_1").desc_nulls_last()],
     )
-    result = with_lei.unionByName(without_lei).drop("source_rank")
+    result = with_lei.unionByName(without_lei).drop("_source_rank")
 
     # Number the entities. The window spans the whole table, which sorts it on
     # one partition, but the number is meant to be a running one and dense.
@@ -770,10 +820,10 @@ def _update_silver_entitymasterdata(spark, config_path, file_format, outcome):
     # on it, are ordered by every other column, so the same input numbers them
     # the same way on every run.
     result = result.withColumn(
-        "ID", func.row_number().over(Window.orderBy(
-            func.col("LEI").asc_nulls_last(),
+        "id", func.row_number().over(Window.orderBy(
+            func.col("lei").asc_nulls_last(),
             *[func.col(column).asc_nulls_last()
-              for column in COLUMNS if column not in ("ID", "LEI")],
+              for column in COLUMNS if column not in ("id", "lei")],
         ))
     )
 
@@ -916,6 +966,8 @@ __all__ = [
     "check_internal_list",
     "first_per_lei",
     "latest_bronze_file",
+    "with_silver_names",
+    "SILVER_NAMES",
     "mfi_sector",
     "normalised_lei",
     "read_internal_list",
@@ -926,5 +978,6 @@ __all__ = [
     "warn_of_malformed_leis",
     "warn_of_unknown_mfi_categories",
     "with_internal_id_columns",
+    "INTERNAL_ID_SILVER",
     "with_normalised_lei",
 ]

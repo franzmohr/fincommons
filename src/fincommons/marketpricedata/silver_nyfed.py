@@ -58,9 +58,9 @@ def update_silver_nyfed_sofr(spark, config_path):
     if bronze is not None:
 
         bronze = bronze \
-            .withColumn("INSTRID", func.lit("ON-SOFR")) \
-            .withColumnRenamed("date", "REFDT") \
-            .withColumnRenamed("sofr", "VALUE") \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumn("instr_id", func.lit("ON-SOFR")) \
+            .withColumnRenamed("date", "ref_date") \
+            .withColumnRenamed("sofr", "value") \
+            .select("ref_date", "instr_id", "value")
 
         standard_upsert(spark, config_path, bronze)

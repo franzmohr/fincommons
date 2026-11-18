@@ -177,17 +177,17 @@ with three columns:
 
 | Column | Type | Content |
 | --- | --- | --- |
-| `REFDT` | date | The reference date the quote belongs to. |
-| `INSTRID` | string | What the value is a price of, see below. |
-| `VALUE` | double | The price or rate itself, in the unit the source publishes it in. |
+| `ref_date` | date | The reference date the quote belongs to. |
+| `instr_id` | string | What the value is a price of, see below. |
+| `value` | double | The price or rate itself, in the unit the source publishes it in. |
 
-A row is identified by `INSTRID` and `REFDT` together. A source that delivers a date again replaces the row it delivered before rather than adding a second one, which is what `standard_upsert` does and what makes the pipeline safe to re-run on a day that has already been loaded.
+A row is identified by `instr_id` and `ref_date` together. A source that delivers a date again replaces the row it delivered before rather than adding a second one, which is what `standard_upsert` does and what makes the pipeline safe to re-run on a day that has already been loaded.
 
 **None of the three columns is ever empty.** A row without an instrument or a reference date would match nothing in the table and be inserted again on every run, because a null equals nothing. A row without a value is a publisher saying it has no observation, and it would otherwise replace one or be read as the newest quote. `complete_rows` drops all such rows before any merge, and inside a batch it drops them before the sources are reduced to one delivery per day, so a source with nothing for a day cannot win that day over one that has a figure.
 
 Because every source writes the same three columns, the instrument identifier is the only thing that tells them apart. It is not a single code system but a convention per source:
 
-| Source | `INSTRID` | Example |
+| Source | `instr_id` | Example |
 | --- | --- | --- |
 | ECB, €STR | a name for the overnight rate | `ON-ESTR` |
 | ECB, key rates | a name for the policy rate | `KR-DFR`, `KR-MRO`, `KR-MLF` |
@@ -376,11 +376,11 @@ events = mp.connect_to_dse_corporate_actions(spark, config_path)
 
 | Column | Content |
 | --- | --- |
-| `INSTRID` | the share, as the price table names it |
-| `EXDATE` | the first day it traded ex |
-| `KIND` | `bonus`, `cash` or `rights` |
-| `FACTOR` | what a close before the ex-date is multiplied by to be comparable with one on or after it |
-| `RECORD`, `DETAIL`, `SOURCE`, `EXDATE_FROM` | the record date, the terms as read, the notice, and whether the ex-date came from a notice or, where there was none, from the first day the share traded after the record date |
+| `instr_id` | the share, as the price table names it |
+| `ex_date` | the first day it traded ex |
+| `kind` | `bonus`, `cash` or `rights` |
+| `factor` | what a close before the ex-date is multiplied by to be comparable with one on or after it |
+| `record_date`, `detail`, `source`, `ex_date_from` | the record date, the terms as read, the notice, and whether the ex-date came from a notice or, where there was none, from the first day the share traded after the record date |
 
 A bonus issue of b per cent has the factor 1/(1 + b/100); a cash dividend of d taka against the close P before it, 1 − d/P, taking the face value as the ten taka the Commission set every share to in 2011; a rights issue of n shares for m at a price S, the theoretical ex-rights price (mP + nS)/((m + n)P), and none where S is above P. Multiplying by the bonus and rights factors gives the price history of a holding, and by all three its total return. Measured over the two years the lake first collected, 540 events of 481 securities: on the ex-dates of the 86 bonus and rights issues the median close moved by -6.4% as traded and by -0.1% once adjusted, and 27 of them moved by more than 10% as traded against 5 adjusted. The five are small, thinly traded shares, and the reader does not claim more than that: a notice worded in a way it does not know is an event it misses, and the close then shows the fall it would have explained.
 
@@ -408,7 +408,7 @@ Due to the heterogeneity of the data source, the module does not provide any fun
 {path to Bronze Layer of marketpricedata as specified in config_path}/internal/marketpricedata_internal.csv
 ```
 
-if that file exists, and expects a comma-separated file with a header row and the three columns of the Silver table, in this order:
+if that file exists, and expects a comma-separated file with a header row and the following three columns, in this order. The file is an input kept by hand, so it carries the upper-case names it always has; it is read into the Silver names (`ref_date`, `instr_id`, `value`) where the Silver stage reads it.
 
 | Column | Type | Content |
 | --- | --- | --- |

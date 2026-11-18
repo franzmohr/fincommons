@@ -82,7 +82,7 @@ def lake(spark, tmp_path):
     def write(facts, filings):
         write_silver(
             spark.createDataFrame(facts, common.facts_schema),
-            common.ref_silver_facts(config_path), partition_by=("COUNTRY",))
+            common.ref_silver_facts(config_path), partition_by=("country",))
         write_silver(
             spark.createDataFrame(filings, common.filings_schema),
             common.ref_silver_filings(config_path))
@@ -94,7 +94,7 @@ def lake(spark, tmp_path):
 def codes(spark, config, **kwargs):
     """The codes the checks report over a lake."""
     found = quality.find_issues(spark, config, **kwargs)
-    return sorted({row["ISSUE"] for row in found.collect()})
+    return sorted({row["issue"] for row in found.collect()})
 
 
 def sound_facts():
@@ -234,7 +234,7 @@ def test_one_figure_tagged_twice_with_two_values_is_reported(spark, lake):
     config = lake(facts, [filing_row()])
 
     found = quality.find_issues(spark, config)
-    rows = [r for r in found.collect() if r["ISSUE"] == "DUPL_FACT_VALUE"]
+    rows = [r for r in found.collect() if r["issue"] == "DUPL_FACT_VALUE"]
     # An instant has no period start, and an equi-join on an empty key matches
     # nothing: both facts have to come back.
     assert len(rows) == 2
@@ -286,8 +286,8 @@ def test_a_filing_with_no_facts_is_counted(spark, lake):
                               jsonurl=None)])
 
     found = quality.find_issues(spark, config)
-    rows = [r for r in found.collect() if r["ISSUE"] == "NO_FACTS"]
-    assert [r["FILING"] for r in rows] == [empty]
+    rows = [r for r in found.collect() if r["issue"] == "NO_FACTS"]
+    assert [r["filing"] for r in rows] == [empty]
 
 
 def test_the_same_period_filed_twice_in_one_language_is_reported(spark, lake):
@@ -350,7 +350,7 @@ def test_a_run_over_one_country_keeps_what_is_known_of_the_others(spark, lake):
 
     quality.update_silver_esef_quality(spark, config)
     before = common.connect_to_esef_issues(spark, config)
-    assert {row["COUNTRY"] for row in before.collect()} == {"DE"}
+    assert {row["country"] for row in before.collect()} == {"DE"}
     count = before.count()
 
     # Checking Austria alone must leave Germany's issues where they are.
@@ -358,4 +358,4 @@ def test_a_run_over_one_country_keeps_what_is_known_of_the_others(spark, lake):
     after = common.connect_to_esef_issues(spark, config)
 
     assert after.count() == count
-    assert {row["COUNTRY"] for row in after.collect()} == {"DE"}
+    assert {row["country"] for row in after.collect()} == {"DE"}

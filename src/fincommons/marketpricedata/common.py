@@ -509,6 +509,31 @@ def create_directory_tree(config_path):
         os.makedirs(folder, exist_ok=True)
 
 
+#: What a Bronze column of this module is called in the Silver table. A Bronze
+#: table records what its reader wrote and keeps those names, so the Silver
+#: names are taken on where Bronze is read; see :func:`read_bronze`.
+SILVER_NAMES = {"REFDT": "ref_date", "INSTRID": "instr_id", "VALUE": "value",
+                "LASTDT": "last_date", "ISIN": "isin"}
+
+
+def with_silver_names(data):
+    """Rename the Bronze columns of ``data`` to the Silver names.
+
+    Whichever of :data:`SILVER_NAMES` the frame carries is renamed and the
+    rest -- the columns a particular source happens to deliver -- is left as
+    it was delivered.
+
+    Parameters
+    ----------
+    data: pyspark.sql.DataFrame
+        A frame read from the Bronze layer.
+    """
+    for bronze in SILVER_NAMES:
+        if bronze in data.columns:
+            data = data.withColumnRenamed(bronze, SILVER_NAMES[bronze])
+    return data
+
+
 def read_bronze(spark, parquet_path, source):
     """Open a parquet data set of the Bronze layer, or None where it holds none.
 
@@ -549,7 +574,9 @@ def read_bronze(spark, parquet_path, source):
                           source=source, path=parquet_path),
         )
         return None
-    return bronze
+    # The Bronze layer keeps the names its reader wrote; the Silver names are
+    # taken on here, which is the one place the two layers meet.
+    return with_silver_names(bronze)
 
 
 def connect_to_marketpricedata(spark, config_path):
@@ -651,16 +678,16 @@ def flush_collected_upserts(spark, config_path, collected):
         # two sources quote it, and would fail rather than choose.
         combined = None
         for priority, frame in enumerate(frames):
-            frame = frame.select("REFDT", "INSTRID", "VALUE") \
+            frame = frame.select("ref_date", "instr_id", "value") \
                          .withColumn("PRIORITY", lit(priority))
             combined = frame if combined is None else combined.unionByName(frame)
 
-        sources = Window.partitionBy("INSTRID", "REFDT") \
+        sources = Window.partitionBy("instr_id", "ref_date") \
                         .orderBy(col("PRIORITY").desc())
         combined = combined \
             .withColumn("DELIVERY", row_number().over(sources)) \
             .filter(col("DELIVERY") == 1) \
-            .select("REFDT", "INSTRID", "VALUE")
+            .select("ref_date", "instr_id", "value")
 
         merge_into_silver(spark, config_path, combined)
 
@@ -717,8 +744,8 @@ def complete_rows(bronze):
     instrument and day, so that a source with nothing to say about a day does
     not win that day over one that has a figure for it.
     """
-    return bronze.select("REFDT", "INSTRID", "VALUE") \
-                 .dropna(subset=["REFDT", "INSTRID", "VALUE"])
+    return bronze.select("ref_date", "instr_id", "value") \
+                 .dropna(subset=["ref_date", "instr_id", "value"])
 
 
 def merge_into_silver(spark, config_path, bronze):
@@ -745,7 +772,7 @@ def merge_into_silver(spark, config_path, bronze):
 
         # Upsert
         silver.alias("s") \
-            .merge(bronze.alias("b"), "s.INSTRID = b.INSTRID AND s.REFDT = b.REFDT") \
+            .merge(bronze.alias("b"), "s.instr_id = b.instr_id AND s.ref_date = b.ref_date") \
             .whenMatchedUpdateAll() \
             .whenNotMatchedInsertAll() \
             .execute()

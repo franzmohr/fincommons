@@ -97,7 +97,7 @@ def write_esef(spark, config_path, framework="ifrs-full"):
     ], schema=esef.facts_schema)
     write_silver(filings, esef.ref_silver_filings(config_path))
     write_silver(facts, esef.ref_silver_facts(config_path),
-                 partition_by=("COUNTRY",))
+                 partition_by=("country",))
 
 
 def write_sec(spark, config_path, taxonomy="us-gaap", framework="US-GAAP"):
@@ -231,9 +231,9 @@ def test_the_coverage_of_each_source_is_stated():
     assert by_source["esef"]["dimensions"] is True
     assert by_source["sec"]["dimensions"] is False
     assert by_source["edinet"]["dimensions"] is True
-    assert by_source["esef"]["entity"] == "LEI"
-    assert by_source["sec"]["entity"] == "CIK"
-    assert by_source["edinet"]["entity"] == "EDINETCODE"
+    assert by_source["esef"]["entity"] == "lei"
+    assert by_source["sec"]["entity"] == "cik"
+    assert by_source["edinet"]["entity"] == "edinet_code"
 
 
 def _source_files(package):
@@ -330,7 +330,7 @@ def test_a_lake_with_only_esef_combines_only_esef(spark, config):
     silver.update_silver_financialreport(spark, config)
     facts = common.connect_to_financialreport(spark, config)
 
-    assert {row["SOURCE"] for row in facts.collect()} == {"esef"}
+    assert {row["source"] for row in facts.collect()} == {"esef"}
 
 
 def test_a_lake_with_only_sec_filings_combines_only_those(spark, config):
@@ -339,7 +339,7 @@ def test_a_lake_with_only_sec_filings_combines_only_those(spark, config):
     silver.update_silver_financialreport(spark, config)
     facts = common.connect_to_financialreport(spark, config)
 
-    assert {row["SOURCE"] for row in facts.collect()} == {"sec"}
+    assert {row["source"] for row in facts.collect()} == {"sec"}
 
 
 def test_all_three_sources_are_found_where_all_three_have_tables(spark, config):
@@ -355,7 +355,7 @@ def test_a_lake_with_only_edinet_combines_only_those(spark, config):
     write_edinet(spark, config)
 
     facts = silver.combine(spark, config, "fact")
-    assert {row["SOURCE"] for row in facts.collect()} == {"edinet"}
+    assert {row["source"] for row in facts.collect()} == {"edinet"}
 
 
 def test_a_japanese_row_carries_its_own_identifiers_and_no_others(spark,
@@ -365,9 +365,9 @@ def test_a_japanese_row_carries_its_own_identifiers_and_no_others(spark,
     write_edinet(spark, config)
     row = silver.combine(spark, config, "filing").collect()[0]
 
-    assert row["EDINETCODE"] == EDINETCODE
-    assert row["JCN"] == JCN
-    assert row["LEI"] is None and row["CIK"] is None
+    assert row["edinet_code"] == EDINETCODE
+    assert row["jcn"] == JCN
+    assert row["lei"] is None and row["cik"] is None
 
 
 def test_the_japanese_framework_is_read_from_the_filing(spark, config):
@@ -376,7 +376,7 @@ def test_the_japanese_framework_is_read_from_the_filing(spark, config):
     group reporting under IFRS tags its front matter against the same
     disclosure taxonomy every other filer uses."""
     write_edinet(spark, config, standard="Japan GAAP")
-    assert {row["FRAMEWORK"] for row in
+    assert {row["framework"] for row in
             silver.combine(spark, config, "fact").collect()} == {"JP-GAAP"}
 
 
@@ -387,7 +387,7 @@ def test_a_japanese_group_reporting_under_ifrs_is_told_from_one_that_is_not(
     group that has adopted IFRS is an IFRS report, and the parent company's
     Japan GAAP statements inside it do not make it something else."""
     write_edinet(spark, config, standard="IFRS")
-    assert {row["FRAMEWORK"] for row in
+    assert {row["framework"] for row in
             silver.combine(spark, config, "filing").collect()} == {"IFRS"}
 
 
@@ -399,8 +399,8 @@ def test_a_fact_that_sits_in_no_period_is_not_carried(spark, config):
     write_edinet(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    assert all(row["PRDEND"] is not None for row in facts)
-    assert {row["FACT"] for row in facts} \
+    assert all(row["prd_end"] is not None for row in facts)
+    assert {row["fact"] for row in facts} \
         == {"f1", "f2", "f3", "f5", "f6", "f7", "f8", "f9"}
 
 
@@ -408,11 +408,11 @@ def test_the_japanese_dimensions_and_text_survive(spark, config):
     """Unlike the company files of the Commission, the agency's conversion
     carries the whole of a report."""
     write_edinet(spark, config)
-    facts = {row["FACT"]: row for row in
+    facts = {row["fact"]: row for row in
              silver.combine(spark, config, "fact").collect()}
 
-    assert facts["f1"]["DIMENSIONS"] == "NonConsolidatedMember"
-    assert facts["f3"]["TEXT"] == "Japan GAAP"
+    assert facts["f1"]["dimensions"] == "NonConsolidatedMember"
+    assert facts["f3"]["text"] == "Japan GAAP"
 
 
 def test_a_japanese_ifrs_filer_keeps_its_two_frameworks_apart(spark, config):
@@ -422,7 +422,7 @@ def test_a_japanese_ifrs_filer_keeps_its_two_frameworks_apart(spark, config):
     jpigp_cor for the group and 1,692,618 million under jppfs_cor for the
     company, and they are not figures of one framework."""
     write_edinet(spark, config, standard="IFRS")
-    by_concept = {row["CONCEPT"]: row["FRAMEWORK"] for row in
+    by_concept = {row["concept"]: row["framework"] for row in
                   silver.combine(spark, config, "fact").collect()}
 
     # The taxonomy settles these two whatever the filing says.
@@ -437,7 +437,7 @@ def test_the_three_regimes_stand_in_one_table(spark, config):
     write_edinet(spark, config)
 
     facts = silver.combine(spark, config, "fact")
-    assert {row["SOURCE"] for row in facts.collect()} \
+    assert {row["source"] for row in facts.collect()} \
         == {"esef", "sec", "edinet"}
     assert facts.columns == list(common.fact_schema.names)
 
@@ -456,9 +456,9 @@ def test_a_measure_reaches_a_filer_that_does_not_consolidate(spark, config):
     values = mapping.measure_values(silver.combine(spark, config, "fact"),
                                     "revenue").collect()
 
-    assert [row["CONCEPT"] for row in values] == ["jppfs_cor:NetSales"]
-    assert values[0]["DIMENSIONS"] == "NonConsolidatedMember"
-    assert values[0]["VALUE"] == 297632.0
+    assert [row["concept"] for row in values] == ["jppfs_cor:NetSales"]
+    assert values[0]["dimensions"] == "NonConsolidatedMember"
+    assert values[0]["value"] == 297632.0
 
 
 def test_a_segment_is_still_not_a_measure(spark, config):
@@ -471,7 +471,7 @@ def test_a_segment_is_still_not_a_measure(spark, config):
     values = mapping.measure_values(silver.combine(spark, config, "fact"),
                                     "revenue").collect()
 
-    assert [row["VALUE"] for row in values] == [100.0]   # not the 40.0 segment
+    assert [row["value"] for row in values] == [100.0]   # not the 40.0 segment
 
 
 def test_the_japanese_measures_resolve_under_both_frameworks():
@@ -512,10 +512,10 @@ def test_total_assets_of_every_regime_answers_to_one_name(spark, config):
     write_edinet(spark, config)
 
     assets = (silver.combine(spark, config, "fact")
-              .where("MEASURE = 'assets'").collect())
+              .where("measure = 'assets'").collect())
 
-    assert {row["SOURCE"] for row in assets} == {"esef", "sec", "edinet"}
-    assert {row["CONCEPT"] for row in assets} \
+    assert {row["source"] for row in assets} == {"esef", "sec", "edinet"}
+    assert {row["concept"] for row in assets} \
         == {"ifrs-full:Assets", "us-gaap:Assets", "jppfs_cor:Assets"}
 
 
@@ -524,9 +524,9 @@ def test_the_concept_is_never_altered_to_carry_the_identifier(spark, config):
     mean, so neither answer is lost."""
     write_edinet(spark, config)
     row = next(r for r in silver.combine(spark, config, "fact").collect()
-               if r["MEASURE"] == "assets")
+               if r["measure"] == "assets")
 
-    assert row["CONCEPT"] == "jppfs_cor:Assets"
+    assert row["concept"] == "jppfs_cor:Assets"
 
 
 def test_a_fact_no_measure_covers_carries_no_identifier(spark, config):
@@ -535,8 +535,8 @@ def test_a_fact_no_measure_covers_carries_no_identifier(spark, config):
     write_edinet(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    assert any(row["MEASURE"] is None for row in facts)
-    assert {row["MEASURE"] for row in facts} \
+    assert any(row["measure"] is None for row in facts)
+    assert {row["measure"] for row in facts} \
         <= {None, "assets", "cash_and_equivalents", "equity",
             "liabilities", "profit_loss", "revenue"}
 
@@ -548,10 +548,10 @@ def test_revenue_of_every_regime_answers_to_one_name(spark, config):
     write_edinet(spark, config)
 
     revenue = (silver.combine(spark, config, "fact")
-               .where("MEASURE = 'revenue'").collect())
+               .where("measure = 'revenue'").collect())
 
-    assert {row["SOURCE"] for row in revenue} == {"esef", "sec", "edinet"}
-    assert {row["CONCEPT"] for row in revenue} == {
+    assert {row["source"] for row in revenue} == {"esef", "sec", "edinet"}
+    assert {row["concept"] for row in revenue} == {
         "ifrs-full:Revenue", "jppfs_cor:NetSales",
         "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"}
 
@@ -566,10 +566,10 @@ def test_profit_or_loss_of_every_regime_answers_to_one_name(spark, config):
     write_edinet(spark, config)
 
     result = (silver.combine(spark, config, "fact")
-              .where("MEASURE = 'profit_loss'").collect())
+              .where("measure = 'profit_loss'").collect())
 
-    assert {row["SOURCE"] for row in result} == {"esef", "sec", "edinet"}
-    assert {row["CONCEPT"] for row in result} == {
+    assert {row["source"] for row in result} == {"esef", "sec", "edinet"}
+    assert {row["concept"] for row in result} == {
         "ifrs-full:ProfitLoss", "us-gaap:ProfitLoss", "jppfs_cor:ProfitLoss"}
 
 
@@ -581,12 +581,12 @@ def test_the_two_american_results_are_two_measures(spark, config):
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    by_concept = {row["CONCEPT"]: row for row in facts}
-    assert by_concept["us-gaap:ProfitLoss"]["MEASURE"] == "profit_loss"
-    assert by_concept["us-gaap:NetIncomeLoss"]["MEASURE"] \
+    by_concept = {row["concept"]: row for row in facts}
+    assert by_concept["us-gaap:ProfitLoss"]["measure"] == "profit_loss"
+    assert by_concept["us-gaap:NetIncomeLoss"]["measure"] \
         == "profit_loss_attributable_to_parent"
-    assert by_concept["us-gaap:NetIncomeLoss"]["VALUE"] \
-        != by_concept["us-gaap:ProfitLoss"]["VALUE"]
+    assert by_concept["us-gaap:NetIncomeLoss"]["value"] \
+        != by_concept["us-gaap:ProfitLoss"]["value"]
 
 
 def test_the_two_regimes_are_not_skewed_alike(spark, config):
@@ -599,17 +599,17 @@ def test_the_two_regimes_are_not_skewed_alike(spark, config):
     write_edinet(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    named = {row["SOURCE"] for row in facts if row["MEASURE"] == "profit_loss"}
+    named = {row["source"] for row in facts if row["measure"] == "profit_loss"}
     assert named == {"sec", "edinet"}
 
     # The Japanese filer consolidates nothing, states no attributable line,
     # and is named all the same.
     japanese = [row for row in facts
-                if row["SOURCE"] == "edinet" and row["MEASURE"] == "profit_loss"]
+                if row["source"] == "edinet" and row["measure"] == "profit_loss"]
     assert len(japanese) == 1
-    assert japanese[0]["CONCEPT"] == "jppfs_cor:ProfitLoss"
+    assert japanese[0]["concept"] == "jppfs_cor:ProfitLoss"
     assert not [row for row in facts
-                if row["CONCEPT"] == "jppfs_cor:ProfitLossAttributableToOwnersOfParent"]
+                if row["concept"] == "jppfs_cor:ProfitLossAttributableToOwnersOfParent"]
 
 
 def test_the_pair_inverts_the_skew_rather_than_repairing_it(spark, config):
@@ -622,8 +622,8 @@ def test_the_pair_inverts_the_skew_rather_than_repairing_it(spark, config):
     write_edinet(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    named = {measure: {row["SOURCE"] for row in facts
-                       if row["MEASURE"] == measure}
+    named = {measure: {row["source"] for row in facts
+                       if row["measure"] == measure}
              for measure in ("profit_loss",
                              "profit_loss_attributable_to_parent")}
 
@@ -642,11 +642,11 @@ def test_the_japanese_filer_states_one_figure_that_is_both_measures(spark, confi
     write_edinet(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    results = [row for row in facts if row["CONCEPT"] == "jppfs_cor:ProfitLoss"]
+    results = [row for row in facts if row["concept"] == "jppfs_cor:ProfitLoss"]
     assert len(results) == 1
-    assert results[0]["MEASURE"] == "profit_loss"
+    assert results[0]["measure"] == "profit_loss"
     assert not [row for row in facts
-                if row["MEASURE"] == "profit_loss_attributable_to_parent"]
+                if row["measure"] == "profit_loss_attributable_to_parent"]
 
 
 def test_the_attributable_result_reaches_every_regime():
@@ -679,10 +679,10 @@ def test_equity_of_every_regime_answers_to_one_name(spark, config):
     write_edinet(spark, config)
 
     equity = (silver.combine(spark, config, "fact")
-              .where("MEASURE = 'equity'").collect())
+              .where("measure = 'equity'").collect())
 
-    assert {row["SOURCE"] for row in equity} == {"esef", "sec", "edinet"}
-    assert {row["CONCEPT"] for row in equity} == {
+    assert {row["source"] for row in equity} == {"esef", "sec", "edinet"}
+    assert {row["concept"] for row in equity} == {
         "ifrs-full:Equity", "jppfs_cor:NetAssets",
         "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"}
 
@@ -694,14 +694,14 @@ def test_the_two_american_equities_are_two_measures(spark, config):
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    by_concept = {row["CONCEPT"]: row for row in facts}
+    by_concept = {row["concept"]: row for row in facts}
     including = by_concept[
         "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]
-    assert including["MEASURE"] == "equity"
-    assert by_concept["us-gaap:StockholdersEquity"]["MEASURE"] \
+    assert including["measure"] == "equity"
+    assert by_concept["us-gaap:StockholdersEquity"]["measure"] \
         == "equity_attributable_to_parent"
-    assert by_concept["us-gaap:StockholdersEquity"]["VALUE"] \
-        != including["VALUE"]
+    assert by_concept["us-gaap:StockholdersEquity"]["value"] \
+        != including["value"]
 
 
 def test_no_japanese_filing_can_carry_the_attributable_equity(spark, config):
@@ -716,13 +716,13 @@ def test_no_japanese_filing_can_carry_the_attributable_equity(spark, config):
     facts = silver.combine(spark, config, "fact").collect()
 
     assert not [row for row in facts
-                if row["MEASURE"] == "equity_attributable_to_parent"]
+                if row["measure"] == "equity_attributable_to_parent"]
     # Not because this filer tagged nothing: there is no element to tag.
     assert mapping.concepts_for("equity_attributable_to_parent", "JP-GAAP") == []
     assert not [c for c in dict(mapping.canonical_concepts(
         ("equity_attributable_to_parent",))) if c.startswith("jppfs_cor:")]
     # And the sum is not computed to close the gap.
-    assert any(row["MEASURE"] == "equity" for row in facts)
+    assert any(row["measure"] == "equity" for row in facts)
 
 
 def test_the_catalogue_is_now_wholly_materialised():
@@ -789,10 +789,10 @@ def test_cash_answers_to_one_name_from_two_different_statements(spark, config):
     write_edinet(spark, config)
 
     cash = (silver.combine(spark, config, "fact")
-            .where("MEASURE = 'cash_and_equivalents'").collect())
+            .where("measure = 'cash_and_equivalents'").collect())
 
-    assert {row["SOURCE"] for row in cash} == {"esef", "sec", "edinet"}
-    assert {row["CONCEPT"] for row in cash} == {
+    assert {row["source"] for row in cash} == {"esef", "sec", "edinet"}
+    assert {row["concept"] for row in cash} == {
         "ifrs-full:CashAndCashEquivalents",
         "us-gaap:CashAndCashEquivalentsAtCarryingValue",
         "jppfs_cor:CashAndCashEquivalents"}
@@ -806,13 +806,13 @@ def test_the_japanese_balance_sheet_line_is_not_given_the_name(spark, config):
     write_edinet(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    by_concept = {row["CONCEPT"]: row for row in facts}
-    assert by_concept["jppfs_cor:CashAndCashEquivalents"]["MEASURE"] \
+    by_concept = {row["concept"]: row for row in facts}
+    assert by_concept["jppfs_cor:CashAndCashEquivalents"]["measure"] \
         == "cash_and_equivalents"
-    assert by_concept["jppfs_cor:CashAndDeposits"]["MEASURE"] is None
+    assert by_concept["jppfs_cor:CashAndDeposits"]["measure"] is None
     # The two are different figures, which is the whole reason for the rule.
-    assert by_concept["jppfs_cor:CashAndDeposits"]["VALUE"] \
-        != by_concept["jppfs_cor:CashAndCashEquivalents"]["VALUE"]
+    assert by_concept["jppfs_cor:CashAndDeposits"]["value"] \
+        != by_concept["jppfs_cor:CashAndCashEquivalents"]["value"]
 
 
 def test_the_restricted_cash_total_is_not_given_the_name(spark, config):
@@ -823,13 +823,13 @@ def test_the_restricted_cash_total_is_not_given_the_name(spark, config):
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact").collect()
 
-    by_concept = {row["CONCEPT"]: row for row in facts}
-    assert by_concept["us-gaap:CashAndCashEquivalentsAtCarryingValue"]["MEASURE"] \
+    by_concept = {row["concept"]: row for row in facts}
+    assert by_concept["us-gaap:CashAndCashEquivalentsAtCarryingValue"]["measure"] \
         == "cash_and_equivalents"
     restricted = by_concept[
         "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"]
-    assert restricted["MEASURE"] is None
-    assert restricted["VALUE"] == 175.0
+    assert restricted["measure"] is None
+    assert restricted["value"] == 175.0
 
 
 def test_liabilities_of_both_regimes_that_state_it_answer_to_one_name(spark, config):
@@ -839,10 +839,10 @@ def test_liabilities_of_both_regimes_that_state_it_answer_to_one_name(spark, con
     write_edinet(spark, config)
 
     liabilities = (silver.combine(spark, config, "fact")
-                   .where("MEASURE = 'liabilities'").collect())
+                   .where("measure = 'liabilities'").collect())
 
-    assert {row["SOURCE"] for row in liabilities} == {"esef", "edinet"}
-    assert {row["CONCEPT"] for row in liabilities} \
+    assert {row["source"] for row in liabilities} == {"esef", "edinet"}
+    assert {row["concept"] for row in liabilities} \
         == {"ifrs-full:Liabilities", "jppfs_cor:Liabilities"}
 
 
@@ -855,10 +855,10 @@ def test_a_filer_stating_no_total_liabilities_carries_no_identifier(spark, confi
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact")
 
-    assert facts.where("MEASURE = 'liabilities'").count() == 0
+    assert facts.where("measure = 'liabilities'").count() == 0
     # And nothing was invented in its place: the registrant's own concepts
     # are all that is there.
-    assert "us-gaap:Liabilities" not in {row["CONCEPT"]
+    assert "us-gaap:Liabilities" not in {row["concept"]
                                          for row in facts.collect()}
 
 
@@ -870,12 +870,12 @@ def test_the_two_kinds_of_null_are_both_nulls_and_neither_is_a_zero(spark, confi
     facts = silver.combine(spark, config, "fact").collect()
 
     # The older revenue total is stated and deliberately not named.
-    unnamed = next(r for r in facts if r["CONCEPT"] == "us-gaap:Revenues")
-    assert unnamed["MEASURE"] is None and unnamed["VALUE"] == 200.0
+    unnamed = next(r for r in facts if r["concept"] == "us-gaap:Revenues")
+    assert unnamed["measure"] is None and unnamed["value"] == 200.0
 
     # Liabilities is named by the catalogue and stated by nobody here.
-    assert all(row["MEASURE"] != "liabilities" for row in facts)
-    assert all(row["VALUE"] != 0.0 for row in facts if row["VALUE"] is not None)
+    assert all(row["measure"] != "liabilities" for row in facts)
+    assert all(row["value"] != 0.0 for row in facts if row["value"] is not None)
 
 
 def test_a_filing_stating_revenue_twice_is_labelled_once(spark, config):
@@ -886,14 +886,14 @@ def test_a_filing_stating_revenue_twice_is_labelled_once(spark, config):
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact")
 
-    revenue = facts.where("MEASURE = 'revenue'").collect()
+    revenue = facts.where("measure = 'revenue'").collect()
     assert len(revenue) == 1
-    assert revenue[0]["CONCEPT"] \
+    assert revenue[0]["concept"] \
         == "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
 
     older = next(row for row in facts.collect()
-                 if row["CONCEPT"] == "us-gaap:Revenues")
-    assert older["MEASURE"] is None
+                 if row["concept"] == "us-gaap:Revenues")
+    assert older["measure"] is None
 
 
 def test_the_older_total_still_resolves_at_query_time(spark, config):
@@ -905,7 +905,7 @@ def test_the_older_total_still_resolves_at_query_time(spark, config):
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact")
 
-    resolved = {row["CONCEPT"]: row["MEASURE"]
+    resolved = {row["concept"]: row["measure"]
                 for row in mapping.with_measures(facts).collect()}
 
     assert resolved["us-gaap:Revenues"] == "revenue"
@@ -920,7 +920,7 @@ def test_the_identifier_never_turns_one_fact_into_two(spark, config):
     facts = silver.combine(spark, config, "fact")
 
     assert facts.count() \
-        == facts.select("SOURCE", "FILING", "FACT").distinct().count()
+        == facts.select("source", "filing", "fact").distinct().count()
 
 
 def test_resolving_again_replaces_the_stored_identifier(spark, config):
@@ -932,13 +932,13 @@ def test_resolving_again_replaces_the_stored_identifier(spark, config):
 
     write_sec(spark, config)
     facts = silver.combine(spark, config, "fact")
-    assert "MEASURE" in facts.columns
+    assert "measure" in facts.columns
 
     resolved = mapping.with_measures(facts)
-    assert resolved.columns.count("MEASURE") == 1
-    assert "MEASURE_PRIORITY" in resolved.columns
+    assert resolved.columns.count("measure") == 1
+    assert "measure_priority" in resolved.columns
     # And the wider question reaches a measure the column does not carry.
-    assert {row["MEASURE"] for row in resolved.collect()} \
+    assert {row["measure"] for row in resolved.collect()} \
         >= {"assets", "revenue"}
 
 
@@ -1101,7 +1101,7 @@ def test_the_facts_of_both_regimes_land_in_one_table(spark, config):
     facts = common.connect_to_financialreport(spark, config)
 
     assert facts.count() == 19
-    assert sorted({row["SOURCE"] for row in facts.collect()}) == ["esef", "sec"]
+    assert sorted({row["source"] for row in facts.collect()}) == ["esef", "sec"]
 
 
 def test_the_entity_columns_are_carried_and_never_both(spark, config):
@@ -1112,7 +1112,7 @@ def test_the_entity_columns_are_carried_and_never_both(spark, config):
     silver.update_silver_financialreport(spark, config)
 
     for row in common.connect_to_financialreport(spark, config).collect():
-        assert (row["LEI"] is None) != (row["CIK"] is None)
+        assert (row["lei"] is None) != (row["cik"] is None)
 
 
 def test_the_framework_comes_from_the_prefix_the_filing_tagged_with(spark, config):
@@ -1120,7 +1120,7 @@ def test_the_framework_comes_from_the_prefix_the_filing_tagged_with(spark, confi
     write_sec(spark, config)
     silver.update_silver_financialreport(spark, config)
 
-    frameworks = {row["SOURCE"]: row["FRAMEWORK"] for row
+    frameworks = {row["source"]: row["framework"] for row
                   in common.connect_to_financialreport(spark, config).collect()}
 
     assert frameworks == {"esef": "IFRS", "sec": "US-GAAP"}
@@ -1135,8 +1135,8 @@ def test_an_ifrs_filer_with_the_commission_is_recorded_as_ifrs(spark, config):
 
     facts = common.connect_to_financialreport(spark, config)
 
-    assert {row["FRAMEWORK"] for row in facts.collect()} == {"IFRS"}
-    assert {row["CIK"] for row in facts.collect()} == {CIK}
+    assert {row["framework"] for row in facts.collect()} == {"IFRS"}
+    assert {row["cik"] for row in facts.collect()} == {CIK}
 
 
 def test_the_concepts_are_not_reconciled(spark, config):
@@ -1146,7 +1146,7 @@ def test_the_concepts_are_not_reconciled(spark, config):
     write_sec(spark, config)
     silver.update_silver_financialreport(spark, config)
 
-    concepts = {row["CONCEPT"] for row
+    concepts = {row["concept"] for row
                 in common.connect_to_financialreport(spark, config).collect()}
 
     assert "ifrs-full:Revenue" in concepts
@@ -1160,13 +1160,13 @@ def test_text_and_dimensions_are_empty_for_the_american_rows(spark, config):
     silver.update_silver_financialreport(spark, config)
 
     facts = common.connect_to_financialreport(spark, config)
-    american = facts.where("SOURCE = 'sec'").collect()
-    european = facts.where("SOURCE = 'esef'").collect()
+    american = facts.where("source = 'sec'").collect()
+    european = facts.where("source = 'esef'").collect()
 
-    assert all(row["TEXT"] is None and row["DIMENSIONS"] is None
+    assert all(row["text"] is None and row["dimensions"] is None
                for row in american)
-    assert any(row["TEXT"] is not None for row in european)
-    assert any(row["DIMENSIONS"] is not None for row in european)
+    assert any(row["text"] is not None for row in european)
+    assert any(row["dimensions"] is not None for row in european)
 
 
 def test_the_period_of_the_filing_reaches_the_american_facts(spark, config):
@@ -1176,8 +1176,8 @@ def test_the_period_of_the_filing_reaches_the_american_facts(spark, config):
 
     facts = common.connect_to_financialreport(spark, config).collect()
 
-    assert {row["PERIODEND"] for row in facts} == {date(2026, 8, 31)}
-    assert {row["PERIODYEAR"] for row in facts} == {2026}
+    assert {row["period_end"] for row in facts} == {date(2026, 8, 31)}
+    assert {row["period_year"] for row in facts} == {2026}
 
 
 def test_the_facts_are_partitioned_by_source_then_year(spark, config):
@@ -1187,8 +1187,8 @@ def test_the_facts_are_partitioned_by_source_then_year(spark, config):
 
     path = common.path_silver_fact(config)
 
-    assert "SOURCE=esef" in os.listdir(path)
-    assert "PERIODYEAR=2025" in os.listdir(os.path.join(path, "SOURCE=esef"))
+    assert "source=esef" in os.listdir(path)
+    assert "period_year=2025" in os.listdir(os.path.join(path, "source=esef"))
 
 
 # The combined filings
@@ -1202,13 +1202,13 @@ def test_each_regime_fills_the_column_it_states(spark, config):
     write_sec(spark, config)
     silver.update_silver_financialreport(spark, config)
 
-    filings = {row["SOURCE"]: row for row in
+    filings = {row["source"]: row for row in
                common.connect_to_financialreport(spark, config, "filing").collect()}
 
-    assert filings["esef"]["COUNTRY"] == "DK"
-    assert filings["esef"]["FORM"] is None
-    assert filings["sec"]["FORM"] == "10-Q"
-    assert filings["sec"]["COUNTRY"] is None
+    assert filings["esef"]["country"] == "DK"
+    assert filings["esef"]["form"] is None
+    assert filings["sec"]["form"] == "10-Q"
+    assert filings["sec"]["country"] is None
 
 
 def test_the_count_of_facts_of_an_esef_filing_comes_from_its_facts(spark, config):
@@ -1218,8 +1218,8 @@ def test_the_count_of_facts_of_an_esef_filing_comes_from_its_facts(spark, config
 
     filing = common.connect_to_financialreport(spark, config, "filing").collect()[0]
 
-    assert filing["FACTS"] == 10
-    assert filing["FRAMEWORK"] == "IFRS"
+    assert filing["facts"] == 10
+    assert filing["framework"] == "IFRS"
 
 
 def test_an_unknown_table_is_rejected(spark, config):
@@ -1246,8 +1246,8 @@ def test_a_measure_resolves_over_the_combined_table(spark, config):
     facts = common.connect_to_financialreport(spark, config)
     revenue = mapping.measure_values(facts, "revenue").collect()
 
-    assert {row["SOURCE"] for row in revenue} == {"esef", "sec"}
-    assert {row["VALUE"] for row in revenue} == {100.0, 200.0}
+    assert {row["source"] for row in revenue} == {"esef", "sec"}
+    assert {row["value"] for row in revenue} == {100.0, 200.0}
 
 
 def test_a_measure_resolves_over_the_esef_table_on_its_own(spark, config):
@@ -1259,7 +1259,7 @@ def test_a_measure_resolves_over_the_esef_table_on_its_own(spark, config):
     facts = read_silver(spark, esef.ref_silver_facts(config))
     revenue = mapping.measure_values(facts, "revenue").collect()
 
-    assert [row["VALUE"] for row in revenue] == [100.0]
+    assert [row["value"] for row in revenue] == [100.0]
 
 
 def test_a_figure_broken_down_by_an_axis_is_not_the_measure(spark, config):
@@ -1271,7 +1271,7 @@ def test_a_figure_broken_down_by_an_axis_is_not_the_measure(spark, config):
     revenue = mapping.measure_values(facts, "revenue").collect()
 
     assert len(revenue) == 1
-    assert revenue[0]["VALUE"] == 100.0
+    assert revenue[0]["value"] == 100.0
 
 
 def test_a_fact_no_measure_names_is_left_unlabelled(spark, config):
@@ -1279,7 +1279,7 @@ def test_a_fact_no_measure_names_is_left_unlabelled(spark, config):
     silver.update_silver_financialreport(spark, config)
 
     facts = common.connect_to_financialreport(spark, config)
-    labelled = {row["CONCEPT"]: row["MEASURE"]
+    labelled = {row["concept"]: row["measure"]
                 for row in mapping.with_measures(facts).collect()}
 
     assert labelled["ifrs-full:Revenue"] == "revenue"

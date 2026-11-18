@@ -72,21 +72,21 @@ def collect(config_path, name, text=None):
 
 def table(spark, config_path):
     frame = ffd.connect_to_famafrenchdata(spark, config_path).toPandas()
-    frame["REFDT"] = pandas.to_datetime(frame["REFDT"])
+    frame["ref_date"] = pandas.to_datetime(frame["ref_date"])
     return frame
 
 
 def expected(name):
     frame = ffd.parse_lines(name, ffd.split_lines(fixture_text(name)))
-    frame["DATASET"] = name
+    frame["dataset"] = name
     return frame
 
 
-KEY = ["DATASET", "TABLE", "FREQUENCY", "SERIES", "REFDT"]
+KEY = ["dataset", "table", "frequency", "series", "ref_date"]
 
 
 def same_rows(left, right):
-    columns = KEY + ["VALUE", "TITLE"]
+    columns = KEY + ["value", "title"]
     left = left[columns].sort_values(KEY).reset_index(drop=True)
     right = right[columns].sort_values(KEY).reset_index(drop=True)
     pandas.testing.assert_frame_equal(left, right, check_dtype=False)
@@ -131,14 +131,14 @@ def test_the_table_has_the_declared_columns_and_no_null(spark, data_lake):
 
     df = ffd.connect_to_famafrenchdata(spark, data_lake)
     types = dict(df.dtypes)
-    assert types == {"REFDT": "date", "DATASET": "string", "TABLE": "string",
-                     "FREQUENCY": "string", "SERIES": "string",
-                     "VALUE": "double", "TITLE": "string"}
+    assert types == {"ref_date": "date", "dataset": "string", "table": "string",
+                     "frequency": "string", "series": "string",
+                     "value": "double", "title": "string"}
     for column in df.columns:
         assert df.filter(df[column].isNull()).count() == 0, column
     # Partitioned by the file.
     assert os.path.isdir(os.path.join(ffd.path_silver_famafrenchdata(data_lake),
-                                      "DATASET=6_Portfolios_2x3"))
+                                      "dataset=6_Portfolios_2x3"))
 
 
 def test_a_run_with_nothing_new_writes_nothing(spark, data_lake, caplog):
@@ -163,10 +163,10 @@ def test_only_the_file_that_changed_is_rebuilt(spark, data_lake):
 
     assert outcome["written"] == 1
     frame = table(spark, data_lake)
-    breakpoints = frame[frame.DATASET == "ME_Breakpoints"]
-    assert breakpoints.REFDT.max() == pandas.Timestamp("2024-10-31")
-    assert pandas.Timestamp("2024-09-30") not in set(breakpoints.REFDT)
-    same_rows(frame[frame.DATASET == "F-F_Research_Data_Factors"],
+    breakpoints = frame[frame.dataset == "ME_Breakpoints"]
+    assert breakpoints.ref_date.max() == pandas.Timestamp("2024-10-31")
+    assert pandas.Timestamp("2024-09-30") not in set(breakpoints.ref_date)
+    same_rows(frame[frame.dataset == "F-F_Research_Data_Factors"],
               expected("F-F_Research_Data_Factors"))
 
 
@@ -201,9 +201,9 @@ def test_a_file_that_cannot_be_read_is_set_aside_and_keeps_its_partition(
     assert outcome["failed_sources"] == ["silver/ME_Breakpoints"]
     assert outcome["written"] == 1
     frame = table(spark, data_lake)
-    same_rows(frame[frame.DATASET == "ME_Breakpoints"], expected("ME_Breakpoints"))
-    assert set(frame[(frame.DATASET == "F-F_Research_Data_Factors")
-                     & (frame.SERIES == "RF") & (frame.FREQUENCY == "M")].VALUE) == {0.41}
+    same_rows(frame[frame.dataset == "ME_Breakpoints"], expected("ME_Breakpoints"))
+    assert set(frame[(frame.dataset == "F-F_Research_Data_Factors")
+                     & (frame.series == "RF") & (frame.frequency == "M")].value) == {0.41}
     # The mark stays where it was, so the next run tries the file again.
     assert ffd.read_watermark(data_lake, "ME_Breakpoints") == mark
     error = next(r for r in caplog.records if r.levelno == logging.ERROR)
@@ -239,9 +239,9 @@ def test_the_table_is_rebuilt_a_partition_at_a_time_as_delta(spark, data_lake):
     assert DeltaTable.isDeltaTable(spark, path)
     assert outcome["written"] == 1
     frame = table(spark, data_lake)
-    assert frame[frame.DATASET == "ME_Breakpoints"].REFDT.max() == \
+    assert frame[frame.dataset == "ME_Breakpoints"].ref_date.max() == \
         pandas.Timestamp("2024-10-31")
-    same_rows(frame[frame.DATASET == "F-F_Research_Data_Factors"],
+    same_rows(frame[frame.dataset == "F-F_Research_Data_Factors"],
               expected("F-F_Research_Data_Factors"))
 
 
@@ -356,7 +356,7 @@ def test_the_pipeline_runs_from_the_page_to_the_table(spark, data_lake, library)
 
     assert outcome["failed"] == 0
     frame = table(spark, data_lake)
-    assert set(frame.DATASET) == set(library)
+    assert set(frame.dataset) == set(library)
 
     # A second run finds the files unchanged and writes nothing.
     again = ffd.update_silver_famafrenchdata(spark, data_lake)

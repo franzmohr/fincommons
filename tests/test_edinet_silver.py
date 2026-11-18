@@ -33,7 +33,7 @@ pytestmark = pytest.mark.usefixtures("spark")
 def an_entry(doc, **overrides):
     entry = {
         "seqNumber": 1, "docID": doc, "edinetCode": "E03270",
-        "secCode": "75130", "JCN": "1070001004815",
+        "secCode": "75130", "jcn": "1070001004815",
         "filerName": "株式会社コジマ", "fundCode": None,
         "ordinanceCode": "010", "formCode": "030000", "docTypeCode": "120",
         "periodStart": "2025-09-01", "periodEnd": "2026-08-31",
@@ -89,10 +89,10 @@ def test_the_filings_of_every_index_collected_are_written(spark, lake):
 
     assert filings.count() == 3
     assert set(filings.columns) == {f.name for f in common.filings_schema.fields}
-    row = filings.where(f"FILING = '{FILING}'").first()
-    assert row["EDINETCODE"] == "E03270"
-    assert row["PERIODEND"] == date(2026, 8, 31)
-    assert row["FILEDYEAR"] == 2026
+    row = filings.where(f"filing = '{FILING}'").first()
+    assert row["edinet_code"] == "E03270"
+    assert row["period_end"] == date(2026, 8, 31)
+    assert row["filed_year"] == 2026
 
 
 def test_a_lake_with_no_index_is_told_so(spark, tmp_path):
@@ -115,7 +115,7 @@ def test_only_the_filing_whose_conversion_was_collected_is_read(spark, lake):
     silver.update_silver_edinet(spark, lake, filers=False)
     facts = common.connect_to_edinet(spark, lake, "facts")
 
-    assert {row["FILING"] for row in facts.select("FILING").distinct().collect()} \
+    assert {row["filing"] for row in facts.select("filing").distinct().collect()} \
         == {FILING}
 
 
@@ -159,19 +159,19 @@ def test_the_period_of_a_fact_is_the_filers_own_year(spark, lake):
     facts = common.connect_to_edinet(spark, lake, "facts")
 
     sales = facts.where(
-        "CONCEPT LIKE '%NetSalesSummaryOfBusinessResults' AND VALUE IS NOT NULL"
-    ).orderBy("PRDEND").collect()
+        "concept LIKE '%NetSalesSummaryOfBusinessResults' AND value IS NOT NULL"
+    ).orderBy("prd_end").collect()
 
-    assert [str(row["PRDEND"]) for row in sales][-1] == "2026-08-31"
-    assert [str(row["PRDSTART"]) for row in sales][-1] == "2025-09-01"
+    assert [str(row["prd_end"]) for row in sales][-1] == "2026-08-31"
+    assert [str(row["prd_start"]) for row in sales][-1] == "2025-09-01"
 
 
 def test_the_facts_are_partitioned_by_the_year_filed(spark, lake):
     silver.update_silver_edinet(spark, lake, filers=False)
     facts = common.connect_to_edinet(spark, lake, "facts")
 
-    assert {row["FILEDYEAR"] for row in
-            facts.select("FILEDYEAR").distinct().collect()} == {2026}
+    assert {row["filed_year"] for row in
+            facts.select("filed_year").distinct().collect()} == {2026}
 
 
 def test_an_archive_that_cannot_be_read_costs_only_its_own_filing(spark, lake):
@@ -187,10 +187,10 @@ def test_an_archive_that_cannot_be_read_costs_only_its_own_filing(spark, lake):
         failed = parsed.where("_ERROR IS NOT NULL").collect()
         good = parsed.where("_ERROR IS NULL")
 
-        assert [row["FILING"] for row in failed] == ["S100AAAA"]
+        assert [row["filing"] for row in failed] == ["S100AAAA"]
         assert good.count() > 0
-        assert {row["FILING"] for row in
-                good.select("FILING").distinct().collect()} == {FILING}
+        assert {row["filing"] for row in
+                good.select("filing").distinct().collect()} == {FILING}
     finally:
         parsed.unpersist()
 

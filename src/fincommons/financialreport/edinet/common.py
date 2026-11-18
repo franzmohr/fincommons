@@ -159,29 +159,29 @@ def earliest_retrievable(today=None):
 
 
 filings_schema = StructType() \
-    .add("FILING", StringType(), False) \
-    .add("EDINETCODE", StringType(), True) \
-    .add("SECCODE", StringType(), True) \
-    .add("JCN", StringType(), True) \
-    .add("NAME", StringType(), True) \
-    .add("FUNDCODE", StringType(), True) \
-    .add("ORDINANCE", StringType(), True) \
-    .add("FORM", StringType(), True) \
-    .add("DOCTYPE", StringType(), True) \
-    .add("PERIODSTART", DateType(), True) \
-    .add("PERIODEND", DateType(), True) \
-    .add("SUBMITTED", TimestampType(), True) \
-    .add("FILEDYEAR", IntegerType(), False) \
-    .add("INDEXDATE", DateType(), False) \
-    .add("DESCRIPTION", StringType(), True) \
-    .add("PARENT", StringType(), True) \
-    .add("WITHDRAWN", StringType(), True) \
-    .add("EDITED", StringType(), True) \
-    .add("DISCLOSED", StringType(), True) \
-    .add("LEGAL", StringType(), True) \
-    .add("HASXBRL", StringType(), True) \
-    .add("HASCSV", StringType(), True) \
-    .add("HASENGLISH", StringType(), True)
+    .add("filing", StringType(), False) \
+    .add("edinet_code", StringType(), True) \
+    .add("sec_code", StringType(), True) \
+    .add("jcn", StringType(), True) \
+    .add("name", StringType(), True) \
+    .add("fund_code", StringType(), True) \
+    .add("ordinance", StringType(), True) \
+    .add("form", StringType(), True) \
+    .add("doc_type", StringType(), True) \
+    .add("period_start", DateType(), True) \
+    .add("period_end", DateType(), True) \
+    .add("submitted", TimestampType(), True) \
+    .add("filed_year", IntegerType(), False) \
+    .add("index_date", DateType(), False) \
+    .add("description", StringType(), True) \
+    .add("parent", StringType(), True) \
+    .add("withdrawn", StringType(), True) \
+    .add("edited", StringType(), True) \
+    .add("disclosed", StringType(), True) \
+    .add("legal", StringType(), True) \
+    .add("has_xbrl", StringType(), True) \
+    .add("has_csv", StringType(), True) \
+    .add("has_english", StringType(), True)
 """The shape of the table of filings: one row per document the indexes name.
 
 ``FILING`` is the 書類管理番号, the document management number the API
@@ -220,23 +220,23 @@ not read.
 """
 
 facts_schema = StructType() \
-    .add("EDINETCODE", StringType(), True) \
-    .add("FILING", StringType(), False) \
-    .add("FILEDYEAR", IntegerType(), False) \
-    .add("FACT", StringType(), False) \
-    .add("CONCEPT", StringType(), False) \
-    .add("LABEL", StringType(), True) \
-    .add("CONTEXT", StringType(), False) \
-    .add("RELATIVE", StringType(), True) \
-    .add("BASIS", StringType(), True) \
-    .add("SHAPE", StringType(), True) \
-    .add("PRDSTART", DateType(), True) \
-    .add("PRDEND", DateType(), True) \
-    .add("DIMENSIONS", StringType(), True) \
-    .add("UNIT", StringType(), True) \
-    .add("VALUE", DoubleType(), True) \
-    .add("TEXT", StringType(), True) \
-    .add("DOCFORM", StringType(), True)
+    .add("edinet_code", StringType(), True) \
+    .add("filing", StringType(), False) \
+    .add("filed_year", IntegerType(), False) \
+    .add("fact", StringType(), False) \
+    .add("concept", StringType(), False) \
+    .add("label", StringType(), True) \
+    .add("context", StringType(), False) \
+    .add("relative", StringType(), True) \
+    .add("basis", StringType(), True) \
+    .add("shape", StringType(), True) \
+    .add("prd_start", DateType(), True) \
+    .add("prd_end", DateType(), True) \
+    .add("dimensions", StringType(), True) \
+    .add("unit", StringType(), True) \
+    .add("value", DoubleType(), True) \
+    .add("text", StringType(), True) \
+    .add("doc_form", StringType(), True)
 """The shape of the table of facts: one row per fact of the agency's CSV.
 
 The columns a fact shares with the other regimes are spelled as they spell
@@ -300,19 +300,19 @@ the reader decide what to do about a figure tagged twice.
 """
 
 filers_schema = StructType() \
-    .add("EDINETCODE", StringType(), False) \
-    .add("KIND", StringType(), True) \
-    .add("LISTED", StringType(), True) \
-    .add("CONSOLIDATED", StringType(), True) \
-    .add("CAPITAL", StringType(), True) \
-    .add("YEAREND", StringType(), True) \
-    .add("NAME", StringType(), True) \
-    .add("NAMEEN", StringType(), True) \
-    .add("NAMEKANA", StringType(), True) \
-    .add("ADDRESS", StringType(), True) \
-    .add("INDUSTRY", StringType(), True) \
-    .add("SECCODE", StringType(), True) \
-    .add("JCN", StringType(), True)
+    .add("edinet_code", StringType(), False) \
+    .add("kind", StringType(), True) \
+    .add("listed", StringType(), True) \
+    .add("consolidated", StringType(), True) \
+    .add("capital", StringType(), True) \
+    .add("year_end", StringType(), True) \
+    .add("name", StringType(), True) \
+    .add("name_en", StringType(), True) \
+    .add("name_kana", StringType(), True) \
+    .add("address", StringType(), True) \
+    .add("industry", StringType(), True) \
+    .add("sec_code", StringType(), True) \
+    .add("jcn", StringType(), True)
 """The shape of the table of filers: one row per filer the agency lists.
 
 The agency's own list, read from the zip it publishes on the disclosure site.

@@ -74,13 +74,13 @@ def _read_report(country, filing, period_end, path, chunk_rows=CHUNK_ROWS):
             facts = facts_from_report(json.load(handle))
     except Exception:
         error = {column: [None] for column in _COLUMNS}
-        error.update(COUNTRY=[country], FILING=[filing],
+        error.update(country=[country], filing=[filing],
                      _ERROR=[traceback.format_exc()])
         yield pandas.DataFrame(error, columns=_COLUMNS)
         return
-    facts["COUNTRY"] = country
-    facts["FILING"] = filing
-    facts["PERIODEND"] = period_end
+    facts["country"] = country
+    facts["filing"] = filing
+    facts["period_end"] = period_end
     facts["_ERROR"] = None
     facts = facts[_COLUMNS]
     # As in the French Data Library: pandas 3 keeps text in Arrow arrays,
@@ -98,7 +98,7 @@ def _read_reports(frames, chunk_rows=CHUNK_ROWS):
     """Read the reports of a partition, as :meth:`mapInPandas` hands them over."""
     for frame in frames:
         for row in frame.itertuples(index=False):
-            yield from _read_report(row.COUNTRY, row.FILING, row.PERIODEND,
+            yield from _read_report(row.country, row.filing, row.period_end,
                                     row.PATH, chunk_rows)
 
 
@@ -142,7 +142,8 @@ def build_filings(spark, config_path):
     """The table of filings as a Spark frame, from the indexes of the Bronze layer."""
     rows = list(read_filings(config_path).values())
     return spark.createDataFrame(
-        [tuple(r[f.name] for f in filings_schema.fields) for r in rows],
+        [tuple(r[FILING_RECORD_KEYS[f.name]] for f in filings_schema.fields)
+         for r in rows],
         schema=filings_schema,
     )
 
@@ -226,17 +227,17 @@ def _update_country(spark, config_path, country, records, periods, file_format,
         [(country, r["filing"], periods.get(r["filing"]),
           path_bronze_report(config_path, country, r["filing"]))
          for r in records],
-        columns=["COUNTRY", "FILING", "PERIODEND", "PATH"],
+        columns=["country", "filing", "period_end", "PATH"],
     )
     # A report whose filing no index lists any more has no period end to
     # file its facts under, and is passed over until one does again.
-    reports = reports[reports["PERIODEND"].notna()]
+    reports = reports[reports["period_end"].notna()]
     if reports.empty:
         return
     frame = spark.createDataFrame(reports, schema=StructType([
-        StructField("COUNTRY", StringType(), False),
-        StructField("FILING", StringType(), False),
-        facts_schema["PERIODEND"],
+        StructField("country", StringType(), False),
+        StructField("filing", StringType(), False),
+        facts_schema["period_end"],
         StructField("PATH", StringType(), False),
     ])).repartition(min(len(reports), 200))
 
@@ -247,27 +248,27 @@ def _update_country(spark, config_path, country, records, periods, file_format,
         .persist(StorageLevel.MEMORY_AND_DISK)
     try:
         errors = parsed.filter(func.col("_ERROR").isNotNull()) \
-            .select("FILING", "_ERROR").collect()
+            .select("filing", "_ERROR").collect()
         for row in errors:
             # The traceback comes from the executor, so it is put into the
             # record rather than raised: the run carries on by design.
             logger.error(
                 "A report could not be read into the table and was set aside",
-                extra=context(module="esef", layer="silver", source=row["FILING"],
+                extra=context(module="esef", layer="silver", source=row["filing"],
                               error=row["_ERROR"].strip().splitlines()[-1]),
             )
             logger.debug("The error of the report", extra=context(
-                module="esef", layer="silver", source=row["FILING"],
+                module="esef", layer="silver", source=row["filing"],
                 traceback=row["_ERROR"]))
             outcome["failed"] += 1
-            outcome["failed_sources"].append(f"silver/{row['FILING']}")
+            outcome["failed_sources"].append(f"silver/{row['filing']}")
 
         result = parsed.filter(func.col("_ERROR").isNull()) \
             .select(*[func.col(f.name) for f in facts_schema.fields])
         rows = result.count()
         if rows:
             replace_silver_partitions(result, ref_silver_facts(config_path),
-                                      "COUNTRY", [country],
+                                      "country", [country],
                                       file_format=file_format)
             outcome["written"] += 1
             outcome["rows"] += rows

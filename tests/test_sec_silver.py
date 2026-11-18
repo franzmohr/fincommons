@@ -41,7 +41,7 @@ def test_the_filings_of_both_registrants_are_read(spark, config):
     silver.update_silver_sec(spark, config)
 
     filings = common.connect_to_sec(spark, config, "filings")
-    frameworks = {row["CIK"]: row["FRAMEWORK"] for row in filings.collect()}
+    frameworks = {row["cik"]: row["framework"] for row in filings.collect()}
 
     assert filings.count() == 3
     assert frameworks == {"0001177394": "US-GAAP", "0001114448": "IFRS"}
@@ -54,8 +54,8 @@ def test_the_facts_carry_the_filing_and_the_registrant(spark, config):
     rows = facts.collect()
 
     assert facts.count() > 0
-    assert all(row["FILING"] and row["CIK"] for row in rows)
-    assert {row["FORM"] for row in rows} <= {"10-K", "10-Q", "20-F"}
+    assert all(row["filing"] and row["cik"] for row in rows)
+    assert {row["form"] for row in rows} <= {"10-K", "10-Q", "20-F"}
 
 
 def test_the_facts_are_partitioned_by_the_year_of_the_filing(spark, config):
@@ -64,17 +64,17 @@ def test_the_facts_are_partitioned_by_the_year_of_the_filing(spark, config):
     silver.update_silver_sec(spark, config)
     path = common.path_silver_facts(config)
 
-    assert "FILEDYEAR=2026" in os.listdir(path)
+    assert "filed_year=2026" in os.listdir(path)
 
 
 def test_a_restated_figure_is_kept_under_both_filings(spark, config):
     silver.update_silver_sec(spark, config)
 
     facts = common.connect_to_sec(spark, config, "facts")
-    assets = facts.where("CONCEPT = 'us-gaap:Assets' AND PRDEND = '2025-11-30'")
+    assets = facts.where("concept = 'us-gaap:Assets' AND prd_end = '2025-11-30'")
 
     assert assets.count() == 2
-    assert {row["VALUE"] for row in assets.collect()} == {100.0, 101.0}
+    assert {row["value"] for row in assets.collect()} == {100.0, 101.0}
 
 
 def test_a_company_file_that_cannot_be_read_does_not_fail_the_run(spark, config):
@@ -87,7 +87,7 @@ def test_a_company_file_that_cannot_be_read_does_not_fail_the_run(spark, config)
 
     filings = common.connect_to_sec(spark, config, "filings")
     assert filings.count() == 3
-    assert "0000000009" not in {row["CIK"] for row in filings.collect()}
+    assert "0000000009" not in {row["cik"] for row in filings.collect()}
 
 
 def test_the_table_is_rebuilt_and_does_not_grow_on_a_second_run(spark, config):
@@ -104,7 +104,7 @@ def test_only_the_registrants_asked_for_are_read(spark, config):
 
     filings = common.connect_to_sec(spark, config, "filings")
 
-    assert {row["CIK"] for row in filings.collect()} == {"0001114448"}
+    assert {row["cik"] for row in filings.collect()} == {"0001114448"}
 
 
 def test_building_from_an_empty_bronze_layer_is_refused(spark, tmp_path):

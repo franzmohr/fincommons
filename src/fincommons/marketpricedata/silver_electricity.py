@@ -66,12 +66,12 @@ def update_silver_electricity(spark, config_path, full=False):
             bronze = bronze.filter(func.col("date") >= first)
 
         bronze = bronze \
-            .withColumnRenamed("date", "REFDT") \
-            .withColumnRenamed("zone", "INSTRID") \
-            .withColumnRenamed("price", "VALUE") \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumnRenamed("date", "ref_date") \
+            .withColumnRenamed("zone", "instr_id") \
+            .withColumnRenamed("price", "value") \
+            .select("ref_date", "instr_id", "value")
 
-        latest = bronze.agg(func.max("REFDT").alias("last")).collect()
+        latest = bronze.agg(func.max("ref_date").alias("last")).collect()
         watermark = latest[0]["last"] if latest else None
         if watermark is None:
             logger.info(

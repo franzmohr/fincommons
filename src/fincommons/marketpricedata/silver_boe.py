@@ -53,9 +53,9 @@ def update_silver_boe_sonia(spark, config_path):
     if bronze is not None:
 
         bronze = bronze \
-            .withColumn("INSTRID", func.lit("ON-SONA")) \
-            .withColumnRenamed("date", "REFDT") \
-            .withColumnRenamed("sonia", "VALUE") \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumn("instr_id", func.lit("ON-SONA")) \
+            .withColumnRenamed("date", "ref_date") \
+            .withColumnRenamed("sonia", "value") \
+            .select("ref_date", "instr_id", "value")
 
         standard_upsert(spark, config_path, bronze)

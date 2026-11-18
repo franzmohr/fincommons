@@ -12,9 +12,9 @@ It holds no data of its own and collects nothing. There is no Bronze layer here,
 
 **It does not join the regimes by entity, because it cannot.** ESEF prescribes the legal entity identifier; a filing with the Commission states a central index key; and neither body publishes a mapping between the two. What GLEIF does publish is the register an entity is registered in, and for some tens of thousands of records that register is EDGAR -- but nearly all of those are funds, named by a series identifier rather than by a central index key, while an operating company's record points at its state register instead. NVIDIA's names Delaware, by a file number that is not its central index key. The issuers these tables hold are exactly the ones it does not reach. Both columns are carried and exactly one of them is filled in any row. It is the one thing a lake holding both regimes would most like to do, and the honest shape of the table says so rather than filling a column with a guess.
 
-Japan is the exception, and it is worth saying why rather than leaving it as a happy accident. The corporate number of the National Tax Agency, which [`edinet`](../edinet/README.md) carries as `JCN`, is not an identifier of its own: it is a check digit followed by the twelve-digit register number of the commercial register, and GLEIF records that same register number against an LEI issued to a Japanese company. The join is therefore arithmetic rather than a lookup table, and it is exact -- two spellings of one register number, not a comparison of names. It reaches about one listed Japanese filer in seven, the rest having no LEI at all, so it is enough to put a Japanese filer beside a European one where both exist and not enough to key anything by. The edinet README sets out the check and what it found.
+Japan is the exception, and it is worth saying why rather than leaving it as a happy accident. The corporate number of the National Tax Agency, which [`edinet`](../edinet/README.md) carries as `jcn`, is not an identifier of its own: it is a check digit followed by the twelve-digit register number of the commercial register, and GLEIF records that same register number against an LEI issued to a Japanese company. The join is therefore arithmetic rather than a lookup table, and it is exact -- two spellings of one register number, not a comparison of names. It reaches about one listed Japanese filer in seven, the rest having no LEI at all, so it is enough to put a Japanese filer beside a European one where both exist and not enough to key anything by. The edinet README sets out the check and what it found.
 
-**It reconciles the vocabularies one measure at a time, and only in a column of its own.** `MEASURE` carries the identifier of what a fact *is* -- the same for every regime that states the same figure -- beside the `CONCEPT` its filer tagged, which is never altered. It is filled for the measures `mapping.MATERIALISED_MEASURES` covers and null for everything else, which today is nearly the whole table.
+**It reconciles the vocabularies one measure at a time, and only in a column of its own.** `measure` carries the identifier of what a fact *is* -- the same for every regime that states the same figure -- beside the `concept` its filer tagged, which is never altered. It is filled for the measures `mapping.MATERIALISED_MEASURES` covers and null for everything else, which today is nearly the whole table.
 
 That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
 
@@ -103,7 +103,7 @@ So the equity pair stays lopsided where the profit pair's reach is not. `equity`
 
 This is the limit of a materialised identifier, and it is better reached honestly than papered over. The figure a population-level comparison wants is *the result attributable to the parent, falling back to the total where there are no minorities to separate*. That is a judgement per filing -- it depends on what the filing states -- and not a judgement per concept, so no concept-to-name map can express it.
 
-- **`MEASURE`** answers a precise question about named facts. This fact is the total including minorities; that one is the parent's share. Filter on it when you mean exactly one of those.
+- **`measure`** answers a precise question about named facts. This fact is the total including minorities; that one is the parent's share. Filter on it when you mean exactly one of those.
 - **`measure_values`** answers a question about a population. It takes the catalogue's priorities, picks the best concept each filing actually states, and returns one row per filing and period. Use it for a benchmark.
 
 The column does not replace the function, and the two pairs are where that stops being a technicality.
@@ -120,7 +120,7 @@ The total is not derived from the balance sheet identity to fill the gap. Nothin
 
 Growing the column is therefore one entry in `MATERIALISED_MEASURES` plus the checks it has to pass. All eight measures pass them today. That includes `equity` and `profit_loss`, which an earlier reading of the catalogue took to be blocked: `us-gaap:StockholdersEquity` is claimed by both `equity` and `equity_attributable_to_parent`, but as the *second* concept of the first and the first of the second, so the priority rule settles it -- it is the equity attributable to the parent, and the stand-in for equity only where a registrant states no wider total. That they pass is not a reason to add them; each is still a judgement to be made against real filings one at a time.
 
-**The concept is never altered to carry the identifier.** `ifrs-full:Revenue`, `us-gaap:Revenues` and `jppfs_cor:NetSales` stand in `CONCEPT` as they were filed, whatever `MEASURE` says beside them, so that what a filer tagged is always in the table and the judgement about what it means is always separable from it. That judgement is `mapping`'s, recorded as data rather than as code; it reaches all three regimes, and the section on the catalogue below sets out what it does and does not settle.
+**The concept is never altered to carry the identifier.** `ifrs-full:Revenue`, `us-gaap:Revenues` and `jppfs_cor:NetSales` stand in `concept` as they were filed, whatever `measure` says beside them, so that what a filer tagged is always in the table and the judgement about what it means is always separable from it. That judgement is `mapping`'s, recorded as data rather than as code; it reaches all three regimes, and the section on the catalogue below sets out what it does and does not settle.
 
 ### What each source covers
 
@@ -132,7 +132,7 @@ The three publishers do not give out the same thing, and the difference is a pro
 | facts | every fact of the report, as xBRL-JSON | the undimensioned numeric facts of the filing | every fact of the report, as the agency's own CSV |
 | dimensions | yes | no | yes |
 | text blocks and narrative | yes | no | yes |
-| entity key | `LEI` | `CIK` | `EDINETCODE` |
+| entity key | `lei` | `cik` | `edinet_code` |
 | frameworks | IFRS | US-GAAP, IFRS | JP-GAAP, IFRS |
 
 A figure for an entity as a whole is comparable across all three. A breakdown by segment or by class is available on two of them: a quarterly report stating 941 facts is carried in a company file as 321. A reader of the combined table is entitled to know that an absent breakdown may mean the company reported none or may mean the publisher does not give them out, and that which of the two it is depends on the source.
@@ -141,9 +141,9 @@ Two things about the Japanese rows have to be read before they are used, and bot
 
 **A report that consolidates states every figure twice**, the group's with no dimension and the parent company's own under `NonConsolidatedMember`, and both are in this table because both are in the source table. A question that does not say which it wants is asking for two sets of accounts at once. Kanagawa Chuo Kotsu states earnings per share of 294.99 for the group and 236.58 for the parent in one table of one report.
 
-**`JP-GAAP` is not comparable with the other two line by line.** A Japanese profit and loss account has two results where an IFRS one has a single operating line: the operating result, and the ordinary result that adds the recurring items outside it. The extraordinary items below that are a presentation an IFRS statement does not have. `FRAMEWORK` is read from what each filing says it reports under rather than from the prefix of a fact, because a Japanese group that has adopted IFRS tags its statements against the Japanese IFRS taxonomy and its front matter against the same disclosure taxonomy every other filer uses — so the prefix does not settle it, and the filing does.
+**`JP-GAAP` is not comparable with the other two line by line.** A Japanese profit and loss account has two results where an IFRS one has a single operating line: the operating result, and the ordinary result that adds the recurring items outside it. The extraordinary items below that are a presentation an IFRS statement does not have. `framework` is read from what each filing says it reports under rather than from the prefix of a fact, because a Japanese group that has adopted IFRS tags its statements against the Japanese IFRS taxonomy and its front matter against the same disclosure taxonomy every other filer uses — so the prefix does not settle it, and the filing does.
 
-One kind of Japanese fact is not carried, and it is the only thing this module drops. The agency's conversion carries no dates, so the edinet module resolves a period from what the filing says about itself and leaves both dates empty for a context whose shape it does not recognise. `PRDEND` is the one column of the combined table of facts that may not be empty — a fact in no period can be compared with nothing, which is what this table is for — so such a fact stays in the edinet table of facts, where that module's `PERIOD_UNRESOLVED` check counts them.
+One kind of Japanese fact is not carried, and it is the only thing this module drops. The agency's conversion carries no dates, so the edinet module resolves a period from what the filing says about itself and leaves both dates empty for a context whose shape it does not recognise. `prd_end` is the one column of the combined table of facts that may not be empty — a fact in no period can be compared with nothing, which is what this table is for — so such a fact stays in the edinet table of facts, where that module's `PERIOD_UNRESOLVED` check counts them.
 
 ## Setting up
 
@@ -195,24 +195,24 @@ print(combined.describe_measure("revenue"))
 
 ### `fact`
 
-One row per fact of a filing, partitioned by `SOURCE` and then `PERIODYEAR`: most questions are scoped to one regime, and a question about a figure is scoped to a year after that.
+One row per fact of a filing, partitioned by `source` and then `period_year`: most questions are scoped to one regime, and a question about a figure is scoped to a year after that.
 
 | Column | Meaning |
 | --- | --- |
-| `SOURCE` | which module the row came from, `esef` or `sec` |
-| `FILING` | the filing, as its own regime identifies it |
-| `FACT` | the identifier of the fact within its filing |
-| `LEI`, `CIK` | the entity; one is filled and the other empty, and neither is derived from the other |
-| `FRAMEWORK` | `IFRS` or `US-GAAP`, from the prefix the concept is tagged under |
-| `PERIODEND`, `PERIODYEAR` | the period the filing reports on, and its year |
-| `CONCEPT` | the concept as the filing tagged it, prefix and name, unresolved across frameworks |
-| `PRDSTART`, `PRDEND` | the period of the fact; an instant has no `PRDSTART` |
-| `UNIT`, `VALUE` | a number and its unit, as reported and in full units |
-| `TEXT`, `DIMENSIONS` | filled for ESEF rows only |
+| `source` | which module the row came from, `esef` or `sec` |
+| `filing` | the filing, as its own regime identifies it |
+| `fact` | the identifier of the fact within its filing |
+| `lei`, `cik` | the entity; one is filled and the other empty, and neither is derived from the other |
+| `framework` | `IFRS` or `US-GAAP`, from the prefix the concept is tagged under |
+| `period_end`, `period_year` | the period the filing reports on, and its year |
+| `concept` | the concept as the filing tagged it, prefix and name, unresolved across frameworks |
+| `prd_start`, `prd_end` | the period of the fact; an instant has no `prd_start` |
+| `unit`, `value` | a number and its unit, as reported and in full units |
+| `text`, `dimensions` | filled for ESEF rows only |
 
-`FRAMEWORK` is taken from the taxonomy the filing tagged against and not from the regime it was filed under. That is what makes the population where the two genuinely meet usable: a foreign private issuer reporting under IFRS files with the Commission and tags against the IFRS taxonomy, and belongs beside the European reports rather than beside the American ones it was filed with.
+`framework` is taken from the taxonomy the filing tagged against and not from the regime it was filed under. That is what makes the population where the two genuinely meet usable: a foreign private issuer reporting under IFRS files with the Commission and tags against the IFRS taxonomy, and belongs beside the European reports rather than beside the American ones it was filed with.
 
-`TEXT` and `DIMENSIONS` are empty for every SEC row, and not because this module drops them: the company files of the Commission carry no narrative facts and no breakdowns at all. An empty `DIMENSIONS` means the fact is for the entity as a whole, which is true of every row the Commission contributes.
+`text` and `dimensions` are empty for every SEC row, and not because this module drops them: the company files of the Commission carry no narrative facts and no breakdowns at all. An empty `dimensions` means the fact is for the entity as a whole, which is true of every row the Commission contributes.
 
 ### `filing`
 
@@ -220,15 +220,15 @@ One row per filing.
 
 | Column | Meaning |
 | --- | --- |
-| `SOURCE`, `FILING` | which module, and the filing |
-| `LEI`, `CIK`, `NAME` | the entity |
-| `FRAMEWORK` | `IFRS` or `US-GAAP`, from the concepts the filing tagged |
-| `COUNTRY` | the member state the report was filed in; ESEF only |
-| `FORM` | the form the filing was made on, e.g. `10-K`; SEC only |
-| `PERIODEND`, `PERIODYEAR` | the period reported on, and its year |
-| `FACTS` | how many facts the filing contributed |
+| `source`, `filing` | which module, and the filing |
+| `lei`, `cik`, `name` | the entity |
+| `framework` | `IFRS` or `US-GAAP`, from the concepts the filing tagged |
+| `country` | the member state the report was filed in; ESEF only |
+| `form` | the form the filing was made on, e.g. `10-K`; SEC only |
+| `period_end`, `period_year` | the period reported on, and its year |
+| `facts` | how many facts the filing contributed |
 
-`COUNTRY` and `FORM` are each empty where their regime states nothing: an ESEF filing goes to the mechanism of one member state and the regime names no form, while a filing with the Commission names a form and no country. Neither is given a value this module invented. For an ESEF filing the framework and the count come from the facts, which is where the evidence for both is -- the repository's index says nothing about what a report tagged against.
+`country` and `form` are each empty where their regime states nothing: an ESEF filing goes to the mechanism of one member state and the regime names no form, while a filing with the Commission names a form and no country. Neither is given a value this module invented. For an ESEF filing the framework and the count come from the facts, which is where the evidence for both is -- the repository's index says nothing about what a report tagged against.
 
 ## The catalogue of measures
 
@@ -270,9 +270,9 @@ print(fr.describe_measure("revenue"))        # basis, caveat and source, printab
 fr.caveats()                                 # every row that carries one
 ```
 
-`with_measures(facts)` labels a table of facts with `MEASURE` and `MEASURE_PRIORITY`, leaving both null for the great majority of facts, which no row of the catalogue names. `measure_values(facts, "revenue")` goes one step further and returns one value per filing and period, by the best concept the filing states; it logs a warning where the concepts it resolved through carry caveats, and it excludes facts reported under a dimension, since a measure is the figure for the entity as a whole and summing the parts beside the whole is the arithmetic that exclusion exists to prevent.
+`with_measures(facts)` labels a table of facts with `measure` and `measure_priority`, leaving both null for the great majority of facts, which no row of the catalogue names. `measure_values(facts, "revenue")` goes one step further and returns one value per filing and period, by the best concept the filing states; it logs a warning where the concepts it resolved through carry caveats, and it excludes facts reported under a dimension, since a measure is the figure for the entity as a whole and summing the parts beside the whole is the arithmetic that exclusion exists to prevent.
 
-Both join on `CONCEPT` as the tables spell it, which means **the catalogue works without this module's tables**. An ESEF-only lake can resolve a measure over `fincommons.financialreport.esef` directly:
+Both join on `concept` as the tables spell it, which means **the catalogue works without this module's tables**. An ESEF-only lake can resolve a measure over `fincommons.financialreport.esef` directly:
 
 ```python
 from fincommons.financialreport import esef

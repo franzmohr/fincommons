@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 #: decides it and a regime added later cannot answer the question
 #: differently from the others.
 SOURCE_FACT_COLUMNS = tuple(name for name in fact_schema.names
-                            if name != "MEASURE")
+                            if name != "measure")
 
 #: How the prefix a filing binds to a taxonomy says which framework it
 #: reports under. Both tables spell a concept as prefix and name, so the
@@ -94,12 +94,12 @@ def facts_from_esef(spark, config_path):
     facts = read_silver(spark, ref_silver_facts(config_path))
     return (
         facts
-        .withColumn("SOURCE", func.lit("esef"))
-        .withColumn("CIK", func.lit(None).cast("string"))
-        .withColumn("EDINETCODE", func.lit(None).cast("string"))
-        .withColumn("JCN", func.lit(None).cast("string"))
-        .withColumn("FRAMEWORK", _framework_of(func.col("CONCEPT")))
-        .withColumn("PERIODYEAR", func.year("PERIODEND"))
+        .withColumn("source", func.lit("esef"))
+        .withColumn("cik", func.lit(None).cast("string"))
+        .withColumn("edinet_code", func.lit(None).cast("string"))
+        .withColumn("jcn", func.lit(None).cast("string"))
+        .withColumn("framework", _framework_of(func.col("concept")))
+        .withColumn("period_year", func.year("period_end"))
         .select(*SOURCE_FACT_COLUMNS)
     )
 
@@ -117,18 +117,18 @@ def facts_from_sec(spark, config_path):
 
     facts = read_silver(spark, ref_silver_facts(config_path))
     filings = read_silver(spark, ref_silver_filings(config_path)) \
-        .select("FILING", "PERIODEND")
+        .select("filing", "period_end")
 
     return (
-        facts.join(filings, "FILING", "left")
-        .withColumn("SOURCE", func.lit("sec"))
-        .withColumn("LEI", func.lit(None).cast("string"))
-        .withColumn("EDINETCODE", func.lit(None).cast("string"))
-        .withColumn("JCN", func.lit(None).cast("string"))
-        .withColumn("FRAMEWORK", _framework_of(func.col("CONCEPT")))
-        .withColumn("PERIODYEAR", func.year("PERIODEND"))
-        .withColumn("TEXT", func.lit(None).cast("string"))
-        .withColumn("DIMENSIONS", func.lit(None).cast("string"))
+        facts.join(filings, "filing", "left")
+        .withColumn("source", func.lit("sec"))
+        .withColumn("lei", func.lit(None).cast("string"))
+        .withColumn("edinet_code", func.lit(None).cast("string"))
+        .withColumn("jcn", func.lit(None).cast("string"))
+        .withColumn("framework", _framework_of(func.col("concept")))
+        .withColumn("period_year", func.year("period_end"))
+        .withColumn("text", func.lit(None).cast("string"))
+        .withColumn("dimensions", func.lit(None).cast("string"))
         .select(*SOURCE_FACT_COLUMNS)
     )
 
@@ -145,19 +145,19 @@ def filings_from_esef(spark, config_path):
     # evidence for both is: the index says nothing about what a report tagged
     # against, and the regime states no form.
     about = (
-        facts.groupBy("FILING")
-        .agg(func.count(func.lit(1)).alias("FACTS"),
-             func.max(_framework_of(func.col("CONCEPT"))).alias("FRAMEWORK"))
+        facts.groupBy("filing")
+        .agg(func.count(func.lit(1)).alias("facts"),
+             func.max(_framework_of(func.col("concept"))).alias("framework"))
     )
     return (
-        filings.join(about, "FILING", "left")
-        .withColumn("SOURCE", func.lit("esef"))
-        .withColumn("CIK", func.lit(None).cast("string"))
-        .withColumn("EDINETCODE", func.lit(None).cast("string"))
-        .withColumn("JCN", func.lit(None).cast("string"))
-        .withColumn("FORM", func.lit(None).cast("string"))
-        .withColumn("PERIODYEAR", func.year("PERIODEND"))
-        .withColumn("FACTS", func.coalesce("FACTS", func.lit(0)))
+        filings.join(about, "filing", "left")
+        .withColumn("source", func.lit("esef"))
+        .withColumn("cik", func.lit(None).cast("string"))
+        .withColumn("edinet_code", func.lit(None).cast("string"))
+        .withColumn("jcn", func.lit(None).cast("string"))
+        .withColumn("form", func.lit(None).cast("string"))
+        .withColumn("period_year", func.year("period_end"))
+        .withColumn("facts", func.coalesce("facts", func.lit(0)))
         .select(*filing_schema.names)
     )
 
@@ -169,12 +169,12 @@ def filings_from_sec(spark, config_path):
 
     return (
         read_silver(spark, ref_silver_filings(config_path))
-        .withColumn("SOURCE", func.lit("sec"))
-        .withColumn("LEI", func.lit(None).cast("string"))
-        .withColumn("EDINETCODE", func.lit(None).cast("string"))
-        .withColumn("JCN", func.lit(None).cast("string"))
-        .withColumn("COUNTRY", func.lit(None).cast("string"))
-        .withColumn("PERIODYEAR", func.year("PERIODEND"))
+        .withColumn("source", func.lit("sec"))
+        .withColumn("lei", func.lit(None).cast("string"))
+        .withColumn("edinet_code", func.lit(None).cast("string"))
+        .withColumn("jcn", func.lit(None).cast("string"))
+        .withColumn("country", func.lit(None).cast("string"))
+        .withColumn("period_year", func.year("period_end"))
         .select(*filing_schema.names)
     )
 
@@ -208,13 +208,13 @@ def _stated_framework(facts):
     this module has no name for keeps it as filed rather than being called
     something it is not.
     """
-    stated = func.trim(func.col("TEXT"))
+    stated = func.trim(func.col("text"))
     named = func.lit(None).cast("string")
     for japanese, name in JAPANESE_STANDARDS.items():
         named = func.when(stated == japanese, func.lit(name)).otherwise(named)
     return (facts
-            .where(func.col("CONCEPT") == STANDARDS_ELEMENT)
-            .groupBy("FILING")
+            .where(func.col("concept") == STANDARDS_ELEMENT)
+            .groupBy("filing")
             .agg(func.max(func.coalesce(named, stated)).alias("_STATED")))
 
 
@@ -275,19 +275,19 @@ def facts_from_edinet(spark, config_path):
 
     facts = read_silver(spark, ref_silver_facts(config_path))
     filings = read_silver(spark, ref_silver_filings(config_path)) \
-        .select("FILING", "PERIODEND", "JCN")
+        .select("filing", "period_end", "jcn")
 
     return (
-        facts.where(func.col("PRDEND").isNotNull())
-        .join(filings, "FILING", "left")
-        .join(_stated_framework(facts), "FILING", "left")
-        .withColumn("SOURCE", func.lit("edinet"))
-        .withColumn("LEI", func.lit(None).cast("string"))
-        .withColumn("CIK", func.lit(None).cast("string"))
-        .withColumn("FRAMEWORK",
-                    _japanese_framework(func.col("CONCEPT"),
+        facts.where(func.col("prd_end").isNotNull())
+        .join(filings, "filing", "left")
+        .join(_stated_framework(facts), "filing", "left")
+        .withColumn("source", func.lit("edinet"))
+        .withColumn("lei", func.lit(None).cast("string"))
+        .withColumn("cik", func.lit(None).cast("string"))
+        .withColumn("framework",
+                    _japanese_framework(func.col("concept"),
                                         func.col("_STATED")))
-        .withColumn("PERIODYEAR", func.year("PERIODEND"))
+        .withColumn("period_year", func.year("period_end"))
         .select(*SOURCE_FACT_COLUMNS)
     )
 
@@ -313,20 +313,20 @@ def filings_from_edinet(spark, config_path):
     filings = read_silver(spark, ref_silver_filings(config_path))
     facts = read_silver(spark, ref_silver_facts(config_path))
 
-    about = (facts.groupBy("FILING")
-             .agg(func.count(func.lit(1)).alias("FACTS")))
+    about = (facts.groupBy("filing")
+             .agg(func.count(func.lit(1)).alias("facts")))
 
     return (
-        filings.join(about, "FILING", "left")
-        .join(_stated_framework(facts), "FILING", "left")
-        .withColumn("SOURCE", func.lit("edinet"))
-        .withColumn("FRAMEWORK", func.col("_STATED"))
-        .withColumn("LEI", func.lit(None).cast("string"))
-        .withColumn("CIK", func.lit(None).cast("string"))
-        .withColumn("COUNTRY", func.lit(None).cast("string"))
-        .withColumn("FORM", func.col("DOCTYPE"))
-        .withColumn("PERIODYEAR", func.year("PERIODEND"))
-        .withColumn("FACTS", func.coalesce("FACTS", func.lit(0)))
+        filings.join(about, "filing", "left")
+        .join(_stated_framework(facts), "filing", "left")
+        .withColumn("source", func.lit("edinet"))
+        .withColumn("framework", func.col("_STATED"))
+        .withColumn("lei", func.lit(None).cast("string"))
+        .withColumn("cik", func.lit(None).cast("string"))
+        .withColumn("country", func.lit(None).cast("string"))
+        .withColumn("form", func.col("doc_type"))
+        .withColumn("period_year", func.year("period_end"))
+        .withColumn("facts", func.coalesce("facts", func.lit(0)))
         .select(*filing_schema.names)
     )
 
@@ -357,13 +357,13 @@ def with_canonical_measure(facts, measures=None, packages=("fincommons",)):
     pairs = canonical_concepts(
         MATERIALISED_MEASURES if measures is None else measures, packages)
     if not pairs:
-        return facts.withColumn("MEASURE", func.lit(None).cast("string"))
+        return facts.withColumn("measure", func.lit(None).cast("string"))
 
     measure = func.lit(None).cast("string")
     for concept, name in pairs:
-        measure = func.when(func.col("CONCEPT") == concept,
+        measure = func.when(func.col("concept") == concept,
                             func.lit(name)).otherwise(measure)
-    return facts.withColumn("MEASURE", measure)
+    return facts.withColumn("measure", measure)
 
 
 def combine(spark, config_path, what, sources=None):

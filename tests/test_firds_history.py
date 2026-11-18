@@ -24,7 +24,7 @@ from fincommons.firds.history import (
 #: The columns a record of the historical database carries in these tests. The
 #: real table carries the whole analytics schema; the algorithm only touches
 #: the key, the validity dates and the flags.
-COLUMNS = "ISIN string, TRADGVN string, FULLNAME string, TECH_PBLCTNPRD_FRDT string"
+COLUMNS = "isin string, trading_venue string, full_name string, tech_publication_period_from_date string"
 
 
 def records(spark, rows):
@@ -35,15 +35,15 @@ def records(spark, rows):
 def delta(spark, rows):
     """Build delta records from (isin, mic, name, frdt, action)."""
     return spark.createDataFrame(
-        rows, COLUMNS + ", ACTNTP string"
+        rows, COLUMNS + ", action_type string"
     )
 
 
 def history_of(history, isin="ISIN1", mic="MIC1"):
     """Return the versions of one instrument, oldest first."""
     return (
-        history.where((F.col("ISIN") == isin) & (F.col("TRADGVN") == mic))
-        .orderBy("VLDFROM")
+        history.where((F.col("isin") == isin) & (F.col("trading_venue") == mic))
+        .orderBy("valid_from")
         .collect()
     )
 
@@ -57,10 +57,10 @@ def test_initialisation_registers_the_full_file(spark):
     full = records(spark, [("ISIN1", "MIC1", "Company X", "2016-09-02")])
     history = initialise_history(full).collect()
     assert len(history) == 1
-    assert history[0]["VLDFROM"] == date(2016, 9, 2)
-    assert history[0]["VLDTO"] is None
-    assert history[0]["LATESTRECORD"] is True
-    assert history[0]["ACTNTP"] == "FULINS"
+    assert history[0]["valid_from"] == date(2016, 9, 2)
+    assert history[0]["valid_to"] is None
+    assert history[0]["latest_record"] is True
+    assert history[0]["action_type"] == "FULINS"
 
 
 # --------------------------------------------------------------------------
@@ -91,20 +91,20 @@ def test_the_worked_example_of_the_instructions(spark):
         )
 
     versions = history_of(history)
-    assert [r["VLDFROM"] for r in versions] == [
+    assert [r["valid_from"] for r in versions] == [
         date(2016, 9, 2),
         date(2016, 9, 4),
         date(2016, 11, 8),
         date(2016, 12, 2),
     ]
-    assert [r["VLDTO"] for r in versions] == [
+    assert [r["valid_to"] for r in versions] == [
         date(2016, 9, 3),
         date(2016, 11, 7),
         date(2016, 12, 1),
         None,
     ]
-    assert [r["LATESTRECORD"] for r in versions] == [False, False, False, True]
-    assert [r["FULLNAME"] for r in versions] == [
+    assert [r["latest_record"] for r in versions] == [False, False, False, True]
+    assert [r["full_name"] for r in versions] == [
         "Company X",
         "Company X",
         "X Corporation",
@@ -126,8 +126,8 @@ def test_new_records_are_inserted(spark):
     )
     assert updated.count() == 2
     added = history_of(updated, isin="ISIN2")
-    assert added[0]["VLDTO"] is None
-    assert added[0]["LATESTRECORD"] is True
+    assert added[0]["valid_to"] is None
+    assert added[0]["latest_record"] is True
 
 
 def test_cancelled_records_close_the_version_in_force(spark):
@@ -138,9 +138,9 @@ def test_cancelled_records_close_the_version_in_force(spark):
         history, delta(spark, [("ISIN1", "MIC1", "A", "2016-09-10", "CancRcrd")])
     )
     versions = history_of(updated)
-    assert [r["VLDTO"] for r in versions] == [date(2016, 9, 9), None]
-    assert [r["LATESTRECORD"] for r in versions] == [False, True]
-    assert versions[1]["ACTNTP"] == "CancRcrd"
+    assert [r["valid_to"] for r in versions] == [date(2016, 9, 9), None]
+    assert [r["latest_record"] for r in versions] == [False, True]
+    assert versions[1]["action_type"] == "CancRcrd"
 
 
 def test_a_termination_reported_late_is_inserted(spark):
@@ -154,10 +154,10 @@ def test_a_termination_reported_late_is_inserted(spark):
     )
     added = history_of(updated, isin="ISIN9")
     assert len(added) == 1
-    assert added[0]["VLDTO"] is None
-    assert added[0]["LATESTRECORD"] is True
+    assert added[0]["valid_to"] is None
+    assert added[0]["latest_record"] is True
     # the unrelated instrument is untouched
-    assert history_of(updated)[0]["LATESTRECORD"] is True
+    assert history_of(updated)[0]["latest_record"] is True
 
 
 def test_a_correction_after_termination_closes_and_inserts(spark):
@@ -171,8 +171,8 @@ def test_a_correction_after_termination_closes_and_inserts(spark):
     )
     versions = history_of(updated)
     assert len(versions) == 2
-    assert [r["VLDTO"] for r in versions] == [date(2016, 9, 19), None]
-    assert [r["LATESTRECORD"] for r in versions] == [False, True]
+    assert [r["valid_to"] for r in versions] == [date(2016, 9, 19), None]
+    assert [r["latest_record"] for r in versions] == [False, True]
 
 
 def test_an_ordinary_termination_replaces_the_version_in_force(spark):
@@ -186,10 +186,10 @@ def test_an_ordinary_termination_replaces_the_version_in_force(spark):
     )
     versions = history_of(updated)
     assert len(versions) == 1, "the version in force is replaced, not added to"
-    assert versions[0]["FULLNAME"] == "A terminated"
-    assert versions[0]["ACTNTP"] == "TermntdRcrd"
-    assert versions[0]["VLDTO"] is None
-    assert versions[0]["LATESTRECORD"] is True
+    assert versions[0]["full_name"] == "A terminated"
+    assert versions[0]["action_type"] == "TermntdRcrd"
+    assert versions[0]["valid_to"] is None
+    assert versions[0]["latest_record"] is True
 
 
 # --------------------------------------------------------------------------
@@ -212,17 +212,17 @@ def test_several_changes_for_one_instrument_in_one_file_are_chained(spark):
         ),
     )
     versions = history_of(updated)
-    assert [r["VLDFROM"] for r in versions] == [
+    assert [r["valid_from"] for r in versions] == [
         date(2016, 9, 2),
         date(2016, 9, 5),
         date(2016, 9, 8),
     ]
-    assert [r["VLDTO"] for r in versions] == [
+    assert [r["valid_to"] for r in versions] == [
         date(2016, 9, 4),
         date(2016, 9, 7),
         None,
     ]
-    assert [r["LATESTRECORD"] for r in versions] == [False, False, True]
+    assert [r["latest_record"] for r in versions] == [False, False, True]
 
 
 def test_validity_periods_do_not_overlap(spark):
@@ -239,10 +239,10 @@ def test_validity_periods_do_not_overlap(spark):
             history, delta(spark, [("ISIN1", "MIC1", name, frdt, action)])
         )
     versions = history_of(history)
-    assert sum(1 for r in versions if r["VLDTO"] is None) == 1
-    assert sum(1 for r in versions if r["LATESTRECORD"]) == 1
+    assert sum(1 for r in versions if r["valid_to"] is None) == 1
+    assert sum(1 for r in versions if r["latest_record"]) == 1
     for earlier, later in zip(versions, versions[1:]):
-        assert earlier["VLDTO"] < later["VLDFROM"]
+        assert earlier["valid_to"] < later["valid_from"]
 
 
 def test_a_record_that_begins_before_the_version_in_force_is_refused(spark):
@@ -270,7 +270,7 @@ def test_a_record_beginning_after_the_version_in_force_is_applied(spark):
     )
 
     versions = history_of(updated)
-    assert [r["VLDTO"] for r in versions] == [date(2016, 9, 9), None]
+    assert [r["valid_to"] for r in versions] == [date(2016, 9, 9), None]
 
 
 # --------------------------------------------------------------------------
@@ -285,9 +285,9 @@ def test_point_in_time_query(spark):
     history = apply_changes(
         history, delta(spark, [("ISIN1", "MIC1", "B", "2016-09-05", "ModfdRcrd")])
     )
-    assert [r["FULLNAME"] for r in latest_records(history).collect()] == ["B"]
+    assert [r["full_name"] for r in latest_records(history).collect()] == ["B"]
     as_of = records_as_of(history, "2016-09-03").collect()
-    assert [r["FULLNAME"] for r in as_of] == ["A"]
+    assert [r["full_name"] for r in as_of] == ["A"]
     assert records_as_of(history, "2016-09-01").count() == 0
 
 
@@ -313,7 +313,7 @@ def test_the_plan_classifies_every_record(spark):
         ),
     )
     operations = {
-        r["ISIN"]: r["_OPERATION"] for r in planned.select("ISIN", "_OPERATION").collect()
+        r["isin"]: r["_OPERATION"] for r in planned.select("isin", "_OPERATION").collect()
     }
     assert operations == {
         "ISIN1": "REPLACE",
@@ -329,7 +329,7 @@ def test_the_plan_classifies_every_record(spark):
 
 
 def assert_no_empty_period(history):
-    assert history.where(F.col("VLDTO") < F.col("VLDFROM")).count() == 0
+    assert history.where(F.col("valid_to") < F.col("valid_from")).count() == 0
 
 
 def test_two_records_beginning_on_the_same_day_leave_one_version(spark):
@@ -349,9 +349,9 @@ def test_two_records_beginning_on_the_same_day_leave_one_version(spark):
     )
     assert_no_empty_period(updated)
     added = history_of(updated, isin="ISIN2")
-    assert [r["FULLNAME"] for r in added] == ["modified"]
-    assert added[0]["VLDTO"] is None
-    assert added[0]["LATESTRECORD"] is True
+    assert [r["full_name"] for r in added] == ["modified"]
+    assert added[0]["valid_to"] is None
+    assert added[0]["latest_record"] is True
 
 
 def test_a_record_delivered_twice_is_applied_once(spark):
@@ -364,8 +364,8 @@ def test_a_record_delivered_twice_is_applied_once(spark):
 
     assert_no_empty_period(updated)
     versions = history_of(updated)
-    assert [r["FULLNAME"] for r in versions] == ["A", "B"]
-    assert [r["VLDTO"] for r in versions] == [date(2016, 9, 4), None]
+    assert [r["full_name"] for r in versions] == ["A", "B"]
+    assert [r["valid_to"] for r in versions] == [date(2016, 9, 4), None]
 
 
 @pytest.mark.parametrize("action", ["ModfdRcrd", "CancRcrd"])
@@ -382,10 +382,10 @@ def test_a_change_beginning_with_the_version_in_force_replaces_it(spark, action)
     assert_no_empty_period(updated)
     versions = history_of(updated)
     assert len(versions) == 1
-    assert versions[0]["FULLNAME"] == "A2"
-    assert versions[0]["ACTNTP"] == action
-    assert versions[0]["VLDTO"] is None
-    assert versions[0]["LATESTRECORD"] is True
+    assert versions[0]["full_name"] == "A2"
+    assert versions[0]["action_type"] == action
+    assert versions[0]["valid_to"] is None
+    assert versions[0]["latest_record"] is True
 
 
 # An instrument reported as new although it is already there
@@ -405,9 +405,9 @@ def test_a_new_record_for_a_live_instrument_supersedes_it(spark):
 
     assert_no_empty_period(updated)
     versions = history_of(updated)
-    assert [r["VLDTO"] for r in versions] == [date(2016, 9, 4), None]
-    assert [r["LATESTRECORD"] for r in versions] == [False, True]
-    assert sum(1 for r in versions if r["VLDTO"] is None) == 1
+    assert [r["valid_to"] for r in versions] == [date(2016, 9, 4), None]
+    assert [r["latest_record"] for r in versions] == [False, True]
+    assert sum(1 for r in versions if r["valid_to"] is None) == 1
 
 
 def test_an_instrument_admitted_again_after_termination_has_one_version_in_force(spark):
@@ -425,6 +425,6 @@ def test_an_instrument_admitted_again_after_termination_has_one_version_in_force
 
     assert_no_empty_period(history)
     versions = history_of(history)
-    assert [r["FULLNAME"] for r in versions] == ["gone", "back"]
-    assert sum(1 for r in versions if r["VLDTO"] is None) == 1
-    assert sum(1 for r in versions if r["LATESTRECORD"]) == 1
+    assert [r["full_name"] for r in versions] == ["gone", "back"]
+    assert sum(1 for r in versions if r["valid_to"] is None) == 1
+    assert sum(1 for r in versions if r["latest_record"]) == 1

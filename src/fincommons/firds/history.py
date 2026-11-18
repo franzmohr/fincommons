@@ -8,13 +8,13 @@ files (DLTINS) that follow it.
 
 The algorithm associates two pieces of bookkeeping with every record:
 
-``VLDFROM`` / ``VLDTO``
+``valid_from`` / ``valid_to``
     the validity dates of the version, and
-``LATESTRECORD``
+``latest_record``
     whether the version is the most recent one received for its instrument.
 
 An instrument is identified by the pair ``(ISIN, TRADGVN)`` -- the ISIN and the
-MIC of the trading venue -- and ``VLDFROM`` is taken from
+MIC of the trading venue -- and ``valid_from`` is taken from
 ``TechAttrbts/PblctnPrd/FrDt`` of the record, as the instructions prescribe.
 
 The logic is expressed as transformations of data frames and does not depend on
@@ -30,20 +30,20 @@ from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
 #: Columns identifying an instrument on a trading venue.
-KEY_COLUMNS = ("ISIN", "TRADGVN")
+KEY_COLUMNS = ("isin", "trading_venue")
 
 #: Column holding the first day of the validity period of a version.
-VALID_FROM = "VLDFROM"
+VALID_FROM = "valid_from"
 
 #: Column holding the last day of the validity period, empty while the version
 #: is the one in force.
-VALID_TO = "VLDTO"
+VALID_TO = "valid_to"
 
 #: Column marking the most recent version received for an instrument.
-LATEST_RECORD = "LATESTRECORD"
+LATEST_RECORD = "latest_record"
 
 #: Column holding the kind of record a version originates from.
-ACTION_TYPE = "ACTNTP"
+ACTION_TYPE = "action_type"
 
 #: The element of the delta file a record was reported in. The order is the
 #: order in which several records for the same instrument in the same file are
@@ -58,11 +58,12 @@ REPLACE = "REPLACE"
 
 #: Column that :func:`records_to_change` tags its rows with, naming the
 #: operation each of them implies for the version in force.
-OPERATION = "OPERATION"
+OPERATION = "operation"
 
 _OPERATION = "_OPERATION"
 _SEQUENCE = "_SEQUENCE"
-_OPEN_VALID_FROM = "_OPEN_VLDFROM"
+_RANK = "_RANK"
+_OPEN_VALID_FROM = "_open_valid_from"
 
 
 def initialise_history(full: DataFrame) -> DataFrame:
@@ -70,13 +71,13 @@ def initialise_history(full: DataFrame) -> DataFrame:
 
     This is paragraph 27.a of the instructions: on the day the history is
     started, every record of the FULINS file is registered with its publication
-    start date as ``VLDFROM``, an empty ``VLDTO`` and ``LATESTRECORD`` set.
+    start date as ``valid_from``, an empty ``valid_to`` and ``latest_record`` set.
 
     Parameters
     ----------
     full:
         The records of the full file in the analytics schema, carrying at least
-        the key columns and ``TECH_PBLCTNPRD_FRDT``.
+        the key columns and ``tech_publication_period_from_date``.
 
     Returns
     -------
@@ -84,7 +85,7 @@ def initialise_history(full: DataFrame) -> DataFrame:
         The initial state of the historical database.
     """
     history = (
-        full.withColumn(VALID_FROM, F.to_date(F.col("TECH_PBLCTNPRD_FRDT")))
+        full.withColumn(VALID_FROM, F.to_date(F.col("tech_publication_period_from_date")))
         .withColumn(VALID_TO, F.lit(None).cast("date"))
         .withColumn(LATEST_RECORD, F.lit(True))
         .withColumn(ACTION_TYPE, F.lit("FULINS"))
@@ -116,26 +117,51 @@ def prepare_incoming(incoming: DataFrame) -> DataFrame:
     order of :data:`ACTION_TYPES` is kept: it is what the instrument looked
     like at the end of that day. Should two records of the same kind begin on
     the same day, which one is kept is not defined by the file. Exact
-    duplicates, as a file imported twice produces, are dropped first.
+    duplicates, as a file imported twice produces, are among those records and
+    are dropped the same way.
+
+    Both steps are taken on one window, ordered as the records are applied, so
+    that a file costs one shuffle rather than three. A record another of the
+    same day supersedes is the one whose successor in that order begins on the
+    same day as it does, which is what the first step drops; and because an
+    exact duplicate begins on the same day as the record it duplicates, the
+    step drops all but the last of a run of them as well. A ``dropDuplicates``
+    of its own would shuffle every column of every record to find what this
+    already removes.
+
+    The order the window reads the records in is a column of its own rather
+    than the expression :func:`_action_rank` returns. Written as the
+    expression, each use of the window computes it again under a name of its
+    own, and Spark cannot then see that the orders two of them ask for are the
+    same one: it sorts the records once per use, within the partitions the one
+    exchange has laid out. Computed once and named, the sort is shared as
+    well, and the chaining reads the records the first step left without
+    laying them out or sorting them again.
     """
-    incoming = incoming.dropDuplicates().withColumn(
-        VALID_FROM, F.to_date(F.col("TECH_PBLCTNPRD_FRDT"))
-    )
-    same_day = Window.partitionBy(*KEY_COLUMNS, VALID_FROM).orderBy(
-        _action_rank(F.col(ACTION_TYPE)).desc()
-    )
-    incoming = (
-        incoming.withColumn("_same_day", F.row_number().over(same_day))
-        .where(F.col("_same_day") == F.lit(1))
-        .drop("_same_day")
-    )
+    incoming = incoming.withColumn(
+        VALID_FROM, F.to_date(F.col("tech_publication_period_from_date"))
+    ).withColumn(_RANK, _action_rank(F.col(ACTION_TYPE)))
     ordering = Window.partitionBy(*KEY_COLUMNS).orderBy(
-        F.col(VALID_FROM),
-        _action_rank(F.col(ACTION_TYPE)),
+        F.col(VALID_FROM), F.col(_RANK)
     )
-    incoming = incoming.withColumn(_SEQUENCE, F.row_number().over(ordering))
     successor = F.lead(F.col(VALID_FROM)).over(ordering)
-    incoming = incoming.withColumn("_successor", successor)
+    # Null-safely, so that a record stating no start date is kept and left to
+    # fincommons.firds.silver.check_publication_period to refuse. Comparing
+    # with == would make the comparison null and drop the record here, and a
+    # file would be applied with it silently missing.
+    incoming = (
+        incoming.withColumn("_successor", successor)
+        .where(
+            F.col("_successor").isNull()
+            | ~F.col("_successor").eqNullSafe(F.col(VALID_FROM))
+        )
+        .drop("_successor")
+    )
+    # Both in one step, so that they are one reading of the window rather
+    # than two.
+    incoming = incoming.withColumns(
+        {_SEQUENCE: F.row_number().over(ordering), "_successor": successor}
+    )
     incoming = incoming.withColumn(
         VALID_TO,
         F.when(
@@ -145,7 +171,7 @@ def prepare_incoming(incoming: DataFrame) -> DataFrame:
     incoming = incoming.withColumn(
         LATEST_RECORD, F.col("_successor").isNull()
     )
-    return incoming.drop("_successor")
+    return incoming.drop("_successor", _RANK)
 
 
 def _action_rank(action: F.Column) -> F.Column:
@@ -191,8 +217,8 @@ def plan_changes(history: DataFrame, incoming: DataFrame) -> DataFrame:
     case, since a new instrument is not supposed to exist already; ESMA can
     report one all the same, for an instrument admitted again after it was
     terminated, and a termination stays in force because it carries no
-    ``VLDTO``. Inserting such a record would give the instrument two versions
-    in force, which makes ``LATESTRECORD`` ambiguous and, on the next delta
+    ``valid_to``. Inserting such a record would give the instrument two versions
+    in force, which makes ``latest_record`` ambiguous and, on the next delta
     file that touches the instrument, matches the merge against two rows at
     once and stops the update with an error until the table is repaired.
 
@@ -202,7 +228,7 @@ def plan_changes(history: DataFrame, incoming: DataFrame) -> DataFrame:
         The historical database as it stands before the file is applied.
     incoming:
         The records of one delta file, in the analytics schema and carrying
-        ``ACTNTP`` and ``TECH_PBLCTNPRD_FRDT``.
+        ``action_type`` and ``tech_publication_period_from_date``.
 
     Returns
     -------
@@ -210,11 +236,32 @@ def plan_changes(history: DataFrame, incoming: DataFrame) -> DataFrame:
         The incoming records with their validity bookkeeping and a column
         ``_OPERATION`` holding the operation each of them implies.
     """
+    # The keys are taken before the records are prepared, so that the window
+    # of prepare_incoming is not computed a second time to find them. The
+    # preparation only drops records, never changes a key, so the two frames
+    # name the same instruments.
+    keys = incoming.select(*KEY_COLUMNS).distinct()
     incoming = prepare_incoming(incoming)
-    in_force = history.where(F.col(VALID_TO).isNull()).select(
-        *KEY_COLUMNS, F.col(VALID_FROM).alias(_OPEN_VALID_FROM)
+
+    # Only an open version whose instrument the file carries a record for can
+    # meet the join below, so the open versions are cut down to those before
+    # it. The point is which join Spark is then left with: the whole history
+    # is far too large to be the broadcast side of the left join, so without
+    # this it is sorted and shuffled in full, every file, to be met by one
+    # day's records. The semi-join broadcasts the day's keys instead, which a
+    # left semi-join may do, so the history is read once -- three columns of
+    # it -- probed against a hash table, and never shuffled. What survives is
+    # at most one row per key of the file and is small enough to broadcast in
+    # turn, which leaves the plan of a file with no shuffle of the history in
+    # it at all.
+    in_force = (
+        history.where(F.col(VALID_TO).isNull())
+        .select(*KEY_COLUMNS, F.col(VALID_FROM).alias(_OPEN_VALID_FROM))
+        .join(F.broadcast(keys), on=list(KEY_COLUMNS), how="left_semi")
     )
-    planned = incoming.join(in_force, on=list(KEY_COLUMNS), how="left")
+    planned = incoming.join(
+        F.broadcast(in_force), on=list(KEY_COLUMNS), how="left"
+    )
 
     first = F.col(_SEQUENCE) == F.lit(1)
     open_version = F.col(_OPEN_VALID_FROM)
@@ -240,7 +287,7 @@ def check_supersession(planned: DataFrame, source: str) -> DataFrame:
     incoming record begins, which says what to do on the assumption that the
     incoming record begins later. Where it begins earlier the arithmetic still
     goes through and produces nonsense: the superseded version is closed on a
-    day before its own ``VLDFROM`` and so is valid on no day at all, while the
+    day before its own ``valid_from`` and so is valid on no day at all, while the
     record that closed it becomes the version in force with a start date
     behind the one it replaced. A point-in-time query then answers for every
     day after the fault with the older record.
@@ -300,7 +347,7 @@ def check_supersession(planned: DataFrame, source: str) -> DataFrame:
 def records_to_close(planned: DataFrame) -> DataFrame:
     """Return the versions that the file supersedes, with their closing date.
 
-    The columns are the key of the instrument and the ``VLDTO`` its open
+    The columns are the key of the instrument and the ``valid_to`` its open
     version has to be set to, which is the day before the incoming record
     begins.
     """
@@ -330,7 +377,7 @@ def records_to_change(planned: DataFrame, columns) -> DataFrame:
 
     The rows of :func:`records_to_close` and :func:`records_to_replace` in one
     frame, carrying every column of ``columns`` and :data:`OPERATION`. For a
-    row that closes a version, ``VLDTO`` already holds the day the version is
+    row that closes a version, ``valid_to`` already holds the day the version is
     closed on, so a caller applies either operation by reading the columns the
     tag names.
 
@@ -440,7 +487,7 @@ __all__ = [
     "INSERT",
     "KEY_COLUMNS",
     "LATEST_RECORD",
-    "OPERATION",
+    "operation",
     "REPLACE",
     "VALID_FROM",
     "VALID_TO",
