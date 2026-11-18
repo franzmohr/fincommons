@@ -131,15 +131,21 @@ def test_a_failure_to_read_the_table_is_not_taken_for_an_empty_database(
 # --------------------------------------------------------------------------
 
 
-def history_row(isin, tradgvn, cfi="ESVUFR", issuer="ISSUER1", actntp="ModfdRcrd"):
+def history_row(isin, tradgvn, cfi="ESVUFR", issuer="ISSUER1", actntp="ModfdRcrd",
+                full_name="Full name", notional_currency="EUR",
+                option_type="CALL", option_exercise_style="EURO",
+                delivery_type="PHYS"):
     return (isin, tradgvn, cfi, issuer, "name", "2030-01-01", "2030-01-01", "1.0",
-            True, actntp)
+            full_name, notional_currency, option_type, option_exercise_style,
+            delivery_type, True, actntp)
 
 
 HISTORY_SCHEMA = (
     "isin string, trading_venue string, cfi string, issuer string, short_name string, "
-    "maturity_date string, expiry_date string, price_multiplier string, latest_record boolean, "
-    "action_type string"
+    "maturity_date string, expiry_date string, price_multiplier string, "
+    "full_name string, notional_currency string, option_type string, "
+    "option_exercise_style string, delivery_type string, "
+    "latest_record boolean, action_type string"
 )
 
 
@@ -168,8 +174,10 @@ def test_the_compact_table_holds_one_row_per_isin(spark, config):
 
 TYPED_HISTORY_SCHEMA = (
     "isin string, trading_venue string, cfi string, issuer string, short_name string, "
-    "maturity_date date, expiry_date date, price_multiplier decimal(35,17), latest_record boolean, "
-    "action_type string"
+    "maturity_date date, expiry_date date, price_multiplier decimal(35,17), "
+    "full_name string, notional_currency string, option_type string, "
+    "option_exercise_style string, delivery_type string, "
+    "latest_record boolean, action_type string"
 )
 
 
@@ -179,10 +187,14 @@ def test_venues_that_disagree_leave_the_typed_columns_empty(spark, config):
     fail the whole rebuild."""
     common.create_directory_tree(config)
     spark.createDataFrame([
-        ("ISIN1", "MIC1", "D", "L", "N", date(2027, 1, 1), date(2027, 1, 1), Decimal("1"), True, "ModfdRcrd"),
-        ("ISIN1", "MIC2", "D", "L", "N", date(2028, 1, 1), date(2027, 1, 1), Decimal("10"), True, "ModfdRcrd"),
-        ("ISIN2", "MIC1", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"), True, "ModfdRcrd"),
-        ("ISIN2", "MIC2", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"), True, "ModfdRcrd"),
+        ("ISIN1", "MIC1", "D", "L", "N", date(2027, 1, 1), date(2027, 1, 1), Decimal("1"),
+         "Name one", "EUR", "CALL", "EURO", "PHYS", True, "ModfdRcrd"),
+        ("ISIN1", "MIC2", "D", "L", "N", date(2028, 1, 1), date(2027, 1, 1), Decimal("10"),
+         "Name two", "USD", "PUTO", "AMER", "CASH", True, "ModfdRcrd"),
+        ("ISIN2", "MIC1", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"),
+         "Agreed", "EUR", "CALL", "EURO", "PHYS", True, "ModfdRcrd"),
+        ("ISIN2", "MIC2", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"),
+         "Agreed", "EUR", "CALL", "EURO", "PHYS", True, "ModfdRcrd"),
     ], TYPED_HISTORY_SCHEMA).write.format("delta").save(common.path_silver_main(config))
 
     silver.update_from_silver_main_to_silver_compact(spark, config)
@@ -196,6 +208,38 @@ def test_venues_that_disagree_leave_the_typed_columns_empty(spark, config):
     assert rows["ISIN2"]["price_multiplier"] == Decimal("5")
     assert dict(common.connect_to_firds(spark, config, "compact").dtypes)[
         "price_multiplier"] == "decimal(35,17)"
+
+
+def test_the_instrument_fields_a_report_states_are_empty_where_venues_disagree(
+        spark, config):
+    """The reference data of RTS 22 fields 42 to 56 says what the instrument
+    is, not what a venue thinks it is, so two venues that disagree leave it
+    empty rather than joined. A name joined with a '+' is no name, and
+    CALL+PUTO is not an option type a transaction report could state."""
+    common.create_directory_tree(config)
+    spark.createDataFrame([
+        ("ISIN1", "MIC1", "D", "L", "N", date(2027, 1, 1), date(2027, 1, 1), Decimal("1"),
+         "Name one", "EUR", "CALL", "EURO", "PHYS", True, "ModfdRcrd"),
+        ("ISIN1", "MIC2", "D", "L", "N", date(2027, 1, 1), date(2027, 1, 1), Decimal("1"),
+         "Name two", "USD", "PUTO", "AMER", "CASH", True, "ModfdRcrd"),
+        ("ISIN2", "MIC1", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"),
+         "Agreed", "EUR", "CALL", "EURO", "PHYS", True, "ModfdRcrd"),
+        ("ISIN2", "MIC2", "D", "L", "N", date(2029, 1, 1), None, Decimal("5"),
+         "Agreed", "EUR", "CALL", "EURO", "PHYS", True, "ModfdRcrd"),
+    ], TYPED_HISTORY_SCHEMA).write.format("delta").save(common.path_silver_main(config))
+
+    silver.update_from_silver_main_to_silver_compact(spark, config)
+
+    rows = {r["isin"]: r for r in
+            common.connect_to_firds(spark, config, "compact").collect()}
+    for column in ("full_name", "notional_currency", "option_type",
+                   "option_exercise_style", "delivery_type"):
+        assert rows["ISIN1"][column] is None, column
+    assert rows["ISIN2"]["full_name"] == "Agreed"
+    assert rows["ISIN2"]["notional_currency"] == "EUR"
+    assert rows["ISIN2"]["option_type"] == "CALL"
+    assert rows["ISIN2"]["option_exercise_style"] == "EURO"
+    assert rows["ISIN2"]["delivery_type"] == "PHYS"
 
 
 def test_a_cancelled_record_is_left_out_of_the_compact_table(spark, config):

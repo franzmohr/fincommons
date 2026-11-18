@@ -164,6 +164,22 @@ the typed fields hold the value the venues agree on and are empty where they
 disagree, and a cancelled record is left out. It is rebuilt from `main` in
 full, so the write replaces it.
 
+Beside those it carries the reference data a MiFIR transaction report states
+for an instrument that is not on a trading venue, RTS 22 fields 42 to 56:
+`full_name`, `cfi`, `notional_currency`, `price_multiplier`, `option_type`,
+`option_exercise_style`, `maturity_date`, `expiry_date` and `delivery_type`.
+These are properties of the instrument and not of the venue it trades on, so
+the five added for this purpose hold the value the venues agree on and are
+empty where they disagree, as the typed fields do: a name joined with a `+`
+is no name, and `CALL+PUTO` is not an option type. `cfi` is older than this
+and is still concatenated, so a reader filling a report field from it should
+expect a value of more than one code.
+
+The fields of that range the table cannot supply are the second notional
+currency, the underlying instrument code, the underlying index and its term,
+and the strike and its currency (45, 47, 48, 49, 51 and 52): the analytics
+schema of section 4.1 does not read them out of the register.
+
 ```python
 firds.update_from_silver_main_to_silver_compact(spark, config_path)
 ```

@@ -1803,6 +1803,18 @@ def _update_from_silver_main_to_silver_compact(spark, config_path, file_format):
             _only_value("maturity_date").alias("maturity_date"),
             _only_value("expiry_date").alias("expiry_date"),
             _only_value("price_multiplier").alias("price_multiplier"),
+            # The reference data a transaction report states for an
+            # instrument that is not on a trading venue, RTS 22 fields 42 to
+            # 56 of MiFIR. They are properties of the instrument rather than
+            # of the venue it trades on, so where two venues disagree the
+            # value is unknown rather than both: a name joined with a plus is
+            # no name, and CALL+PUTO is not an option type. That is the same
+            # argument the three above are aggregated under.
+            _only_value("full_name").alias("full_name"),
+            _only_value("notional_currency").alias("notional_currency"),
+            _only_value("option_type").alias("option_type"),
+            _only_value("option_exercise_style").alias("option_exercise_style"),
+            _only_value("delivery_type").alias("delivery_type"),
         ) \
         .withColumn("maturity_date", func.to_date(func.col("maturity_date"))) \
         .withColumn("expiry_date", func.to_date(func.col("expiry_date"))) \
