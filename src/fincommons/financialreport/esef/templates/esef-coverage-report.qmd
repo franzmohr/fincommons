@@ -542,7 +542,12 @@ years <- selected %>%
   arrange(fy, period_end) %>%
   distinct(fy, .keep_all = TRUE)
 year_labels <- as.character(report_years)
-latest_fy <- max(report_years)
+# The latest year a report was read for, not the latest year a filing is
+# listed for: the index lists the year now being filed, and a lake collected
+# with `years` lists every year and reads a few. Taken from the listing, the
+# figures the cover compares were taken over no report at all.
+latest_fy <- max(selected$fy)
+latest_label <- as.character(latest_fy)
 n_filings <- nrow(filings_all)
 n_selected <- nrow(selected)
 n_issuers <- length(unique(selected$lei))
@@ -757,7 +762,7 @@ cat("  [#text(size: 8pt, weight: \"bold\", ",
     typst_kv(record_items), "],\n", sep = "")
 cat("  [#text(size: 8pt, weight: \"bold\", ",
     ts(paste(tr("Comparability", "Vergleichbarkeit"),
-             year_labels[length(year_labels)])),
+             latest_label)),
     ")\n  #v(6pt)\n  ", typst_kv(compare_items), "]\n)\n", sep = "")
 cat("#v(1fr)\n#line(length: 100%, stroke: 0.5pt + rule)\n#v(6pt)\n")
 cat("#text(size: 7pt, fill: soft, ", ts(notice), ")\n", sep = "")
@@ -1269,14 +1274,14 @@ render_years(temp, share, digits = 1,
 
 ```{r concept-reach, results='asis'}
 cat(tr(paste0("The common ground of the market in the financial year ",
-              year_labels[length(year_labels)], ": the concepts of the ",
+              latest_label, ": the concepts of the ",
               "taxonomy that the most issuers tagged as a total of the year, ",
               "out of the ", fmt(sum(selected$fy == latest_fy)),
               " reports read for that year. A concept further down this ",
               "ranking than a reader expects is a line that cannot carry a ",
               "cross-section."),
        paste0("Die gemeinsame Grundlage des Marktes im Geschäftsjahr ",
-              year_labels[length(year_labels)], ": die Konzepte der ",
+              latest_label, ": die Konzepte der ",
               "Taxonomie, die die meisten Emittenten als Jahressumme ",
               "ausgezeichnet haben, von den ",
               fmt(sum(selected$fy == latest_fy)),
@@ -1387,9 +1392,9 @@ render_years(line_coverage %>% filter(statement == "cf"), share, digits = 1,
 chart_ranked(line_coverage %>% filter(fy == latest_fy),
              share, label,
              subtitle = tr(paste0("Issuers tagging the line in ",
-                                  year_labels[length(year_labels)], ", %"),
+                                  latest_label, ", %"),
                            paste0("Emittenten mit dieser Zeile in ",
-                                  year_labels[length(year_labels)], ", %")),
+                                  latest_label, ", %")),
              digits = 0)
 ```
 
@@ -1475,11 +1480,11 @@ ggplot(per_issuer %>% filter(fy == latest_fy),
   scale_x_continuous(breaks = pretty(c(0, n_lines))) +
   scale_y_continuous(labels = function(x) fmt(x)) +
   labs(caption = wrap_caption(source_caption),
-       subtitle = tr(paste0("Reports of ", year_labels[length(year_labels)],
+       subtitle = tr(paste0("Reports of ", latest_label,
                             " by the number of the ", n_lines,
                             " lines they tag"),
                      paste0("Berichte des Jahres ",
-                            year_labels[length(year_labels)],
+                            latest_label,
                             " nach der Anzahl der ausgezeichneten Zeilen von ",
                             n_lines))) +
   theme_corporate_design(base_size = chart_base_size,
@@ -1538,9 +1543,9 @@ render_years(indicator_coverage, share, digits = 1,
 chart_ranked(indicator_coverage %>% filter(fy == latest_fy),
              share, label,
              subtitle = tr(paste0("Issuers the indicator is feasible for in ",
-                                  year_labels[length(year_labels)], ", %"),
+                                  latest_label, ", %"),
                            paste0("Emittenten mit berechenbarer Kennzahl in ",
-                                  year_labels[length(year_labels)], ", %")),
+                                  latest_label, ", %")),
              digits = 0)
 ```
 
