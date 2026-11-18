@@ -176,6 +176,33 @@ asked for rather than guessed. `compact = 'never'` with the one compaction at
 the end is the fastest run and the one that leaves the merges reading the most
 deleted rows; the daily cadence is the other end of that trade.
 
+`batch` says how many dates are applied together. Each date applied on its own
+is a plan, a merge and an append, and the plan and the merge each read the
+whole history to find the versions in force that the date's records meet, however
+few those are. A backfill pays those two reads once per date. With `batch`, the
+records of several dates are planned as one delta file would be -- the records
+an instrument receives are chained in order, across the files as within one --
+and applied in one merge and one append, so the history is read twice per
+batch instead. The history that results is the one the dates build applied in
+turn:
+
+```python
+# A backfill applied twenty dates at a time, compacted every forty dates and
+# once more at the end.
+firds.update_from_bronze_to_silver_main(spark, config_path, compact = 40, batch = 20)
+firds.compact_silver_main(spark, config_path)
+```
+
+The default is one date, which is what a daily run has to apply anyway. A
+batch ends early before a date whose file held no records and before a date the
+run stops at, so the dates before it are applied. It is committed as one merge
+and one append tagged with its first and last date, and a run that died within
+one resumes that same batch whatever `batch` it is then given. A batch is
+refused where a delta file begins a version before one an earlier file of the
+batch began, which applied one after another is refused too. A batch holds its
+records in memory for the plan, so how large it can be is again a property of
+the machine.
+
 A run stops rather than building a history around a gap: at a day whose delta
 file is not fully imported, at a record that does not say which instrument it
 is about, and at a day ESMA published after the history had passed it. Each

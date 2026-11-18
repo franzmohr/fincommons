@@ -60,6 +60,12 @@ REPLACE = "REPLACE"
 #: operation each of them implies for the version in force.
 OPERATION = "operation"
 
+#: Column naming the reference date of the delta file a record came from,
+#: where the records of several files are planned together; see
+#: :func:`prepare_incoming` and :func:`check_file_order`. The records of a
+#: single file need not carry it.
+FILE_DATE = "file_date"
+
 _OPERATION = "_OPERATION"
 _SEQUENCE = "_SEQUENCE"
 _RANK = "_RANK"
@@ -137,13 +143,26 @@ def prepare_incoming(incoming: DataFrame) -> DataFrame:
     exchange has laid out. Computed once and named, the sort is shared as
     well, and the chaining reads the records the first step left without
     laying them out or sorting them again.
+
+    Records of several delta files can be prepared together where they carry
+    the reference date of their file in :data:`FILE_DATE`. That date is then
+    ordered on between the start date and the record type, which is what
+    applying the files one after another amounts to: a record of a later file
+    that begins on the same day as one of an earlier file replaces it, as
+    :func:`plan_changes` has a record replace the version in force that began
+    on its own day, whichever element either was reported in. Ordering on the
+    start date first is only the order the files were published in where no
+    file begins a version before one an earlier file began, which
+    :func:`check_file_order` refuses.
     """
     incoming = incoming.withColumn(
         VALID_FROM, F.to_date(F.col("tech_publication_period_from_date"))
     ).withColumn(_RANK, _action_rank(F.col(ACTION_TYPE)))
-    ordering = Window.partitionBy(*KEY_COLUMNS).orderBy(
-        F.col(VALID_FROM), F.col(_RANK)
-    )
+    order = [F.col(VALID_FROM)]
+    if FILE_DATE in incoming.columns:
+        order.append(F.col(FILE_DATE))
+    order.append(F.col(_RANK))
+    ordering = Window.partitionBy(*KEY_COLUMNS).orderBy(*order)
     successor = F.lead(F.col(VALID_FROM)).over(ordering)
     # Null-safely, so that a record stating no start date is kept and left to
     # fincommons.firds.silver.check_publication_period to refuse. Comparing
@@ -172,6 +191,68 @@ def prepare_incoming(incoming: DataFrame) -> DataFrame:
         LATEST_RECORD, F.col("_successor").isNull()
     )
     return incoming.drop("_successor", _RANK)
+
+
+def check_file_order(incoming: DataFrame, source: str) -> DataFrame:
+    """Refuse delta files planned together where a later one backdates an earlier one.
+
+    Applied one after another, the first record a file carries for an
+    instrument meets the version an earlier file left in force, and
+    :func:`check_supersession` refuses it where it begins before that version
+    does. Planned together, the earlier file's version is not yet in the
+    history for the check to meet, and :func:`prepare_incoming` would order the
+    two records by their start dates and chain them the other way round. The
+    history would come out differently from the one the files build applied in
+    turn, and without an error. This makes the same refusal across the files
+    of a batch: no file may carry a record for an instrument that begins
+    before a record an earlier file of the batch carries for it.
+
+    Parameters
+    ----------
+    incoming:
+        The records of several delta files, in the analytics schema, carrying
+        ``tech_publication_period_from_date`` and the reference date of their
+        file in :data:`FILE_DATE`.
+    source:
+        What was being applied, for the message.
+
+    Returns
+    -------
+    pyspark.sql.DataFrame
+        ``incoming`` unchanged, so the check can stand in a chain.
+
+    Raises
+    ------
+    ValueError
+        If a record begins before one an earlier file of the batch carries
+        for its instrument.
+    """
+    starts = F.to_date(F.col("tech_publication_period_from_date"))
+    per_file = incoming.groupBy(*KEY_COLUMNS, FILE_DATE).agg(
+        F.min(starts).alias("_first"), F.max(starts).alias("_last")
+    )
+    earlier = (
+        Window.partitionBy(*KEY_COLUMNS)
+        .orderBy(F.col(FILE_DATE))
+        .rowsBetween(Window.unboundedPreceding, -1)
+    )
+    backdated = per_file.withColumn(
+        "_earlier", F.max(F.col("_last")).over(earlier)
+    ).where(F.col("_first") < F.col("_earlier"))
+    count = backdated.count()
+    if not count:
+        return incoming
+
+    columns = [*KEY_COLUMNS, FILE_DATE, "_first", "_earlier"]
+    examples = [tuple(row) for row in backdated.select(*columns).limit(3).collect()]
+    raise ValueError(
+        f"{count} records of {source} begin before a record an earlier delta "
+        f"file of the batch carries for their instrument. Applied one file "
+        f"after another, the later record would be refused for beginning "
+        f"before the version in force; planned together it would be chained "
+        f"in front of it instead. Examples, as ({', '.join(KEY_COLUMNS)}, "
+        f"file, begins, earlier file begins): {examples}."
+    )
 
 
 def _action_rank(action: F.Column) -> F.Column:
@@ -491,7 +572,9 @@ __all__ = [
     "REPLACE",
     "VALID_FROM",
     "VALID_TO",
+    "FILE_DATE",
     "apply_changes",
+    "check_file_order",
     "check_supersession",
     "initialise_history",
     "latest_records",
