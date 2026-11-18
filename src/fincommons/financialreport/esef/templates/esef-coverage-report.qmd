@@ -326,11 +326,26 @@ if (is.null(report_years)) {
   }
 }
 
+# Which filings this lake holds facts for, which is what every count of a
+# report read and every rate over the reports read is taken over. The
+# `json_url` of the index is a different thing: it says the repository
+# publishes facts for a filing, not that the pipeline has collected them,
+# and the pipeline collects the reports of the countries it is given. Read
+# as the one for the other, a lake of one country reported as though the
+# whole repository had been read -- 16,764 reports read against the 594 the
+# facts came from -- because `per_filing` joins the facts to this population
+# and only the filings with facts survive that join. One query of the same
+# kind as the four below: a row per filing, not a row per fact.
+filings_with_facts <- open_dataset(file.path(path_silver, "facts")) %>%
+  select("filing") %>%
+  distinct() %>%
+  collect()
+
 filings_all <- filings_all %>%
   mutate(fy = as.integer(format(period_end, "%Y"))) %>%
   filter(fy %in% report_years) %>%
   mutate(year = fy_label(period_end),
-         has_facts = !is.na(json_url),
+         has_facts = filing %in% filings_with_facts$filing,
          lag_days = as.numeric(as.Date(published) - period_end),
          deadline = add_months(period_end, deadline_months),
          late = as.Date(published) > deadline)
@@ -366,7 +381,8 @@ if (nrow(selected) == 0) {
 # back a result of the size of the market rather than of the size of the
 # lake. The table of facts is the largest table of the module -- a year of
 # the repository is a few thousand reports of a few thousand facts each --
-# and none of these collects it.
+# and none of these collects it, nor does the query above that asks which
+# filings it holds.
 facts_ds <- open_dataset(file.path(path_silver, "facts")) %>%
   filter(filing %in% selected$filing)
 

@@ -8,6 +8,29 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `esef`: the analyst factsheet's `lines_dropped` answers to both of the
+  arguments that ask for a line to be left out. It took only `core_only` and
+  dropped the untagged lines whatever the caller asked, so
+  `drop_empty = FALSE` with `core_only = TRUE` would have removed them and
+  named them in the note. Every caller asks for both, so no rendered page
+  was wrong.
+- `esef`: a heading of the analyst factsheet that heads no lines is left out,
+  which is what it was always meant to do. `seq.int(h + 1L, last)` counts
+  down where the heading is the last row of a statement or is followed
+  straight by another, so the block of lines under it came back with two
+  rows instead of none and the heading survived. No statement the template
+  ships has a heading in either place.
+- `esef`: every count of a report read in the coverage report, and every
+  rate taken over the reports read, is over the filings the lake holds facts
+  for. It read the `json_url` of the index instead, which says the
+  repository publishes facts for a filing and not that the pipeline has
+  collected them; since `per_filing` joins the facts to that population and
+  only the filings with facts survive the join, the numerators and the
+  denominators were different populations. A lake of one country read as
+  though the whole repository had been read: 16,764 reports read and 0.3 per
+  cent listed without facts, where the facts came from 315 reports and 97.9
+  per cent of what is listed was never collected. A lake holding every
+  country the repository lists is unaffected, which is why nothing caught it.
 - The categorical colour scales ask the palette for as many colours as the
   chart has groups. `scale_colour_corporate_design` and its fill counterpart
   handed `scale_*_manual` the ten colours of the palette, and a manual scale
