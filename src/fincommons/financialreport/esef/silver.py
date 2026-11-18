@@ -7,7 +7,7 @@ filings there are, and which of them have a report.
 
 **The table of facts is rebuilt country by country, and only for the
 countries whose reports changed.** Each country is a partition of its own,
-``COUNTRY``, and a country whose Bronze layer holds a report the partition
+``country``, and a country whose Bronze layer holds a report the partition
 was not built from -- a new filing, or a filing the repository processed
 anew -- is read again and replaces its partition, leaving every other
 country as it was. Which reports each partition was built from is recorded
