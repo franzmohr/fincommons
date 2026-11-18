@@ -938,7 +938,7 @@ def _update_entitymasterdata(spark, config_path, url_gleif_level_1,
             )
 
     # Update the Bronze layer
-    update_from_landing_to_bronze(config_path)
+    update_from_landing_to_bronze(config_path, spark)
 
     # Update the Silver layer
     update_silver_entitymasterdata_public(

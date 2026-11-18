@@ -17,6 +17,8 @@ points at.
 import logging
 import os
 import re
+import shutil
+import zipfile
 
 import pandas
 import pyarrow
@@ -199,6 +201,31 @@ def write_parquet(frame, path):
 CSV_AS_TEXT = {"dtype": str, "keep_default_na": False, "na_values": [""]}
 
 
+def registers_to_import(path_landing, extensions, reference_date, bronze_name):
+    """The files of a landing folder with their reference dates, clashes refused.
+
+    Two files that would be stored under the same Bronze name are refused
+    before anything is imported, because the second would silently replace the
+    first: a monthly and a quarterly list of investment funds that end on the
+    same day, for instance.
+
+    Both importers go through this, so that the one that reads a register with
+    Spark refuses the same files as the one that reads it with pandas.
+    """
+    files = [(name, reference_date(name)) for name in landing_files(path_landing, extensions)]
+
+    targets = {}
+    for name, refdate in files:
+        targets.setdefault(bronze_name(name, refdate), []).append(name)
+    clashes = sorted(names for names in targets.values() if len(names) > 1)
+    if clashes:
+        raise ValueError(
+            f"Files of the landing zone in {path_landing!r} would replace one "
+            f"another in the Bronze layer: {clashes}. Remove all but one of each."
+        )
+    return files
+
+
 def import_registers(path_landing, path_bronze, extensions, read, reference_date,
                      bronze_name, source):
     """Import the files of one folder of the landing zone into the Bronze layer.
@@ -237,17 +264,7 @@ def import_registers(path_landing, path_bronze, extensions, read, reference_date
     int
         Number of files imported.
     """
-    files = [(name, reference_date(name)) for name in landing_files(path_landing, extensions)]
-
-    targets = {}
-    for name, refdate in files:
-        targets.setdefault(bronze_name(name, refdate), []).append(name)
-    clashes = sorted(names for names in targets.values() if len(names) > 1)
-    if clashes:
-        raise ValueError(
-            f"Files of the landing zone in {path_landing!r} would replace one "
-            f"another in the Bronze layer: {clashes}. Remove all but one of each."
-        )
+    files = registers_to_import(path_landing, extensions, reference_date, bronze_name)
 
     for name, refdate in files:
         path_i = os.path.join(path_landing, name)
@@ -261,6 +278,150 @@ def import_registers(path_landing, path_bronze, extensions, read, reference_date
             "Imported register into the Bronze layer",
             extra=context(module="entitymasterdata", layer="bronze", source=source,
                           file=name, refdt=refdate, rows=len(raw)),
+        )
+
+    return len(files)
+
+
+def import_registers_with_spark(spark, path_landing, path_bronze, extensions,
+                                columns, reference_date, bronze_name, source):
+    """Import zipped csv registers through Spark, for files too large to hold at once.
+
+    The golden copies of GLEIF are what this exists for. The Level 1 file is
+    487 MB zipped and 4.74 GB as csv over some two hundred columns, and reading
+    it into one pandas frame takes more memory than a small machine has:
+    measured on a Raspberry Pi of 8 GB, where the kernel killed the import at
+    7.5 GB resident. Spark reads the csv in splits and writes the parquet
+    without ever holding the file, so what a run needs no longer follows the
+    size of the register.
+
+    Spark cannot read a zip, so the csv member is extracted beside the Bronze
+    folder first, and deliberately not into the system temporary directory:
+    there /tmp is often a tmpfs, and extracting into it would put the 4.74 GB
+    back into the memory this function exists to save.
+
+    Every column is read as text, as the pandas path reads them. The registers
+    are text as far as they are concerned, and a reader left to infer types
+    would make ``NA``, the country code of Namibia, into a missing value. Only
+    the empty field is missing, which is what ``nullValue`` says here and what
+    :data:`CSV_AS_TEXT` says there.
+
+    The Bronze entry is a parquet directory rather than a single file, which is
+    what a Spark write produces. :func:`fincommons.entitymasterdata.silver.latest_bronze_file`
+    picks it up either way, since it selects on the name and the name still
+    ends in ``.parquet``, and the directory is written under another name and
+    renamed once complete, so an import that dies half-way leaves nothing the
+    Silver layer would read.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    path_landing: str
+        Folder of the landing zone the files are read from.
+    path_bronze: str
+        Folder of the Bronze layer they are written to.
+    extensions: tuple of str
+        The file extensions to import, see :func:`landing_files`.
+    columns: dict
+        The csv columns to keep, mapped to the names the Bronze layer gives
+        them. Only these are read; the golden copy carries some two hundred.
+    reference_date: callable
+        Takes the name of a file and returns its reference date, ``YYYY-MM-DD``.
+    bronze_name: callable
+        Takes the name of a file and its reference date and returns the name of
+        the Bronze entry, without the extension.
+    source: str
+        Name of the register, for the log.
+
+    Returns
+    -------
+    int
+        Number of files imported.
+    """
+    from pyspark.sql import functions as func
+
+    files = registers_to_import(path_landing, extensions, reference_date, bronze_name)
+
+    for name, refdate in files:
+        path_i = os.path.join(path_landing, name)
+        target = os.path.join(path_bronze, bronze_name(name, refdate) + ".parquet")
+        unzipped = target + ".unzip"
+        partial = target + ".partial"
+
+        try:
+            with zipfile.ZipFile(path_i) as archive:
+                members = [m for m in archive.namelist() if m.lower().endswith(".csv")]
+                if len(members) != 1:
+                    raise ValueError(
+                        f"The archive {name!r} holds {len(members)} csv members, "
+                        f"and one is expected: {members}"
+                    )
+                shutil.rmtree(unzipped, ignore_errors=True)
+                os.makedirs(unzipped, exist_ok=True)
+                archive.extract(members[0], unzipped)
+
+            raw = (
+                spark.read
+                .option("header", "true")
+                .option("inferSchema", "false")
+                .option("nullValue", "")
+                # Both of the next two are needed, and neither is enough. The
+                # format doubles a quote inside a quoted field, so the escape
+                # has to be the quote; but with that alone an empty field is
+                # ambiguous -- `""` is either an empty value or an escaped
+                # quote -- and the reader takes the second reading and
+                # swallows the delimiters that follow. `multiLine` puts it on
+                # the parser that resolves that correctly. The cost is that
+                # the file is then read by one task rather than split across
+                # the cores.
+                #
+                # Measured against pandas over the GLEIF Level 1 copy of
+                # 18 November 2026, 3,498,374 rows, counting the countries
+                # that are not two letters, of which pandas finds none:
+                #
+                #   default escape                        1394 wrong
+                #   escape=quote                            19 wrong
+                #   multiLine alone                       1394 wrong
+                #   escape=quote and multiLine               0
+                #
+                # charToEscapeQuoteEscaping and the three
+                # unescapedQuoteHandling settings leave the 19 in place, so
+                # this pairing is the one that reproduces what the pandas
+                # path read before it.
+                .option("escape", chr(34))
+                .option("multiLine", "true")
+                .csv(os.path.join(unzipped, members[0]))
+            )
+            absent = [column for column in columns if column not in raw.columns]
+            if absent:
+                raise ValueError(
+                    f"The register {name!r} carries no column {absent}, so the "
+                    "Bronze layer cannot be built from it."
+                )
+            frame = raw.select(*[
+                func.col(f"`{old}`").alias(new) for old, new in columns.items()
+            ]).withColumn("REFDT", func.lit(refdate))
+
+            shutil.rmtree(partial, ignore_errors=True)
+            frame.write.mode("overwrite").parquet(partial)
+            if os.path.exists(target):
+                shutil.rmtree(target)
+            os.rename(partial, target)
+        finally:
+            shutil.rmtree(unzipped, ignore_errors=True)
+            shutil.rmtree(partial, ignore_errors=True)
+
+        # Counted off the parquet that was written, which answers from its
+        # footers, rather than from the frame, which would read the csv a
+        # second time to say how many rows it had.
+        rows = spark.read.parquet(target).count()
+        os.remove(path_i)
+
+        logger.info(
+            "Imported register into the Bronze layer",
+            extra=context(module="entitymasterdata", layer="bronze", source=source,
+                          file=name, refdt=refdate, rows=rows),
         )
 
     return len(files)
@@ -282,18 +443,35 @@ def dated_by_period(file_name, refdate):
 # --------------------------------------------------------------------------
 
 
-def update_bronze_gleif_level_1(config_path):
+#: The columns of the GLEIF Level 1 golden copy the entity master data set
+#: draws on, as the Bronze layer names them. The copy carries some two hundred
+#: and the rest is never looked at.
+GLEIF_LEVEL_1_COLUMNS = {
+    "LEI": "LEI",
+    "Entity.LegalName": "NAME",
+    "Entity.LegalAddress.Country": "CTRY",
+}
+
+
+def update_bronze_gleif_level_1(config_path, spark = None):
     """Update GLEIF Level 1 data in the Bronze layer.
 
     Imports the zipped csv files holding GLEIF Level 1 data from the landing
-    zone into the Bronze layer. Only the three columns the entity master data
-    set draws on are read, because the golden copy carries some two hundred of
-    them and the rest is never looked at.
+    zone into the Bronze layer. Only the three columns of
+    :data:`GLEIF_LEVEL_1_COLUMNS` are read.
 
     Parameters
     ----------
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
+    spark: pyspark.sql.session.SparkSession, optional
+        Session the golden copy is read with. Where it is not given the file
+        is read into one pandas frame instead. **The golden copy is 4.74 GB as csv, and reading
+        it in one frame needs more memory than a small machine has**: on a
+        machine of 8 GB the kernel kills the import. A session therefore
+        decides whether this stage is portable, which is why
+        :func:`update_from_landing_to_bronze` passes one down; see
+        :func:`import_registers_with_spark`.
 
     Returns
     -------
@@ -301,15 +479,22 @@ def update_bronze_gleif_level_1(config_path):
         Number of GLEIF Level 1 files imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
+    if spark is not None:
+        return import_registers_with_spark(
+            spark,
+            common.path_landing_gleif_level_1(config_path),
+            common.path_bronze_gleif_level_1(config_path),
+            (".zip",), GLEIF_LEVEL_1_COLUMNS,
+            reference_date_from_file_name, dated_by_name, "GLEIF_L1",
+        )
+
     def read(path):
         return pandas.read_csv(
             path,
             compression = "zip",
-            usecols = ["LEI", "Entity.LegalName", "Entity.LegalAddress.Country"],
+            usecols = list(GLEIF_LEVEL_1_COLUMNS),
             **CSV_AS_TEXT,
-        ).rename(
-            columns = {"Entity.LegalName": "NAME", "Entity.LegalAddress.Country": "CTRY"}
-        )
+        ).rename(columns = GLEIF_LEVEL_1_COLUMNS)
 
     return import_registers(
         common.path_landing_gleif_level_1(config_path),
@@ -318,7 +503,19 @@ def update_bronze_gleif_level_1(config_path):
     )
 
 
-def update_bronze_gleif_level_2(config_path):
+#: The columns of the GLEIF Level 2 golden copy, i.e. of the reported
+#: relationships between legal entities. The Bronze layer keeps their own
+#: names, which the Silver layer reads by.
+GLEIF_LEVEL_2_COLUMNS = {
+    name: name for name in (
+        "Relationship.StartNode.NodeID", "Relationship.StartNode.NodeIDType",
+        "Relationship.EndNode.NodeID", "Relationship.EndNode.NodeIDType",
+        "Relationship.RelationshipType", "Relationship.RelationshipStatus",
+    )
+}
+
+
+def update_bronze_gleif_level_2(config_path, spark = None):
     """Update GLEIF Level 2 data in the Bronze layer.
 
     Imports the zipped csv files holding GLEIF Level 2 data, i.e. the reported
@@ -336,13 +533,20 @@ def update_bronze_gleif_level_2(config_path):
         Number of GLEIF Level 2 files imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
+    if spark is not None:
+        return import_registers_with_spark(
+            spark,
+            common.path_landing_gleif_level_2(config_path),
+            common.path_bronze_gleif_level_2(config_path),
+            (".zip",), GLEIF_LEVEL_2_COLUMNS,
+            reference_date_from_file_name, dated_by_name, "GLEIF_L2",
+        )
+
     def read(path):
         return pandas.read_csv(
             path,
             compression = "zip",
-            usecols = ["Relationship.StartNode.NodeID", "Relationship.StartNode.NodeIDType",
-                       "Relationship.EndNode.NodeID", "Relationship.EndNode.NodeIDType",
-                       "Relationship.RelationshipType", "Relationship.RelationshipStatus"],
+            usecols = list(GLEIF_LEVEL_2_COLUMNS),
             **CSV_AS_TEXT,
         )
 
@@ -677,7 +881,7 @@ def update_bronze_esma_ccp(config_path):
 
 
 
-def update_from_landing_to_bronze(config_path):
+def update_from_landing_to_bronze(config_path, spark = None):
     """Entity master data: import the registers into the Bronze layer.
 
     Imports everything the landing zone currently holds, source by source. The
@@ -688,6 +892,15 @@ def update_from_landing_to_bronze(config_path):
     ----------
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
+    spark: pyspark.sql.session.SparkSession, optional
+        Session the GLEIF golden copies are read with; the other registers are
+        small enough to be read without one. Where it is not given they are
+        read into one pandas frame instead, which a machine of 8 GB cannot do
+        for the Level 1 copy -- so a session is what makes this stage portable.
+        It is asked for rather than taken from whatever session happens to be
+        active: no module of this package opens a session, and a stage whose
+        reader depended on one another stage had left behind would behave
+        differently for reasons its caller cannot see.
 
     Examples
     --------
@@ -700,10 +913,10 @@ def update_from_landing_to_bronze(config_path):
         layer="bronze",
         config_path=config_path,
     ) as outcome:
-        _update_from_landing_to_bronze(config_path, outcome)
+        _update_from_landing_to_bronze(config_path, outcome, spark)
 
 
-def _update_from_landing_to_bronze(config_path, outcome):
+def _update_from_landing_to_bronze(config_path, outcome, spark = None):
     """Do the work of :func:`update_from_landing_to_bronze`.
 
     Each of the imports reports how many files it read, so that the closing
@@ -714,8 +927,8 @@ def _update_from_landing_to_bronze(config_path, outcome):
     imported = 0
 
     # GLEIF data
-    imported += update_bronze_gleif_level_1(config_path)
-    imported += update_bronze_gleif_level_2(config_path)
+    imported += update_bronze_gleif_level_1(config_path, spark)
+    imported += update_bronze_gleif_level_2(config_path, spark)
 
     # ECB data
     imported += update_bronze_ecb_investment_fund(config_path)
