@@ -14,7 +14,7 @@ nothing of them.
 
 import logging
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 # The package logs through the tree below this logger and leaves the
 # configuration to the caller, see fincommons.log. The handler makes that

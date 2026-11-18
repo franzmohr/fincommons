@@ -4,7 +4,13 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
-## Unreleased
+## 0.5.2
+
+The reports of `financialreport` render again, and a render that fails says
+so. Every template set `execute: error: true`, which turns a failed chunk
+into a clean exit over a PDF of error messages; naming `error: false` instead
+is what brought the rest of this list to light. No report carries the path of
+the lake it was read from any more.
 
 ### Changed
 
