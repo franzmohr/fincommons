@@ -8,6 +8,24 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `firds`: `update_from_bronze_to_silver_main` takes `compact`, which says how
+  often the historical database is compacted while the dates are applied, and
+  `firds.compact_silver_main` compacts it on its own. The default,
+  `silver.COMPACT_WEEKLY`, is what the stage has always done -- the delta file
+  of each Friday -- so a daily run is unchanged. A whole number compacts after
+  every *n* dates the run applied records for, and `silver.COMPACT_NEVER` not
+  at all. The argument exists for the backfill: a compaction rewrites the
+  files whose deleted rows have accumulated, which is most of the table, so
+  its cost follows the size of the history and not the number of dates since
+  the last one. A daily run pays that once a week, which is the trade deletion
+  vectors are there to make; a run applying a year of delta files paid it some
+  forty times over a history growing the whole while. A run that names a
+  cadence its last date did not fall on is expected to call
+  `compact_silver_main` when it is done, since the merges of an uncompacted
+  history read the rows they marked deleted. `compact = True` is refused
+  although it is an `int`, because it reads as "yes, compact" and would mean
+  the most expensive cadence there is.
+
 - `esef`: the analyst factsheet takes its issuer from `FINCOMMONS_ISSUER`
   where that is set, as it takes the config file from `FINCOMMONS_CONFIG`.
   The LEI was stated in the template alone, so rendering the factsheet for
