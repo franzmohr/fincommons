@@ -17,6 +17,17 @@ release may change the public API, which `tests/test_public_api.py` lists.
   stops the render where it is given rather than at a page of empty tables
   several chunks later.
 
+### Fixed
+
+- `esef`: the README names the columns of a sector panel file as the files
+  and the template spell them. It had them in the lower case the rename of
+  0.5.0 gave the Silver columns -- `lei`, `country`, `name` -- where a panel
+  is a list kept by hand and keeps its upper case, so a panel built from the
+  README would have been refused for want of `SHORT` and `GROUP` or read
+  with its identifiers empty. The README now also says which columns are
+  required, which is `SHORT` and `GROUP` with an `LEI` or a `CIK` on every
+  row, and why the two spellings are both right.
+
 ## 0.5.2
 
 The reports of `financialreport` render again, and a render that fails says
