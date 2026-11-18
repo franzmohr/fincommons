@@ -190,13 +190,25 @@ palette_corporate_design <- function(type = "cat", n = NULL, hue = "blue",
   out
 }
 
+# The scales ask the palette for as many colours as the chart has groups
+# rather than handing it a fixed ten. `palette_corporate_design` ramps
+# through the ten when more are asked for, which is the answer it already
+# gives any other caller that passes `n`; a manual scale handed ten values
+# for an eleventh group is an error instead, and it halts the render. Ten
+# distinguishable colours remain the point for the eight or nine series a
+# chart is meant to carry -- a chart of twenty-seven is hard to read whoever
+# colours it, but it is the chart that was asked for.
 scale_colour_corporate_design <- function(..., brand = FALSE) {
-  ggplot2::scale_colour_manual(
-    ..., values = palette_corporate_design("cat", brand = brand))
+  ggplot2::discrete_scale(
+    "colour",
+    palette = function(n) palette_corporate_design("cat", n, brand = brand),
+    ...)
 }
 scale_fill_corporate_design <- function(..., brand = FALSE) {
-  ggplot2::scale_fill_manual(
-    ..., values = palette_corporate_design("cat", brand = brand))
+  ggplot2::discrete_scale(
+    "fill",
+    palette = function(n) palette_corporate_design("cat", n, brand = brand),
+    ...)
 }
 scale_color_corporate_design <- scale_colour_corporate_design
 
