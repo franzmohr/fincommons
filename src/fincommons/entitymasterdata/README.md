@@ -340,13 +340,13 @@ The module is covered by the tests in `tests/test_entitymasterdata.py`, which ru
 Some of these are worth naming, because they are pinned to rules that are easy to undo by accident rather than to behaviour that would obviously break:
 
 * `test_the_narrower_register_wins_where_two_describe_the_same_entity` holds the order of the registers. The precedence rests on an explicit rank rather than on the order in which the rows of the union arrive, which is not specified.
-* `test_internal_entities_without_an_lei_are_all_kept` holds those rows being set aside before the deduplication. A window partitioned by `LEI` gathers every row without one into a single group and keeps one of them.
+* `test_internal_entities_without_an_lei_are_all_kept` holds those rows being set aside before the deduplication. A window partitioned by `lei` gathers every row without one into a single group and keeps one of them.
 * `test_a_file_that_cannot_be_read_stays_in_the_landing_zone` holds the import raising rather than reporting and carrying on, which is what keeps a register from silently going missing from the Bronze layer.
 * `test_an_error_answer_is_not_stored_as_the_register` holds the download refusing what the server said rather than storing it. The two rules meet here: a file that cannot be read stays in the landing zone, so a bad answer stored under the name of a register blocks every later run of the Bronze import.
 * `test_an_internal_identifier_keeps_its_leading_zeros` holds the proprietary list being read as text throughout.
 * `test_a_relationship_that_has_ended_is_not_the_current_one` holds the status of a Level 2 relationship being read. The parents in it are named so that the lapsed one sorts first, because ordering the rows of an LEI is what makes the choice repeatable and not what makes it right.
 * `test_an_institution_on_the_mfi_register_is_never_read_as_uncovered` holds the fallback sector. Without it an unrecognised category is indistinguishable from an entity no register covers.
-* `test_the_subsector_stays_the_statement_of_the_register_that_won` holds the line between the two kinds of column the fund register contributes. The fund characteristics cross the precedence of the registers and `SUBSECTOR` does not, which is a decision rather than an accident of the code.
+* `test_the_subsector_stays_the_statement_of_the_register_that_won` holds the line between the two kinds of column the fund register contributes. The fund characteristics cross the precedence of the registers and `subsector` does not, which is a decision rather than an accident of the code.
 * `test_a_register_carrying_an_lei_twice_answers_the_same_way_either_way` runs the same two rows in both of the orders the file can hold them in, and holds that the answer does not depend on which. Asserting a single pick would pass against an incomplete ordering too, because Spark reads a small test file in one partition; it is the two orders having to agree that makes the test bite.
 
 Run them, from the root of the repository, with

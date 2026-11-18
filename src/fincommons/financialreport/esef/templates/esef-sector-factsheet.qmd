@@ -91,7 +91,7 @@ country_name <- c(en = "Austria", de = "Österreich")
 # here at all, but read from the table of filings, so that an issuer is
 # named as its own report names it.
 panel <- tibble::tribble(
-  ~lei,                    ~SHORT,          ~GROUP,                ~NACE,     ~ACTIVITY_EN,                                              ~ACTIVITY_DE,
+  ~LEI,                    ~SHORT,          ~GROUP,                ~NACE,     ~ACTIVITY_EN,                                              ~ACTIVITY_DE,
   "529900TYYSRJH2VJSP60",  "STRABAG",       "contractors",         "F42/F41", "Civil engineering and building construction, Europe-wide", "Hoch- und Tiefbau, europaweit",
   "529900ARBU9SBJFNX419",  "PORR",          "contractors",         "F41/F42", "Building construction and civil engineering, Austria and CEE", "Hoch- und Tiefbau, Österreich und CEE",
   "529900IWRUBPP2VNQB05",  "UBM",           "developers",          "F41.1",   "Development of building projects, residential and office", "Projektentwicklung, Wohnen und Büro",
@@ -107,8 +107,8 @@ panel <- tibble::tribble(
 # hundred and forty-five -- the construction issuers of twenty-seven
 # countries -- does not, and putting it here would bury the code under a
 # list. So the panel may instead be read from a csv named in
-# FINCOMMONS_PANEL, with the columns of the table above: `lei`, `SHORT` and
-# `GROUP` are required, and `NACE`, `country`, `ACTIVITY_EN` and
+# FINCOMMONS_PANEL, with the columns of the table above: `LEI`, `SHORT` and
+# `GROUP` are required, and `NACE`, `COUNTRY`, `ACTIVITY_EN` and
 # `ACTIVITY_DE` are shown where the file has them. The file is a stated list
 # exactly as the table above is, and the disclaimer says so of either.
 panel_file <- Sys.getenv("FINCOMMONS_PANEL", "")
@@ -119,26 +119,26 @@ if (nzchar(panel_file)) {
   # a filing under ESEF, a central index key for one with the Commission.
   # Neither body publishes a mapping between them, which is why the combined
   # table carries both columns and fills one, and why this does the same.
-  if (!"lei" %in% names(panel)) panel$lei <- NA_character_
-  if (!"cik" %in% names(panel)) panel$cik <- NA_character_
+  if (!"LEI" %in% names(panel)) panel$LEI <- NA_character_
+  if (!"CIK" %in% names(panel)) panel$CIK <- NA_character_
   required <- c("SHORT", "GROUP")
   if (!all(required %in% names(panel))) {
     stop("The panel file ", panel_file, " needs the columns ",
          paste(required, collapse = ", "), "; it has ",
          paste(names(panel), collapse = ", "), ".")
   }
-  if (any(is.na(panel$lei) & is.na(panel$cik))) {
+  if (any(is.na(panel$LEI) & is.na(panel$CIK))) {
     stop("Every row of the panel file ", panel_file, " needs an LEI or a CIK; ",
-         sum(is.na(panel$lei) & is.na(panel$cik)), " row(s) have neither.")
+         sum(is.na(panel$LEI) & is.na(panel$CIK)), " row(s) have neither.")
   }
   # A panel file may carry the issuer's name, which is useful to whoever
   # maintains the file and is not what the page prints: the name comes from
   # the table of filings, so that an issuer is named as its own report names
   # it. It is kept under another name rather than dropped, so that a panel
   # whose lei no longer files can still be named in the gaps.
-  if ("name" %in% names(panel)) {
-    panel$PANEL_NAME <- panel$name
-    panel$name <- NULL
+  if ("NAME" %in% names(panel)) {
+    panel$PANEL_NAME <- panel$NAME
+    panel$NAME <- NULL
   }
 }
 if (!"PANEL_NAME" %in% names(panel)) {
@@ -150,8 +150,8 @@ if (!"PANEL_NAME" %in% names(panel)) {
 # so that the tables below ask for them without knowing where the panel came
 # from. A column no row fills is dropped from the table rather than printed
 # as a column of dashes.
-for (optional in c("NACE", "country", "ACTIVITY_EN", "ACTIVITY_DE", "cik",
-                   "lei")) {
+for (optional in c("NACE", "COUNTRY", "ACTIVITY_EN", "ACTIVITY_DE", "CIK",
+                   "LEI")) {
   if (!optional %in% names(panel)) panel[[optional]] <- NA_character_
 }
 
@@ -163,30 +163,30 @@ blank_to_na <- function(x) {
   x <- trimws(as.character(x))
   ifelse(is.na(x) | x == "", NA_character_, x)
 }
-panel$lei <- blank_to_na(panel$lei)
+panel$LEI <- blank_to_na(panel$LEI)
 
 # A central index key is ten digits with the leading zeros kept, and the
 # combined table keys a filing by it in that shape. Two things lose them: a
 # csv read as numbers, which turns 0000868857 into 868857, and formatC on a
 # character, whose "0" flag pads with spaces and not zeros. So it is padded
 # as a number and only then used as text.
-panel$cik <- blank_to_na(panel$cik)
-if (any(!is.na(panel$cik) & grepl("\\D", panel$cik))) {
+panel$CIK <- blank_to_na(panel$CIK)
+if (any(!is.na(panel$CIK) & grepl("\\D", panel$CIK))) {
   stop("A central index key in the panel is not all digits: ",
-       paste(unique(panel$cik[!is.na(panel$cik) & grepl("\\D", panel$cik)]),
+       paste(unique(panel$CIK[!is.na(panel$CIK) & grepl("\\D", panel$CIK)]),
              collapse = ", "))
 }
-panel$cik <- ifelse(is.na(panel$cik), NA_character_,
-                    formatC(as.integer(panel$cik), width = 10, flag = "0",
+panel$CIK <- ifelse(is.na(panel$CIK), NA_character_,
+                    formatC(as.integer(panel$CIK), width = 10, flag = "0",
                             format = "d"))
 
 # Base R, because this runs before dplyr is attached further down.
-panel$KEY <- paste0(ifelse(is.na(panel$lei), "", panel$lei), "|",
-                    ifelse(is.na(panel$cik), "", panel$cik))
+panel$KEY <- paste0(ifelse(is.na(panel$LEI), "", panel$LEI), "|",
+                    ifelse(is.na(panel$CIK), "", panel$CIK))
 
-if (any(is.na(panel$lei) & is.na(panel$cik))) {
+if (any(is.na(panel$LEI) & is.na(panel$CIK))) {
   stop("Every row of the panel needs an LEI or a CIK; ",
-       sum(is.na(panel$lei) & is.na(panel$cik)), " row(s) have neither.")
+       sum(is.na(panel$LEI) & is.na(panel$CIK)), " row(s) have neither.")
 }
 
 # On the key rather than on the LEI: a panel of two regimes has an empty
@@ -573,10 +573,10 @@ if (is.null(path_esef)) {
 for (table in c("filings", "facts")) refuse_delta(path_esef, table, "esef")
 
 filings_all <- open_dataset(file.path(path_esef, "filings")) %>%
-  filter(lei %in% panel$lei) %>%
+  filter(lei %in% panel$LEI) %>%
   collect()
 
-missing_issuers <- setdiff(panel$lei, filings_all$lei)
+missing_issuers <- setdiff(panel$LEI, filings_all$lei)
 if (length(missing_issuers) == nrow(panel)) {
   stop("The table of filings lists no filing of any issuer of the panel. ",
        "The table lists every country whether its reports were collected or ",
@@ -1325,7 +1325,7 @@ panel_countries <- sort(unique(filings$country[!is.na(filings$country)]))
 # none in its report, and a cover that counted only the second would say
 # seventeen of a panel that spans eighteen.
 cover_countries <- sort(unique(c(panel_countries,
-                                 panel$country[!is.na(panel$country)])))
+                                 panel$COUNTRY[!is.na(panel$COUNTRY)])))
 where <- if (length(cover_countries) == 1 && !is.null(country_name)) {
   country_name[[report_lang]]
 } else if (length(cover_countries) == 1) {
@@ -1342,7 +1342,7 @@ title <- tr(paste0(sector_name[["en"]], " in ", where),
 # regimes and how many issuers file under each instead of listing
 # eighteen country codes, which at this width wraps to three lines and
 # tells a reader nothing the panel table does not.
-regime_counts <- c(ESEF = sum(!is.na(panel$lei)), SEC = sum(is.na(panel$lei)))
+regime_counts <- c(ESEF = sum(!is.na(panel$LEI)), SEC = sum(is.na(panel$LEI)))
 subtitle <- if (is_cross_regime) {
   tr(paste0("A factsheet on ", nrow(panel), " issuers across two reporting ",
             "regimes: ", regime_counts[["ESEF"]], " filing an ESEF annual ",
