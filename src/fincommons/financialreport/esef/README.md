@@ -233,7 +233,14 @@ It shows numbers and their development; the prose on the page is the text of the
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
 ```
 
-The issuer is set by its LEI in the first chunk, together with the number of years and the language; the country of the issuer has to have been collected by the pipeline. The figures of a year are the totals its own filing reports for it, from the filing in the language of the factsheet where an issuer files in two; the comparative figures of the previous year that every filing carries as well are left aside, so that a figure in the column of a year is the one that year was reported with. One year more than the factsheet shows is read behind it, because a return puts the result of a year against the average of the capital at its start and its end, and because the screening indicators compare a year with the one before it.
+The issuer is set by its LEI, either in the first chunk together with the number of years and the language, or in `FINCOMMONS_ISSUER`, which wins where it is set so that a run rendering one issuer after another needs no edit of the template:
+
+```
+FINCOMMONS_ISSUER=529900ARBU9SBJFNX419 \
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
+```
+
+The country of the issuer has to have been collected by the pipeline. The figures of a year are the totals its own filing reports for it, from the filing in the language of the factsheet where an issuer files in two; the comparative figures of the previous year that every filing carries as well are left aside, so that a figure in the column of a year is the one that year was reported with. One year more than the factsheet shows is read behind it, because a return puts the result of a year against the average of the capital at its start and its end, and because the screening indicators compare a year with the one before it.
 
 Concepts of the IFRS taxonomy come first, because an issuer's extension concepts change their names from one year to the next, and a key may list several concepts in order of preference for a line whose tag changed: voestalpine tags its property, plant and equipment under two names in six years. The lines the taxonomy has no concept for -- voestalpine's capital expenditure and the movement in its working capital, both of which it presents in its cash flow statement -- are kept in a list of the issuer's own concepts beside it. A figure read from one of those carries a dagger wherever it is shown, and the page on the coverage of the tags names every one of them with the number of years it was found in, so that a reader can tell a figure of the taxonomy from a figure of the issuer's own making.
 

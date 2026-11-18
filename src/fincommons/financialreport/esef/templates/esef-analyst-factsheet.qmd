@@ -63,8 +63,21 @@ execute:
 config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
 
 # The issuer, by its LEI. This is voestalpine AG; any other issuer whose
-# country the esef pipeline has collected can be put here.
-issuer_lei <- "529900ZAXBMQDIWPNB72"
+# country the esef pipeline has collected can be put here, or named in the
+# environment variable FINCOMMONS_ISSUER, which is what a run that renders
+# the factsheet for one issuer after another sets, as it sets the config
+# file. The variable wins where it is set, so the template needs no edit.
+issuer_lei <- Sys.getenv("FINCOMMONS_ISSUER", "529900ZAXBMQDIWPNB72")
+
+# An LEI is twenty upper-case letters and digits. A value that is not one
+# reads as an issuer the lake does not hold, and the first the reader would
+# see of it is a page of empty tables several chunks later, so it is named
+# here instead.
+if (!grepl("^[A-Z0-9]{20}$", issuer_lei)) {
+  stop("The issuer is given as \"", issuer_lei, "\", which is not an LEI. ",
+       "Set FINCOMMONS_ISSUER, or the issuer_lei of this chunk, to the ",
+       "twenty characters of one.")
+}
 
 # The number of financial years shown, counted back from the latest filing.
 # One further year is read behind them, because a return puts a flow of a

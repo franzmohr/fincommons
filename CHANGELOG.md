@@ -4,6 +4,19 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
+## Unreleased
+
+### Added
+
+- `esef`: the analyst factsheet takes its issuer from `FINCOMMONS_ISSUER`
+  where that is set, as it takes the config file from `FINCOMMONS_CONFIG`.
+  The LEI was stated in the template alone, so rendering the factsheet for
+  one issuer after another meant editing the template between renders. The
+  template keeps its LEI as the default, so a render that sets nothing is
+  unchanged, and a value that is not twenty upper-case letters and digits
+  stops the render where it is given rather than at a page of empty tables
+  several chunks later.
+
 ## 0.5.2
 
 The reports of `financialreport` render again, and a render that fails says
