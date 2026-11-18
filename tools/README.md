@@ -132,3 +132,52 @@ not filter keeps a row of column names in the Bronze layer, and where the
 import partitions by the reference date it gets a `TIME_PERIOD=TIME_PERIOD`
 partition beside the real ones. Typing the column as a string would take the
 means of telling them apart away altogether.
+
+# Rebuilding the Silver layer after the column rename
+
+`rebuild_silver.py` writes the Silver tables again from Bronze. A lake written
+before the rename of 0.5.0 carries the old column names, so the code after it
+cannot read the lake at all: the three Quarto reports of `financialreport`
+fail on their first table, and the coverage report, whose header sets
+`error: true`, renders a PDF of error messages and exits 0.
+
+Bronze is the source and the rename did not touch it, so nothing is lost by
+writing Silver again.
+
+    python tools/rebuild_silver.py exchangerate
+    python tools/rebuild_silver.py esef --clean
+    python tools/rebuild_silver.py sec
+    python tools/rebuild_silver.py combined
+
+`combined` reads what the others write and goes last. One stage at a time: the
+workstation has under 6 GB of RAM and the session is sized for it.
+
+## Why the first esef rebuild has to remove something
+
+The facts table is partitioned by country and rebuilt a partition at a time,
+and the partition column was renamed along with the rest. So the rebuild
+writes `country=AT` into a table that already holds `COUNTRY=AT`, and
+`replace_silver_partitions` replaces partitions of the column it is given and
+knows nothing of the other spelling. Both directories survive.
+
+The table then holds each rebuilt country twice under two schemas, and arrow
+resolves the dataset to whichever file it reads first. Measured on a lake with
+ten countries rebuilt, `open_dataset` on the facts table returned the
+pre-rename names plus both partition columns:
+
+    FILING LEI PERIODEND FACT CONCEPT ... COUNTRY country
+
+which is a table that has just been rebuilt and still reads as though it had
+not. `--clean` removes the `COUNTRY=` directories and leaves everything else,
+which is why it is not the same as emptying the table.
+
+`addressing.rename_folders_to_snake_case` does not help here: it renames
+hyphenated table folders and skips any name containing `=`, so partition
+directories are outside it. Renaming them by hand would not help either, since
+the columns inside the files of a country not yet rebuilt are still upper case.
+
+## Resuming
+
+`--countries` rebuilds the countries named and cleans nothing, for continuing a
+run that was interrupted. Which countries are already done can be read off the
+partition directories: a `country=XX` is rebuilt, a `COUNTRY=XX` is not.
