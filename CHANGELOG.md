@@ -8,6 +8,25 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- The categorical colour scales ask the palette for as many colours as the
+  chart has groups. `scale_colour_corporate_design` and its fill counterpart
+  handed `scale_*_manual` the ten colours of the palette, and a manual scale
+  given ten values for an eleventh group is an error, so a chart of more
+  groups than that halted the render: the coverage report colours a line per
+  country and the repository lists twenty-seven.
+  `palette_corporate_design` already ramps through the ten for any caller
+  that passes `n`, and the scales now do.
+- `esef`: the coverage report leaves the FIRDS comparison out where the
+  `firds` module has a Silver layer that was never built, as it says it
+  does. It tested the directory and `create_directory_tree` makes the
+  directory of every table whether a run has filled it or not, so an empty
+  one passed the test and `open_dataset` then had no columns to select.
+- `esef`: the sector factsheet renders its panel again. Six references
+  reached for a panel column by the lower-case name the rename of 0.5.0 gave
+  it -- `lei` in four joins, `lei` and `country` in two more -- while the
+  panel kept the upper-case names 0.5.1 restored to it. The first of them
+  emptied every figure on the page; the last was never reached. A join
+  between a panel and a Silver table now names both sides.
 - `esef`: the analyst factsheet renders for an issuer whose extension members
   were renamed. The equity-by-component table takes the member of the
   components-of-equity axis for the identity of a component, and an issuer

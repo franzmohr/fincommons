@@ -1061,7 +1061,16 @@ if (is.list(firds_silver)) firds_silver <- firds_silver[["path"]]
 firds_compact <- if (is.null(firds_silver)) NULL else
   file.path(firds_silver, "compact")
 
-if (is.null(firds_compact) || !dir.exists(firds_compact)) {
+# An empty directory is no table. `create_directory_tree` makes the
+# directory of every table of a module whether a run has filled it or not,
+# so a lake whose firds module has been set up and never built holds the
+# directory and nothing else. `open_dataset` on it has no columns to select,
+# which halted the chunk where the comparison was meant to be left out.
+firds_built <- !is.null(firds_compact) && dir.exists(firds_compact) &&
+  length(list.files(firds_compact, pattern = "\\.parquet$",
+                    recursive = TRUE)) > 0
+
+if (!firds_built) {
   cat(tr(paste("The config file names no Silver layer of the `firds` module,",
                "or it holds no compact table, so this comparison is left",
                "out. Build it with `firds.update_from_silver_main_to_silver_compact`",
