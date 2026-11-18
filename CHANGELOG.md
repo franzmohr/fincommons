@@ -8,6 +8,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `esef`: the analyst factsheet renders for an issuer whose extension members
+  were renamed. The equity-by-component table takes the member of the
+  components-of-equity axis for the identity of a component, and an issuer
+  renames its extension members from one year to the next as it renames its
+  extension concepts: PORR tags its other reserves and its hybrid capital
+  under `porr:` to 2023 and under `PORR:` from 2024. One component then
+  became two rows and `factor` was handed the same level twice, which halted
+  the render. The label is the identity instead, so the prefix may change
+  without splitting a component; where two members of one year do share a
+  label the table shows both figures rather than choosing one in silence.
+- `esef`: the columns of that same table are the financial years in order.
+  `pivot_wider` names its columns in the order the rows reach it, which is
+  the order the facts were read, so the years came out shuffled --
+  2020, 2021, 2025, 2022, 2024, 2023 for PORR.
 - A Quarto template whose chunk fails now fails the render. Every template of
   `financialreport` set `execute: error: true` in its header, which turns a
   failure into a clean exit: the coverage report over a lake written before

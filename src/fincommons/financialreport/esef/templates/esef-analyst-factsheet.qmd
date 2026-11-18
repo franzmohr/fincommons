@@ -1898,7 +1898,7 @@ members <- facts %>%
   mutate(member = sub("^[^=]+=", "", dimensions),
          label = gsub("([a-z])([A-Z])", "\\1 \\2",
                       sub("Member$", "", sub("^[^:]+:", "", member)))) %>%
-  distinct(period_end, member, label, value)
+  distinct(period_end, label, value)
 
 if (nrow(members) == 0) {
   cat(tr(paste("The statement of changes in equity of this issuer tags no",
@@ -1909,18 +1909,36 @@ if (nrow(members) == 0) {
                "Eigenkapitalbestandteile aus, sodass das Eigenkapital hier",
                "nicht aufgeteilt werden kann.")))
 } else {
+  # The label is the identity of a component here, not the member it was
+  # read from. An issuer's extension members change their names from one
+  # year to the next as its extension concepts do: PORR tags its other
+  # reserves and its hybrid capital under `porr:` up to 2023 and under
+  # `PORR:` from 2024, a change of case and nothing else. Grouped by the
+  # member, one component becomes two rows with holes in them and `factor`
+  # is handed the same level twice, which halts the render rather than
+  # merely misprinting a table.
   order_of <- members %>%
-    group_by(member, label) %>%
+    group_by(label) %>%
     summarise(size = max(abs(value)), .groups = "drop") %>%
     arrange(desc(size))
+  # The years are a factor of the years the page shows, in that order, and
+  # the pivot below is told to sort its names: `pivot_wider` otherwise lays
+  # the columns out in the order the rows arrive in, which is the order the
+  # facts were read and is not chronological. A year outside the window
+  # falls outside the levels and is dropped with the NA it becomes.
   temp <- members %>%
-    mutate(year = fy_label(period_end),
+    mutate(year = factor(fy_label(period_end), levels = years),
            label = factor(label, levels = order_of$label)) %>%
-    filter(year %in% years) %>%
+    filter(!is.na(year)) %>%
     select("year", "label", "value") %>%
     mutate(value = fmt(value / scale)) %>%
+    # Two members of one year can still share a label, where an issuer
+    # extends a concept whose name the taxonomy already uses. The page
+    # cannot tell those apart, so it shows both figures rather than
+    # choosing one in silence.
     pivot_wider(names_from = "year", values_from = "value",
-                values_fill = "–") %>%
+                values_fill = "–", names_sort = TRUE,
+                values_fn = function(x) paste(unique(x), collapse = " / ")) %>%
     arrange(label) %>%
     rename(item = "label")
   knitr::kable(temp, col.names = c(amount_label, names(temp)[-1]),
