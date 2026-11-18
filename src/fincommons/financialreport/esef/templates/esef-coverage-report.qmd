@@ -1648,9 +1648,11 @@ cat(paste(limits, collapse = "\n\n"))
 ### `r tr("The run", "Der Lauf")`
 
 ```{r run}
+# The table says what was read, not where it was read from. A path on the
+# machine that rendered the report tells a reader nothing and travels with
+# the PDF to wherever it is sent, so no local address goes in a report.
 temp <- tibble(
-  item = c(tr("Silver layer", "Silver-Layer"),
-           tr("Countries", "Länder"),
+  item = c(tr("Countries", "Länder"),
            tr("Financial years", "Geschäftsjahre"),
            tr("Filings listed", "Gelistete Einreichungen"),
            tr("Of those, without facts", "Davon ohne Fakten"),
@@ -1663,8 +1665,7 @@ temp <- tibble(
            tr("Lines looked for", "Gesuchte Zeilen"),
            tr("Indicators tested", "Geprüfte Kennzahlen"),
            tr("Rendered on", "Erstellt am")),
-  value = c(path_silver,
-            paste(report_countries, collapse = ", "),
+  value = c(paste(report_countries, collapse = ", "),
             period_range,
             fmt(n_filings),
             fmt(sum(!filings_all$has_facts)),

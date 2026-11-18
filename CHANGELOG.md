@@ -6,6 +6,15 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ## Unreleased
 
+### Changed
+
+- The run table of the coverage report and of the two quality reports no
+  longer names the Silver layer it read. The value is a path on the machine
+  that rendered the report, which tells a reader nothing and travels with the
+  PDF wherever it is sent; what the table is for is saying what was read, and
+  the countries, the years and the counts say that. No report carries a local
+  address now.
+
 ### Fixed
 
 - `esef`: the analyst factsheet's `lines_dropped` answers to both of the

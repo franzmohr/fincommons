@@ -1223,9 +1223,11 @@ for (level in severities) {
 ### What was read
 
 ```{r run}
+# The table says what was read, not where it was read from. A path on the
+# machine that rendered the report tells a reader nothing and travels with
+# the PDF to wherever it is sent, so no local address goes in a report.
 temp <- tibble(
-  item = c("Silver layer",
-           "Countries",
+  item = c("Countries",
            "Financial years",
            "Filings listed",
            "Of those, with facts",
@@ -1241,8 +1243,7 @@ temp <- tibble(
            "Rows naming a withdrawn filing",
            "Checks last run",
            "Rendered on"),
-  value = c(path_silver,
-            paste(report_countries, collapse = ", "),
+  value = c(paste(report_countries, collapse = ", "),
             period_range,
             fmt(n_listed),
             fmt(n_read),
