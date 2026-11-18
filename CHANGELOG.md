@@ -8,6 +8,25 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `firds`: `update_from_bronze_to_silver_main` takes `batch`, the number of
+  dates applied together, one by default. Each date applied on its own is a
+  plan, a merge and an append, and the plan and the merge each read the whole
+  history to find the versions in force the date's records meet, so a backfill
+  read the history twice per date. A batch plans the records of its dates as
+  one delta file is planned -- `history.prepare_incoming` orders them on the
+  date of their file, in `history.FILE_DATE`, between the start date and the
+  record type -- and applies them in one merge and one append, which leaves the
+  history the dates build applied in turn. A batch ends early before a date
+  whose file held no records and before a date the run stops at. Its commits
+  are tagged with its first and last date, `firds-silver-main:<first>..<last>`,
+  and a run that died within one resumes that same batch whatever `batch` it is
+  then given, since a batch under another label would not find the commits it
+  is resumed by. `history.check_file_order` refuses a batch in which a file
+  begins a version before one an earlier file began, which applied one after
+  another `history.check_supersession` refuses too. `silver.upsert_from_bronze`
+  applies the dates of a batch; `upsert_from_bronze_daily` is it for one date.
+  `batch = True` is refused, as `compact = True` is.
+
 - `firds`: `update_from_bronze_to_silver_main` takes `compact`, which says how
   often the historical database is compacted while the dates are applied, and
   `firds.compact_silver_main` compacts it on its own. The default,

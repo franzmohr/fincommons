@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import functools
 import logging
 import os
 import shutil
@@ -18,6 +19,7 @@ import shutil
 import pytest
 import yaml
 
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as func
 from pyspark.sql import types
 
@@ -2139,3 +2141,251 @@ def test_the_compaction_leaves_the_history_as_it_found_it(spark, config):
     # And again on a history that has just been compacted.
     silver.compact_silver_main(spark, config)
     assert versions(spark.read.format("delta").load(path)) == before
+
+
+# Several dates applied in one merge
+# --------------------------------------------------------------------------
+
+
+def through_batches(spark, config, full, files, size):
+    """Build the history with ``size`` delta files planned and merged at a time."""
+    path = start_history(spark, config, full)
+    for start in range(0, len(files), size):
+        chunk = files[start:start + size]
+        bronze = functools.reduce(
+            DataFrame.unionByName,
+            [delta_file(spark, datadt, records) for datadt, records in chunk],
+        )
+        silver.upsert_from_bronze(
+            spark, bronze, config, [format_reference_date(d) for d, _ in chunk]
+        )
+    return spark.read.format("delta").load(path)
+
+
+#: Cases in which the files of a batch meet the same instrument, which is
+#: where planning them together could differ from applying them in turn.
+BATCH_CASES = {
+    "changed on one day and again on the next": (
+        [("ISIN1", "MIC1", "X", date(2016, 9, 2))],
+        [(date(2016, 9, 4), [("ISIN1", "MIC1", "A", date(2016, 9, 4), "ModfdRcrd")]),
+         (date(2016, 9, 5), [("ISIN1", "MIC1", "B", date(2016, 9, 5), "ModfdRcrd")])],
+    ),
+    # Applied in turn, the second replaces the version the first left in
+    # force, because both begin on the same day.
+    "a later file restating the same start replaces": (
+        [("ISIN1", "MIC1", "X", date(2016, 9, 2))],
+        [(date(2016, 9, 4), [("ISIN1", "MIC1", "A", date(2016, 9, 4), "ModfdRcrd")]),
+         (date(2016, 9, 5), [("ISIN1", "MIC1", "B", date(2016, 9, 4), "ModfdRcrd")])],
+    ),
+    # Within one file a termination outranks a new record of the same day;
+    # across files the later file wins whatever its element.
+    "a later file outranks the record type": (
+        [("ISIN1", "MIC1", "X", date(2016, 9, 2))],
+        [(date(2016, 9, 4), [("ISIN1", "MIC1", "ended", date(2016, 9, 4), "TermntdRcrd")]),
+         (date(2016, 9, 5), [("ISIN1", "MIC1", "again", date(2016, 9, 4), "NewRcrd")])],
+    ),
+    "new on one day and terminated on a later one": (
+        [("ISIN1", "MIC1", "X", date(2016, 9, 2))],
+        [(date(2016, 9, 4), [("ISIN2", "MIC1", "Y", date(2016, 9, 4), "NewRcrd")]),
+         (date(2016, 9, 6), [("ISIN2", "MIC1", "Y", date(2016, 9, 6), "TermntdRcrd")])],
+    ),
+    "terminated in the ordinary way and corrected later": (
+        [("ISIN1", "MIC1", "X", date(2016, 9, 2))],
+        [(date(2016, 9, 4), [("ISIN1", "MIC1", "X", date(2016, 9, 2), "TermntdRcrd")]),
+         (date(2016, 9, 6), [("ISIN1", "MIC1", "corrected", date(2016, 9, 6), "ModfdRcrd")])],
+    ),
+    "cancelled and admitted again": (
+        [("ISIN1", "MIC1", "X", date(2016, 9, 2))],
+        [(date(2016, 9, 4), [("ISIN1", "MIC1", "X", date(2016, 9, 4), "CancRcrd")]),
+         (date(2016, 9, 7), [("ISIN1", "MIC1", "X again", date(2016, 9, 7), "NewRcrd")])],
+    ),
+    "a file between that leaves the instrument alone": (
+        [("ISIN1", "MIC1", "X", date(2016, 9, 2))],
+        [(date(2016, 9, 4), [("ISIN1", "MIC1", "A", date(2016, 9, 4), "ModfdRcrd")]),
+         (date(2016, 9, 5), [("ISIN2", "MIC1", "Y", date(2016, 9, 5), "NewRcrd")]),
+         (date(2016, 9, 6), [("ISIN1", "MIC1", "B", date(2016, 9, 6), "ModfdRcrd"),
+                             ("ISIN2", "MIC1", "Y2", date(2016, 9, 6), "ModfdRcrd")])],
+    ),
+    "the worked example": MERGE_CASES["the worked example"],
+    "a mixed batch over two files": MERGE_CASES["a mixed batch over two files"],
+}
+
+
+@pytest.mark.parametrize(
+    "case", list(BATCH_CASES), ids=[name.replace(" ", "-") for name in BATCH_CASES]
+)
+def test_a_batch_builds_the_history_its_files_build_in_turn(spark, config, case):
+    """Planning several files as one is only worth having if the history it
+    leaves is the one the files leave applied one after another."""
+    records, files = BATCH_CASES[case]
+    full = full_file(spark, records)
+
+    assert versions(
+        through_batches(spark, config, full, files, size=len(files))
+    ) == versions(through_reference(spark, full, files))
+
+
+def test_a_file_that_backdates_an_earlier_one_of_its_batch_is_refused(spark, config):
+    """Applied in turn, the second file meets the version the first left in
+    force and is refused for beginning before it. Planned together, it would
+    be chained in front of that version instead, and nothing would fail."""
+    full = full_file(spark, [("ISIN1", "MIC1", "X", date(2016, 9, 2))])
+    files = [
+        (date(2016, 9, 4), [("ISIN1", "MIC1", "A", date(2016, 9, 6), "ModfdRcrd")]),
+        (date(2016, 9, 5), [("ISIN1", "MIC1", "B", date(2016, 9, 5), "ModfdRcrd")]),
+    ]
+
+    with pytest.raises(ValueError, match="begin before the version in force"):
+        through_reference(spark, full, files)
+    with pytest.raises(ValueError, match="earlier delta file of the batch"):
+        through_batches(spark, config, full, files, size=2)
+
+    # Refused before anything was written.
+    built = spark.read.format("delta").load(common.path_silver_main(config))
+    assert versions(built) == versions(history.initialise_history(full))
+
+
+def tags_of(spark, config):
+    """The tags of the update's commits, oldest first."""
+    return [
+        tag for _, tag in reversed(
+            silver.tagged_commits(spark, common.ref_silver_main(config))
+        )
+        if tag and tag.startswith(silver.COMMIT_TAG_PREFIX + ":")
+        and not tag.endswith(":init")
+    ]
+
+
+def tag(label, step):
+    return silver.commit_tag(label, step)
+
+
+def test_a_batched_run_builds_the_history_a_daily_run_builds(spark, config):
+    days = FORTNIGHT[:5]
+    path, files = changes_over(spark, config, days)
+
+    silver.update_from_bronze_to_silver_main(spark, config, batch=2)
+
+    full = full_file(spark, [("ISIN1", "MIC1", "Company X", date(2016, 9, 2))])
+    assert versions(spark.read.format("delta").load(path)) == versions(
+        through_reference(spark, full, files)
+    )
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-09"
+    assert tags_of(spark, config) == [
+        tag("2016-09-05..2016-09-06", "merge"), tag("2016-09-05..2016-09-06", "append"),
+        tag("2016-09-07..2016-09-08", "merge"), tag("2016-09-07..2016-09-08", "append"),
+        tag("2016-09-09", "merge"), tag("2016-09-09", "append"),
+    ]
+
+
+def test_a_batch_ends_before_a_date_whose_file_held_no_records(spark, config):
+    """The empty date is passed as it is when the dates are applied in turn,
+    and the dates on either side of it are not merged across it."""
+    days = [date(2016, 9, 5), date(2016, 9, 7), date(2016, 9, 8)]
+    path, files = changes_over(spark, config, days)
+    empty_partition(config, date(2016, 9, 6))
+    finished(config, "DLTINS_20160906_01of01.zip")
+
+    silver.update_from_bronze_to_silver_main(spark, config, batch=5)
+
+    full = full_file(spark, [("ISIN1", "MIC1", "Company X", date(2016, 9, 2))])
+    assert versions(spark.read.format("delta").load(path)) == versions(
+        through_reference(spark, full, files)
+    )
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-08"
+    assert tags_of(spark, config) == [
+        tag("2016-09-05", "merge"), tag("2016-09-05", "append"),
+        tag("2016-09-07..2016-09-08", "merge"), tag("2016-09-07..2016-09-08", "append"),
+    ]
+
+
+def test_a_batch_stops_at_an_incomplete_day_with_the_dates_before_it_applied(
+    spark, config
+):
+    full = full_file(spark, [("ISIN1", "MIC1", "Company X", date(2016, 9, 2))])
+    path = start_history(spark, config, full)
+    files = [
+        (day, [("ISIN1", "MIC1", f"Name {day.day}", day, "ModfdRcrd")])
+        for day in (date(2016, 9, 5), date(2016, 9, 6), date(2016, 9, 7))
+    ]
+    write_bronze(spark, config, files)
+    finished(config, "DLTINS_20160905_01of01.zip", "DLTINS_20160906_01of01.zip",
+             "DLTINS_20160907_02of02.zip")
+
+    with pytest.raises(RuntimeError, match="DLTINS_20160907_01of02"):
+        silver.update_from_bronze_to_silver_main(spark, config, batch=5)
+
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-06"
+    assert versions(spark.read.format("delta").load(path)) == versions(
+        through_reference(spark, full, files[:2])
+    )
+
+
+def test_a_batch_that_died_between_merge_and_append_is_resumed_as_that_batch(
+    monkeypatch, spark, config
+):
+    """The merge has closed and replaced versions for every date of the
+    batch. Resumed as batches of another size, the first would find no tag of
+    its own, plan from the table the merge left and insert again what the
+    merge had replaced."""
+    days = [date(2016, 9, 5), date(2016, 9, 6), date(2016, 9, 7)]
+    path, files = changes_over(spark, config, days)
+    fail_once(monkeypatch, history, "records_to_insert")
+
+    with pytest.raises(RuntimeError, match="died"):
+        silver.update_from_bronze_to_silver_main(spark, config, batch=3)
+    ref = common.ref_silver_main(config)
+    assert silver.watermark_from_commits(spark, ref) == "2016-09-04"
+    assert silver.span_in_flight(spark, ref, date(2000, 1, 1)) == (days[0], days[-1])
+
+    silver.update_from_bronze_to_silver_main(spark, config, batch=1)
+
+    full = full_file(spark, [("ISIN1", "MIC1", "Company X", date(2016, 9, 2))])
+    assert versions(spark.read.format("delta").load(path)) == versions(
+        through_reference(spark, full, files)
+    )
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-07"
+    assert silver.watermark_from_commits(spark, ref) == "2016-09-07"
+
+
+def test_a_batch_that_died_before_its_watermark_is_not_applied_twice(
+    monkeypatch, spark, config
+):
+    days = [date(2016, 9, 5), date(2016, 9, 6), date(2016, 9, 7)]
+    path, files = changes_over(spark, config, days)
+    fail_once(monkeypatch, common, "update_metadata_maxdate")
+
+    with pytest.raises(RuntimeError, match="died"):
+        silver.update_from_bronze_to_silver_main(spark, config, batch=3)
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2000-01-01"
+
+    silver.update_from_bronze_to_silver_main(spark, config, batch=2)
+
+    full = full_file(spark, [("ISIN1", "MIC1", "Company X", date(2016, 9, 2))])
+    assert versions(spark.read.format("delta").load(path)) == versions(
+        through_reference(spark, full, files)
+    )
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-07"
+
+
+def test_a_batch_is_compacted_after_where_the_cadence_falls_within_it(
+    monkeypatch, spark, config
+):
+    """The Fridays of the fortnight are the 9th and the 16th, which fall in
+    the second and the third batch of four; each is compacted after once."""
+    compacted = compaction_log(monkeypatch)
+    changes_over(spark, config, FORTNIGHT)
+
+    silver.update_from_bronze_to_silver_main(spark, config, batch=4)
+
+    assert compacted == ["2016-09-12", "2016-09-16"]
+
+
+@pytest.mark.parametrize("size", [True, False, 0, -1, 2.5, None, "3"])
+def test_a_batch_size_that_names_nothing_is_refused(spark, config, size):
+    changes_over(spark, config, [date(2016, 9, 6)])
+
+    with pytest.raises(ValueError, match="batch is"):
+        silver.update_from_bronze_to_silver_main(spark, config, batch=size)
+
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2000-01-01"

@@ -38,8 +38,13 @@ REFERENCE_DATE_FORMAT = "%Y-%m-%d"
 
 #: Prefix of the ``userMetadata`` the commits of a daily update carry. The tag
 #: of a commit is the prefix, the reference date and the step, e.g.
-#: ``firds-silver-main:2026-09-06:append``.
+#: ``firds-silver-main:2026-09-06:append``. A batch of several dates applied
+#: together names the first and the last of them instead, joined by
+#: :data:`SPAN_SEPARATOR`, e.g. ``firds-silver-main:2026-09-01..2026-09-05:merge``.
 COMMIT_TAG_PREFIX = "firds-silver-main"
+
+#: What separates the first and the last date of a batch in a commit tag.
+SPAN_SEPARATOR = ".."
 
 #: The session setting Delta takes the ``userMetadata`` of a MERGE from.
 USER_METADATA_CONF = "spark.databricks.delta.commitInfo.userMetadata"
@@ -180,8 +185,43 @@ def read_fulins_partition(spark, config_path, datadt):
 
 
 def commit_tag(datadt, step):
-    """The ``userMetadata`` of the commit ``step`` of the update for ``datadt``."""
+    """The ``userMetadata`` of the commit ``step`` of the update for ``datadt``.
+
+    ``datadt`` is a reference date, or the label :func:`span_label` gives the
+    dates of a batch.
+    """
     return f"{COMMIT_TAG_PREFIX}:{datadt}:{step}"
+
+
+def span_label(dates):
+    """The label the commits of the update of ``dates`` are tagged with.
+
+    A single date is its own label, which is what the tags of a date applied
+    on its own have always been. Several are labelled by the first and the
+    last of them, since the dates of a batch are the dates to apply that lie
+    between those two; see :func:`update_from_bronze_to_silver_main`.
+    """
+    if len(dates) == 1:
+        return dates[0]
+    return f"{dates[0]}{SPAN_SEPARATOR}{dates[-1]}"
+
+
+def span_bounds(label):
+    """The first and the last reference date a label of :func:`span_label` names."""
+    first, _, last = label.partition(SPAN_SEPARATOR)
+    return first, last or first
+
+
+def _parse_tag(tag):
+    """The first date, the last date and the step a commit tag names.
+
+    ``None`` for a commit that is not one of this module's, or carries no tag.
+    """
+    if not tag or not tag.startswith(COMMIT_TAG_PREFIX + ":"):
+        return None
+    _, label, step = tag.split(":", 2)
+    first, last = span_bounds(label)
+    return first, last, step
 
 
 def tagged_commits(spark, ref, limit=None):
@@ -247,20 +287,24 @@ def watermark_from_commits(spark, ref):
     A date whose append was committed has been applied in full. A date of
     which only the merge was committed has not, so the watermark is the day
     before it and the date is applied again, which
-    :func:`upsert_from_bronze_daily` resumes rather than starts afresh.
+    :func:`upsert_from_bronze_daily` resumes rather than starts afresh. A batch
+    of dates is one merge and one append, so a batch whose append was
+    committed has been applied up to its last date, and one of which only the
+    merge was committed has not been applied from its first date on.
 
     Returns ``None`` where no commit names a reference date, as for a database
     that was not built by this code.
     """
     for _, tag in tagged_commits(spark, ref):
-        if not tag or not tag.startswith(COMMIT_TAG_PREFIX + ":"):
+        parsed = _parse_tag(tag)
+        if parsed is None:
             continue
-        _, datadt, step = tag.split(":", 2)
+        first, last, step = parsed
         if step == "merge":
             return format_reference_date(
-                parse_reference_date(datadt) - timedelta(days=1)
+                parse_reference_date(first) - timedelta(days=1)
             )
-        return datadt
+        return last
     return None
 
 
@@ -315,6 +359,51 @@ def committed_steps(spark, ref, datadt):
         if step is not None:
             found.setdefault(step, version)
     return found
+
+
+def span_in_flight(spark, ref, after):
+    """The dates the table was last written by, where the watermark is behind them.
+
+    A run that dies after the merge of a batch, or after its append but before
+    the watermark, leaves the watermark at ``after`` and the table written by
+    the dates past it. The next run has to apply exactly those dates as one
+    batch again, whatever batch size it was asked for, because only a batch
+    with the same label finds the commits it is resumed by; see
+    :func:`committed_steps`. Planned under another label, a batch would read
+    the table as the merge left it and insert the versions that merge had
+    replaced a second time.
+
+    Only the most recent commit of this module is looked at, within the
+    window of :data:`RESUME_COMMITS`, because the update writes nothing else
+    to the table between the commits of one batch and those of the next.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    ref:
+        Where the table lives.
+    after: datetime.date
+        The watermark.
+
+    Returns
+    -------
+    tuple of datetime.date or None
+        The first and the last date of the batch, or ``None`` where the table
+        was last written by dates the watermark already covers.
+    """
+    for _, tag in tagged_commits(spark, ref, limit=RESUME_COMMITS):
+        parsed = _parse_tag(tag)
+        if parsed is None:
+            continue
+        first, last, step = parsed
+        if step not in ("merge", "append"):
+            return None
+        last = parse_reference_date(last)
+        if last <= after:
+            return None
+        return parse_reference_date(first), last
+    return None
 
 
 def finished_files(config_path):
@@ -409,7 +498,7 @@ def _partition_holds_records(config_path, datadt):
 
 
 def update_from_bronze_to_silver_main(spark, config_path,
-                                      compact=COMPACT_WEEKLY):
+                                      compact=COMPACT_WEEKLY, batch=1):
     """Update the historical FIRDS database from the Bronze layer.
 
     The function initialises the database from the full file if it does not
@@ -473,13 +562,46 @@ def update_from_bronze_to_silver_main(spark, config_path,
         :data:`COMPACT_NEVER` or a cadence its last date did not fall on is
         expected to call :func:`compact_silver_main` when it is done.
 
+        Where dates are applied in batches, the compaction is made after a
+        batch that holds a date the cadence falls on, and so at most once per
+        batch.
+    batch: int, optional
+        How many dates are applied together, one by default.
+
+        Each date applied on its own is a plan, a merge and an append, and the
+        plan and the merge each read the whole history to find the versions
+        in force that the date's records meet, however few those are. A
+        backfill pays those two reads once per date. Applied together, the
+        records of several dates are planned as one delta file would be --
+        :func:`fincommons.firds.history.prepare_incoming` chains the records
+        an instrument receives in order, across the files as within one --
+        and the history is read twice per batch instead. The history that
+        results is the one the dates build applied one after another.
+
+        A batch holds only dates whose delta file carries records. It ends
+        early before a date whose file held none, which is passed as before,
+        and before a date the update stops at, so that the dates before it
+        are applied. A batch is committed as one merge and one append, tagged
+        with its first and last date, and a run that died within one resumes
+        that same batch whatever size it is then given. Batches are refused
+        where a delta file begins a version before one an earlier file of the
+        batch began, which applied one after another is refused too; see
+        :func:`fincommons.firds.history.check_file_order`.
+
+        What a batch costs is the size of the records it plans, which are held
+        in memory for the plan, so the figure is a property of the machine as
+        the cadence of ``compact`` is. A daily run has one date to apply and
+        gains nothing from a larger figure.
+
     Raises
     ------
     ValueError
         If ``compact`` names neither of the two cadences nor a whole number of
-        dates of at least one.
+        dates of at least one, or if ``batch`` is not a whole number of at
+        least one.
     """
     compact = _checked_compaction(compact)
+    batch = _checked_batch(batch)
     with pipeline_run(
         logger,
         "update_from_bronze_to_silver_main",
@@ -488,12 +610,30 @@ def update_from_bronze_to_silver_main(spark, config_path,
         table="MAIN",
         config_path=config_path,
         compact=compact,
+        batch=batch,
     ) as outcome:
-        _update_from_bronze_to_silver_main(spark, config_path, outcome, compact)
+        _update_from_bronze_to_silver_main(
+            spark, config_path, outcome, compact, batch
+        )
+
+
+def _checked_batch(batch):
+    """Return ``batch`` where it is a whole number of dates, and raise where not.
+
+    ``True`` is refused although it is an :class:`int`, for the reason
+    :func:`_checked_compaction` refuses it: it reads as "yes, batch" and would
+    mean batches of one date, which is not batching at all.
+    """
+    if isinstance(batch, bool) or not isinstance(batch, int) or batch < 1:
+        raise ValueError(
+            f"batch is {batch!r}; it names how many dates are applied "
+            "together, which is a whole number of at least one."
+        )
+    return batch
 
 
 def _update_from_bronze_to_silver_main(spark, config_path, outcome,
-                                       compact=COMPACT_WEEKLY):
+                                       compact=COMPACT_WEEKLY, batch=1):
     """Do the work of :func:`update_from_bronze_to_silver_main`."""
 
     state = read_landing_state(config_path)
@@ -621,30 +761,131 @@ def _update_from_bronze_to_silver_main(spark, config_path, outcome,
     outcome["empty"] = 0
     outcome["compactions"] = 0
 
+    # A batch a previous run left half-committed is applied again as the same
+    # batch, whatever size this run was given; see span_in_flight.
+    in_flight = span_in_flight(spark, common.ref_silver_main(config_path), maxdate)
+    if in_flight is not None:
+        logger.warning(
+            "The dates the historical database was last written by are past "
+            "the watermark, so they are applied again as the batch they were",
+            extra=context(
+                module="firds", layer="silver", table="MAIN",
+                datadt=format_reference_date(in_flight[1]),
+                first=format_reference_date(in_flight[0]),
+            ),
+        )
+
+    pending = []
+
+    def apply_pending():
+        """Apply the dates gathered so far as one batch."""
+        if not pending:
+            return
+        if (
+            in_flight is not None
+            and pending[0] <= in_flight[1]
+            and (pending[0], pending[-1]) != in_flight
+        ):
+            raise RuntimeError(
+                "A previous run left the dates "
+                f"{format_reference_date(in_flight[0])} to "
+                f"{format_reference_date(in_flight[1])} applied in part, but "
+                "the dates to apply no longer begin and end there, so they "
+                "cannot be resumed as the batch they were. The Bronze layer "
+                "or the landing zone has changed since; the history is not "
+                "updated further until the dates are back as they were."
+            )
+        dates = [format_reference_date(day) for day in pending]
+        # One partition at a time, and only once the date is known to be
+        # there. Reading the whole folder would put files written with
+        # different vintages of the XML schema under one schema, and reading
+        # it before the checks below would fail with a complaint about the
+        # schema of a folder that holds no file yet, which says nothing about
+        # what is actually missing.
+        bronze = functools.reduce(DataFrame.unionByName, [
+            read_dltins_partition(
+                spark, config_path, datadt, records=history.ACTION_TYPES
+            )
+            for datadt in dates
+        ])
+        upsert_from_bronze(
+            spark=spark, bronze=bronze, config_path=config_path, dates=dates
+        )
+
+        applied = outcome["periods"]
+        outcome["periods"] += len(pending)
+
+        # Cluster the files written since the last compaction, at the cadence
+        # the caller asked for. Only half of what this does is incremental,
+        # and the other half rewrites most of the history, which is why the
+        # cadence is an argument and why a backfill has one to choose; see
+        # compact_silver_main and the compact argument of
+        # update_from_bronze_to_silver_main. A batch is compacted after at
+        # most once, where any of its dates is one the cadence falls on.
+        if any(
+            _compaction_is_due(compact, day, applied + position)
+            for position, day in enumerate(pending, start=1)
+        ):
+            compact_silver_main(spark, config_path)
+            outcome["compactions"] += 1
+
+        outcome["datadt"] = dates[-1]
+        # The landing zone cannot read the watermark of the historical
+        # database and needs to know how far it stands, so that it can tell a
+        # file for a day still to come from one for a day left behind.
+        record_applied_through(config_path, dates[-1])
+        for datadt in dates:
+            if datadt in state["late"]:
+                # It arrived late but still before the history reached its day.
+                clear_late_day(config_path, datadt)
+        pending.clear()
+
+    def stop(datadt, message):
+        """Apply the dates before ``datadt`` and refuse to go past it."""
+        if in_flight is not None and parse_reference_date(datadt) <= in_flight[1]:
+            # The batch left half-committed cannot be applied in part: a
+            # batch under another label would not find the commits it is
+            # resumed by.
+            outcome["blocked"] = datadt
+            raise RuntimeError(
+                message + " It lies within the dates "
+                f"{format_reference_date(in_flight[0])} to "
+                f"{format_reference_date(in_flight[1])}, which a previous run "
+                "left applied in part and which are resumed as one batch, so "
+                "none of them is applied until it is resolved."
+            )
+        apply_pending()
+        outcome["blocked"] = datadt
+        raise RuntimeError(message)
+
     for d in periods:
         datadt = format_reference_date(d)
         missing = missing_parts(finished, "DLTINS", d)
         if missing:
-            outcome["blocked"] = datadt
-            raise RuntimeError(
+            stop(datadt, (
                 f"The delta file of {datadt} is incomplete, missing "
                 f"{', '.join(missing)}. The history has been built up to the "
                 f"day before and is not updated further until the missing "
                 f"parts have been imported into the Bronze layer."
-            )
+            ))
         if d not in in_bronze:
-            outcome["blocked"] = datadt
-            raise RuntimeError(
+            stop(datadt, (
                 f"Every part of the delta file of {datadt} has been imported, "
                 "but the Bronze layer holds no partition for it, not even an "
                 "empty one. A partition has gone missing; the history is not "
                 "updated further until it is back, or until the watermark is "
                 "moved past this date by hand."
-            )
+            ))
         if not _partition_holds_records(config_path, datadt):
+            if in_flight is not None and d <= in_flight[1]:
+                stop(datadt, (
+                    f"The delta file of {datadt} holds no records, but it "
+                    "did when the dates around it were last applied."
+                ))
             # The file of that date carried no records. There is nothing to
             # apply, and the date is passed rather than left to be applied
-            # again on the next run.
+            # again on the next run, once the dates before it are.
+            apply_pending()
             outcome["empty"] += 1
             logger.warning(
                 "The delta file of this date held no records, nothing to apply",
@@ -661,39 +902,15 @@ def _update_from_bronze_to_silver_main(spark, config_path, outcome,
                 clear_late_day(config_path, datadt)
             continue
 
-        # One partition at a time, and only once the date is known to be
-        # there. Reading the whole folder would put files written with
-        # different vintages of the XML schema under one schema, and reading
-        # it before the checks above would fail with a complaint about the
-        # schema of a folder that holds no file yet, which says nothing about
-        # what is actually missing.
-        bronze = read_dltins_partition(
-            spark, config_path, datadt, records=history.ACTION_TYPES
-        )
-        upsert_from_bronze_daily(
-            spark=spark, bronze=bronze, config_path=config_path, datadt=datadt
-        )
+        pending.append(d)
+        if in_flight is not None and d <= in_flight[1]:
+            # The batch left half-committed ends where it ended before.
+            if d == in_flight[1]:
+                apply_pending()
+        elif len(pending) == batch:
+            apply_pending()
 
-        outcome["periods"] += 1
-
-        # Cluster the files written since the last compaction, at the cadence
-        # the caller asked for. Only half of what this does is incremental,
-        # and the other half rewrites most of the history, which is why the
-        # cadence is an argument and why a backfill has one to choose; see
-        # compact_silver_main and the compact argument of
-        # update_from_bronze_to_silver_main.
-        if _compaction_is_due(compact, d, outcome["periods"]):
-            compact_silver_main(spark, config_path)
-            outcome["compactions"] += 1
-
-        outcome["datadt"] = datadt
-        # The landing zone cannot read the watermark of the historical
-        # database and needs to know how far it stands, so that it can tell a
-        # file for a day still to come from one for a day left behind.
-        record_applied_through(config_path, datadt)
-        if datadt in state["late"]:
-            # It arrived late but still before the history reached its day.
-            clear_late_day(config_path, datadt)
+    apply_pending()
 
 
 def declare_silver_main_layout(spark, config_path):
@@ -1705,11 +1922,52 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     * if only its merge was committed, the plan is made from the table as it
       stood before the merge, and only the append is made.
     """
+    upsert_from_bronze(spark, bronze, config_path, [datadt])
+
+
+def upsert_from_bronze(spark, bronze, config_path: str, dates):
+    """Apply the delta files of several reference dates to the historical database.
+
+    What :func:`upsert_from_bronze_daily` does for one date, done for the
+    records of several at once: they are planned together, each carrying the
+    date of its file in :data:`fincommons.firds.history.FILE_DATE`, and applied
+    in one merge and one append. The history that results is the one the
+    dates build applied one after another, which is what
+    :func:`fincommons.firds.history.prepare_incoming` makes of records of
+    several files, and :func:`fincommons.firds.history.check_file_order`
+    refuses the files where it would not be.
+
+    The commits are tagged with the label :func:`span_label` gives the dates,
+    and a batch is resumed as a single date is. Resuming rests on the batch
+    being made of the same dates as the one that died, which
+    :func:`update_from_bronze_to_silver_main` sees to.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    bronze: pyspark.sql.DataFrame
+        The Bronze partitions of the dates, with the reference date in
+        ``DATADT``.
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be
+        a yaml-file.
+    dates: list of str
+        The reference dates, in chronological order.
+    """
+    dates = list(dates)
+    datadt = dates[-1]
+    label = span_label(dates)
+    source = (
+        f"the delta file of {datadt}" if len(dates) == 1
+        else f"the delta files of {dates[0]} to {datadt}"
+    )
 
     logger.info(
-        "Applying delta file",
+        "Applying delta file" if len(dates) == 1 else "Applying delta files",
         extra=context(
-            module="firds", layer="silver", table="MAIN", datadt=datadt
+            module="firds", layer="silver", table="MAIN", datadt=datadt,
+            **({} if len(dates) == 1 else {"first": dates[0], "dates": len(dates)}),
         ),
     )
 
@@ -1724,12 +1982,23 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     # that saves the most, since it is the flattening of the four action types
     # into the analytics schema that would otherwise be computed four times
     # over.
-    daily = bronze.filter(func.col("DATADT") == datadt).cache()
-    incoming = read_daily_changes(daily).cache()
-    incoming = check_incoming_records(incoming, f"the delta file of {datadt}")
+    #
+    # The records of each date are flattened on their own and carry the date
+    # of their file, which is what orders the records of several files that
+    # begin on the same day; see history.prepare_incoming.
+    daily = bronze.filter(func.col("DATADT").isin(dates)).cache()
+    incoming = functools.reduce(DataFrame.unionByName, [
+        read_daily_changes(daily.filter(func.col("DATADT") == day)).withColumn(
+            history.FILE_DATE, func.to_date(func.lit(day))
+        )
+        for day in dates
+    ]).cache()
+    incoming = check_incoming_records(incoming, source)
+    if len(dates) > 1:
+        history.check_file_order(incoming, source)
 
     ref = common.ref_silver_main(config_path)
-    committed = committed_steps(spark, ref, datadt)
+    committed = committed_steps(spark, ref, label)
 
     if "append" in committed:
         logger.warning(
@@ -1757,7 +2026,7 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     columns = main.columns
 
     planned = history.plan_changes(main, incoming).cache()
-    history.check_supersession(planned, f"the delta file of {datadt}")
+    history.check_supersession(planned, source)
     table = common.delta_table(spark, ref)
     # The condition is built from the key the history identifies an
     # instrument by, so that it cannot drift away from it.
@@ -1784,7 +2053,7 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     else:
         changing = history.records_to_change(planned, columns)
         tag = func.col(f"src.{history.OPERATION}")
-        spark.conf.set(USER_METADATA_CONF, commit_tag(datadt, "merge"))
+        spark.conf.set(USER_METADATA_CONF, commit_tag(label, "merge"))
         try:
             table.alias("tgt").merge(changing.alias("src"), condition).whenMatchedUpdate(
                 condition=tag == func.lit(history.CLOSE_AND_INSERT),
@@ -1804,7 +2073,7 @@ def upsert_from_bronze_daily(spark, bronze, config_path: str, datadt: str):
     inserting = history.records_to_insert(planned, columns)
     common.write_delta(
         inserting, ref, mode="append",
-        options={"userMetadata": commit_tag(datadt, "append")},
+        options={"userMetadata": commit_tag(label, "append")},
     )
 
     planned.unpersist()
@@ -2098,6 +2367,7 @@ __all__ = [
     "RESUME_COMMITS",
     "REWRITING_OPERATIONS",
     "SOURCE_FIELDS",
+    "SPAN_SEPARATOR",
     "USER_METADATA_CONF",
     "check_incoming_records",
     "check_instrument_key",
@@ -2123,12 +2393,16 @@ __all__ = [
     "read_daily_changes",
     "read_dltins_partition",
     "read_fulins_partition",
+    "span_bounds",
+    "span_in_flight",
+    "span_label",
     "tagged_commits",
     "translate_xml_to_analytics_schema",
     "translate_xml_to_analytics_schema_017_001_02",
     "translate_xml_to_analytics_schema_036_001_03",
     "update_from_bronze_to_silver_main",
     "update_from_silver_main_to_silver_compact",
+    "upsert_from_bronze",
     "upsert_from_bronze_daily",
     "watermark_from_commits",
 ]
