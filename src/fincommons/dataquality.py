@@ -398,7 +398,7 @@ def issue_counts(issues, by=None, packages=("fincommons",), dataset=None):
     Returns
     -------
     pyspark.sql.DataFrame
-        ``by``, the code, the severity, the title and ``RECORDS``, ordered by
+        ``by``, the code, the severity, the title and ``records``, ordered by
         severity and then by the count.
     """
     import pyspark.sql.functions as func

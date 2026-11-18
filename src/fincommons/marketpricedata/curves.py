@@ -283,7 +283,7 @@ def read_pillars(spark, prices, refdt, currencies = None):
         An open Spark session.
     prices: pyspark.sql.DataFrame
         The Silver table of :mod:`fincommons.marketpricedata`, with the
-        columns ``REFDT``, ``INSTRID`` and ``VALUE``.
+        columns ``ref_date``, ``instr_id`` and ``value``.
     refdt: str
         The date the curves are built for, as ``YYYY-MM-DD``.
     currencies: list

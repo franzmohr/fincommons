@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 #: The columns a source adapter produces: those of the combined table of
 #: facts except the identifier of what a fact is, which no source knows.
-#: ``MEASURE`` is given once, to the union of the sources, so that one place
+#: ``measure`` is given once, to the union of the sources, so that one place
 #: decides it and a regime added later cannot answer the question
 #: differently from the others.
 SOURCE_FACT_COLUMNS = tuple(name for name in fact_schema.names
@@ -108,8 +108,8 @@ def facts_from_sec(spark, config_path):
     """The SEC facts, in the columns of the combined table.
 
     The period the filing reports on is on that module's table of filings and
-    not on its facts, so the two are joined on the accession number. ``TEXT``
-    and ``DIMENSIONS`` come back empty because the company files carry
+    not on its facts, so the two are joined on the accession number. ``text``
+    and ``dimensions`` come back empty because the company files carry
     neither.
     """
     from ..sec.common import ref_silver_facts, ref_silver_filings
@@ -249,11 +249,11 @@ def facts_from_edinet(spark, config_path):
 
     The period the filing reports on is on that module's table of filings and
     not on its facts, as with the Commission, so the two are joined on the
-    document number. ``TEXT`` and ``DIMENSIONS`` are carried as they stand:
+    document number. ``text`` and ``dimensions`` are carried as they stand:
     the agency's conversion gives the whole of a report, and both the
     narrative facts and the breakdowns are in it.
 
-    What travels in ``DIMENSIONS`` is worth knowing before the rows are used.
+    What travels in ``dimensions`` is worth knowing before the rows are used.
     A report that prepares consolidated statements states every figure twice,
     the group's with no dimension and the parent company's own under
     ``NonConsolidatedMember``, and both are here because both are in the
@@ -263,7 +263,7 @@ def facts_from_edinet(spark, config_path):
     The agency's conversion carries no dates, so the edinet module resolves
     the period of a fact from what the filing says about itself and leaves
     both dates empty for a context whose shape it does not recognise rather
-    than inventing them. ``PRDEND`` is the one column of the combined table
+    than inventing them. ``prd_end`` is the one column of the combined table
     of facts that is not allowed to be empty -- a fact that sits in no period
     can be compared with nothing, which is what this table is for -- so such
     a fact is not carried here. It is not lost: it is in the edinet table of
@@ -295,10 +295,10 @@ def facts_from_edinet(spark, config_path):
 def filings_from_edinet(spark, config_path):
     """The EDINET filings, in the columns of the combined table.
 
-    ``FORM`` is the document type as the agency codes it -- ``'120'`` is the
+    ``form`` is the document type as the agency codes it -- ``'120'`` is the
     annual securities report -- and not an English name this module made up
     for it; see
-    :data:`fincommons.financialreport.edinet.common.REPORT_TYPES`. ``COUNTRY``
+    :data:`fincommons.financialreport.edinet.common.REPORT_TYPES`. ``country``
     is empty because the agency states none, as the Commission does not.
 
     The count of facts comes from the facts table, as it does for ESEF: the

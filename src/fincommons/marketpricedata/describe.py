@@ -45,7 +45,7 @@ __all__ = ["InstrumentDescription", "describe_instrument"]
 class InstrumentDescription:
     """What one identifier of the Silver table stands for.
 
-    ``unit`` is what one unit of ``VALUE`` is; ``currency`` is the currency of
+    ``unit`` is what one unit of ``value`` is; ``currency`` is the currency of
     a price, or None for a rate, a ratio or an index level.
     """
 

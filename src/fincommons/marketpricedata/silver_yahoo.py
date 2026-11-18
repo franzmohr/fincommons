@@ -165,7 +165,7 @@ def isolated_prints(frame, factor=YAHOO_FX_ISOLATED_FACTOR):
     Parameters
     ----------
     frame: pyspark.sql.DataFrame
-        Rows of ``REFDT``, ``INSTRID`` and ``VALUE``, each pair once.
+        Rows of ``ref_date``, ``instr_id`` and ``value``, each pair once.
     factor: float
         The ratio beyond which two values are taken to disagree.
 

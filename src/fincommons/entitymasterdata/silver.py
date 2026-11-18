@@ -71,7 +71,7 @@ INTERNAL_ID_COLUMNS = ["INTERNALID_1", "INTERNALID_2", "INTERNALID_3",
 INTERNAL_ID_SILVER = [SILVER_NAMES[column] for column in INTERNAL_ID_COLUMNS]
 
 #: The columns a proprietary list may carry: those of the entity master data
-#: set except ``ID``, which the update assigns. ``LEI`` is the one it must.
+#: set except ``id``, which the update assigns. ``LEI`` is the one it must.
 INTERNAL_COLUMNS = ["LEI"] + INTERNAL_ID_COLUMNS + [
     "NAME", "CTRY", "SECTOR", "SUBSECTOR", "ULTPAR_LEI", "AMC",
     "IF_POLICY", "IF_TYPE", "IF_UCITS_COMPL"]
@@ -242,7 +242,7 @@ def with_normalised_lei(data, source, columns = ("lei",), lei="lei"):
     source: str
         Name of the register, for the log.
     columns: tuple
-        The columns that hold an LEI. Only ``LEI`` itself is checked.
+        The columns that hold an LEI. Only ``lei`` itself is checked.
     """
     for column in columns:
         if column in data.columns:
@@ -398,7 +398,7 @@ def first_per_lei(data, order):
     Parameters
     ----------
     data: pyspark.sql.DataFrame
-        A data frame with an ``LEI`` column.
+        A data frame with an ``lei`` column.
     order: list
         The columns the rows of one LEI are ordered by. The first of them is
         kept.
@@ -441,7 +441,7 @@ def active_relationship(data, relationship_type, column):
     Returns
     -------
     pyspark.sql.DataFrame
-        A frame with an ``LEI`` column and ``column``, one row per LEI.
+        A frame with an ``lei`` column and ``column``, one row per LEI.
     """
     related = data \
         .filter(func.col("`Relationship.RelationshipType`") == relationship_type) \

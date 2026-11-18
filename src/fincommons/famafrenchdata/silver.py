@@ -8,7 +8,7 @@ is :mod:`fincommons.famafrenchdata.parse`; this module runs it over the
 Bronze layer and writes the result.
 
 **The table is rebuilt file by file, and only for the files that changed.**
-Each file is a partition of its own, ``DATASET``, and each one that the Bronze
+Each file is a partition of its own, ``dataset``, and each one that the Bronze
 layer holds a newer collection of is parsed again and replaces its partition,
 leaving every other partition as it was. Kenneth French rebuilds the whole
 library each month, so in the month's first run that is every file; but a run
@@ -366,7 +366,7 @@ def series(data, dataset, table, frequency, columns=None):
     Returns
     -------
     pandas.DataFrame
-        Indexed by ``REFDT`` as a ``DatetimeIndex``, in order of time, with a
+        Indexed by ``ref_date`` as a ``DatetimeIndex``, in order of time, with a
         column per series. A period a series has no value for is ``NaN``.
 
     Raises

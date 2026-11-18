@@ -36,7 +36,7 @@ FACT_COLUMNS = ["fact", "lei", "concept", "prd_start", "prd_end", "unit",
 
 #: The dimensions every fact of xBRL-JSON may carry, which the table gives a
 #: column of their own. The others are the dimensions of the taxonomy, which
-#: go into ``DIMENSIONS``.
+#: go into ``dimensions``.
 CORE_DIMENSIONS = {"concept", "entity", "period", "unit", "language", "noteId"}
 
 #: What a filing and a country may look like. Both become names of files and
@@ -228,10 +228,10 @@ def facts_from_report(document):
     -------
     pandas.DataFrame
         The columns :data:`FACT_COLUMNS`. A numeric fact -- one with a unit
-        -- has ``VALUE`` and no ``TEXT``, any other fact ``TEXT`` and no
-        ``VALUE``; a value with a unit that is not a number is kept as
-        ``TEXT``. A fact reported as nil, and a text block, are left out; see
-        the module docstring. ``DIMENSIONS`` lists the dimensions of the
+        -- has ``value`` and no ``text``, any other fact ``text`` and no
+        ``value``; a value with a unit that is not a number is kept as
+        ``text``. A fact reported as nil, and a text block, are left out; see
+        the module docstring. ``dimensions`` lists the dimensions of the
         taxonomy as ``axis=member``, sorted and joined by ``;``, and is empty
         where the fact has none.
 

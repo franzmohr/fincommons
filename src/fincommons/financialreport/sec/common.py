@@ -88,14 +88,14 @@ filings_schema = StructType() \
     .add("facts", IntegerType(), False)
 """The shape of the table of filings: one row per filing the facts name.
 
-``FILING`` is the accession number, which identifies a filing with the
+``filing`` is the accession number, which identifies a filing with the
 Commission. The row is reconstructed from the facts rather than read from an
 index of filings: a company file states, for every fact, the filing it came
 from, so grouping the facts by accession gives back what each filing stated.
 
-``PERIODEND`` is the latest period the filing reports on, which for a periodic
+``period_end`` is the latest period the filing reports on, which for a periodic
 report is the period it is about; the earlier periods in it are its
-comparatives. ``FRAMEWORK`` is IFRS or US-GAAP, taken from the taxonomies the
+comparatives. ``framework`` is IFRS or US-GAAP, taken from the taxonomies the
 filing tagged against: a foreign private issuer reporting under IFRS tags
 against the IFRS taxonomy and is recognised as such, rather than being taken
 for a US GAAP filer because of where it filed.
@@ -117,26 +117,26 @@ facts_schema = StructType() \
 """The shape of the table of facts: one row per fact of a filing.
 
 The columns a fact shares with :data:`fincommons.financialreport.esef.common.facts_schema`
-are spelled as that module spells them -- ``FILING``, ``FACT``, ``CONCEPT``,
-``PRDSTART``, ``PRDEND``, ``UNIT``, ``VALUE`` -- so that a module combining
+are spelled as that module spells them -- ``filing``, ``fact``, ``concept``,
+``prd_start``, ``prd_end``, ``unit``, ``value`` -- so that a module combining
 the two is combining two tables of the same shape rather than translating one
-into the other. A fact of a duration has ``PRDSTART``; one of an instant has
-none, and ``PRDEND`` is the day it stands for.
+into the other. A fact of a duration has ``prd_start``; one of an instant has
+none, and ``prd_end`` is the day it stands for.
 
 Four columns of that table are missing here, and each is missing because the
 company files do not carry it rather than because this module dropped it.
-There is no ``DIMENSIONS`` and no ``TEXT``: the files hold the undimensioned
+There is no ``dimensions`` and no ``text``: the files hold the undimensioned
 numeric facts and neither the breakdowns nor the narrative. There is no
-``DECIMALS``: the Commission publishes the value and not the precision the
-filing claimed for it. There is no ``LANG``, the Commission filing in English.
+``decimals``: the Commission publishes the value and not the precision the
+filing claimed for it. There is no ``lang``, the Commission filing in English.
 A column that is always empty would say none of this; an absent column says
 it to anyone who looks at the table.
 
-``FILEDYEAR`` is the partition column, the year of ``FILED``. The year a
+``filed_year`` is the partition column, the year of ``filed``. The year a
 filing was made is monotonic and is what a run collects by; the fiscal year is
 neither, since a filing states several of them.
 
-``FRAME`` is the Commission's own label for a period it considers comparable
+``frame`` is the Commission's own label for a period it considers comparable
 across companies, where it gave the fact one. It is carried as published and
 nothing here depends on it.
 """

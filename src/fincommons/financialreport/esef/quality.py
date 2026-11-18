@@ -78,19 +78,19 @@ issues_schema = StructType() \
     .add("checked", DateType(), False)
 """The shape of the table of issues: one row per issue found.
 
-``COUNTRY`` is the partition column, as it is on the table of facts, so that
+``country`` is the partition column, as it is on the table of facts, so that
 the issues of a filing sit in the same partition as the facts they are about
 and a run can check one country at a time as the pipeline collects one at a
 time.
 
-``FACT`` and ``CONCEPT`` name the fact an issue is about, and are empty where
+``fact`` and ``concept`` name the fact an issue is about, and are empty where
 the issue is about the filing as a whole: a balance sheet that does not balance
 is a fault of the filing and not of any one of the facts that makes it up, and
 pointing at one of them would be picking a culprit the data cannot name.
 
-``ISSUE`` is the code, which
+``issue`` is the code, which
 :func:`fincommons.dataquality.describe_check` turns into the sentence that says
-what it means. ``CHECKED`` is the day the run was made, not the day the problem
+what it means. ``checked`` is the day the run was made, not the day the problem
 arose: the issues of a country are replaced whole when it is checked again.
 
 A filing with nothing wrong with it has no row here. The absence of a code is

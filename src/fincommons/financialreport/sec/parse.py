@@ -161,10 +161,10 @@ def filings_from_company(document, forms=PERIODIC_FORMS):
     """Return the filings of one company file, as rows of ``filings_schema``.
 
     A filing is what a group of facts sharing an accession number says it is.
-    ``PERIODEND`` is the latest period the filing reports on under a reporting
+    ``period_end`` is the latest period the filing reports on under a reporting
     taxonomy, which for a periodic report is the period it is about; the
     earlier ones are its comparatives. The cover page is deliberately not
-    counted: it states a date after the period closed. ``FRAMEWORK`` comes from the taxonomies the filing tagged
+    counted: it states a date after the period closed. ``framework`` comes from the taxonomies the filing tagged
     against and not from the fact that it was filed with the Commission, so
     that a foreign private issuer reporting under IFRS is recognised as one.
     """

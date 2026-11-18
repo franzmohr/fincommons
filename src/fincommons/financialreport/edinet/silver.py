@@ -13,7 +13,7 @@ millions, so the archives are read on the executors, one at a time, and only
 the rows come back.
 
 Which filings are read for facts is decided by the index rather than by what
-is on disk, and in two steps. A filing whose ``HASCSV`` is not ``'1'`` has no
+is on disk, and in two steps. A filing whose ``has_csv`` is not ``'1'`` has no
 conversion to read, and the agency says so in the index, so nothing is
 attempted for it; of the rest, those whose archive the Bronze layer holds are
 read. A filing listed with a conversion and not collected is counted and
