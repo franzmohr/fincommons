@@ -4,6 +4,29 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
+## 0.5.1
+
+What 0.5.0 left behind in the files the test suite does not run: a template,
+two handbook references and the text of a check.
+
+### Fixed
+
+- `esef`: the sector factsheet reads its panel file again. The panel is a
+  list kept by hand -- the nine issuers stated in the template, or the csv
+  named by `FINCOMMONS_PANEL` -- and like every other file kept by hand it
+  carries the upper-case names it always had, `LEI`, `CIK`, `COUNTRY` and
+  `NAME`. The rename of 0.5.0 lowered them in the template but not in the two
+  panels shipped beside it, so the template looked for `lei` in a file whose
+  header says `LEI` and every row of the panel went missing. Nothing caught
+  it, because no test renders a Quarto template. The panel keeps its names,
+  the Silver columns it is joined to keep theirs, and the two meet through
+  the key built from them, as they did before.
+- The data quality check `edinet.PERIOD_UNRESOLVED` tells the reader to read
+  the `context` and `relative` columns rather than the names they had.
+- The handbook calls the exchange rate column `imputed`, and the README of
+  `entitymasterdata` calls the columns of the Silver table `lei` and
+  `subsector` where it describes what the tests hold.
+
 ## 0.5.0
 
 The columns of the Silver layer are renamed from the compressed upper case of
