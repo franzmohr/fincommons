@@ -323,18 +323,30 @@ if (nrow(filings_all) == 0) {
 # again with corrections, is a filing of its own with facts of its own, and
 # the figures of the year are taken from one of them: the one in the
 # language of the factsheet, then the one with fewer validation errors, then
-# the one the repository processed last. A filing without a json_url has no
-# facts and is never chosen while another one is there.
+# the one the repository processed last. Only a filing this lake holds facts
+# for is chosen: the `json_url` of the index says the repository publishes
+# facts for a filing, not that the pipeline collected them, and a lake
+# collected with `years` holds the index of every year and the facts of a
+# few. Taken as the one for the other, the columns of the years not
+# collected were printed as years the issuer tagged nothing in.
+filings_with_facts <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(lei == issuer_lei) %>%
+  select("filing") %>%
+  distinct() %>%
+  collect()
+
 filings <- filings_all %>%
+  mutate(has_facts = filing %in% filings_with_facts$filing) %>%
   arrange(period_end,
-          is.na(json_url),
+          !has_facts,
           coalesce(lang, "") != report_lang,
           coalesce(errors, 0L),
           desc(processed)) %>%
   group_by(period_end) %>%
   slice(1) %>%
   ungroup() %>%
-  filter(!is.na(json_url)) %>%
+  filter(has_facts) %>%
+  select(-has_facts) %>%
   arrange(period_end) %>%
   slice_tail(n = n_years + 1)
 

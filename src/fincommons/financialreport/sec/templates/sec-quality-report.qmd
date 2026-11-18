@@ -242,7 +242,9 @@ if (!dir.exists(file.path(path_silver, "issues"))) {
 }
 
 filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
-  select(cik, filing, name, form, fp, fy, filed, period_end, facts,
+  # Not `fy`, the fiscal year the registrant states: this report counts by
+  # the year a filing was made, and calls that `fy` below.
+  select(cik, filing, name, form, fp, filed, period_end, facts,
          framework) %>%
   collect()
 

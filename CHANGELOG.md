@@ -64,6 +64,21 @@ release may change the public API, which `tests/test_public_api.py` lists.
   with its identifiers empty. The README now also says which columns are
   required, which is `SHORT` and `GROUP` with an `LEI` or a `CIK` on every
   row, and why the two spellings are both right.
+- `sec`: the quality report renders again. It reads the year a filing was
+  made as `fy`, and the rename of 0.5.0 gave the fiscal year the registrant
+  states that same name, so the report stopped on two columns called `fy`.
+  The report never used the fiscal year and no longer reads it.
+- `esef`: the sector and the analyst factsheet choose from the filings the
+  lake holds facts for, not from those the index lists with a `json_url`,
+  which says the repository publishes facts rather than that the pipeline
+  collected them. On a lake collected with `years` the sector factsheet
+  printed a year's sector total over the one issuer whose report of it was
+  read, and said an issuer whose latest report was not collected had not
+  filed it; the analyst factsheet counted filings it had not read.
+- `esef`: the coverage report compares the latest year a report was read
+  for, not the latest year a filing is listed for. That was the year now
+  being filed, over which a lake collected with `years` had read nothing,
+  and the comparison on the cover printed dashes and a bare per cent sign.
 
 ## 0.5.2
 

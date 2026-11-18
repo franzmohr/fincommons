@@ -601,10 +601,22 @@ if (length(missing_issuers) == nrow(panel)) {
 # or filed again with corrections, is a filing of its own with facts of its
 # own, and the figures of the year are taken from one of them: the one in
 # the language of the factsheet, then the one with fewer validation errors,
-# then the one the repository processed last. A filing without a json_url has
-# no facts and is never chosen while another one is there.
+# then the one the repository processed last. Only a filing this lake holds
+# facts for is chosen. The `json_url` of the index is not that: it says the
+# repository publishes facts for a filing, not that the pipeline collected
+# them, and a lake collected with `years` holds the index of every year and
+# the facts of a few. Taken as the one for the other, the years were chosen
+# from filings never read -- a sector total for a year printed over the one
+# issuer whose report of it was read -- and an issuer whose latest report
+# was not collected was said not to have filed it.
+filings_with_facts <- open_dataset(file.path(path_esef, "facts")) %>%
+  filter(lei %in% panel$LEI) %>%
+  select("filing") %>%
+  distinct() %>%
+  collect()
+
 filings <- filings_all %>%
-  filter(!is.na(json_url)) %>%
+  filter(filing %in% filings_with_facts$filing) %>%
   arrange(lei, period_end,
           coalesce(lang, "") != report_lang,
           coalesce(errors, 0L),
