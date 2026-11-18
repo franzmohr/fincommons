@@ -68,21 +68,21 @@ _FACT_COLUMNS = [f.name for f in facts_schema.fields] + ["_ERROR"]
 #: period and the day of submission resolve the relative contexts of the
 #: conversion, so they travel with the path.
 _WORK = StructType([
-    StructField("FILING", StringType(), False),
+    StructField("filing", StringType(), False),
     StructField("PATH", StringType(), False),
-    StructField("EDINETCODE", StringType(), True),
-    StructField("PERIODSTART", StringType(), True),
-    StructField("PERIODEND", StringType(), True),
+    StructField("edinet_code", StringType(), True),
+    StructField("period_start", StringType(), True),
+    StructField("period_end", StringType(), True),
     StructField("FILED", StringType(), True),
-    StructField("FILEDYEAR", StringType(), False),
+    StructField("filed_year", StringType(), False),
 ])
 
 
 def _error_frame(filing):
     """One row carrying a traceback, in the shape the reading hands back."""
     row = {column: [None] for column in _FACT_COLUMNS}
-    row["FILING"] = [filing]
-    row["FILEDYEAR"] = [None]
+    row["filing"] = [filing]
+    row["filed_year"] = [None]
     row["_ERROR"] = [f"reading {filing}\n{traceback.format_exc()}"]
     return pandas.DataFrame(row, columns=_FACT_COLUMNS)
 
@@ -101,15 +101,15 @@ def _read_one(work, chunk_rows=CHUNK_ROWS):
     """The facts of one archive, in chunks. It never raises."""
     try:
         rows = facts_from_archive(
-            work.PATH, work.FILING,
-            period_start=_as_date(work.PERIODSTART),
-            period_end=_as_date(work.PERIODEND),
+            work.PATH, work.filing,
+            period_start=_as_date(work.period_start),
+            period_end=_as_date(work.period_end),
             filed=_as_date(work.FILED),
-            edinet_code=work.EDINETCODE,
-            filed_year=int(work.FILEDYEAR),
+            edinet_code=work.edinet_code,
+            filed_year=int(work.filed_year),
         )
     except Exception:  # noqa: BLE001 - carried back, not swallowed
-        yield _error_frame(work.FILING)
+        yield _error_frame(work.filing)
         return
 
     names = _FACT_COLUMNS[:-1]
@@ -169,12 +169,12 @@ def outstanding(config_path, filings):
     which it cannot. The caller gets the document numbers so that it can
     collect them.
     """
-    wanted = filings.where("HASCSV = '1'").select(
-        "FILING", "EDINETCODE", "PERIODSTART", "PERIODEND", "SUBMITTED",
-        "FILEDYEAR").collect()
-    return [row["FILING"] for row in wanted
+    wanted = filings.where("has_csv = '1'").select(
+        "filing", "edinet_code", "period_start", "period_end", "submitted",
+        "filed_year").collect()
+    return [row["filing"] for row in wanted
             if not os.path.exists(path_bronze_document(config_path,
-                                                       row["FILING"], "csv"))]
+                                                       row["filing"], "csv"))]
 
 
 def build_facts(spark, config_path, filings, chunk_rows=CHUNK_ROWS):
@@ -196,16 +196,16 @@ def build_facts(spark, config_path, filings, chunk_rows=CHUNK_ROWS):
         The rows, with the errors in ``_ERROR``.
     """
     work = []
-    for row in filings.where("HASCSV = '1'").collect():
-        path = path_bronze_document(config_path, row["FILING"], "csv")
+    for row in filings.where("has_csv = '1'").collect():
+        path = path_bronze_document(config_path, row["filing"], "csv")
         if not os.path.exists(path):
             continue
         work.append((
-            row["FILING"], path, row["EDINETCODE"],
-            row["PERIODSTART"].isoformat() if row["PERIODSTART"] else None,
-            row["PERIODEND"].isoformat() if row["PERIODEND"] else None,
-            row["SUBMITTED"].date().isoformat() if row["SUBMITTED"] else None,
-            str(row["FILEDYEAR"]),
+            row["filing"], path, row["edinet_code"],
+            row["period_start"].isoformat() if row["period_start"] else None,
+            row["period_end"].isoformat() if row["period_end"] else None,
+            row["submitted"].date().isoformat() if row["submitted"] else None,
+            str(row["filed_year"]),
         ))
 
     if not work:
@@ -223,12 +223,12 @@ def build_facts(spark, config_path, filings, chunk_rows=CHUNK_ROWS):
 
 def _report_errors(frame):
     """Log the archives that could not be read, and return how many."""
-    failed = frame.where("_ERROR IS NOT NULL").select("FILING", "_ERROR").collect()
+    failed = frame.where("_ERROR IS NOT NULL").select("filing", "_ERROR").collect()
     for row in failed:
         logger.error(
             "The conversion could not be read\n%s", row["_ERROR"],
             extra=context(module="edinet", layer="silver", source=SOURCE,
-                          table="facts", file=f"{row['FILING']}.zip"),
+                          table="facts", file=f"{row['filing']}.zip"),
         )
     return len(failed)
 
@@ -267,12 +267,12 @@ def update_silver_edinet(spark, config_path, days=None, file_format=None,
     ) as outcome:
         filings = build_filings(spark, config_path, days).cache()
         try:
-            write_silver(rebalanced(filings, "FILEDYEAR"),
+            write_silver(rebalanced(filings, "filed_year"),
                          ref_silver_filings(config_path),
                          file_format=file_format,
-                         partition_by=("FILEDYEAR",))
+                         partition_by=("filed_year",))
             outcome["filings"] = filings.count()
-            outcome["with_conversion"] = filings.where("HASCSV = '1'").count()
+            outcome["with_conversion"] = filings.where("has_csv = '1'").count()
             outcome["not_collected"] = len(outstanding(config_path, filings))
 
             parsed = build_facts(spark, config_path, filings, chunk_rows).cache()
@@ -280,12 +280,12 @@ def update_silver_edinet(spark, config_path, days=None, file_format=None,
                 outcome["failed"] = _report_errors(parsed)
                 facts = parsed.where("_ERROR IS NULL") \
                     .select(*facts_schema.names)
-                years = [row["FILEDYEAR"] for row in
-                         facts.select("FILEDYEAR").distinct().collect()]
+                years = [row["filed_year"] for row in
+                         facts.select("filed_year").distinct().collect()]
                 replace_silver_partitions(
-                    rebalanced(facts, "FILEDYEAR"),
+                    rebalanced(facts, "filed_year"),
                     ref_silver_facts(config_path),
-                    "FILEDYEAR", sorted(years),
+                    "filed_year", sorted(years),
                     file_format=file_format or silver_format(config_path),
                 )
                 outcome["facts"] = facts.count()

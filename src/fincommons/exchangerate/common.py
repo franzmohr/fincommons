@@ -20,7 +20,7 @@ from pyspark.sql.types import DoubleType, StringType, StructType
 from ..addressing import load_paths, resolve  # noqa: F401
 
 internal_schema = StructType() \
-    .add("REFDATE", StringType(), False) \
+    .add("REFDT", StringType(), False) \
     .add("BASE", StringType(), False) \
     .add("QUOTE", StringType(), False) \
     .add("VALUE", DoubleType(), False) \

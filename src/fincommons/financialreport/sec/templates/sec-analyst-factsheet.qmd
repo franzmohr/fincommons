@@ -57,7 +57,7 @@ config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
 # The registrant, by its central index key, padded to ten digits as the
 # company files and the Silver layer spell it. This is NVIDIA Corporation;
 # any other registrant the sec pipeline has collected can be put here.
-cik <- "0001045810"
+issuer_cik <- "0001045810"
 
 # The number of financial years shown, counted back from the latest annual
 # report. One further year is read behind them, because a return puts a flow
@@ -293,18 +293,18 @@ for (table in c("filings", "facts")) {
   }
 }
 
-if (!grepl("^[0-9]{10}$", cik)) {
+if (!grepl("^[0-9]{10}$", issuer_cik)) {
   stop("The central index key is spelled padded to ten digits in the Silver ",
-       "layer, as the company files spell it: ", cik, " is not. NVIDIA is ",
+       "layer, as the company files spell it: ", issuer_cik, " is not. NVIDIA is ",
        "0001045810 and not 1045810.")
 }
 
 filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
-  filter(CIK == cik) %>%
+  filter(cik == issuer_cik) %>%
   collect()
 
 if (nrow(filings_all) == 0) {
-  stop("The table of filings lists no filing of ", cik, ". Collect the ",
+  stop("The table of filings lists no filing of ", issuer_cik, ". Collect the ",
        "company file of the registrant with the sec pipeline first.")
 }
 
@@ -312,8 +312,8 @@ if (nrow(filings_all) == 0) {
 # amendment restates, and the figure of a year as it was reported is the
 # figure of the report that was filed first.
 annual_all <- filings_all %>%
-  filter(sub("/.*", "", FORM) %in% annual_forms, !is.na(PERIODEND)) %>%
-  arrange(PERIODEND, FILED)
+  filter(sub("/.*", "", form) %in% annual_forms, !is.na(period_end)) %>%
+  arrange(period_end, filed)
 
 if (nrow(annual_all) == 0) {
   stop("The registrant has no annual report in the Silver layer. A company ",
@@ -322,20 +322,20 @@ if (nrow(annual_all) == 0) {
 }
 
 annual <- annual_all %>%
-  group_by(PERIODEND) %>%
+  group_by(period_end) %>%
   slice(1) %>%
   ungroup() %>%
-  arrange(PERIODEND) %>%
+  arrange(period_end) %>%
   slice_tail(n = n_years + 1) %>%
   # The year is named as the registrant names it on its own cover page: the
   # Commission carries the fiscal year of a filing, so a financial year that
   # ends in January is FY2026 here as it is in the registrant's own
   # reporting, and not 2025/26. Where the cover states none, the calendar
   # year of the period end stands in.
-  mutate(year = paste0("FY", coalesce(FY, as.integer(format(PERIODEND, "%Y")))))
+  mutate(year = paste0("fy", coalesce(fy, as.integer(format(period_end, "%Y")))))
 
-registrant_name <- annual %>% slice_tail(n = 1) %>% pull("NAME")
-framework <- annual %>% slice_tail(n = 1) %>% pull("FRAMEWORK")
+registrant_name <- annual %>% slice_tail(n = 1) %>% pull("name")
+framework <- annual %>% slice_tail(n = 1) %>% pull("framework")
 
 if (!is.na(framework) && framework != "US-GAAP") {
   warning("The registrant reports under ", framework, ". The concepts above ",
@@ -345,14 +345,14 @@ if (!is.na(framework) && framework != "US-GAAP") {
 }
 
 facts <- open_dataset(file.path(path_silver, "facts")) %>%
-  filter(CIK == cik) %>%
+  filter(cik == issuer_cik) %>%
   collect()
 
 # --------------------------------------------------------------------------
 # The figures, one row per financial year
 # --------------------------------------------------------------------------
 
-period_ends <- annual$PERIODEND
+period_ends <- annual$period_end
 
 # Every fact of an annual report that stands for one of the years shown: an
 # instant on the period end, or a flow over a period of about a year ending
@@ -360,24 +360,24 @@ period_ends <- annual$PERIODEND
 # aside here; which of the remaining filings a figure is taken from is the
 # question the basis answers, below.
 pool <- facts %>%
-  filter(!is.na(VALUE),
-         FILING %in% annual_all$FILING,
-         PRDEND %in% period_ends,
-         is.na(PRDSTART) |
-           (as.numeric(PRDEND - PRDSTART) >= min_days &
-              as.numeric(PRDEND - PRDSTART) <= max_days)) %>%
-  left_join(annual_all %>% select(FILING, filed_at = FILED), by = "FILING")
+  filter(!is.na(value),
+         filing %in% annual_all$filing,
+         prd_end %in% period_ends,
+         is.na(prd_start) |
+           (as.numeric(prd_end - prd_start) >= min_days &
+              as.numeric(prd_end - prd_start) <= max_days)) %>%
+  left_join(annual_all %>% select(filing, filed_at = filed), by = "filing")
 
 # The year's own report, by which a figure is judged to be the one first
 # reported or a later restatement.
-own_filing <- setNames(annual$FILING, as.character(annual$PERIODEND))
+own_filing <- setNames(annual$filing, as.character(annual$period_end))
 
 if (!basis %in% c("as-reported", "latest")) {
   stop("basis is \"as-reported\" or \"latest\", not ", basis)
 }
 
 if (basis == "as-reported") {
-  pool <- pool %>% filter(FILING == own_filing[as.character(PRDEND)])
+  pool <- pool %>% filter(filing == own_filing[as.character(prd_end)])
 }
 
 # The same fact may be tagged more than once in a report, in the statements
@@ -387,21 +387,21 @@ if (basis == "as-reported") {
 direction <- if (basis == "latest") -1 else 1
 
 figures <- pool %>%
-  mutate(PERIODEND = PRDEND, ord = direction * as.numeric(filed_at)) %>%
-  arrange(PERIODEND, CONCEPT, ord) %>%
-  group_by(PERIODEND, CONCEPT) %>%
+  mutate(period_end = prd_end, ord = direction * as.numeric(filed_at)) %>%
+  arrange(period_end, concept, ord) %>%
+  group_by(period_end, concept) %>%
   slice(1) %>%
   ungroup() %>%
-  select("PERIODEND", "CONCEPT", "UNIT", "VALUE", "FILING")
+  select("period_end", "concept", "unit", "value", "filing")
 
 # The currency the statements are kept in. The company files spell a unit as
 # the Commission spells it -- USD, not iso4217:USD -- and a per-share amount
 # carries USD/shares, which is why the unit of the total assets is what is
 # read and not the unit of the first fact that comes to hand.
 currency <- figures %>%
-  filter(CONCEPT == concepts[["assets"]]) %>%
+  filter(concept == concepts[["assets"]]) %>%
   slice_tail(n = 1) %>%
-  pull("UNIT")
+  pull("unit")
 if (length(currency) == 0) currency <- ""
 
 # --------------------------------------------------------------------------
@@ -425,11 +425,11 @@ if (length(currency) == 0) currency <- ""
 shares_concept <- concepts[["shares_diluted"]]
 
 shares_of <- function(filing, period_end) {
-  value <- facts$VALUE[facts$FILING == filing &
-                         facts$CONCEPT == shares_concept &
-                         facts$PRDEND == period_end &
-                         !is.na(facts$PRDSTART) &
-                         as.numeric(facts$PRDEND - facts$PRDSTART) >= min_days]
+  value <- facts$value[facts$filing == filing &
+                         facts$concept == shares_concept &
+                         facts$prd_end == period_end &
+                         !is.na(facts$prd_start) &
+                         as.numeric(facts$prd_end - facts$prd_start) >= min_days]
   if (length(value) == 0) NA_real_ else value[1]
 }
 
@@ -446,11 +446,11 @@ accumulated <- 1
 for (i in rev(seq_len(nrow(annual)))) {
   if (i < nrow(annual)) {
     accumulated <- accumulated *
-      split_ratio(annual$PERIODEND[i], annual$FILING[i], annual$FILING[i + 1])
+      split_ratio(annual$period_end[i], annual$filing[i], annual$filing[i + 1])
   }
   split_factor[i] <- accumulated
 }
-splits <- tibble(PERIODEND = annual$PERIODEND, split_factor = split_factor)
+splits <- tibble(period_end = annual$period_end, split_factor = split_factor)
 
 # The factor is a property of the report a figure was taken from and not of
 # the year the figure is about: a report filed after a split states every
@@ -460,19 +460,19 @@ splits <- tibble(PERIODEND = annual$PERIODEND, split_factor = split_factor)
 # adjusting it by its year's factor would adjust it twice. A figure from an
 # annual filing outside the window -- an amendment, say -- falls back to the
 # factor of the year it reports on.
-filing_splits <- tibble(FILING = annual$FILING, filing_factor = split_factor)
+filing_splits <- tibble(filing = annual$filing, filing_factor = split_factor)
 
 # One row per year, one column per key of the concepts above, from the first
 # of a key's concepts the year's report tags. A concept the registrant did
 # not tag at all stays a column of missing values, so that the figures below
 # show a gap rather than fail.
 keys_all <- unique(names(concepts))
-lookup <- tibble(key = names(concepts), CONCEPT = unname(concepts),
+lookup <- tibble(key = names(concepts), concept = unname(concepts),
                  preference = seq_along(concepts))
 
 tagged <- figures %>%
-  inner_join(lookup, by = "CONCEPT") %>%
-  group_by(PERIODEND, key) %>%
+  inner_join(lookup, by = "concept") %>%
+  group_by(period_end, key) %>%
   slice_min(preference, n = 1, with_ties = FALSE) %>%
   ungroup()
 
@@ -483,25 +483,25 @@ per_share_up <- c("shares_basic", "shares_diluted", "shares_outstanding")
 
 if (split_adjust) {
   tagged <- tagged %>%
-    left_join(filing_splits, by = "FILING") %>%
-    left_join(splits, by = "PERIODEND") %>%
+    left_join(filing_splits, by = "filing") %>%
+    left_join(splits, by = "period_end") %>%
     mutate(factor = coalesce(filing_factor, split_factor, 1),
-           VALUE = case_when(key %in% per_share_down ~ VALUE / factor,
-                             key %in% per_share_up ~ VALUE * factor,
-                             TRUE ~ VALUE))
+           value = case_when(key %in% per_share_down ~ value / factor,
+                             key %in% per_share_up ~ value * factor,
+                             TRUE ~ value))
 }
 
 wide <- tagged %>%
-  select("PERIODEND", "key", "VALUE") %>%
-  pivot_wider(names_from = "key", values_from = "VALUE") %>%
-  arrange(PERIODEND)
+  select("period_end", "key", "value") %>%
+  pivot_wider(names_from = "key", values_from = "value") %>%
+  arrange(period_end)
 for (key in setdiff(keys_all, names(wide))) {
   wide[[key]] <- NA_real_
 }
 wide <- wide %>%
-  left_join(annual %>% select("PERIODEND", "year", "FILING", "FORM", "FILED"),
-            by = "PERIODEND") %>%
-  left_join(splits, by = "PERIODEND")
+  left_join(annual %>% select("period_end", "year", "filing", "form", "filed"),
+            by = "period_end") %>%
+  left_join(splits, by = "period_end")
 
 # The adjustment above is made at selection, while the report each figure
 # came from is still known, and so before anything is derived from a share
@@ -515,9 +515,9 @@ if (!split_adjust) wide$split_factor <- 1
 # construction; under "latest" these are the restatements and the lines the
 # year's own report did not tag under a concept of the taxonomy.
 restated_used <- tagged %>%
-  left_join(tibble(PERIODEND = annual$PERIODEND, own = annual$FILING),
-            by = "PERIODEND") %>%
-  filter(FILING != own) %>%
+  left_join(tibble(period_end = annual$period_end, own = annual$filing),
+            by = "period_end") %>%
+  filter(filing != own) %>%
   count(key, name = "years")
 is_restated <- function(key) key %in% restated_used$key
 
@@ -543,7 +543,7 @@ is_restated <- function(key) key %in% restated_used$key
 # concept of the taxonomy, and registrants tag them.
 wide <- wide %>%
   mutate(
-    days = as.numeric(PERIODEND - lag(PERIODEND)),
+    days = as.numeric(period_end - lag(period_end)),
 
     # Statement of operations
     profit_group_shown = coalesce(profit_group, profit),
@@ -671,7 +671,7 @@ wide <- wide %>%
 shown <- wide %>% slice_tail(n = min(n_years, nrow(wide)))
 n_shown <- nrow(shown)
 years <- shown$year
-max_date <- max(shown$PERIODEND)
+max_date <- max(shown$period_end)
 cur <- shown %>% slice_tail(n = 1) %>% as.list()
 prv <- shown %>% slice(max(1, n_shown - 1)) %>% as.list()
 
@@ -684,20 +684,20 @@ prv <- shown %>% slice(max(1, n_shown - 1)) %>% as.list()
 # the instant they carry is the date the registrant measured them on rather
 # than the period end.
 cover_facts <- facts %>%
-  filter(FILING == tail(annual$FILING, 1), !is.na(VALUE)) %>%
+  filter(filing == tail(annual$filing, 1), !is.na(value)) %>%
   inner_join(tibble(key = names(cover_concepts),
-                    CONCEPT = unname(cover_concepts)), by = "CONCEPT") %>%
-  arrange(key, desc(PRDEND)) %>%
+                    concept = unname(cover_concepts)), by = "concept") %>%
+  arrange(key, desc(prd_end)) %>%
   group_by(key) %>%
   slice(1) %>%
   ungroup()
 
 cover_of <- function(key) {
-  value <- cover_facts$VALUE[cover_facts$key == key]
+  value <- cover_facts$value[cover_facts$key == key]
   if (length(value) == 0) NA_real_ else value
 }
 cover_date_of <- function(key) {
-  value <- cover_facts$PRDEND[cover_facts$key == key]
+  value <- cover_facts$prd_end[cover_facts$key == key]
   if (length(value) == 0) NA else value
 }
 ```
@@ -741,9 +741,9 @@ amount_label <- paste0(currency, " million")
 
 # The x-axis of every chart has one break per financial year, named as the
 # tables name it.
-year_labels <- setNames(shown$year, as.character(shown$PERIODEND))
+year_labels <- setNames(shown$year, as.character(shown$period_end))
 scale_x_years <- function(...) {
-  scale_x_date(expand = c(.02, 0), breaks = shown$PERIODEND,
+  scale_x_date(expand = c(.02, 0), breaks = shown$period_end,
                labels = function(d) year_labels[as.character(d)], ...)
 }
 
@@ -861,8 +861,8 @@ render_lines <- function(spec, data = shown, unit_header = NULL,
 # are to be read, and leaves the corporate design to the sourced script.
 chart_data <- function(keys, labels, scale_by = scale, data = shown) {
   data %>%
-    select(all_of(c("PERIODEND", keys))) %>%
-    pivot_longer(-"PERIODEND", names_to = "var") %>%
+    select(all_of(c("period_end", keys))) %>%
+    pivot_longer(-"period_end", names_to = "var") %>%
     mutate(value = value / scale_by,
            var = factor(var, levels = keys, labels = wrap_labels(labels, 34)))
 }
@@ -870,7 +870,7 @@ chart_data <- function(keys, labels, scale_by = scale, data = shown) {
 chart_stacked <- function(keys, labels, subtitle = amount_label,
                           scale_by = scale, ncol = 2, data = shown) {
   ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = PERIODEND, y = value, fill = var)) +
+         aes(x = period_end, y = value, fill = var)) +
     geom_col(width = 250) +
     geom_zeroline() +
     scale_x_years() +
@@ -885,7 +885,7 @@ chart_stacked <- function(keys, labels, subtitle = amount_label,
 chart_bars <- function(keys, labels, subtitle = amount_label,
                        scale_by = scale, digits = 0, ncol = 3, data = shown) {
   ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = PERIODEND, y = value, fill = var)) +
+         aes(x = period_end, y = value, fill = var)) +
     geom_col(position = position_dodge(width = 260), width = 240) +
     geom_zeroline() +
     scale_x_years() +
@@ -900,7 +900,7 @@ chart_bars <- function(keys, labels, subtitle = amount_label,
 chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
                         digits = 0, zero = TRUE, ncol = 3, data = shown) {
   g <- ggplot(chart_data(keys, labels, scale_by, data) %>% filter(!is.na(value)),
-              aes(x = PERIODEND, y = value, colour = var)) +
+              aes(x = period_end, y = value, colour = var)) +
     geom_line(linewidth = linewidth_corporate_design) +
     geom_point(size = 1.4) +
     scale_x_years() +
@@ -944,13 +944,13 @@ period_range <- paste0(years[1], " – ", years[n_shown])
 float <- cover_of("public_float")
 
 identity_items <- list()
-identity_items[["Central index key"]] <- cik
+identity_items[["Central index key"]] <- issuer_cik
 identity_items[["Framework"]] <- coalesce(framework, "–")
 identity_items[["Reporting currency"]] <- currency
 identity_items[["Financial years"]] <- period_range
 identity_items[["Latest period end"]] <- format(max_date, "%d %B %Y")
-identity_items[["Latest report"]] <- paste(tail(annual$FORM, 1), "filed",
-                                           format(tail(annual$FILED, 1), "%d %b %Y"))
+identity_items[["Latest report"]] <- paste(tail(annual$form, 1), "filed",
+                                           format(tail(annual$filed, 1), "%d %b %Y"))
 identity_items[["Public float"]] <- if (is.na(float)) "–" else
   paste(fmt(float / 1e9, 1), paste0(currency, " bn"))
 identity_items[["Reports read"]] <- as.character(nrow(annual))
@@ -1199,12 +1199,12 @@ shares_date <- cover_date_of("shares_on_cover")
 
 profile <- c(
   paste0("**", registrant_name, "** files with the Securities and Exchange ",
-         "Commission under central index key ", cik, ". The reports read ",
-         "here are ", paste(sort(unique(annual$FORM)), collapse = ", "),
+         "Commission under central index key ", issuer_cik, ". The reports read ",
+         "here are ", paste(sort(unique(annual$form)), collapse = ", "),
          " filings for the financial years ", period_range,
          ", prepared under ", coalesce(framework, "an unstated framework"),
          " and tagged against ", paste(sort(unique(unlist(strsplit(
-           annual$TAXONOMIES, ";")))), collapse = ", "),
+           annual$taxonomies, ";")))), collapse = ", "),
          "."),
   if (!is.na(float))
     paste0("On the cover of its latest annual report the registrant states ",
@@ -1599,8 +1599,8 @@ f$f_score <- rowSums(as.matrix(f[f_keys]), na.rm = TRUE)
 # confused.
 f$f_tested <- rowSums(!is.na(as.matrix(f[f_keys])))
 shown <- shown %>%
-  left_join(f %>% select("PERIODEND", all_of(f_keys), "f_score", "f_tested"),
-            by = "PERIODEND")
+  left_join(f %>% select("period_end", all_of(f_keys), "f_score", "f_tested"),
+            by = "period_end")
 
 f_rows <- tribble(
   ~key,          ~en,
@@ -1666,12 +1666,12 @@ chart_lines(c("f_score", "z_score"), c("F-score", "Z''-score"),
 # with the issuer's own concepts, and here that share is unknowable from the
 # data, because those facts are not published at all.
 coverage <- facts %>%
-  filter(FILING %in% annual$FILING, !is.na(VALUE)) %>%
-  left_join(annual %>% select("FILING", "year", "PERIODEND"), by = "FILING") %>%
+  filter(filing %in% annual$filing, !is.na(value)) %>%
+  left_join(annual %>% select("filing", "year", "period_end"), by = "filing") %>%
   group_by(year) %>%
   summarise(facts_total = n(),
-            facts_of_the_year = sum(PRDEND == PERIODEND),
-            taxonomies = n_distinct(sub(":.*", "", CONCEPT)),
+            facts_of_the_year = sum(prd_end == period_end),
+            taxonomies = n_distinct(sub(":.*", "", concept)),
             .groups = "drop")
 
 found <- tibble(year = years) %>%
@@ -1713,9 +1713,9 @@ missing <- keys_all[vapply(keys_all, function(k) all(is.na(shown[[k]])),
 # the basis, so that a line missing under "as-reported" can be reported as
 # recoverable under "latest".
 anywhere <- facts %>%
-  filter(FILING %in% annual_all$FILING, PRDEND %in% shown$PERIODEND,
-         !is.na(VALUE)) %>%
-  inner_join(lookup, by = "CONCEPT") %>%
+  filter(filing %in% annual_all$filing, prd_end %in% shown$period_end,
+         !is.na(value)) %>%
+  inner_join(lookup, by = "concept") %>%
   distinct(key)
 
 if (length(missing) == 0) {
@@ -1725,7 +1725,7 @@ if (length(missing) == 0) {
   temp <- lookup %>%
     filter(key %in% missing) %>%
     group_by(key) %>%
-    summarise(concepts = paste(sub("^[a-z-]*:", "", CONCEPT), collapse = ", "),
+    summarise(concepts = paste(sub("^[a-z-]*:", "", concept), collapse = ", "),
               .groups = "drop") %>%
     mutate(where = ifelse(key %in% anywhere$key,
                           "a later report tags it",
@@ -1827,15 +1827,15 @@ knitr::kable(temp, col.names = c(amount_label, years),
 # it or not. A registrant may file the same year twice -- amended, or
 # restated in a later report -- and each filing carries facts of its own.
 temp <- annual_all %>%
-  filter(PERIODEND %in% shown$PERIODEND) %>%
-  arrange(desc(PERIODEND), FILED) %>%
-  transmute(FILING,
-            FORM,
-            PERIODEND = format(PERIODEND, "%Y-%m-%d"),
-            FILED = format(FILED, "%Y-%m-%d"),
-            FY = ifelse(is.na(FY), "", as.character(FY)),
-            used = ifelse(FILING %in% shown$FILING, "✔", ""),
-            FACTS = FACTS)
+  filter(period_end %in% shown$period_end) %>%
+  arrange(desc(period_end), filed) %>%
+  transmute(filing,
+            form,
+            period_end = format(period_end, "%Y-%m-%d"),
+            filed = format(filed, "%Y-%m-%d"),
+            fy = ifelse(is.na(fy), "", as.character(fy)),
+            used = ifelse(filing %in% shown$filing, "✔", ""),
+            facts = facts)
 
 knitr::kable(temp,
              col.names = c("Accession number", "Form", "Period end", "Filed",

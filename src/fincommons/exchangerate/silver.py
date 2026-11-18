@@ -168,10 +168,10 @@ def _convert2ccy_spark(data, config_path, date, amount, currency, target):
         )
 
     fxdata = connect_to_exchangerate(spark, config_path) \
-        .filter(func.col("BASE") == target) \
-        .select(func.col("REFDATE").cast("date").alias(day_column),
-                func.col("QUOTE").alias(currency),
-                func.col("VALUE").alias(fxrate_column_name))
+        .filter(func.col("base") == target) \
+        .select(func.col("ref_date").cast("date").alias(day_column),
+                func.col("quote").alias(currency),
+                func.col("value").alias(fxrate_column_name))
     if fxdata.limit(1).count() == 0 \
             and data.filter(~func.col(currency).eqNullSafe(target)).limit(1).count() > 0:
         raise ValueError(
@@ -231,9 +231,9 @@ def check_internal_rates(internal, source, base = "EUR"):
         Naming each problem found, with a few of the rows that have it.
     """
     problems = {
-        "a REFDATE that is not a date written as YYYY-MM-DD":
-            ~func.col("REFDATE").rlike("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-            | func.to_date(func.col("REFDATE"), "yyyy-MM-dd").isNull(),
+        "a REFDT that is not a date written as YYYY-MM-DD":
+            ~func.col("REFDT").rlike("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+            | func.to_date(func.col("REFDT"), "yyyy-MM-dd").isNull(),
         f"a BASE other than {base}": func.col("BASE") != base,
         "a VALUE that is missing or not positive":
             func.col("VALUE").isNull() | (func.col("VALUE") <= 0),
@@ -246,7 +246,7 @@ def check_internal_rates(internal, source, base = "EUR"):
             examples = [tuple(row) for row in rows.limit(3).collect()]
             found.append(f"{count} rows with {problem}, e.g. {examples}")
 
-    duplicated = internal.groupBy("REFDATE", "BASE", "QUOTE").count() \
+    duplicated = internal.groupBy("REFDT", "BASE", "QUOTE").count() \
         .filter(func.col("count") > 1)
     count = duplicated.count()
     if count:
@@ -301,15 +301,15 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
 
     ecb_file = os.path.join(path_bronze_ecb_exchangerate(config_path), "ecb_exchangerate.parquet")
     ecb = spark.read.parquet(ecb_file) \
-        .unpivot(ids = "Date", values = None, variableColumnName = "QUOTE", valueColumnName = "VALUE") \
-        .filter(func.col("VALUE").isNotNull()) \
-        .withColumn("BASE", func.lit("EUR")) \
-        .withColumn("TYPE", func.lit("ref")) \
-        .withColumn("SOURCE", func.lit("ECB")) \
-        .withColumnRenamed("Date", "REFDATE") \
-        .select("REFDATE", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE")
+        .unpivot(ids = "Date", values = None, variableColumnName = "quote", valueColumnName = "value") \
+        .filter(func.col("value").isNotNull()) \
+        .withColumn("base", func.lit("EUR")) \
+        .withColumn("type", func.lit("ref")) \
+        .withColumn("source", func.lit("ECB")) \
+        .withColumnRenamed("Date", "ref_date") \
+        .select("ref_date", "base", "quote", "value", "type", "source")
 
-    ecb_max_date = ecb.select(func.max("REFDATE")).first()[0]
+    ecb_max_date = ecb.select(func.max("ref_date")).first()[0]
 
     # A rebase to a currency the ECB does not quote finds no euro leg to divide
     # by, and every row of the table would be dropped: the table would be
@@ -321,7 +321,7 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
                 "The table is based on the euro already; leave rebase out "
                 "rather than rebasing to 'EUR'."
             )
-        if ecb.filter(func.col("QUOTE") == rebase).limit(1).count() == 0:
+        if ecb.filter(func.col("quote") == rebase).limit(1).count() == 0:
             raise ValueError(
                 f"Cannot rebase to {rebase!r}: the ECB reference rates in the "
                 f"Bronze layer hold no rate against it. The table was left as "
@@ -333,17 +333,17 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
         bis = spark.read.parquet(bis_file) \
             .filter(func.col("FREQ:Frequency") == "D: Daily") \
             .filter(func.substring(func.col("COLLECTION:Collection"), 0, 1) == "A") \
-            .withColumn("QUOTE", func.substring(func.col("CURRENCY:Currency"), 0, 3)) \
-            .filter(func.col("QUOTE") != "EUR") \
-            .withColumn("BASE", func.lit("USD")) \
-            .withColumn("SOURCE", func.lit("BIS")) \
-            .withColumnRenamed("TIME_PERIOD:Time period or range", "REFDATE") \
-            .withColumnRenamed("OBS_VALUE:Observation Value", "VALUE") \
-            .filter(func.col("VALUE").isNotNull()) \
-            .withColumn("TYPE", func.lit("avg")) \
-            .select("REFDATE", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE")
+            .withColumn("quote", func.substring(func.col("CURRENCY:Currency"), 0, 3)) \
+            .filter(func.col("quote") != "EUR") \
+            .withColumn("base", func.lit("USD")) \
+            .withColumn("source", func.lit("BIS")) \
+            .withColumnRenamed("TIME_PERIOD:Time period or range", "ref_date") \
+            .withColumnRenamed("OBS_VALUE:Observation Value", "value") \
+            .filter(func.col("value").isNotNull()) \
+            .withColumn("type", func.lit("avg")) \
+            .select("ref_date", "base", "quote", "value", "type", "source")
         
-        bis_max_date = bis.select(func.max("REFDATE")).first()[0]
+        bis_max_date = bis.select(func.max("ref_date")).first()[0]
 
         # The table ends on the BIS's last day, so there has to be one. A
         # Bronze file without a single daily average -- a download that
@@ -364,9 +364,17 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
             .options(header='True', delimiter=',') \
             .schema(internal_schema) \
             .csv(internal_file) \
-            .select("REFDATE", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE")
+            .select("REFDT", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE")
         check_internal_rates(internal, internal_file)
-        internal_max_date = internal.select(func.max("REFDATE")).first()[0]
+        # The file is a Bronze input and keeps its own names; the Silver names
+        # are taken on here, which is the one place the two layers meet.
+        internal = internal.select(func.col("REFDT").alias("ref_date"),
+                                   func.col("BASE").alias("base"),
+                                   func.col("QUOTE").alias("quote"),
+                                   func.col("VALUE").alias("value"),
+                                   func.col("TYPE").alias("type"),
+                                   func.col("SOURCE").alias("source"))
+        internal_max_date = internal.select(func.max("ref_date")).first()[0]
         if internal_max_date is None:
             logger.warning(
                 "The internal exchange rates hold no rows, only the public "
@@ -383,9 +391,8 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
     # see the cut further down. The last day of each source is logged, so that
     # a source that has fallen behind is visible.
     logger.info(
-        "Combining the sources, the table ending on the BIS's last day"
-        if use_bis else
-        "Combining the sources, each up to its own last day",
+        "Combining the sources, the table ending on the BIS's last day" if use_bis
+        else "Combining the sources, each up to its own last day",
         extra=context(
             module="exchangerate",
             layer="silver",
@@ -399,16 +406,16 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
     # Convert BIS' USD-FX-rates into EUR-FX-rates
     if use_bis:
         eur_usd = ecb \
-            .filter((func.col("BASE") == "EUR") & (func.col("QUOTE") == "USD")) \
-            .select("REFDATE", "VALUE") \
-            .withColumnRenamed("VALUE", "FX")
+            .filter((func.col("base") == "EUR") & (func.col("quote") == "USD")) \
+            .select("ref_date", "value") \
+            .withColumnRenamed("value", "fx")
         
         bis = bis \
-            .join(eur_usd, on = "REFDATE", how = "leftouter") \
-            .filter(func.col("FX").isNotNull()) \
-            .withColumn("VALUE", func.col("VALUE") * func.col("FX")) \
-            .drop("FX") \
-            .withColumn("BASE", func.lit("EUR"))
+            .join(eur_usd, on = "ref_date", how = "leftouter") \
+            .filter(func.col("fx").isNotNull()) \
+            .withColumn("value", func.col("value") * func.col("fx")) \
+            .drop("fx") \
+            .withColumn("base", func.lit("EUR"))
     
     # Internal over ECB over BIS. The precedence is carried by an explicit rank
     # rather than by SOURCE, because the SOURCE values of the internal data set
@@ -417,22 +424,22 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
     # that two rows of one source for the same day and pair -- the BIS carries
     # a series per reference area, and areas share currencies -- are settled
     # the same way on every run rather than by the order Spark reads them in.
-    window_spec = Window.partitionBy("REFDATE", "BASE", "QUOTE").orderBy(
-        func.col("source_rank"), func.col("VALUE"), func.col("SOURCE"), func.col("TYPE"))
+    window_spec = Window.partitionBy("ref_date", "base", "quote").orderBy(
+        func.col("_source_rank"), func.col("value"), func.col("source"), func.col("type"))
 
     if use_internal:
-        result = internal.withColumn("source_rank", func.lit(1)) \
-            .union(ecb.withColumn("source_rank", func.lit(2)))
+        result = internal.withColumn("_source_rank", func.lit(1)) \
+            .union(ecb.withColumn("_source_rank", func.lit(2)))
     else:
-        result = ecb.withColumn("source_rank", func.lit(2))
+        result = ecb.withColumn("_source_rank", func.lit(2))
 
     if use_bis:
-        result = result.union(bis.withColumn("source_rank", func.lit(3)))
+        result = result.union(bis.withColumn("_source_rank", func.lit(3)))
     
     result = result \
-        .withColumn("row_ctrpty", func.row_number().over(window_spec)) \
-        .filter(func.col("row_ctrpty") == 1) \
-        .drop("row_ctrpty", "source_rank")
+        .withColumn("_row_ctrpty", func.row_number().over(window_spec)) \
+        .filter(func.col("_row_ctrpty") == 1) \
+        .drop("_row_ctrpty", "_source_rank")
     
     # Generate sequences between dates. The fill follows the time series of
     # the pair and not that of the individual source, because the quote that
@@ -447,18 +454,18 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
     # whatever the reason for it. A run lasts at most MAX_FILL_DAYS after its
     # quote, so a pair that goes unquoted for longer has no rate on the days
     # beyond.
-    window_spec = Window.partitionBy("BASE", "QUOTE").orderBy("REFDATE")
+    window_spec = Window.partitionBy("base", "quote").orderBy("ref_date")
     result = result \
-        .withColumn("next_date", func.lead("REFDATE").over(window_spec)) \
-        .withColumn("next_date", func.date_sub(func.col("next_date"), 1)) \
-        .withColumn("next_date", func.when(func.col("next_date").isNull(), func.col("REFDATE")).otherwise(func.col("next_date"))) \
-        .withColumn("next_date", func.least(
-            func.col("next_date"), func.date_add(func.col("REFDATE"), MAX_FILL_DAYS))) \
-        .withColumn("dates", func.sequence(func.col("REFDATE"), func.col("next_date"))) \
-        .select(func.posexplode(func.col("dates")).alias("POS", "REFDATE"),
-                "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE") \
-        .withColumn("IMPUTED", func.col("POS") > 0) \
-        .drop("POS")
+        .withColumn("_next_date", func.lead("ref_date").over(window_spec)) \
+        .withColumn("_next_date", func.date_sub(func.col("_next_date"), 1)) \
+        .withColumn("_next_date", func.when(func.col("_next_date").isNull(), func.col("ref_date")).otherwise(func.col("_next_date"))) \
+        .withColumn("_next_date", func.least(
+            func.col("_next_date"), func.date_add(func.col("ref_date"), MAX_FILL_DAYS))) \
+        .withColumn("_dates", func.sequence(func.col("ref_date"), func.col("_next_date"))) \
+        .select(func.posexplode(func.col("_dates")).alias("_POS", "ref_date"),
+                "base", "quote", "value", "type", "source") \
+        .withColumn("imputed", func.col("_POS") > 0) \
+        .drop("_POS")
 
     # A run that uses the BIS ends where the BIS ends. The BIS publishes with
     # a lag of a few days, and the days beyond it would be described by the
@@ -473,31 +480,32 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
     # last quote on or before it rather than losing its fill along with the
     # quote beyond the cut that opened the run it belongs to.
     if use_bis:
-        result = result.filter(func.col("REFDATE") <= func.to_date(func.lit(bis_max_date)))
+        result = result.filter(
+            func.col("ref_date") <= func.to_date(func.lit(bis_max_date)))
 
     if rebase is not None:
 
         eur = result \
-            .filter((func.col("BASE") == "EUR") & (func.col("QUOTE") == rebase)) \
-            .withColumn("QUOTE", func.lit("EUR")) \
-            .withColumn("BASE", func.lit(rebase)) \
-            .withColumn("VALUE", 1 / func.col("VALUE"))
+            .filter((func.col("base") == "EUR") & (func.col("quote") == rebase)) \
+            .withColumn("quote", func.lit("EUR")) \
+            .withColumn("base", func.lit(rebase)) \
+            .withColumn("value", 1 / func.col("value"))
         
         eur_rebase = result \
-            .filter((func.col("BASE") == "EUR") & (func.col("QUOTE") == rebase)) \
-            .select("REFDATE", "VALUE", "IMPUTED") \
-            .withColumnRenamed("VALUE", "FX") \
-            .withColumnRenamed("IMPUTED", "FX_IMPUTED")
+            .filter((func.col("base") == "EUR") & (func.col("quote") == rebase)) \
+            .select("ref_date", "value", "imputed") \
+            .withColumnRenamed("value", "fx") \
+            .withColumnRenamed("imputed", "fx_imputed")
         
         result = result \
-            .filter(func.col("BASE") == "EUR") \
-            .join(eur_rebase, on = "REFDATE", how = "leftouter") \
-            .filter(func.col("FX").isNotNull()) \
-            .withColumn("VALUE", func.col("VALUE") / func.col("FX")) \
-            .withColumn("IMPUTED", func.col("IMPUTED") | func.col("FX_IMPUTED")) \
-            .drop("FX", "FX_IMPUTED") \
-            .withColumn("BASE", func.lit(rebase)) \
-            .filter(func.col("BASE") != func.col("QUOTE"))
+            .filter(func.col("base") == "EUR") \
+            .join(eur_rebase, on = "ref_date", how = "leftouter") \
+            .filter(func.col("fx").isNotNull()) \
+            .withColumn("value", func.col("value") / func.col("fx")) \
+            .withColumn("imputed", func.col("imputed") | func.col("fx_imputed")) \
+            .drop("fx", "fx_imputed") \
+            .withColumn("base", func.lit(rebase)) \
+            .filter(func.col("base") != func.col("quote"))
 
         result = result.unionByName(eur)
 

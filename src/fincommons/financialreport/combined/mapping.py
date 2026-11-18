@@ -64,7 +64,7 @@ FIRST_CONCEPT = 1
 #: added here only once its concepts are agreed to mean the same figure in
 #: every framework the catalogue defines it for, because a materialised
 #: identifier is read by people who will not go back to the caveat: a query
-#: filtering on ``MEASURE = 'assets'`` is making the claim that the rows it
+#: filtering on ``measure = 'assets'`` is making the claim that the rows it
 #: gets back are comparable, and this tuple is where that claim is made.
 #:
 #: Total assets is first because it is the cleanest of the eight. One element
@@ -148,7 +148,7 @@ FIRST_CONCEPT = 1
 #: exactly the groups a cross-regime comparison is about.
 #:
 #: The consequence is a skew and not only a gap, which a benchmark has to
-#: know. A query over ``MEASURE = 'equity'`` reaches the registrants that
+#: know. A query over ``measure = 'equity'`` reaches the registrants that
 #: tag the including-NCI total, and those are more often groups that have
 #: non-controlling interests to report. It is not a random sample of the
 #: population. Counting the rows says how many filings were named, never how
@@ -176,7 +176,7 @@ FIRST_CONCEPT = 1
 #: and the column names it. In the United States it states only
 #: ``us-gaap:NetIncomeLoss``, and the column names nothing, though the
 #: figure is the same one. So the Japanese population under
-#: ``MEASURE = 'profit_loss'`` is close to every filer, while the American
+#: ``measure = 'profit_loss'`` is close to every filer, while the American
 #: population is conditional on having non-controlling interests to report.
 #: The two samples are selected by different rules, and a comparison of
 #: their medians is not a comparison of the two regimes. The same holds for
@@ -586,16 +586,16 @@ def with_measures(facts, framework=None, packages=("fincommons",)):
         )
 
     lookup = spark.createDataFrame(rows, schema=types.StructType([
-        types.StructField("MEASURE", types.StringType(), nullable=False),
-        types.StructField("CONCEPT", types.StringType(), nullable=False),
-        types.StructField("MEASURE_PRIORITY", types.IntegerType(), nullable=False),
+        types.StructField("measure", types.StringType(), nullable=False),
+        types.StructField("concept", types.StringType(), nullable=False),
+        types.StructField("measure_priority", types.IntegerType(), nullable=False),
     ]))
 
-    stored = [name for name in ("MEASURE", "MEASURE_PRIORITY")
+    stored = [name for name in ("measure", "measure_priority")
               if name in facts.columns]
     if stored:
         facts = facts.drop(*stored)
-    return facts.join(func.broadcast(lookup), ["CONCEPT"], "left")
+    return facts.join(func.broadcast(lookup), ["concept"], "left")
 
 
 def measure_values(facts, measure, packages=("fincommons",)):
@@ -648,19 +648,19 @@ def measure_values(facts, measure, packages=("fincommons",)):
         )
 
     labelled = with_measures(facts, packages=packages) \
-        .where(func.col("MEASURE") == wanted)
+        .where(func.col("measure") == wanted)
     consolidated = func.lit(0)
-    if "DIMENSIONS" in facts.columns:
+    if "dimensions" in facts.columns:
         labelled = labelled.where(
-            func.col("DIMENSIONS").isNull()
-            | func.col("DIMENSIONS").isin(list(BASIS_MEMBERS)))
+            func.col("dimensions").isNull()
+            | func.col("dimensions").isin(list(BASIS_MEMBERS)))
         # The group's figure before the parent company's, where a filing
         # states both; see BASIS_MEMBERS.
-        consolidated = func.when(func.col("DIMENSIONS").isNull(),
+        consolidated = func.when(func.col("dimensions").isNull(),
                                  func.lit(0)).otherwise(func.lit(1))
 
-    best = Window.partitionBy("FILING", "PRDSTART", "PRDEND") \
-        .orderBy(consolidated, "MEASURE_PRIORITY")
+    best = Window.partitionBy("filing", "prd_start", "prd_end") \
+        .orderBy(consolidated, "measure_priority")
     return (
         labelled
         .withColumn("_rank", func.row_number().over(best))

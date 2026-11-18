@@ -76,14 +76,16 @@ def update_silver_internal(spark, config_path):
         .options(header='True', delimiter=',') \
         .schema(internal_schema) \
         .csv(internal_file) \
-        .select("REFDT", "INSTRID", "VALUE")
+        .select(func.col("REFDT").alias("ref_date"),
+                func.col("INSTRID").alias("instr_id"),
+                func.col("VALUE").alias("value"))
 
     # Checked here, while the stage can still fail on its own, rather than left
     # to the merge: inside a batch the rows are only read when every source is
     # merged together, and an error then would take the other sources with it.
     unreadable = bronze.filter(
-        func.col("REFDT").isNull() | func.col("INSTRID").isNull()
-        | func.col("VALUE").isNull()
+        func.col("ref_date").isNull() | func.col("instr_id").isNull()
+        | func.col("value").isNull()
     ).limit(5).collect()
     if unreadable:
         raise ValueError(

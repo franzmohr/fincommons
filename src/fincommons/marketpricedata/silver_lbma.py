@@ -44,10 +44,10 @@ def _update_silver_lbma_series(spark, config_path, parquet_path, value_column,
     if bronze is not None:
 
         bronze = bronze \
-            .withColumn("INSTRID", func.lit(instrid)) \
-            .withColumnRenamed("date", "REFDT") \
-            .withColumnRenamed(value_column, "VALUE") \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumn("instr_id", func.lit(instrid)) \
+            .withColumnRenamed("date", "ref_date") \
+            .withColumnRenamed(value_column, "value") \
+            .select("ref_date", "instr_id", "value")
 
         standard_upsert(spark, config_path, bronze)
 

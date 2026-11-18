@@ -86,13 +86,13 @@ CHECK_CATALOGUE_COLUMNS = ("dataset", "code", "severity", "title", "meaning",
                            "remedy")
 
 #: The column every issue table carries the code in.
-ISSUE_COLUMN = "ISSUE"
+ISSUE_COLUMN = "issue"
 
 #: The column every issue table carries the day the check was made in. The
 #: issues of a partition are replaced as a whole when it is checked again, so
 #: this says when the rows that are there were found and not when the problem
 #: arose.
-CHECKED_COLUMN = "CHECKED"
+CHECKED_COLUMN = "checked"
 
 
 def _root(package):
@@ -408,27 +408,27 @@ def issue_counts(issues, by=None, packages=("fincommons",), dataset=None):
     spark = issues.sparkSession
 
     counted = (issues.groupBy(*by, ISSUE_COLUMN)
-               .agg(func.count(func.lit(1)).alias("RECORDS")))
+               .agg(func.count(func.lit(1)).alias("records")))
 
     catalogue = check_catalogue(dataset=dataset, packages=packages)
     rows = [(row.code, row.severity, row.title)
             for row in catalogue.itertuples()]
     described = spark.createDataFrame(rows, schema=types.StructType([
         types.StructField(ISSUE_COLUMN, types.StringType(), nullable=False),
-        types.StructField("SEVERITY", types.StringType(), nullable=False),
-        types.StructField("TITLE", types.StringType(), nullable=False),
+        types.StructField("severity", types.StringType(), nullable=False),
+        types.StructField("title", types.StringType(), nullable=False),
     ]))
 
     rank = func.lit(len(SEVERITIES))
     for i, name in enumerate(SEVERITIES):
-        rank = func.when(func.col("SEVERITY") == name, func.lit(i)).otherwise(rank)
+        rank = func.when(func.col("severity") == name, func.lit(i)).otherwise(rank)
 
     return (counted
             .join(func.broadcast(described), [ISSUE_COLUMN], "left")
             .withColumn("_rank", rank)
-            .orderBy("_rank", func.col("RECORDS").desc(), ISSUE_COLUMN)
+            .orderBy("_rank", func.col("records").desc(), ISSUE_COLUMN)
             .drop("_rank")
-            .select(*by, ISSUE_COLUMN, "SEVERITY", "TITLE", "RECORDS"))
+            .select(*by, ISSUE_COLUMN, "severity", "title", "records"))
 
 
 def with_issues(records, issues, keys, separator="+"):

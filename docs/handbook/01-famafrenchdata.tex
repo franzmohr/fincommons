@@ -28,7 +28,7 @@ A file is downloaded only where it has changed. The server states when a file wa
 
 \subsection{Silver layer}
 
-The Silver layer holds one table with a row per file, table, series and period. Its seven columns are the date of the period \verb|REFDT| -- the day for daily and weekly rows, the last day of the month for monthly rows and the 31st of December for annual ones --, the file \verb|DATASET|, a code for the kind of table within the file \verb|TABLE|, the frequency \verb|FREQUENCY| (\verb|D|, \verb|W|, \verb|M| or \verb|A|), the series \verb|SERIES| as the file's header names it, the value \verb|VALUE| as published, and the title of the table \verb|TITLE| as published, kept so that every code can be checked against what the library says. No column is ever null: the library writes a missing value as $-99.99$ or $-999$, and such a value is left out rather than written as a null. Returns and factors stay in percent, as published, because a table that silently divided some of its values by a hundred would be read wrongly by everyone who knows the library.
+The Silver layer holds one table with a row per file, table, series and period. Its seven columns are the date of the period \verb|ref_date| -- the day for daily and weekly rows, the last day of the month for monthly rows and the 31st of December for annual ones --, the file \verb|dataset|, a code for the kind of table within the file \verb|table|, the frequency \verb|frequency| (\verb|D|, \verb|W|, \verb|M| or \verb|A|), the series \verb|series| as the file's header names it, the value \verb|value| as published, and the title of the table \verb|title| as published, kept so that every code can be checked against what the library says. No column is ever null: the library writes a missing value as $-99.99$ or $-999$, and such a value is left out rather than written as a null. Returns and factors stay in percent, as published, because a table that silently divided some of its values by a hundred would be read wrongly by everyone who knows the library.
 
 The table is partitioned by the file and rebuilt file by file. Each file whose Bronze collection the table was not built from is read again and replaces its own partition, and the other partitions are left as they are. As Delta the replacement is one transaction; as Parquet a reader of a partition that is being rewritten may find it missing for a moment, as for the other modules. Which collection each partition was built from is recorded in a small mark per file beside the table, written after the partition is in place, so a run that dies leaves the mark behind and the next run builds the file again. In the month's first run every file is rebuilt, since every file has changed; what the arrangement buys is that a run in which a few downloads failed, or a run repeated after one that failed half-way, does only the work that is left.
 
@@ -47,7 +47,7 @@ The titles are prose and vary from one file to the next: \emph{Average Firm Size
 	\small
 	\begin{tabular}{p{4.6cm}p{10cm}}
 		\hline
-		\verb|TABLE| & What it holds \\
+		\verb|table| & What it holds \\
 		\hline
 		\verb|FACTORS| & the factor returns of a factor file, in percent \\
 		\verb|BREAKPOINTS| & the breakpoints of a sort: counts of firms and percentiles \\

@@ -38,7 +38,7 @@ Kojima's annual report for the year to 31 August 2026 comes to 1,099 facts: 1,08
 
 Two things turn a label into dates, and the better one comes first. **A filing states its own financial year and the comparative one among its facts**, in the document and entity information: `jpdei_cor:CurrentFiscalYearStartDateDEI` and the three beside it. Those are used as reported, so the two periods nearly every use of these figures rests on are the filer's own dates rather than arithmetic. Only where no anchor covers the label -- the year before the comparative, and everything further back -- is the period shifted by whole years from the anchor, which is exact only where the filer's years are of equal length. A report stating five years of net sales is therefore anchored for two of them and shifted for three.
 
-A label whose shape is not recognised yields no dates at all rather than a guess, and `CONTEXT` and `RELATIVE` are carried beside the dates so that what each one rested on can always be read. The XBRL instance of the filing carries the true dates for every context; a lake that needs them for the older years needs the instance and a parser, which is not this module.
+A label whose shape is not recognised yields no dates at all rather than a guess, and `context` and `relative` are carried beside the dates so that what each one rested on can always be read. The XBRL instance of the filing carries the true dates for every context; a lake that needs them for the older years needs the instance and a parser, which is not this module.
 
 ### Source and terms
 
@@ -129,21 +129,21 @@ edinet.update_edinet(spark, "paths.yaml", start=earliest_retrievable())
 
 ### `filings`
 
-One row per document the collected indexes name, partitioned by `FILEDYEAR`. `FILING` is the 書類管理番号, the document management number the API addresses a filing by and the key of everything else here; `INDEXDATE` is the calendar day whose index the row came from, which is what a run collects by.
+One row per document the collected indexes name, partitioned by `filed_year`. `filing` is the 書類管理番号, the document management number the API addresses a filing by and the key of everything else here; `index_date` is the calendar day whose index the row came from, which is what a run collects by.
 
-`HASCSV` is the column the module turns on: the agency converts the XBRL of a filing where it can and says per filing whether it did, and a filing whose flag is not `'1'` contributes nothing to the table of facts -- exactly as an ESEF filing with no `JSONURL` does. `DOCTYPE` says what kind of document it is, `'120'` being the annual securities report; see `REPORT_TYPES`.
+`has_csv` is the column the module turns on: the agency converts the XBRL of a filing where it can and says per filing whether it did, and a filing whose flag is not `'1'` contributes nothing to the table of facts -- exactly as an ESEF filing with no `json_url` does. `doc_type` says what kind of document it is, `'120'` being the annual securities report; see `REPORT_TYPES`.
 
-Four states travel with a filing and all four are carried rather than acted on: `WITHDRAWN` marks a filing taken back, `EDITED` one an official of a finance bureau has corrected, `DISCLOSED` one withheld from disclosure, and `LEGAL` whether it is on public view, in the extension period, or past both. A filing in the last state is still named by an index collected earlier and can no longer be fetched, which is the thing this module's Bronze layer exists to survive.
+Four states travel with a filing and all four are carried rather than acted on: `withdrawn` marks a filing taken back, `edited` one an official of a finance bureau has corrected, `disclosed` one withheld from disclosure, and `legal` whether it is on public view, in the extension period, or past both. A filing in the last state is still named by an index collected earlier and can no longer be fetched, which is the thing this module's Bronze layer exists to survive.
 
 Eight of the twenty-nine fields an index carries are deliberately absent, and the schema's docstring says which and why.
 
 ### `facts`
 
-One row per fact of the conversion, partitioned by `FILEDYEAR`, the year the filing was made -- which only moves forward, as a financial year does not, since one report states five of them. The columns a fact shares with the other two regimes are spelled as they spell them, so that a module combining them is combining tables of one shape rather than translating between them.
+One row per fact of the conversion, partitioned by `filed_year`, the year the filing was made -- which only moves forward, as a financial year does not, since one report states five of them. The columns a fact shares with the other two regimes are spelled as they spell them, so that a module combining them is combining tables of one shape rather than translating between them.
 
-Three columns have no counterpart in `esef` or `sec`. `LABEL` is the Japanese name of the element, which the conversion states beside it and which is the only thing in these tables that says what a concept means to a reader who does not know the taxonomy. `DIMENSIONS` carries the members of a context, which the company files of the Commission do not have at all. And `BASIS` is 連結・個別, the column that says whether a figure is the group's or the parent company's.
+Three columns have no counterpart in `esef` or `sec`. `label` is the Japanese name of the element, which the conversion states beside it and which is the only thing in these tables that says what a concept means to a reader who does not know the taxonomy. `dimensions` carries the members of a context, which the company files of the Commission do not have at all. And `basis` is 連結・個別, the column that says whether a figure is the group's or the parent company's.
 
-`VALUE` holds a number and `TEXT` everything else, and **a fact can have a unit and no number**: the conversion writes `－` where a figure does not apply, forty-eight times in one report of 1,086 facts, and that becomes a null `VALUE` rather than a zero. `CONCEPT` is the element identifier as the conversion writes it, prefix and name; four prefixes appear, and one of them -- `jpcrp030000-asr_E03270-000` -- is built from the form and the filer's own EDINET code, which is how an extension is told from the taxonomy here.
+`value` holds a number and `text` everything else, and **a fact can have a unit and no number**: the conversion writes `－` where a figure does not apply, forty-eight times in one report of 1,086 facts, and that becomes a null `value` rather than a zero. `concept` is the element identifier as the conversion writes it, prefix and name; four prefixes appear, and one of them -- `jpcrp030000-asr_E03270-000` -- is built from the form and the filer's own EDINET code, which is how an extension is told from the taxonomy here.
 
 #### Consolidated and non-consolidated
 
@@ -157,9 +157,9 @@ A further member on top of the consolidation one is a breakdown and not a statem
 
 One row per filer the agency lists, from the zip it publishes on the disclosure site. It is the counterpart of the Commission's list of registrants and, like it, is how a lake that wants companies by name or by ticker finds the codes to collect them by. The list as published in November 2026 is 11,467 rows, of which 3,816 are listed; the figures below are of that snapshot and the agency revises it continually.
 
-`YEAREND` is carried as the agency writes it -- `'5月31日'` for a filer closing on 31 May -- and not as a date, there being no year in it. It is worth having: **1,633 of the 3,816 listed filers do not close in March**, and a comparison that assumes the Japanese financial year ends there is wrong for every one of them. It is also why the field is text and not a parsed date: among those listed filers the agency writes the end of March two ways, `3月31日` for 2,029 of them and `3月末日` for 139, and thirteen more close on `3月20日`.
+`year_end` is carried as the agency writes it -- `'5月31日'` for a filer closing on 31 May -- and not as a date, there being no year in it. It is worth having: **1,633 of the 3,816 listed filers do not close in March**, and a comparison that assumes the Japanese financial year ends there is wrong for every one of them. It is also why the field is text and not a parsed date: among those listed filers the agency writes the end of March two ways, `3月31日` for 2,029 of them and `3月末日` for 139, and thirteen more close on `3月20日`.
 
-`SECCODE` is the securities code: the four-digit ticker of a listed filer with a check digit appended, so `'75130'` is ticker 7513. In that snapshot it is non-blank for exactly the 3,816 filers the list marks as listed. `JCN` is the corporate number of the National Tax Agency, thirteen digits, non-blank for 7,289 of the rows -- an individual filer has none.
+`sec_code` is the securities code: the four-digit ticker of a listed filer with a check digit appended, so `'75130'` is ticker 7513. In that snapshot it is non-blank for exactly the 3,816 filers the list marks as listed. `jcn` is the corporate number of the National Tax Agency, thirteen digits, non-blank for 7,289 of the rows -- an individual filer has none.
 
 ## Data quality
 

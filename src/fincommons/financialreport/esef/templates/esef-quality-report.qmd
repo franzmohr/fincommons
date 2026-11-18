@@ -233,8 +233,8 @@ if (!dir.exists(file.path(path_silver, "issues"))) {
 }
 
 filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
-  select(COUNTRY, LEI, FILING, NAME, PERIODEND, LANG, JSONURL,
-         ERRORS, WARNINGS, INCONSISTENCIES, PROCESSED) %>%
+  select(country, lei, filing, name, period_end, lang, json_url,
+         errors, warnings, inconsistencies, processed) %>%
   collect()
 
 if (nrow(filings_all) == 0) {
@@ -250,7 +250,7 @@ if (nrow(filings_all) == 0) {
 # themselves: arrow answers this over the parquet files and hands back a
 # result of the size of the record rather than of the size of the lake.
 facts_filings <- open_dataset(file.path(path_silver, "facts")) %>%
-  count(COUNTRY, LEI, FILING) %>%
+  count(country, lei, filing) %>%
   collect() %>%
   rename(facts = n)
 
@@ -266,13 +266,13 @@ if (nrow(issues_all) == 0) {
 # written partitioned and from the file when it is not, and arrow reads the
 # two as different types. One type here, so the joins below hold either way.
 issues_all <- issues_all %>%
-  mutate(across(c(COUNTRY, LEI, FILING, ISSUE), as.character),
-         CHECKED = as.Date(CHECKED))
+  mutate(across(c(country, lei, filing, issue), as.character),
+         checked = as.Date(checked))
 
 # A code in the table that the catalogue does not describe is a check that
 # was removed or renamed and whose rows were left behind. The report cannot
 # say what it means, so it stops rather than print a bare code.
-uncatalogued <- setdiff(unique(issues_all$ISSUE), catalogue$code)
+uncatalogued <- setdiff(unique(issues_all$issue), catalogue$code)
 if (length(uncatalogued) > 0) {
   stop("The table of issues holds codes the catalogue does not describe: ",
        paste(uncatalogued, collapse = ", "), ". Run the checks again, which ",
@@ -280,12 +280,12 @@ if (length(uncatalogued) > 0) {
 }
 
 filings_all <- filings_all %>%
-  mutate(year = as.integer(format(PERIODEND, "%Y")),
+  mutate(year = as.integer(format(period_end, "%Y")),
          fy = year,
-         fy_name = fy_label(PERIODEND),
-         published = !is.na(JSONURL) & JSONURL != "") %>%
-  left_join(facts_filings %>% select(COUNTRY, LEI, FILING, facts),
-            by = c("COUNTRY", "LEI", "FILING")) %>%
+         fy_name = fy_label(period_end),
+         published = !is.na(json_url) & json_url != "") %>%
+  left_join(facts_filings %>% select(country, lei, filing, facts),
+            by = c("country", "lei", "filing")) %>%
   mutate(read = !is.na(facts) & facts > 0,
          facts = coalesce(facts, 0L))
 
@@ -293,7 +293,7 @@ filings_all <- filings_all %>%
 # settings that the table does not list is an error rather than an empty
 # column, because a report that silently covers less than it says is worse
 # than one that does not render.
-countries_held <- sort(unique(filings_all$COUNTRY))
+countries_held <- sort(unique(filings_all$country))
 if (is.null(report_countries)) {
   report_countries <- countries_held
 } else {
@@ -326,7 +326,7 @@ report_years <- sort(report_years)
 # like the first; the coverage report in this directory is the one that
 # picks a filing per issuer and year.
 filings <- filings_all %>%
-  filter(COUNTRY %in% report_countries, fy %in% report_years)
+  filter(country %in% report_countries, fy %in% report_years)
 
 if (nrow(filings) == 0) {
   stop("No filing of the table falls in the countries and years of this ",
@@ -348,22 +348,22 @@ year_labels <- vapply(report_years, function(y) {
 # either a partition every check passed or a partition no check has run
 # over. Nothing in the two tables tells the two apart, so the report names
 # the countries it cannot speak for rather than count them as sound.
-checked_countries <- sort(unique(issues_all$COUNTRY))
+checked_countries <- sort(unique(issues_all$country))
 silent_countries <- setdiff(report_countries, checked_countries)
 
 issues <- issues_all %>%
-  inner_join(filings %>% select(COUNTRY, LEI, FILING, NAME, fy, PERIODEND,
+  inner_join(filings %>% select(country, lei, filing, name, fy, period_end,
                                 read),
-             by = c("COUNTRY", "LEI", "FILING")) %>%
-  left_join(catalogue %>% select(ISSUE = code, severity, title, population),
-            by = "ISSUE")
+             by = c("country", "lei", "filing")) %>%
+  left_join(catalogue %>% select(issue = code, severity, title, population),
+            by = "issue")
 
 # An issue row whose filing the table of filings does not list is a row left
 # over from a filing the repository withdrew. It cannot be placed in a year
 # or a country, so it is counted and set aside.
 orphans <- issues_all %>%
-  anti_join(filings_all %>% select(COUNTRY, LEI, FILING),
-            by = c("COUNTRY", "LEI", "FILING"))
+  anti_join(filings_all %>% select(country, lei, filing),
+            by = c("country", "lei", "filing"))
 
 # --------------------------------------------------------------------------
 # What the checks found
@@ -387,40 +387,40 @@ n_read <- sum(filings$read)
 # One row per code: the rows it wrote, the filings those rows name, and that
 # count against the filings the check could have fired on at all.
 by_code <- issues %>%
-  group_by(ISSUE) %>%
+  group_by(issue) %>%
   summarise(findings = n(),
-            affected = n_distinct(FILING),
+            affected = n_distinct(filing),
             .groups = "drop") %>%
-  right_join(catalogue %>% select(ISSUE = code, severity, title, population),
-             by = "ISSUE") %>%
+  right_join(catalogue %>% select(issue = code, severity, title, population),
+             by = "issue") %>%
   mutate(findings = coalesce(findings, 0L),
          affected = coalesce(affected, 0L),
          denominator = ifelse(population == "listed", n_listed, n_read),
          share = ifelse(denominator > 0, affected / denominator * 100,
                         NA_real_)) %>%
-  arrange(severity, desc(affected), ISSUE)
+  arrange(severity, desc(affected), issue)
 
 # One row per filing the checks named, with the severity of the worst thing
 # found in it. A filing with no row here is one every check passed -- which,
 # for a country no check has run over, is a statement this report does not
 # make.
 per_filing <- issues %>%
-  group_by(COUNTRY, LEI, FILING, NAME, fy, PERIODEND) %>%
+  group_by(country, lei, filing, name, fy, period_end) %>%
   summarise(findings = n(),
-            codes = n_distinct(ISSUE),
+            codes = n_distinct(issue),
             errors = sum(severity == "error"),
             warnings = sum(severity == "warning"),
             infos = sum(severity == "info"),
             worst = severities[min(as.integer(severity))],
-            which = paste(sort(unique(ISSUE)), collapse = ", "),
+            which = paste(sort(unique(issue)), collapse = ", "),
             .groups = "drop")
 
 # Every filing of the selection, with a zero where no check named it.
 filing_state <- filings %>%
-  select(COUNTRY, LEI, FILING, NAME, fy, PERIODEND, read, facts) %>%
-  left_join(per_filing %>% select(COUNTRY, LEI, FILING, findings, codes,
+  select(country, lei, filing, name, fy, period_end, read, facts) %>%
+  left_join(per_filing %>% select(country, lei, filing, findings, codes,
                                   errors, warnings, infos, worst, which),
-            by = c("COUNTRY", "LEI", "FILING")) %>%
+            by = c("country", "lei", "filing")) %>%
   mutate(across(c(findings, codes, errors, warnings, infos),
                 ~ coalesce(.x, 0L)),
          worst = coalesce(worst, "none"),
@@ -459,20 +459,20 @@ by_year <- filing_state %>%
             by = "fy")
 
 by_country <- filing_state %>%
-  group_by(COUNTRY) %>%
+  group_by(country) %>%
   summarise(listed = n(),
             read = sum(read),
             findings = sum(findings),
             .groups = "drop") %>%
   left_join(rated %>%
-              group_by(COUNTRY) %>%
+              group_by(country) %>%
               summarise(with_error = sum(errors > 0),
                         error_share = sum(errors > 0) / n() * 100,
                         clean = sum(clean) / n() * 100,
                         per_filing = sum(findings) / n(),
                         .groups = "drop"),
-            by = "COUNTRY") %>%
-  arrange(desc(error_share), COUNTRY)
+            by = "country") %>%
+  arrange(desc(error_share), country)
 
 # The five identities, which are the checks that say the figures of a report
 # are consistent with one another. They are grouped because an analysis that
@@ -480,13 +480,13 @@ by_country <- filing_state %>%
 identity_codes <- catalogue$code[grepl("^IMBAL_", catalogue$code)]
 identity_state <- rated %>%
   left_join(issues %>%
-              filter(ISSUE %in% identity_codes) %>%
-              distinct(COUNTRY, LEI, FILING) %>%
+              filter(issue %in% identity_codes) %>%
+              distinct(country, lei, filing) %>%
               mutate(fails_identity = TRUE),
-            by = c("COUNTRY", "LEI", "FILING")) %>%
+            by = c("country", "lei", "filing")) %>%
   mutate(fails_identity = coalesce(fails_identity, FALSE))
 
-checked_on <- range(issues_all$CHECKED)
+checked_on <- range(issues_all$checked)
 ```
 
 ```{r formats}
@@ -505,7 +505,7 @@ wrap_caption <- function(text, width = 125) {
   paste(strwrap(text, width = width), collapse = "\n")
 }
 
-max_date <- max(filings$PERIODEND, na.rm = TRUE)
+max_date <- max(filings$period_end, na.rm = TRUE)
 period_range <- paste0(min(report_years), " – ", max(report_years))
 
 source_caption <- caption_corporate_design(
@@ -799,16 +799,16 @@ knitr::kable(temp, align = "llll", col.names = c(
 # checks were never asked about, and the two cannot be told apart from the
 # tables.
 temp <- filing_state %>%
-  group_by(COUNTRY) %>%
+  group_by(country) %>%
   summarise(listed = n(),
             read = sum(read),
-            issuers = n_distinct(LEI),
-            checked = ifelse(COUNTRY[1] %in% checked_countries, "yes", "–"),
+            issuers = n_distinct(lei),
+            checked = ifelse(country[1] %in% checked_countries, "yes", "–"),
             .groups = "drop") %>%
-  arrange(desc(listed), COUNTRY) %>%
+  arrange(desc(listed), country) %>%
   mutate(read_share = read / listed * 100)
 
-knitr::kable(temp %>% transmute(COUNTRY, Issuers = fmt(issuers),
+knitr::kable(temp %>% transmute(country, Issuers = fmt(issuers),
                                 Listed = fmt(listed), Read = fmt(read),
                                 `Read, %` = fmt(read_share, 1),
                                 Checked = checked),
@@ -913,7 +913,7 @@ chart_ranked(by_code %>% filter(affected > 0),
 
 ```{r found-code-table}
 temp <- by_code %>%
-  transmute(code = paste0("`", ISSUE, "`"),
+  transmute(code = paste0("`", issue, "`"),
             severity = severity_label(severity),
             Findings = fmt(findings),
             Filings = fmt(affected),
@@ -968,7 +968,7 @@ cat("\nThe loudest one per cent of the filings with facts -- ",
 # over every filing listed, which is why a country with none of the former
 # has a dash rather than a hundred per cent.
 knitr::kable(by_country %>%
-               transmute(COUNTRY,
+               transmute(country,
                          Listed = fmt(listed),
                          Read = fmt(read),
                          Findings = fmt(findings),
@@ -1047,7 +1047,7 @@ cat("All five hold in ", fmt(sum(!identity_state$fails_identity)),
 
 ```{r identities-table}
 temp <- by_code %>%
-  filter(ISSUE %in% identity_codes) %>%
+  filter(issue %in% identity_codes) %>%
   transmute(title,
             Filings = fmt(affected),
             Share = fmt(share, 1))
@@ -1061,7 +1061,7 @@ knitr::kable(temp, align = "lrr",
 # An identity can only be tested where the filing tags both sides of it. A
 # filing that tags neither passes by silence, which is a different thing
 # from passing, and the MISS_ checks are what makes that visible.
-miss <- by_code %>% filter(grepl("^MISS_", ISSUE), ISSUE != "MISS_FACT_VALUE")
+miss <- by_code %>% filter(grepl("^MISS_", issue), issue != "MISS_FACT_VALUE")
 cat("\nAn identity is only tested where the filing tags the lines it rests ",
     "on. A filing that tags neither side of one passes it by silence, which ",
     "is not the same as passing it: ",
@@ -1084,8 +1084,8 @@ temp <- filing_state %>%
   filter(findings > 0) %>%
   arrange(desc(errors), desc(findings)) %>%
   slice_head(n = top_n) %>%
-  transmute(NAME = substr(NAME, 1, 34),
-            COUNTRY,
+  transmute(name = substr(name, 1, 34),
+            country,
             Year = fy,
             Findings = fmt(findings),
             Errors = fmt(errors),
@@ -1103,10 +1103,10 @@ knitr::kable(temp, align = "llrrrl",
 # report's checks and are not re-run here; one of the checks carries them
 # into the table of issues so that they sit beside the rest.
 temp <- filings %>%
-  summarise(with_errors = sum(ERRORS > 0, na.rm = TRUE),
-            with_warnings = sum(WARNINGS > 0, na.rm = TRUE),
-            with_inconsistencies = sum(INCONSISTENCIES > 0, na.rm = TRUE),
-            errors = sum(ERRORS, na.rm = TRUE))
+  summarise(with_errors = sum(errors > 0, na.rm = TRUE),
+            with_warnings = sum(warnings > 0, na.rm = TRUE),
+            with_inconsistencies = sum(inconsistencies > 0, na.rm = TRUE),
+            errors = sum(errors, na.rm = TRUE))
 
 cat("filings.xbrl.org validates every filing it takes in and records what ",
     "its rules found. Those counts are the repository's, not this ",
@@ -1195,7 +1195,7 @@ for (level in severities) {
                     info = "Notes")
   cat("\n### ", heading, "\n\n", sep = "")
   for (i in seq_len(nrow(rows))) {
-    found <- by_code %>% filter(ISSUE == rows$code[i])
+    found <- by_code %>% filter(issue == rows$code[i])
     cat("**`", rows$code[i], "` — ", rows$title[i], ".** ",
         rows$meaning[i], " ",
         "*Found in ", fmt(found$affected), " of the ",
@@ -1238,7 +1238,7 @@ temp <- tibble(
             period_range,
             fmt(n_listed),
             fmt(n_read),
-            fmt(n_distinct(filing_state$LEI)),
+            fmt(n_distinct(filing_state$lei)),
             fmt(n_checks),
             fmt(sum(by_code$affected > 0)),
             fmt(n_findings),

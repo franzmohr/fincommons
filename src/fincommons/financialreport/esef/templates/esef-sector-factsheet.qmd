@@ -73,7 +73,7 @@ country_name <- c(en = "Austria", de = "Österreich")
 
 # ESEF carries no sector code. A filing states the issuer's legal entity
 # identifier and nothing about what it does, and the sector classifications
-# the package does hold -- `SECTOR` in fincommons.entitymasterdata -- cover
+# the package does hold -- `sector` in fincommons.entitymasterdata -- cover
 # financial entities only, a bank, an insurer, a fund. So the panel is a
 # stated list, and stating it is the one judgement this factsheet makes that
 # the data cannot check.
@@ -87,11 +87,11 @@ country_name <- c(en = "Austria", de = "Österreich")
 # well as for the panel as a whole, and the groups are ordered from the
 # building site outwards.
 #
-# `SHORT` is what the charts and the narrow tables use; `NAME` is not set
+# `SHORT` is what the charts and the narrow tables use; `name` is not set
 # here at all, but read from the table of filings, so that an issuer is
 # named as its own report names it.
 panel <- tibble::tribble(
-  ~LEI,                    ~SHORT,          ~GROUP,                ~NACE,     ~ACTIVITY_EN,                                              ~ACTIVITY_DE,
+  ~lei,                    ~SHORT,          ~GROUP,                ~NACE,     ~ACTIVITY_EN,                                              ~ACTIVITY_DE,
   "529900TYYSRJH2VJSP60",  "STRABAG",       "contractors",         "F42/F41", "Civil engineering and building construction, Europe-wide", "Hoch- und Tiefbau, europaweit",
   "529900ARBU9SBJFNX419",  "PORR",          "contractors",         "F41/F42", "Building construction and civil engineering, Austria and CEE", "Hoch- und Tiefbau, Österreich und CEE",
   "529900IWRUBPP2VNQB05",  "UBM",           "developers",          "F41.1",   "Development of building projects, residential and office", "Projektentwicklung, Wohnen und Büro",
@@ -107,8 +107,8 @@ panel <- tibble::tribble(
 # hundred and forty-five -- the construction issuers of twenty-seven
 # countries -- does not, and putting it here would bury the code under a
 # list. So the panel may instead be read from a csv named in
-# FINCOMMONS_PANEL, with the columns of the table above: `LEI`, `SHORT` and
-# `GROUP` are required, and `NACE`, `COUNTRY`, `ACTIVITY_EN` and
+# FINCOMMONS_PANEL, with the columns of the table above: `lei`, `SHORT` and
+# `GROUP` are required, and `NACE`, `country`, `ACTIVITY_EN` and
 # `ACTIVITY_DE` are shown where the file has them. The file is a stated list
 # exactly as the table above is, and the disclaimer says so of either.
 panel_file <- Sys.getenv("FINCOMMONS_PANEL", "")
@@ -119,26 +119,26 @@ if (nzchar(panel_file)) {
   # a filing under ESEF, a central index key for one with the Commission.
   # Neither body publishes a mapping between them, which is why the combined
   # table carries both columns and fills one, and why this does the same.
-  if (!"LEI" %in% names(panel)) panel$LEI <- NA_character_
-  if (!"CIK" %in% names(panel)) panel$CIK <- NA_character_
+  if (!"lei" %in% names(panel)) panel$lei <- NA_character_
+  if (!"cik" %in% names(panel)) panel$cik <- NA_character_
   required <- c("SHORT", "GROUP")
   if (!all(required %in% names(panel))) {
     stop("The panel file ", panel_file, " needs the columns ",
          paste(required, collapse = ", "), "; it has ",
          paste(names(panel), collapse = ", "), ".")
   }
-  if (any(is.na(panel$LEI) & is.na(panel$CIK))) {
+  if (any(is.na(panel$lei) & is.na(panel$cik))) {
     stop("Every row of the panel file ", panel_file, " needs an LEI or a CIK; ",
-         sum(is.na(panel$LEI) & is.na(panel$CIK)), " row(s) have neither.")
+         sum(is.na(panel$lei) & is.na(panel$cik)), " row(s) have neither.")
   }
   # A panel file may carry the issuer's name, which is useful to whoever
   # maintains the file and is not what the page prints: the name comes from
   # the table of filings, so that an issuer is named as its own report names
   # it. It is kept under another name rather than dropped, so that a panel
-  # whose LEI no longer files can still be named in the gaps.
-  if ("NAME" %in% names(panel)) {
-    panel$PANEL_NAME <- panel$NAME
-    panel$NAME <- NULL
+  # whose lei no longer files can still be named in the gaps.
+  if ("name" %in% names(panel)) {
+    panel$PANEL_NAME <- panel$name
+    panel$name <- NULL
   }
 }
 if (!"PANEL_NAME" %in% names(panel)) {
@@ -150,8 +150,8 @@ if (!"PANEL_NAME" %in% names(panel)) {
 # so that the tables below ask for them without knowing where the panel came
 # from. A column no row fills is dropped from the table rather than printed
 # as a column of dashes.
-for (optional in c("NACE", "COUNTRY", "ACTIVITY_EN", "ACTIVITY_DE", "CIK",
-                   "LEI")) {
+for (optional in c("NACE", "country", "ACTIVITY_EN", "ACTIVITY_DE", "cik",
+                   "lei")) {
   if (!optional %in% names(panel)) panel[[optional]] <- NA_character_
 }
 
@@ -163,34 +163,34 @@ blank_to_na <- function(x) {
   x <- trimws(as.character(x))
   ifelse(is.na(x) | x == "", NA_character_, x)
 }
-panel$LEI <- blank_to_na(panel$LEI)
+panel$lei <- blank_to_na(panel$lei)
 
 # A central index key is ten digits with the leading zeros kept, and the
 # combined table keys a filing by it in that shape. Two things lose them: a
 # csv read as numbers, which turns 0000868857 into 868857, and formatC on a
 # character, whose "0" flag pads with spaces and not zeros. So it is padded
 # as a number and only then used as text.
-panel$CIK <- blank_to_na(panel$CIK)
-if (any(!is.na(panel$CIK) & grepl("\\D", panel$CIK))) {
+panel$cik <- blank_to_na(panel$cik)
+if (any(!is.na(panel$cik) & grepl("\\D", panel$cik))) {
   stop("A central index key in the panel is not all digits: ",
-       paste(unique(panel$CIK[!is.na(panel$CIK) & grepl("\\D", panel$CIK)]),
+       paste(unique(panel$cik[!is.na(panel$cik) & grepl("\\D", panel$cik)]),
              collapse = ", "))
 }
-panel$CIK <- ifelse(is.na(panel$CIK), NA_character_,
-                    formatC(as.integer(panel$CIK), width = 10, flag = "0",
+panel$cik <- ifelse(is.na(panel$cik), NA_character_,
+                    formatC(as.integer(panel$cik), width = 10, flag = "0",
                             format = "d"))
 
 # Base R, because this runs before dplyr is attached further down.
-panel$KEY <- paste0(ifelse(is.na(panel$LEI), "", panel$LEI), "|",
-                    ifelse(is.na(panel$CIK), "", panel$CIK))
+panel$KEY <- paste0(ifelse(is.na(panel$lei), "", panel$lei), "|",
+                    ifelse(is.na(panel$cik), "", panel$cik))
 
-if (any(is.na(panel$LEI) & is.na(panel$CIK))) {
+if (any(is.na(panel$lei) & is.na(panel$cik))) {
   stop("Every row of the panel needs an LEI or a CIK; ",
-       sum(is.na(panel$LEI) & is.na(panel$CIK)), " row(s) have neither.")
+       sum(is.na(panel$lei) & is.na(panel$cik)), " row(s) have neither.")
 }
 
 # On the key rather than on the LEI: a panel of two regimes has an empty
-# LEI in every row keyed by a central index key, and checking that column
+# lei in every row keyed by a central index key, and checking that column
 # would read those as one issuer named eighty-six times.
 if (anyDuplicated(panel$KEY)) {
   stop("The panel names an issuer twice: ",
@@ -258,7 +258,7 @@ benchmark <- list(
 # building. They are therefore named here and shown apart.
 #
 # Naming them is a stated list for the same reason the panel is: ESEF has no
-# sector code. The right source once a lake holds it is `SECTOR` in
+# sector code. The right source once a lake holds it is `sector` in
 # fincommons.entitymasterdata, which the registers of the ECB, EIOPA and
 # ESMA fill in and which covers exactly these entities; this list is what a
 # lake without that module uses, and it is a list of Austrian filers only.
@@ -270,7 +270,7 @@ benchmark <- list(
 # Two things identify them, and the second exists because the first has a
 # hole in it.
 #
-# The first is the sectoral registers, which is where `SECTOR` of
+# The first is the sectoral registers, which is where `sector` of
 # fincommons.entitymasterdata gets its answer: the ECB's register of
 # monetary financial institutions, EIOPA's of insurance undertakings and of
 # institutions for occupational retirement provision, and ESMA's list of
@@ -380,11 +380,11 @@ chart_base_size <- 9
 max_lines <- 12
 
 # The language of the factsheet.
-lang <- "en"
+report_lang <- "en"
 
 # The month names in the captions come from the system locale rather than
-# from the language set above, so the locale for dates is set from lang.
-invisible(Sys.setlocale("LC_TIME", if (lang == "de") "German" else "C"))
+# from the language set above, so the locale for dates is set from report_lang.
+invisible(Sys.setlocale("LC_TIME", if (report_lang == "de") "German" else "C"))
 
 # --------------------------------------------------------------------------
 # The concepts the panel's own lines are read from
@@ -469,7 +469,7 @@ library(yaml)
 library(arrow)
 
 # Translate a label: `tr("Revenue", "Umsatzerlöse")`.
-tr <- function(en, de) if (lang == "de") de else en
+tr <- function(en, de) if (report_lang == "de") de else en
 
 # The label of a financial year. A year that ends on 31 December is named by
 # its calendar year, and any other by the two it spans: Zumtobel's year to
@@ -530,7 +530,7 @@ typst_string <- function(x) {
 }
 
 group_label <- function(key) {
-  labels <- if (lang == "de") group_labels_de else group_labels
+  labels <- if (report_lang == "de") group_labels_de else group_labels
   out <- unname(labels[key])
   ifelse(is.na(out), key, out)
 }
@@ -573,10 +573,10 @@ if (is.null(path_esef)) {
 for (table in c("filings", "facts")) refuse_delta(path_esef, table, "esef")
 
 filings_all <- open_dataset(file.path(path_esef, "filings")) %>%
-  filter(LEI %in% panel$LEI) %>%
+  filter(lei %in% panel$lei) %>%
   collect()
 
-missing_issuers <- setdiff(panel$LEI, filings_all$LEI)
+missing_issuers <- setdiff(panel$lei, filings_all$lei)
 if (length(missing_issuers) == nrow(panel)) {
   stop("The table of filings lists no filing of any issuer of the panel. ",
        "The table lists every country whether its reports were collected or ",
@@ -587,14 +587,14 @@ if (length(missing_issuers) == nrow(panel)) {
 # or filed again with corrections, is a filing of its own with facts of its
 # own, and the figures of the year are taken from one of them: the one in
 # the language of the factsheet, then the one with fewer validation errors,
-# then the one the repository processed last. A filing without a JSONURL has
+# then the one the repository processed last. A filing without a json_url has
 # no facts and is never chosen while another one is there.
 filings <- filings_all %>%
-  filter(!is.na(JSONURL)) %>%
-  arrange(LEI, PERIODEND,
-          coalesce(LANG, "") != lang,
-          coalesce(ERRORS, 0L),
-          desc(PROCESSED)) %>%
+  filter(!is.na(json_url)) %>%
+  arrange(lei, period_end,
+          coalesce(lang, "") != report_lang,
+          coalesce(errors, 0L),
+          desc(processed)) %>%
   # `distinct(..., .keep_all = TRUE)` and not `group_by %>% slice(1)`. The
   # two keep the same row -- the first in the order just arranged -- but
   # dplyr builds a group index per group for the second, and over the
@@ -602,7 +602,7 @@ filings <- filings_all %>%
   # ninety seconds against half of one. Every dedupe below is written this
   # way for that reason, and each is preceded by the arrange that decides
   # which row "first" means.
-  distinct(LEI, PERIODEND, .keep_all = TRUE)
+  distinct(lei, period_end, .keep_all = TRUE)
 
 if (nrow(filings) == 0) {
   stop("No filing of any issuer of the panel has facts in the Silver layer. ",
@@ -618,7 +618,7 @@ period_year <- function(date) {
   ifelse(as.integer(format(date, "%m")) <= 6L, y - 1L, y)
 }
 
-filings <- filings %>% mutate(FY = period_year(PERIODEND))
+filings <- filings %>% mutate(fy = period_year(period_end))
 
 # A financial year still being filed is not a year with less in it, and
 # showing it as one would put a sector's latest year on two or three
@@ -629,11 +629,11 @@ filings <- filings %>% mutate(FY = period_year(PERIODEND))
 # issuers all report to 31 December it drops nothing.
 min_share <- 0.5
 filed_per_year <- filings %>%
-  group_by(FY) %>%
-  summarise(issuers = n_distinct(LEI), .groups = "drop")
+  group_by(fy) %>%
+  summarise(issuers = n_distinct(lei), .groups = "drop")
 complete_years <- filed_per_year %>%
   filter(issuers >= min_share * max(issuers)) %>%
-  pull("FY") %>%
+  pull("fy") %>%
   sort()
 if (length(complete_years) == 0) {
   stop("No financial year of the panel has filings from half the issuers of ",
@@ -641,12 +641,12 @@ if (length(complete_years) == 0) {
 }
 years_shown <- tail(complete_years, n_years)
 years_read <- tail(complete_years, n_years + 1)
-partial_years <- setdiff(sort(unique(filings$FY)), complete_years)
+partial_years <- setdiff(sort(unique(filings$fy)), complete_years)
 partial_years <- partial_years[partial_years > max(years_shown)]
-filings <- filings %>% filter(FY %in% years_read)
+filings <- filings %>% filter(fy %in% years_read)
 
 facts <- open_dataset(file.path(path_esef, "facts")) %>%
-  filter(FILING %in% filings$FILING) %>%
+  filter(filing %in% filings$filing) %>%
   collect()
 
 # --------------------------------------------------------------------------
@@ -656,7 +656,7 @@ facts <- open_dataset(file.path(path_esef, "facts")) %>%
 # The benchmark is a question about a population rather than about named
 # facts, and the combined table is where this package answers one: it
 # carries every regime the lake has collected in the same columns, and the
-# column `MEASURE` names what a fact is wherever the catalogue of measures
+# column `measure` names what a fact is wherever the catalogue of measures
 # has agreed that the frameworks mean the same figure by it.
 #
 # What that column does not carry is as important as what it does. Only the
@@ -678,7 +678,7 @@ if (has_combined) {
   bench_filings <- open_dataset(file.path(path_combined, "filing")) %>%
     collect()
   if (!is.null(benchmark$source)) {
-    bench_filings <- bench_filings %>% filter(SOURCE %in% benchmark$source)
+    bench_filings <- bench_filings %>% filter(source %in% benchmark$source)
   }
   # The countries of the benchmark: the ones named above, or the ones the
   # panel filed in where none are.
@@ -691,18 +691,18 @@ if (has_combined) {
   # therefore a statement about the sources that have them.
   bench_countries <- benchmark$country
   if (is.null(bench_countries)) {
-    bench_countries <- sort(unique(filings$COUNTRY[!is.na(filings$COUNTRY)]))
+    bench_countries <- sort(unique(filings$country[!is.na(filings$country)]))
   }
   if (length(bench_countries) > 0) {
     bench_filings <- bench_filings %>%
-      filter(is.na(COUNTRY) | COUNTRY %in% bench_countries)
+      filter(is.na(country) | country %in% bench_countries)
   }
 
   # Annual reports only; see `annual_forms`.
   bench_filings <- bench_filings %>%
-    filter(is.na(FORM) | FORM %in% annual_forms)
+    filter(is.na(form) | form %in% annual_forms)
   if (!is.null(benchmark$framework)) {
-    bench_filings <- bench_filings %>% filter(FRAMEWORK %in% benchmark$framework)
+    bench_filings <- bench_filings %>% filter(framework %in% benchmark$framework)
   }
 
   # Everything that can be decided without the rows is decided before them.
@@ -711,22 +711,22 @@ if (has_combined) {
   # wanted, the undimensioned rows and the period the filing reports on are
   # therefore filters arrow applies to the files, not conditions R applies
   # to a frame already pulled into memory.
-  # `PERIODYEAR` is the calendar year the filing's period ends in and the
+  # `period_year` is the calendar year the filing's period ends in and the
   # fact table is partitioned on it, so the first condition is a choice of
   # directories rather than a filter over rows: half of this table is of
   # years no page below shows. The financial year of the factsheet is that
   # calendar year or the one before it -- `period_year` moves a period
   # ending in the first half of a year back one -- so the bound is the
   # first year shown and not one less, and nothing the pages use is
-  # outside it. No row of this table has a null `PERIODYEAR`.
+  # outside it. No row of this table has a null `period_year`.
   # Computed here and not inside the filter: arrow translates `min` as an
   # aggregate of a column and refuses it over an R vector.
   first_year_wanted <- min(years_shown)
   bench_facts <- open_dataset(file.path(path_combined, "fact")) %>%
-    filter(PERIODYEAR >= first_year_wanted,
-           MEASURE %in% measures_wanted, is.na(DIMENSIONS), !is.na(VALUE),
-           PRDEND == PERIODEND, FILING %in% bench_filings$FILING) %>%
-    select(SOURCE, FILING, LEI, CIK, PERIODEND, PERIODYEAR, MEASURE, VALUE) %>%
+    filter(period_year >= first_year_wanted,
+           measure %in% measures_wanted, is.na(dimensions), !is.na(value),
+           prd_end == period_end, filing %in% bench_filings$filing) %>%
+    select(source, filing, lei, cik, period_end, period_year, measure, value) %>%
     collect()
 
   # The second test for a bank or an insurer: a filer whose own primary
@@ -742,13 +742,13 @@ if (has_combined) {
   # which is the one thing this test exists to stop. It reads two columns
   # of a concept filter and costs under five seconds.
   financial_by_statement <- open_dataset(file.path(path_combined, "fact")) %>%
-    filter(CONCEPT %in% financial_concepts,
-           FILING %in% bench_filings$FILING) %>%
-    select(LEI, CIK) %>%
+    filter(concept %in% financial_concepts,
+           filing %in% bench_filings$filing) %>%
+    select(lei, cik) %>%
     collect() %>%
     distinct()
-  financial_by_statement <- unique(c(financial_by_statement$LEI,
-                                     financial_by_statement$CIK))
+  financial_by_statement <- unique(c(financial_by_statement$lei,
+                                     financial_by_statement$cik))
   financial_by_statement <- financial_by_statement[!is.na(financial_by_statement)]
 } else {
   bench_filings <- filings[0, ]
@@ -763,17 +763,17 @@ if (has_combined) {
 # One row per calendar day and quoted currency, the table of
 # fincommons.exchangerate, which carries the last rate quoted on or before a
 # day for at most a week after that quote and marks a carried rate as
-# `IMPUTED`. It is read only where the panel needs it, so a lake holding one
+# `imputed`. It is read only where the panel needs it, so a lake holding one
 # currency needs no exchangerate section at all.
 path_fx <- silver_of("exchangerate")
 fx <- NULL
 if (!is.null(path_fx) && dir.exists(file.path(path_fx, "exchangerate"))) {
   refuse_delta(path_fx, "exchangerate", "exchangerate")
   fx <- open_dataset(file.path(path_fx, "exchangerate")) %>%
-    filter(BASE == target_ccy) %>%
-    select(REFDATE, QUOTE, VALUE, IMPUTED) %>%
+    filter(base == target_ccy) %>%
+    select(ref_date, quote, value, imputed) %>%
     collect() %>%
-    mutate(REFDATE = as.Date(REFDATE))
+    mutate(ref_date = as.Date(ref_date))
   if (nrow(fx) == 0) fx <- NULL
 }
 ```
@@ -790,24 +790,24 @@ if (!is.null(path_fx) && dir.exists(file.path(path_fx, "exchangerate"))) {
 # aside, so that a restated figure does not stand beside the one first
 # reported without saying so.
 annual <- facts %>%
-  filter(is.na(DIMENSIONS), !is.na(VALUE), PRDEND == PERIODEND,
-         is.na(PRDSTART) | PRDSTART >= PERIODEND - 366) %>%
-  left_join(filings %>% select(FILING, FY), by = "FILING") %>%
-  distinct(LEI, FY, PERIODEND, PRDSTART, CONCEPT, UNIT, VALUE)
+  filter(is.na(dimensions), !is.na(value), prd_end == period_end,
+         is.na(prd_start) | prd_start >= period_end - 366) %>%
+  left_join(filings %>% select(filing, fy), by = "filing") %>%
+  distinct(lei, fy, period_end, prd_start, concept, unit, value)
 
-lookup <- tibble(key = names(concepts), CONCEPT = unname(concepts),
+lookup <- tibble(key = names(concepts), concept = unname(concepts),
                  preference = seq_along(concepts))
 
 tagged <- annual %>%
-  inner_join(lookup, by = "CONCEPT", relationship = "many-to-many") %>%
-  group_by(LEI, FY, key) %>%
+  inner_join(lookup, by = "concept", relationship = "many-to-many") %>%
+  group_by(lei, fy, key) %>%
   slice_min(preference, n = 1, with_ties = FALSE) %>%
   ungroup()
 
 wide <- tagged %>%
-  select(LEI, FY, PERIODEND, key, VALUE) %>%
-  pivot_wider(names_from = "key", values_from = "VALUE") %>%
-  arrange(LEI, FY)
+  select(lei, fy, period_end, key, value) %>%
+  pivot_wider(names_from = "key", values_from = "value") %>%
+  arrange(lei, fy)
 for (key in setdiff(unique(names(concepts)), names(wide))) {
   wide[[key]] <- NA_real_
 }
@@ -826,11 +826,11 @@ for (key in setdiff(unique(names(concepts)), names(wide))) {
 # one currency and two, and an issuer landing in the second would have no
 # rate and no converted amount at all.
 reported_ccy <- tagged %>%
-  filter(key == "assets", !is.na(UNIT)) %>%
-  transmute(LEI, FY, CCY = toupper(sub("(?i)^iso4217:", "", UNIT, perl = TRUE))) %>%
-  distinct(LEI, FY, .keep_all = TRUE)
+  filter(key == "assets", !is.na(unit)) %>%
+  transmute(lei, fy, CCY = toupper(sub("(?i)^iso4217:", "", unit, perl = TRUE))) %>%
+  distinct(lei, fy, .keep_all = TRUE)
 
-wide <- wide %>% left_join(reported_ccy, by = c("LEI", "FY"))
+wide <- wide %>% left_join(reported_ccy, by = c("lei", "fy"))
 
 currencies <- sort(unique(wide$CCY[!is.na(wide$CCY)]))
 needs_fx <- any(currencies != target_ccy)
@@ -855,13 +855,13 @@ if (needs_fx && is.null(fx)) {
 # rather than counted back from the period end, so that a year that is not
 # twelve months long is averaged over the months it has.
 period_start <- annual %>%
-  filter(!is.na(PRDSTART)) %>%
-  group_by(LEI, FY) %>%
-  summarise(PRDSTART = min(PRDSTART), .groups = "drop")
+  filter(!is.na(prd_start)) %>%
+  group_by(lei, fy) %>%
+  summarise(prd_start = min(prd_start), .groups = "drop")
 
 wide <- wide %>%
-  left_join(period_start, by = c("LEI", "FY")) %>%
-  mutate(PRDSTART = coalesce(PRDSTART, PERIODEND - 364))
+  left_join(period_start, by = c("lei", "fy")) %>%
+  mutate(prd_start = coalesce(prd_start, period_end - 364))
 
 # Two rates per filing, because IAS 21 translates the two kinds of figure
 # differently and a factsheet that adds up translated amounts should do what
@@ -879,25 +879,25 @@ wide <- wide %>%
 # value at a time does not always.
 if (needs_fx) {
   wide <- wide %>%
-    left_join(fx %>% select(CCY = QUOTE, PERIODEND = REFDATE,
-                            FXRATE_CLOSING = VALUE),
-              by = c("CCY", "PERIODEND")) %>%
+    left_join(fx %>% select(CCY = quote, period_end = ref_date,
+                            FXRATE_CLOSING = value),
+              by = c("CCY", "period_end")) %>%
     mutate(FXRATE_CLOSING = ifelse(!is.na(CCY) & CCY == target_ccy, 1,
                                    FXRATE_CLOSING))
 
   periods <- wide %>%
     filter(!is.na(CCY), CCY != target_ccy,
-           !is.na(PRDSTART), !is.na(PERIODEND)) %>%
-    distinct(CCY, PRDSTART, PERIODEND)
+           !is.na(prd_start), !is.na(period_end)) %>%
+    distinct(CCY, prd_start, period_end)
   periods$FXRATE_AVERAGE <- vapply(seq_len(nrow(periods)), function(i) {
-    v <- fx$VALUE[fx$QUOTE == periods$CCY[i]
-                  & fx$REFDATE >= periods$PRDSTART[i]
-                  & fx$REFDATE <= periods$PERIODEND[i]]
+    v <- fx$value[fx$quote == periods$CCY[i]
+                  & fx$ref_date >= periods$prd_start[i]
+                  & fx$ref_date <= periods$period_end[i]]
     if (length(v) == 0) NA_real_ else mean(v)
   }, numeric(1))
 
   wide <- wide %>%
-    left_join(periods, by = c("CCY", "PRDSTART", "PERIODEND")) %>%
+    left_join(periods, by = c("CCY", "prd_start", "period_end")) %>%
     mutate(FXRATE_AVERAGE = ifelse(!is.na(CCY) & CCY == target_ccy, 1,
                                    FXRATE_AVERAGE))
 } else {
@@ -934,11 +934,11 @@ flow_keys <- c("revenue", "ebit", "profit_before_tax", "income_tax", "profit",
 # indicator that would rest on EBITDA is shown against EBIT or against the
 # operating cash flow instead.
 wide <- wide %>%
-  left_join(panel, by = "LEI") %>%
-  group_by(LEI) %>%
-  arrange(FY, .by_group = TRUE) %>%
+  left_join(panel, by = "lei") %>%
+  group_by(lei) %>%
+  arrange(fy, .by_group = TRUE) %>%
   mutate(
-    year = fy_label(PERIODEND),
+    year = fy_label(period_end),
     liabilities = coalesce(liabilities, assets - equity),
     financial_liabilities =
       coalesce(financial_liabilities_noncurrent, borrowings_noncurrent, 0) +
@@ -989,18 +989,18 @@ for (key in c(instant_keys, flow_keys)) {
 # the issuer drops out of a sum; it is never the filed figure counted as
 # though it were already in the target currency.
 unconverted <- wide %>%
-  filter(FY %in% years_shown, !is.na(assets), is.na(assets_DOMESTIC)) %>%
-  select(LEI, FY, CCY)
+  filter(fy %in% years_shown, !is.na(assets), is.na(assets_DOMESTIC)) %>%
+  select(lei, fy, CCY)
 
 # Which lines rest on a concept the catalogue calls an approximation, so the
 # tables can mark them.
 approximate <- tagged %>%
-  filter(CONCEPT %in% approximate_concepts) %>%
-  distinct(LEI, FY, key)
+  filter(concept %in% approximate_concepts) %>%
+  distinct(lei, fy, key)
 
-shown <- wide %>% filter(FY %in% years_shown)
+shown <- wide %>% filter(fy %in% years_shown)
 latest_year <- max(years_shown)
-latest <- shown %>% filter(FY == latest_year)
+latest <- shown %>% filter(fy == latest_year)
 
 # An issuer that has stopped filing has no row in the latest year, and the
 # page says so rather than dropping it without a word.
@@ -1010,9 +1010,9 @@ latest <- shown %>% filter(FY == latest_year)
 # with the Commission has no LEI and never had an ESEF year to stop filing,
 # and listing it here would read as a filer that went quiet.
 absent_latest <- panel %>%
-  filter(!is.na(LEI), LEI %in% wide$LEI, !LEI %in% latest$LEI) %>%
-  left_join(wide %>% group_by(LEI) %>%
-              summarise(last_year = max(FY), .groups = "drop"), by = "LEI") %>%
+  filter(!is.na(lei), lei %in% wide$lei, !lei %in% latest$lei) %>%
+  left_join(wide %>% group_by(lei) %>%
+              summarise(last_year = max(fy), .groups = "drop"), by = "lei") %>%
   arrange(desc(last_year), SHORT)
 
 # --------------------------------------------------------------------------
@@ -1029,23 +1029,23 @@ absent_latest <- panel %>%
 # same financial year of the sector, and `period_year` is what puts them
 # there. Each issuer keeps its own label in the tables that show it alone.
 totals <- shown %>%
-  group_by(FY) %>%
+  group_by(fy) %>%
   summarise(across(ends_with("_DOMESTIC"),
                    list(sum = ~sum(.x, na.rm = TRUE),
                         n = ~sum(!is.na(.x)))),
             issuers = n(), .groups = "drop") %>%
   rename_with(~sub("_DOMESTIC_", "_", .x)) %>%
-  arrange(FY)
+  arrange(fy)
 
 # Growth of the sector, over the issuers that filed in both years.
 like_for_like <- shown %>%
-  transmute(LEI, FY, revenue = revenue_DOMESTIC) %>%
-  arrange(LEI, FY) %>%
-  group_by(LEI) %>%
-  mutate(prev = lag(revenue), prev_fy = lag(FY)) %>%
+  transmute(lei, fy, revenue = revenue_DOMESTIC) %>%
+  arrange(lei, fy) %>%
+  group_by(lei) %>%
+  mutate(prev = lag(revenue), prev_fy = lag(fy)) %>%
   ungroup() %>%
-  filter(!is.na(revenue), !is.na(prev), FY == prev_fy + 1) %>%
-  group_by(FY) %>%
+  filter(!is.na(revenue), !is.na(prev), fy == prev_fy + 1) %>%
+  group_by(fy) %>%
   summarise(revenue = sum(revenue), prev = sum(prev), issuers = n(),
             .groups = "drop") %>%
   mutate(growth = 100 * (revenue / prev - 1))
@@ -1079,8 +1079,8 @@ ratio_of_sums <- function(num, den) {
 # number, which is that number. The summed columns are therefore written
 # last, once nothing else needs the rows.
 by_group <- shown %>%
-  group_by(GROUP, FY) %>%
-  summarise(issuers = n_distinct(LEI),
+  group_by(GROUP, fy) %>%
+  summarise(issuers = n_distinct(lei),
             # The median of the issuers' own ratios, which no single issuer
             # can carry and which a sum always can.
             ebit_margin_median = median(ebit_margin[is.finite(ebit_margin)],
@@ -1096,7 +1096,7 @@ by_group <- shown %>%
                    ~sum(.x, na.rm = TRUE)),
             .groups = "drop") %>%
   rename_with(~sub("_DOMESTIC$", "", .x)) %>%
-  arrange(GROUP, FY)
+  arrange(GROUP, fy)
 ```
 
 ```{r benchmark}
@@ -1112,10 +1112,10 @@ by_group <- shown %>%
 # ESEF filings.
 if (has_combined) {
   bench_values <- bench_facts %>%
-    distinct(SOURCE, FILING, LEI, CIK, PERIODEND, PERIODYEAR, MEASURE, VALUE) %>%
-    distinct(FILING, PERIODEND, MEASURE, .keep_all = TRUE) %>%
-    pivot_wider(names_from = "MEASURE", values_from = "VALUE") %>%
-    mutate(FY = period_year(PERIODEND))
+    distinct(source, filing, lei, cik, period_end, period_year, measure, value) %>%
+    distinct(filing, period_end, measure, .keep_all = TRUE) %>%
+    pivot_wider(names_from = "measure", values_from = "value") %>%
+    mutate(fy = period_year(period_end))
   for (key in setdiff(measures_wanted, names(bench_values))) {
     bench_values[[key]] <- NA_real_
   }
@@ -1127,14 +1127,14 @@ if (has_combined) {
   # not the LEI: a filing with the Commission has no LEI, so grouping on one
   # would collapse every American registrant into a single issuer.
   bench_values <- bench_values %>%
-    mutate(KEY = paste0(coalesce(LEI, ""), "|", coalesce(CIK, "")),
+    mutate(KEY = paste0(coalesce(lei, ""), "|", coalesce(cik, "")),
            filled = rowSums(!is.na(across(all_of(measures_wanted))))) %>%
-    arrange(KEY, FY, desc(filled), FILING) %>%
-    distinct(KEY, FY, .keep_all = TRUE) %>%
+    arrange(KEY, fy, desc(filled), filing) %>%
+    distinct(KEY, fy, .keep_all = TRUE) %>%
     mutate(
-      financial = LEI %in% financial_leis
-                  | LEI %in% financial_by_statement
-                  | CIK %in% financial_by_statement,
+      financial = lei %in% financial_leis
+                  | lei %in% financial_by_statement
+                  | cik %in% financial_by_statement,
       in_panel  = KEY %in% panel$KEY,
       # The figure a population question wants is the result attributable to
       # the parent, falling back to the total where there are no minorities
@@ -1194,13 +1194,13 @@ bench_ratio_labels <- c(
 # the same figure across frameworks. Putting an EBIT column beside a
 # US-GAAP row would promise a comparison the catalogue refuses to make.
 panel_regimes <- panel %>%
-  mutate(REGIME = ifelse(is.na(LEI), "SEC", "ESEF")) %>%
-  select(KEY, SHORT, GROUP, COUNTRY, REGIME)
+  mutate(REGIME = ifelse(is.na(lei), "SEC", "ESEF")) %>%
+  select(KEY, SHORT, GROUP, country, REGIME)
 
 cross_regime <- NULL
 if (has_combined && !is.null(bench_values)) {
   cross_regime <- bench_values %>%
-    filter(in_panel, FY %in% years_shown) %>%
+    filter(in_panel, fy %in% years_shown) %>%
     inner_join(panel_regimes, by = "KEY") %>%
     mutate(GROUP = factor(GROUP, levels = group_levels))
 }
@@ -1220,10 +1220,10 @@ is_cross_regime <- length(regimes_present) > 1
 composition <- NULL
 if (!is.null(bench_values)) {
   composition <- bench_values %>%
-    filter(FY == latest_year) %>%
+    filter(fy == latest_year) %>%
     mutate(population = ifelse(in_panel, "panel",
                         ifelse(financial, "financial", "market"))) %>%
-    group_by(population, SOURCE) %>%
+    group_by(population, source) %>%
     summarise(filings = n(),
               profit_total = sum(profit_basis == "total", na.rm = TRUE),
               profit_attributable = sum(profit_basis == "attributable",
@@ -1252,12 +1252,12 @@ bench_table <- NULL
 if (has_combined && nrow(market) > 0) {
   bench_table <- lapply(bench_ratios, function(key) {
     bind_rows(
-      quartiles(bench_values %>% filter(in_panel, FY == latest_year), key) %>%
+      quartiles(bench_values %>% filter(in_panel, fy == latest_year), key) %>%
         mutate(population = tr("The panel", "Das Panel")),
-      quartiles(market %>% filter(FY == latest_year), key) %>%
+      quartiles(market %>% filter(fy == latest_year), key) %>%
         mutate(population = tr("Other filers, excluding banks and insurers",
                                "Übrige Emittenten, ohne Banken und Versicherer")),
-      quartiles(bench_values %>% filter(financial, FY == latest_year), key) %>%
+      quartiles(bench_values %>% filter(financial, fy == latest_year), key) %>%
         mutate(population = tr("Banks and insurers", "Banken und Versicherer"))
     ) %>% mutate(ratio = key)
   }) %>% bind_rows()
@@ -1269,8 +1269,8 @@ market_band <- NULL
 if (has_combined && nrow(market) > 0) {
   market_band <- lapply(bench_ratios, function(key) {
     market %>%
-      filter(FY %in% years_shown) %>%
-      group_by(FY) %>%
+      filter(fy %in% years_shown) %>%
+      group_by(fy) %>%
       group_modify(~quartiles(.x, key)) %>%
       ungroup() %>%
       mutate(ratio = key)
@@ -1291,8 +1291,8 @@ source_caption <- caption_corporate_design(
     tr("ESEF annual financial reports, filings.xbrl.org.",
        "ESEF-Finanzberichte, filings.xbrl.org.")
   },
-  last = format(max(filings$PERIODEND), tr("%d %b %Y", "%d.%m.%Y")),
-  lang = lang)
+  last = format(max(filings$period_end), tr("%d %b %Y", "%d.%m.%Y")),
+  lang = report_lang)
 
 # One break per financial year of the sector. The label is the year the
 # period end falls in by `period_year`, so a year to 30 April 2026 is shown
@@ -1318,16 +1318,16 @@ group_colours <- setNames(
 # table and a report filed with the Commission carries no country in it.
 # A panel of two regimes is therefore not named by this list, and does not
 # use it.
-panel_countries <- sort(unique(filings$COUNTRY[!is.na(filings$COUNTRY)]))
+panel_countries <- sort(unique(filings$country[!is.na(filings$country)]))
 
 # What a panel of two regimes may be called. The countries of the panel
 # file, not of the filings: a US registrant has a country in the panel and
 # none in its report, and a cover that counted only the second would say
 # seventeen of a panel that spans eighteen.
 cover_countries <- sort(unique(c(panel_countries,
-                                 panel$COUNTRY[!is.na(panel$COUNTRY)])))
+                                 panel$country[!is.na(panel$country)])))
 where <- if (length(cover_countries) == 1 && !is.null(country_name)) {
-  country_name[[lang]]
+  country_name[[report_lang]]
 } else if (length(cover_countries) == 1) {
   cover_countries
 } else {
@@ -1342,7 +1342,7 @@ title <- tr(paste0(sector_name[["en"]], " in ", where),
 # regimes and how many issuers file under each instead of listing
 # eighteen country codes, which at this width wraps to three lines and
 # tells a reader nothing the panel table does not.
-regime_counts <- c(ESEF = sum(!is.na(panel$LEI)), SEC = sum(is.na(panel$LEI)))
+regime_counts <- c(ESEF = sum(!is.na(panel$lei)), SEC = sum(is.na(panel$lei)))
 subtitle <- if (is_cross_regime) {
   tr(paste0("A factsheet on ", nrow(panel), " issuers across two reporting ",
             "regimes: ", regime_counts[["ESEF"]], " filing an ESEF annual ",
@@ -1480,8 +1480,8 @@ if (!needs_fx) {
 }
 if (nrow(unconverted) > 0) {
   missing <- unconverted %>%
-    left_join(panel %>% select(LEI, SHORT), by = "LEI") %>%
-    mutate(txt = paste0(SHORT, " ", FY, " (", CCY, ")"))
+    left_join(panel %>% select(lei, SHORT), by = "lei") %>%
+    mutate(txt = paste0(SHORT, " ", fy, " (", CCY, ")"))
   cat("\n\n", tr(
     paste0("The rate table does not quote ", nrow(unconverted),
            " of the issuer-years shown: ",
@@ -1530,13 +1530,13 @@ if (is_cross_regime) {
 ```{r panel-table}
 temp <- panel %>%
   left_join(filings %>%
-              arrange(LEI, desc(PERIODEND)) %>%
-              group_by(LEI) %>%
-              summarise(NAME = first(NAME),
-                        first_year = fy_label(min(PERIODEND)),
-                        last_year = fy_label(max(PERIODEND)),
+              arrange(lei, desc(period_end)) %>%
+              group_by(lei) %>%
+              summarise(name = first(name),
+                        first_year = fy_label(min(period_end)),
+                        last_year = fy_label(max(period_end)),
                         filings = n(), .groups = "drop"),
-            by = "LEI") %>%
+            by = "lei") %>%
   mutate(GROUP = factor(GROUP, levels = group_levels)) %>%
   arrange(GROUP, SHORT) %>%
   transmute(
@@ -1544,12 +1544,12 @@ temp <- panel %>%
     # gives, then the short name. An issuer the lake holds no filing for
     # stays in this table and is named by the panel rather than dropped:
     # that it filed nothing is a fact about the panel worth printing.
-    !!tr("Issuer", "Emittent") := coalesce(NAME, PANEL_NAME, SHORT),
+    !!tr("Issuer", "Emittent") := coalesce(name, PANEL_NAME, SHORT),
     !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
     !!tr("NACE", "NACE") := NACE,
-    !!tr("Country", "Land") := COUNTRY,
+    !!tr("Country", "Land") := country,
     !!tr("What it does", "Tätigkeit") :=
-      if (lang == "de") ACTIVITY_DE else ACTIVITY_EN,
+      if (report_lang == "de") ACTIVITY_DE else ACTIVITY_EN,
     # `filings` is the ESEF table, so an issuer that files with the
     # Commission has no row in it and no year to show. A dash says that,
     # where NA–NA said the issuer filed nothing at all -- which is the
@@ -1579,7 +1579,7 @@ knitr::kable(temp, align = paste(rep("l", ncol(temp)), collapse = ""))
 ```{r glance-table}
 temp <- totals %>%
   transmute(
-    !!tr("Financial year", "Geschäftsjahr") := as.character(FY),
+    !!tr("Financial year", "Geschäftsjahr") := as.character(fy),
     !!tr("Issuers", "Emittenten") := issuers,
     !!tr("Revenue", "Umsatzerlöse") :=
       paste0(fmt_num(revenue_sum / scale), " (", revenue_n, ")"),
@@ -1612,7 +1612,7 @@ kable_note(temp, tr(paste0("Sums over the issuers that stated the ",
 # and is worse -- the two scales can be chosen to make the lines cross
 # wherever the author likes.
 temp <- totals %>%
-  select(FY, revenue = revenue_sum, profit = profit_sum) %>%
+  select(fy, revenue = revenue_sum, profit = profit_sum) %>%
   mutate(across(c(revenue, profit), ~.x / scale)) %>%
   pivot_longer(c(revenue, profit), names_to = "measure", values_to = "value") %>%
   mutate(measure = factor(
@@ -1620,7 +1620,7 @@ temp <- totals %>%
     labels = c(tr("Revenue", "Umsatzerlöse"),
                tr("Result for the year", "Jahresergebnis"))))
 
-g <- ggplot(temp, aes(x = FY, y = value, fill = measure)) +
+g <- ggplot(temp, aes(x = fy, y = value, fill = measure)) +
   geom_col(width = .62) +
   geom_zeroline() +
   facet_wrap(~measure, nrow = 1, scales = "free_y") +
@@ -1634,17 +1634,17 @@ g
 
 ```{r partial-years, results = "asis"}
 if (length(partial_years) > 0) {
-  n <- filed_per_year %>% filter(FY %in% partial_years)
+  n <- filed_per_year %>% filter(fy %in% partial_years)
   cat(tr(
     paste0("A later financial year than ", max(years_shown), " is not shown. ",
-           paste(sprintf("%d has %d issuer(s) so far", n$FY, n$issuers),
+           paste(sprintf("%d has %d issuer(s) so far", n$fy, n$issuers),
                  collapse = "; "),
            ", against ", max(filed_per_year$issuers), " in the fullest year, ",
            "so it is a year still being filed rather than a year with less ",
            "in it."),
     paste0("Ein spateres Geschaftsjahr als ", max(years_shown),
            " wird nicht gezeigt. ",
-           paste(sprintf("%d hat bisher %d Emittenten", n$FY, n$issuers),
+           paste(sprintf("%d hat bisher %d Emittenten", n$fy, n$issuers),
                  collapse = "; "),
            ", gegen ", max(filed_per_year$issuers),
            " im vollsten Jahr; es ist ein Jahr, das noch eingereicht wird, ",
@@ -1656,14 +1656,14 @@ if (length(partial_years) > 0) {
 if (nrow(like_for_like) > 0) {
   last <- like_for_like %>% slice_tail(n = 1)
   cat(tr(
-    paste0("Revenue of the issuers that filed for both ", last$FY - 1, " and ",
-           last$FY, " changed by ", fmt_signed(last$growth), " per cent. That ",
+    paste0("Revenue of the issuers that filed for both ", last$fy - 1, " and ",
+           last$fy, " changed by ", fmt_signed(last$growth), " per cent. That ",
            "is computed over the ", last$issuers, " issuers present in both ",
            "years rather than over the totals above, which are sums over a ",
            "changing number of issuers, and it is a nominal figure: nothing ",
            "in this lake deflates it."),
-    paste0("Der Umsatz der Emittenten, die sowohl für ", last$FY - 1,
-           " als auch für ", last$FY, " eingereicht haben, veränderte sich um ",
+    paste0("Der Umsatz der Emittenten, die sowohl für ", last$fy - 1,
+           " als auch für ", last$fy, " eingereicht haben, veränderte sich um ",
            fmt_signed(last$growth), " Prozent. Berechnet über die ",
            last$issuers, " in beiden Jahren vorhandenen Emittenten, nicht über ",
            "die Summen oben, die über eine wechselnde Zahl von Emittenten ",
@@ -1678,7 +1678,7 @@ if (nrow(like_for_like) > 0) {
 temp <- by_group %>%
   transmute(
     !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
-    !!tr("Year", "Jahr") := as.character(FY),
+    !!tr("Year", "Jahr") := as.character(fy),
     !!tr("Issuers", "Emittenten") := issuers,
     !!tr("Revenue", "Umsatz") := fmt_num(revenue / scale),
     !!tr("EBIT", "EBIT") := fmt_num(ebit / scale),
@@ -1711,7 +1711,7 @@ kable_note(temp, tr(
 
 ```{r group-chart, fig.height = 2.6}
 g <- ggplot(by_group %>% filter(!is.na(ebit_margin)),
-            aes(x = FY, y = ebit_margin, colour = GROUP)) +
+            aes(x = fy, y = ebit_margin, colour = GROUP)) +
   geom_zeroline() +
   geom_line(linewidth = linewidth_corporate_design) +
   geom_point(size = 1.6) +
@@ -1729,7 +1729,7 @@ g
 
 ```{r issuer-table}
 temp <- shown %>%
-  arrange(GROUP, SHORT, FY) %>%
+  arrange(GROUP, SHORT, fy) %>%
   transmute(
     !!tr("Issuer", "Emittent") := SHORT,
     !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
@@ -1774,26 +1774,26 @@ kable_note(temp, tr(paste0("Amounts in ", amount_label,
 # many those were.
 base <- shown %>%
   filter(!is.na(revenue_DOMESTIC)) %>%
-  group_by(LEI) %>%
-  arrange(FY, .by_group = TRUE) %>%
+  group_by(lei) %>%
+  arrange(fy, .by_group = TRUE) %>%
   mutate(index = 100 * revenue_DOMESTIC / first(revenue_DOMESTIC),
          n_years = n()) %>%
   ungroup() %>%
   filter(n_years > 1)
 
-drawn <- n_distinct(base$LEI)
-left_out <- n_distinct(shown$LEI) - drawn
+drawn <- n_distinct(base$lei)
+left_out <- n_distinct(shown$lei) - drawn
 
-g <- ggplot(mapping = aes(x = FY, y = index)) +
+g <- ggplot(mapping = aes(x = fy, y = index)) +
   geom_hline(yintercept = 100, colour = design_colours()["grid"])
 
 if (drawn > max_lines) {
   # The median of each group in front of every issuer's line, drawn faint.
   medians <- base %>%
-    group_by(GROUP, FY) %>%
+    group_by(GROUP, fy) %>%
     summarise(index = median(index, na.rm = TRUE), .groups = "drop")
   g <- g +
-    geom_line(data = base, aes(group = LEI),
+    geom_line(data = base, aes(group = lei),
               colour = design_colours()["mute"], linewidth = .35, alpha = .7) +
     geom_line(data = medians, aes(colour = GROUP),
               linewidth = linewidth_corporate_design + .2) +
@@ -1823,10 +1823,10 @@ if (drawn > max_lines) {
 # where it returns -- and the caption says how many did.
 upper <- max(160, stats::quantile(base$index, .98, na.rm = TRUE))
 clipped <- base %>%
-  group_by(LEI) %>%
+  group_by(lei) %>%
   filter(any(index > upper)) %>%
   ungroup() %>%
-  distinct(LEI, SHORT)
+  distinct(lei, SHORT)
 
 g <- g +
   scale_x_years() +
@@ -1946,29 +1946,29 @@ if (!is.null(market_band)) {
   temp <- shown %>% filter(!is.na(equity_ratio), is.finite(equity_ratio))
 
   g <- ggplot() +
-    geom_ribbon(data = band, aes(x = FY, ymin = q1, ymax = q3),
+    geom_ribbon(data = band, aes(x = fy, ymin = q1, ymax = q3),
                 fill = design_colours()["mute"], alpha = .5) +
-    geom_line(data = band, aes(x = FY, y = median),
+    geom_line(data = band, aes(x = fy, y = median),
               colour = design_colours()["ink_soft"],
               linewidth = linewidth_corporate_design, linetype = "22")
 
-  if (n_distinct(temp$LEI) > max_lines) {
+  if (n_distinct(temp$lei) > max_lines) {
     medians <- temp %>%
-      group_by(GROUP, FY) %>%
+      group_by(GROUP, fy) %>%
       summarise(equity_ratio = median(equity_ratio), n = n(), .groups = "drop")
     g <- g +
-      geom_line(data = temp, aes(x = FY, y = equity_ratio, group = LEI),
+      geom_line(data = temp, aes(x = fy, y = equity_ratio, group = lei),
                 colour = design_colours()["mute"], linewidth = .3, alpha = .55) +
-      geom_line(data = medians, aes(x = FY, y = equity_ratio, colour = GROUP),
+      geom_line(data = medians, aes(x = fy, y = equity_ratio, colour = GROUP),
                 linewidth = linewidth_corporate_design + .2) +
-      geom_point(data = medians, aes(x = FY, y = equity_ratio, colour = GROUP),
+      geom_point(data = medians, aes(x = fy, y = equity_ratio, colour = GROUP),
                  size = 1.8)
   } else {
     g <- g +
-      geom_line(data = temp, aes(x = FY, y = equity_ratio, colour = GROUP,
+      geom_line(data = temp, aes(x = fy, y = equity_ratio, colour = GROUP,
                                  group = SHORT),
                 linewidth = linewidth_corporate_design) +
-      geom_point(data = temp, aes(x = FY, y = equity_ratio, colour = GROUP),
+      geom_point(data = temp, aes(x = fy, y = equity_ratio, colour = GROUP),
                  size = 1.4)
   }
 
@@ -2024,7 +2024,7 @@ if (is_cross_regime) {
 ```{r cross-regime-table}
 if (is_cross_regime) {
   temp <- cross_regime %>%
-    filter(FY == latest_year) %>%
+    filter(fy == latest_year) %>%
     group_by(GROUP, REGIME) %>%
     summarise(issuers = n_distinct(KEY),
               revenue = sum(revenue, na.rm = TRUE),
@@ -2060,10 +2060,10 @@ if (is_cross_regime && !is.null(composition)) {
                                labels = c(tr("The panel", "Das Panel"),
                                           tr("Other filers", "Übrige Emittenten"),
                                           tr("Banks and insurers", "Banken und Versicherer")))) %>%
-    arrange(population, SOURCE) %>%
+    arrange(population, source) %>%
     transmute(
       !!tr("Population", "Grundgesamtheit") := as.character(population),
-      !!tr("Source", "Quelle") := toupper(SOURCE),
+      !!tr("Source", "Quelle") := toupper(source),
       !!tr("Filings", "Berichte") := filings,
       !!tr("Profit: total", "Ergebnis: gesamt") := profit_total,
       !!tr("Profit: parent", "Ergebnis: Mutter") := profit_attributable,

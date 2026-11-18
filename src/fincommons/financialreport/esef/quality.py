@@ -69,13 +69,13 @@ logger = logging.getLogger(__name__)
 DATASET = "esef"
 
 issues_schema = StructType() \
-    .add("COUNTRY", StringType(), False) \
-    .add("LEI", StringType(), False) \
-    .add("FILING", StringType(), False) \
-    .add("FACT", StringType(), True) \
-    .add("CONCEPT", StringType(), True) \
-    .add("ISSUE", StringType(), False) \
-    .add("CHECKED", DateType(), False)
+    .add("country", StringType(), False) \
+    .add("lei", StringType(), False) \
+    .add("filing", StringType(), False) \
+    .add("fact", StringType(), True) \
+    .add("concept", StringType(), True) \
+    .add("issue", StringType(), False) \
+    .add("checked", DateType(), False)
 """The shape of the table of issues: one row per issue found.
 
 ``COUNTRY`` is the partition column, as it is on the table of facts, so that
@@ -155,7 +155,7 @@ CONCEPTS = {
 #: The columns that identify the record an issue is about. Every check returns
 #: these, with the two that name a fact left null where the issue is about the
 #: filing as a whole.
-KEYS = ("COUNTRY", "LEI", "FILING", "FACT", "CONCEPT")
+KEYS = ("country", "lei", "filing", "fact", "concept")
 
 
 def is_extension(concept):
@@ -167,8 +167,8 @@ def is_extension(concept):
 def _filing_level(frame):
     """A frame of filing-level issues: the keys, with no fact named."""
     return (frame
-            .withColumn("FACT", func.lit(None).cast("string"))
-            .withColumn("CONCEPT", func.lit(None).cast("string"))
+            .withColumn("fact", func.lit(None).cast("string"))
+            .withColumn("concept", func.lit(None).cast("string"))
             .select(*KEYS))
 
 
@@ -182,19 +182,19 @@ def annual_figures(facts, filings):
     report against itself.
     """
     own = (facts
-           .where(func.col("VALUE").isNotNull() & func.col("DIMENSIONS").isNull())
-           .where(func.col("PRDEND") == func.col("PERIODEND"))
-           .where(func.col("PRDSTART").isNull()
-                  | (func.datediff("PRDEND", "PRDSTART").between(MIN_DAYS, MAX_DAYS))))
+           .where(func.col("value").isNotNull() & func.col("dimensions").isNull())
+           .where(func.col("prd_end") == func.col("period_end"))
+           .where(func.col("prd_start").isNull()
+                  | (func.datediff("prd_end", "prd_start").between(MIN_DAYS, MAX_DAYS))))
 
     # The same figure is often tagged twice in one report, in the statements
     # and again in the notes, with one value.
-    chosen = (own.groupBy("FILING", "COUNTRY", "LEI", "CONCEPT")
-              .agg(func.min("VALUE").alias("VALUE")))
+    chosen = (own.groupBy("filing", "country", "lei", "concept")
+              .agg(func.min("value").alias("value")))
 
     names = [name for values in CONCEPTS.values() for name in values]
-    wide = (chosen.groupBy("FILING", "COUNTRY", "LEI")
-            .pivot("CONCEPT", names).agg(func.first("VALUE")))
+    wide = (chosen.groupBy("filing", "country", "lei")
+            .pivot("concept", names).agg(func.first("value")))
 
     for key, values in CONCEPTS.items():
         column = func.lit(None).cast("double")
@@ -203,7 +203,7 @@ def annual_figures(facts, filings):
                 column = func.coalesce(func.col(f"`{name}`"), column)
         wide = wide.withColumn(key, column)
 
-    return wide.select("FILING", "COUNTRY", "LEI", *CONCEPTS)
+    return wide.select("filing", "country", "lei", *CONCEPTS)
 
 
 def _imbalance(figures, difference, scale):
@@ -294,24 +294,24 @@ def check_missing_profit(state):
 def check_implausible_period(state):
     """A fact whose period ends before it begins."""
     return (state["facts"]
-            .where(func.col("PRDSTART").isNotNull()
-                   & (func.col("PRDSTART") > func.col("PRDEND")))
+            .where(func.col("prd_start").isNotNull()
+                   & (func.col("prd_start") > func.col("prd_end")))
             .select(*KEYS))
 
 
 def check_missing_fact_value(state):
     """A fact carrying neither a number nor a text, which says nothing."""
     return (state["facts"]
-            .where(func.col("VALUE").isNull() & func.col("TEXT").isNull())
+            .where(func.col("value").isNull() & func.col("text").isNull())
             .select(*KEYS))
 
 
 def check_period_after_processing(state):
     """A fact reporting on a period the repository had not yet seen end."""
     return (state["facts"]
-            .join(state["filings"].select("FILING", "PROCESSED"), "FILING")
-            .where(func.col("PROCESSED").isNotNull())
-            .where(func.col("PRDEND") > func.to_date("PROCESSED"))
+            .join(state["filings"].select("filing", "processed"), "filing")
+            .where(func.col("processed").isNotNull())
+            .where(func.col("prd_end") > func.to_date("processed"))
             .select(*KEYS))
 
 
@@ -328,9 +328,9 @@ def check_duplicate_fact_value(state):
     key matches nothing -- which would have let every balance sheet figure
     past. They are therefore filled before they are grouped and joined on.
     """
-    keys = ["FILING", "CONCEPT", "PRDSTART", "PRDEND", "UNIT",
-            "DIMENSIONS"]
-    filled = state["facts"].where(func.col("VALUE").isNotNull())
+    keys = ["filing", "concept", "prd_start", "prd_end", "unit",
+            "dimensions"]
+    filled = state["facts"].where(func.col("value").isNotNull())
     for key in keys:
         filled = filled.withColumn(
             f"_{key}",
@@ -338,7 +338,7 @@ def check_duplicate_fact_value(state):
     grouped = [f"_{key}" for key in keys]
 
     conflicting = (filled.groupBy(*grouped)
-                   .agg(func.countDistinct("VALUE").alias("_values"))
+                   .agg(func.countDistinct("value").alias("_values"))
                    .where(func.col("_values") > 1)
                    .select(*grouped))
     return filled.join(conflicting, grouped).select(*KEYS)
@@ -348,12 +348,12 @@ def check_mixed_unit(state):
     """One concept in two units in one filing."""
     facts = state["facts"]
     mixed = (facts
-             .where(func.col("UNIT").isNotNull())
-             .groupBy("FILING", "CONCEPT")
-             .agg(func.countDistinct("UNIT").alias("_units"))
+             .where(func.col("unit").isNotNull())
+             .groupBy("filing", "concept")
+             .agg(func.countDistinct("unit").alias("_units"))
              .where(func.col("_units") > 1)
              .drop("_units"))
-    return facts.join(mixed, ["FILING", "CONCEPT"]).select(*KEYS)
+    return facts.join(mixed, ["filing", "concept"]).select(*KEYS)
 
 
 def check_validation_errors(state):
@@ -366,8 +366,8 @@ def check_validation_errors(state):
     """
     return _filing_level(
         state["filings"]
-        .where(func.coalesce(func.col("ERRORS"), func.lit(0)) > 0)
-        .select("COUNTRY", "LEI", "FILING"))
+        .where(func.coalesce(func.col("errors"), func.lit(0)) > 0)
+        .select("country", "lei", "filing"))
 
 
 def check_no_facts(state):
@@ -382,8 +382,8 @@ def check_no_facts(state):
     been reported.
     """
     return _filing_level(
-        state["filings"].where(func.col("JSONURL").isNull())
-        .select("COUNTRY", "LEI", "FILING"))
+        state["filings"].where(func.col("json_url").isNull())
+        .select("country", "lei", "filing"))
 
 
 def check_duplicate_filing_period(state):
@@ -395,29 +395,29 @@ def check_duplicate_filing_period(state):
     """
     filings = state["filings"]
     with_facts = (filings
-                  .join(state["facts"].select("FILING").distinct(), "FILING"))
+                  .join(state["facts"].select("filing").distinct(), "filing"))
     repeated = (with_facts
-                .groupBy("LEI", "PERIODEND",
-                         func.coalesce(func.col("LANG"), func.lit("")).alias("_lang"))
-                .agg(func.countDistinct("FILING").alias("_filings"))
+                .groupBy("lei", "period_end",
+                         func.coalesce(func.col("lang"), func.lit("")).alias("_lang"))
+                .agg(func.countDistinct("filing").alias("_filings"))
                 .where(func.col("_filings") > 1)
-                .select("LEI", "PERIODEND", "_lang"))
+                .select("lei", "period_end", "_lang"))
     return _filing_level(
         with_facts
-        .withColumn("_lang", func.coalesce(func.col("LANG"), func.lit("")))
-        .join(repeated, ["LEI", "PERIODEND", "_lang"])
-        .select("COUNTRY", "LEI", "FILING"))
+        .withColumn("_lang", func.coalesce(func.col("lang"), func.lit("")))
+        .join(repeated, ["lei", "period_end", "_lang"])
+        .select("country", "lei", "filing"))
 
 
 def check_high_extension_share(state):
     """A report whose figures mostly rest on concepts of the issuer's own."""
     shares = (state["facts"]
-              .where(func.col("VALUE").isNotNull())
-              .groupBy("COUNTRY", "LEI", "FILING")
-              .agg(func.avg(is_extension(func.col("CONCEPT")).cast("double"))
+              .where(func.col("value").isNotNull())
+              .groupBy("country", "lei", "filing")
+              .agg(func.avg(is_extension(func.col("concept")).cast("double"))
                    .alias("_share"))
               .where(func.col("_share") > EXTENSION_SHARE))
-    return _filing_level(shares.select("COUNTRY", "LEI", "FILING"))
+    return _filing_level(shares.select("country", "lei", "filing"))
 
 
 #: Every check of this data set, by the code its rows carry. The order is the
@@ -470,8 +470,8 @@ def find_issues(spark, config_path, countries=None):
 
     if countries:
         wanted = [str(country).upper() for country in countries]
-        facts = facts.where(func.col("COUNTRY").isin(wanted))
-        filings = filings.where(func.col("COUNTRY").isin(wanted))
+        facts = facts.where(func.col("country").isin(wanted))
+        filings = filings.where(func.col("country").isin(wanted))
 
     # The facts carry their filing's period end, which is what lets a check
     # tell a figure of the year from a comparative without a join.
@@ -524,13 +524,13 @@ def update_silver_esef_quality(spark, config_path, countries=None,
 
         if countries and existing is not None:
             rechecked = [str(country).upper() for country in countries]
-            to_write = merged_issues(found, existing, "COUNTRY", rechecked)
+            to_write = merged_issues(found, existing, "country", rechecked)
         else:
             to_write = found
 
-        write_silver(rebalanced(to_write, "COUNTRY"), ref,
+        write_silver(rebalanced(to_write, "country"), ref,
                      file_format=file_format,
-                     partition_by=partitioning(to_write, "COUNTRY"))
+                     partition_by=partitioning(to_write, "country"))
         outcome["issues"] = found.count()
         outcome["checks"] = len(CHECKS)
 

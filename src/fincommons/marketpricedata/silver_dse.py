@@ -36,24 +36,34 @@ logger = logging.getLogger(__name__)
 #: The prefix a DSE trading code is given in the price table.
 DSE_PREFIX = "DSE-"
 
+#: What a column of the corporate action frame that
+#: :func:`~fincommons.marketpricedata.dse_events.corporate_actions` builds is
+#: called in the Silver table. That function reads and writes the Bronze shape
+#: of the DSE deliveries, and this is where its result crosses over.
+CORPORATE_ACTION_SILVER_NAMES = {
+    "EXDATE": "ex_date", "KIND": "kind", "FACTOR": "factor",
+    "RECORD": "record_date", "DETAIL": "detail", "SOURCE": "source",
+    "EXDATE_FROM": "ex_date_from",
+}
+
 dse_corporate_actions_schema = StructType() \
-    .add("INSTRID", StringType(), False) \
-    .add("EXDATE", DateType(), False) \
-    .add("KIND", StringType(), False) \
-    .add("FACTOR", DoubleType(), False) \
-    .add("RECORD", DateType(), True) \
-    .add("DETAIL", StringType(), True) \
-    .add("SOURCE", StringType(), True) \
-    .add("EXDATE_FROM", StringType(), True)
+    .add("instr_id", StringType(), False) \
+    .add("ex_date", DateType(), False) \
+    .add("kind", StringType(), False) \
+    .add("factor", DoubleType(), False) \
+    .add("record_date", DateType(), True) \
+    .add("detail", StringType(), True) \
+    .add("source", StringType(), True) \
+    .add("ex_date_from", StringType(), True)
 
 
 def _latest_delivery(bronze, keys):
     """Each row once, as the most recent download delivered it."""
-    downloads = Window.partitionBy(*keys).orderBy(func.col("LASTDT").desc())
+    downloads = Window.partitionBy(*keys).orderBy(func.col("last_date").desc())
     return bronze \
-        .withColumn("DELIVERY", func.row_number().over(downloads)) \
-        .filter(func.col("DELIVERY") == 1) \
-        .drop("DELIVERY")
+        .withColumn("_DELIVERY", func.row_number().over(downloads)) \
+        .filter(func.col("_DELIVERY") == 1) \
+        .drop("_DELIVERY")
 
 
 def update_silver_dse(spark, config_path, full=False):
@@ -83,12 +93,12 @@ def update_silver_dse(spark, config_path, full=False):
             extra=context(module="marketpricedata", layer="silver",
                           source="DSE"))
     else:
-        closes = _latest_delivery(dayend, ["CODE", "REFDT"]) \
+        closes = _latest_delivery(dayend, ["CODE", "ref_date"]) \
             .filter((func.col("TRADES") > 0) & (func.col("CLOSE") > 0)) \
-            .select("REFDT",
+            .select("ref_date",
                     func.concat(func.lit(DSE_PREFIX), func.col("CODE"))
-                        .alias("INSTRID"),
-                    func.col("CLOSE").alias("VALUE"))
+                        .alias("instr_id"),
+                    func.col("CLOSE").alias("value"))
         standard_upsert(spark, config_path, closes)
         write_watermark(config_path, "DSE", watermark)
 
@@ -102,12 +112,12 @@ def update_silver_dse(spark, config_path, full=False):
                           source="DSE-INDICES"))
         return
 
-    summary = _latest_delivery(summary, ["REFDT"])
-    indices = summary.select("REFDT", func.lit("IX-DSEX").alias("INSTRID"),
-                             func.col("DSEX").alias("VALUE")) \
-        .unionByName(summary.select("REFDT", func.lit("IX-DS30").alias("INSTRID"),
-                                    func.col("DS30").alias("VALUE"))) \
-        .filter(func.col("VALUE") > 0)
+    summary = _latest_delivery(summary, ["ref_date"])
+    indices = summary.select("ref_date", func.lit("IX-DSEX").alias("instr_id"),
+                             func.col("DSEX").alias("value")) \
+        .unionByName(summary.select("ref_date", func.lit("IX-DS30").alias("instr_id"),
+                                    func.col("DS30").alias("value"))) \
+        .filter(func.col("value") > 0)
     standard_upsert(spark, config_path, indices)
     write_watermark(config_path, "DSE-INDICES", watermark)
 
@@ -141,11 +151,15 @@ def update_silver_dse_corporate_actions(spark, config_path):
 
     news = _latest_delivery(news, ["ID"]) \
         .select("ID", "CODE", "FILEDAT", "SUMMARY", "BODY").toPandas()
-    prices = _latest_delivery(dayend, ["CODE", "REFDT"]) \
-        .select("REFDT", "CODE", "CLOSE", "TRADES").toPandas()
+    # ``corporate_actions`` reads the Bronze shape of the DSE deliveries, so
+    # it is given the Bronze names and its result is read into the Silver ones.
+    prices = _latest_delivery(dayend, ["CODE", "ref_date"]) \
+        .select(func.col("ref_date").alias("REFDT"), "CODE", "CLOSE",
+                "TRADES").toPandas()
 
     events = corporate_actions(news, prices)
-    events.insert(0, "INSTRID", DSE_PREFIX + events.pop("CODE").astype(str))
+    events.insert(0, "instr_id", DSE_PREFIX + events.pop("CODE").astype(str))
+    events = events.rename(columns=CORPORATE_ACTION_SILVER_NAMES)
     frame = spark.createDataFrame(
         events[dse_corporate_actions_schema.fieldNames()],
         schema=dse_corporate_actions_schema)

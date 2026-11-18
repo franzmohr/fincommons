@@ -75,8 +75,8 @@ _PARSED_SCHEMA = StructType(
     + [StructField("_ERROR", StringType(), True)]
 )
 
-_COLUMNS = ["REFDT", "DATASET", "TABLE", "FREQUENCY", "SERIES", "VALUE",
-            "TITLE", "_ERROR"]
+_COLUMNS = ["ref_date", "dataset", "table", "frequency", "series", "value",
+            "title", "_ERROR"]
 
 
 def _parse_file(dataset, lines, chunk_rows=CHUNK_ROWS):
@@ -98,13 +98,13 @@ def _parse_file(dataset, lines, chunk_rows=CHUNK_ROWS):
         values = parse_lines(dataset, list(lines))
     except Exception:
         yield pandas.DataFrame({
-            "REFDT": [None], "DATASET": [dataset], "TABLE": [None],
-            "FREQUENCY": [None], "SERIES": [None], "VALUE": [None],
-            "TITLE": [None], "_ERROR": [traceback.format_exc()],
+            "ref_date": [None], "dataset": [dataset], "table": [None],
+            "frequency": [None], "series": [None], "value": [None],
+            "title": [None], "_ERROR": [traceback.format_exc()],
         })
         return
-    values["DATASET"] = dataset
-    values["REFDT"] = values["REFDT"].dt.date
+    values["dataset"] = dataset
+    values["ref_date"] = values["ref_date"].dt.date
     values["_ERROR"] = None
     values = values[_COLUMNS]
     # pandas 3 keeps text in Arrow arrays, and a column the parser put
@@ -125,7 +125,7 @@ def _parse_files(frames, chunk_rows=CHUNK_ROWS):
     Each row holds one file: its name and its lines, already in order.
     """
     for frame in frames:
-        for dataset, lines in zip(frame["DATASET"], frame["LINES"]):
+        for dataset, lines in zip(frame["dataset"], frame["lines"]):
             yield from _parse_file(dataset, lines, chunk_rows)
 
 
@@ -242,17 +242,17 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
         .option("basePath", path_bronze_files(config_path)) \
         .parquet(path_bronze_files(config_path)) \
         .filter(func.col("DATASET").isin(batch)) \
-        .select("DATASET", "LINENO", "LINE")
+        .select(func.col("DATASET").alias("dataset"), "LINENO", "LINE")
 
     # One row per file, its lines in the order of the file, and one file per
     # partition as far as hashing allows, so that a task holds the text of a
     # file or two rather than of the whole batch.
-    files = bronze.groupBy("DATASET").agg(
+    files = bronze.groupBy("dataset").agg(
         func.transform(
             func.sort_array(func.collect_list(func.struct("LINENO", "LINE"))),
             lambda line: line["LINE"],
-        ).alias("LINES")
-    ).repartition(len(batch), "DATASET")
+        ).alias("lines")
+    ).repartition(len(batch), "dataset")
 
     # The chunk size is bound here, on the driver, because the executors
     # import this module afresh and would not see it changed.
@@ -261,9 +261,9 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
         .persist(StorageLevel.MEMORY_AND_DISK)
     try:
         summary = {
-            row["DATASET"]: row for row in parsed.groupBy("DATASET").agg(
-                func.count(func.col("VALUE")).alias("rows"),
-                func.max(func.col("_ERROR")).alias("error"),
+            row["dataset"]: row for row in parsed.groupBy("dataset").agg(
+                func.count(func.col("value")).alias("_rows"),
+                func.max(func.col("_ERROR")).alias("_error"),
             ).collect()
         }
         good = []
@@ -272,9 +272,9 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
             error = None
             if row is None:
                 error = "The Bronze layer holds no lines of the file."
-            elif row["error"] is not None:
-                error = row["error"]
-            elif row["rows"] == 0:
+            elif row["_error"] is not None:
+                error = row["_error"]
+            elif row["_rows"] == 0:
                 error = "The file holds no value the parser could read."
             if error is None:
                 good.append(dataset)
@@ -296,18 +296,18 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
         if not good:
             return
 
-        result = parsed.filter(func.col("DATASET").isin(good)) \
+        result = parsed.filter(func.col("dataset").isin(good)) \
             .filter(func.col("_ERROR").isNull()) \
             .select(*[func.col(f.name) for f in silver_schema.fields])
         _report_unknown_tables(result)
 
         replace_silver_partitions(
-            result, ref_silver_famafrenchdata(config_path), "DATASET", good,
+            result, ref_silver_famafrenchdata(config_path), "dataset", good,
             file_format=file_format,
         )
         for dataset in good:
             write_watermark(config_path, dataset, pending[dataset])
-        rows = sum(summary[d]["rows"] for d in good)
+        rows = sum(summary[d]["_rows"] for d in good)
         outcome["written"] += len(good)
         outcome["rows"] += rows
         logger.info(
@@ -326,14 +326,14 @@ def _report_unknown_tables(result):
     whose log a reader of the run does not see. The codes are therefore
     looked at again here, where they can be reported.
     """
-    unknown = result.filter(~func.col("TABLE").isin(list(TABLE_CODES))) \
-        .select("DATASET", "TABLE", "TITLE").distinct().collect()
+    unknown = result.filter(~func.col("table").isin(list(TABLE_CODES))) \
+        .select("dataset", "table", "title").distinct().collect()
     for row in unknown:
         logger.warning(
             "A table is filed under a code that is not in the vocabulary",
             extra=context(module="famafrenchdata", layer="silver",
-                          source=row["DATASET"], table=row["TABLE"],
-                          title=row["TITLE"]),
+                          source=row["dataset"], table=row["table"],
+                          title=row["title"]),
         )
 
 
@@ -376,19 +376,19 @@ def series(data, dataset, table, frequency, columns=None):
         a misspelt name far more often than an empty table; or if a series of
         ``columns`` is not among them.
     """
-    where = {"DATASET": dataset, "TABLE": table, "FREQUENCY": frequency}
+    where = {"dataset": dataset, "table": table, "frequency": frequency}
     if hasattr(data, "sparkSession"):
         selected = data
         for column, value in where.items():
             selected = selected.filter(func.col(column) == value)
         if columns is not None:
-            selected = selected.filter(func.col("SERIES").isin(list(columns)))
-        frame = selected.select("REFDT", "SERIES", "VALUE").toPandas()
+            selected = selected.filter(func.col("series").isin(list(columns)))
+        frame = selected.select("ref_date", "series", "value").toPandas()
     else:
         mask = pandas.Series(True, index=data.index)
         for column, value in where.items():
             mask &= data[column] == value
-        frame = data.loc[mask, ["REFDT", "SERIES", "VALUE"]]
+        frame = data.loc[mask, ["ref_date", "series", "value"]]
 
     if frame.empty:
         raise LookupError(
@@ -396,8 +396,8 @@ def series(data, dataset, table, frequency, columns=None):
             f"{table!r} at frequency {frequency!r}. Check the names against "
             "the DATASET, TABLE and FREQUENCY columns."
         )
-    wide = frame.assign(REFDT=pandas.to_datetime(frame["REFDT"])) \
-        .pivot(index="REFDT", columns="SERIES", values="VALUE") \
+    wide = frame.assign(ref_date=pandas.to_datetime(frame["ref_date"])) \
+        .pivot(index="ref_date", columns="series", values="value") \
         .sort_index()
     wide.columns.name = None
     if columns is not None:

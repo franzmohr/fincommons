@@ -63,13 +63,13 @@ file named ``10_Industry_Portfolios`` was read as a name.
 
 
 silver_schema = StructType() \
-    .add("REFDT", DateType(), False) \
-    .add("DATASET", StringType(), False) \
-    .add("TABLE", StringType(), False) \
-    .add("FREQUENCY", StringType(), False) \
-    .add("SERIES", StringType(), False) \
-    .add("VALUE", DoubleType(), False) \
-    .add("TITLE", StringType(), False)
+    .add("ref_date", DateType(), False) \
+    .add("dataset", StringType(), False) \
+    .add("table", StringType(), False) \
+    .add("frequency", StringType(), False) \
+    .add("series", StringType(), False) \
+    .add("value", DoubleType(), False) \
+    .add("title", StringType(), False)
 """The shape of the Silver table: one row per file, table, series and period.
 
 No column is ever null. A missing value of the library is left out rather

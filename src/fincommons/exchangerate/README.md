@@ -72,21 +72,21 @@ Due to the heterogeneity of the data source, the module does not provide any fun
 
 | Column | Type | Content |
 | --- | --- | --- |
-| `REFDATE` | string | The reference date of the quote, as `YYYY-MM-DD`. |
+| `REFDT` | string | The reference date of the quote, as `YYYY-MM-DD`. |
 | `BASE` | string | The ISO-3 code of the base currency. |
 | `QUOTE` | string | The ISO-3 code of the quoted currency. |
 | `VALUE` | double | Units of `QUOTE` per one unit of `BASE`. |
 | `TYPE` | string | The kind of rate, for instance `ref` for a reference rate. |
 | `SOURCE` | string | A label stating where the quote came from. It is carried through to the Silver layer. |
 
-The file is checked before it is combined, and refused as a whole where a row would be misread: a `REFDATE` not written as `YYYY-MM-DD`, a `VALUE` that is missing or not positive, or one day and pair quoted twice. The first matters most, because the combination compares dates as text: a date written `2020-10-5` is not the same day as the ECB's `2020-10-05` to it, and one such row could cut the whole table short.
+The file is checked before it is combined, and refused as a whole where a row would be misread: a `REFDT` not written as `YYYY-MM-DD`, a `VALUE` that is missing or not positive, or one day and pair quoted twice. The first matters most, because the combination compares dates as text: a date written `2020-10-5` is not the same day as the ECB's `2020-10-05` to it, and one such row could cut the whole table short.
 
 ## From bronze to silver layer
 
 Function `update_silver_exchangerate` updates the exchange rate data set. It takes the following arguments:
 * `spark`: The open Spark session.
 * `config_path`: The path to the configuration file, where the paths of the data lake are specified.
-* `use_bis`: A boolean indicating if exchange rate data from the website of the Bank for International Settlements should be used. The default specification of this argument is `False` since the data is not updated daily.
+* `use_bis`: A boolean indicating if exchange rate data from the website of the Bank for International Settlements should be used. The default specification of this argument is `False` since the data is not updated daily. A run that uses it also ends the table on the latest date for which BIS data is available, see [How far the table reaches](#how-far-the-table-reaches).
 * `rebase`: An ISO-3 currency code indicating into which FX rate the exchange rate data set should be converted, for organisations where the euro is not the domestic currency. The SFTR, EMIR and MiFIR stages and `convert2ccy` read the rates quoted against the currency they convert into, so any target other than the euro needs the table rebased to it. SFTR, EMIR and `convert2ccy` refuse to run against a table that is not; MiFIR warns and leaves the volumes it cannot convert empty.
 * `file_format`: The format the table is stored in, `'parquet'` or `'delta'`. The default is `'parquet'`, because it is the format every engine reads without a further dependency.
 
@@ -96,7 +96,7 @@ Function `update_silver_exchangerate` updates the exchange rate data set. It tak
 ex.update_silver_exchangerate(spark, config_path, use_bis = False, file_format = 'parquet')
 ```
 
-During the update process, the function logs the latest date in each data set for which observations are available. The final data set will only contain observations until the smallest of them, which is logged beside them as the cutoff.
+During the update process, the function logs the latest date in each data set for which observations are available, and, where the BIS is used, the date the table is cut back to.
 
 The resulting data set will be stored in the folder specified in the `paths.yaml` file under `exchangerate/silver`. Each update replaces the table rather than adding to it.
 
@@ -116,7 +116,13 @@ Note that a Delta update replaces the table in a single transaction, so a reader
 
 ### How the sources are combined
 
-Where more than one source quotes the same currency pair on the same day, the proprietary data takes precedence over the ECB, and the ECB over the BIS. Only the winning quote reaches the Silver layer, and the `SOURCE` column of the result states which source it came from.
+Where more than one source quotes the same currency pair on the same day, the proprietary data takes precedence over the ECB, and the ECB over the BIS. Only the winning quote reaches the Silver layer, and the `source` column of the result states which source it came from.
+
+### How far the table reaches
+
+Without the BIS, every source counts up to its own last day: where one source has fallen behind, the others describe the days it does not reach, as they do on any day it is silent, rather than the newest rates of the up-to-date sources being thrown away.
+
+With `use_bis = True` the table ends on the latest date for which BIS data is available. The BIS publishes its bulk statistics several days late, and the days beyond it would be described by the ECB and the proprietary source alone: a pair only the BIS quotes would stop days before the rest, and the day an amount is converted on would decide which currencies the table covers. The cut keeps the whole table on the same footing, at the price of the few newest days of the other sources, which the next run picks up once the BIS has caught up. It is applied after the days without a quote have been filled, so a day before the cut still carries the last rate quoted on or before it. Where the BIS data in the Bronze layer holds no daily average at all there is no day to cut back to: the update is refused and the existing table left as it is, rather than replaced by an empty one.
 
 ### Days without a quote
 
@@ -124,7 +130,7 @@ The sources quote on business days, but an amount agreed on a Saturday still has
 
 The fill stops at the last quote of a pair: the last quoted day is present once and is not carried forward beyond itself. A currency that stops being quoted therefore ends with its last observation, and an amount dated after that gets no rate. Days before the first quote of a pair are not filled either.
 
-The column `IMPUTED` says which rows are filled: it is `True` on a day whose rate was carried from the last quote before it, and `False` on a day a source quoted. Wherever the ECB is the source, those are the weekends and the TARGET closing days, on which it does not publish; any other day without a quote is marked as well, whatever the reason for it. A rebased cross rate is imputed where either of the two euro rates it is computed from is.
+The column `imputed` says which rows are filled: it is `True` on a day whose rate was carried from the last quote before it, and `False` on a day a source quoted. Wherever the ECB is the source, those are the weekends and the TARGET closing days, on which it does not publish; any other day without a quote is marked as well, whatever the reason for it. A rebased cross rate is imputed where either of the two euro rates it is computed from is.
 
 ### Application for non-EA countries
 
@@ -216,7 +222,7 @@ does with a file rather than what those two happen to be publishing.
 | --- | --- |
 | the data lake | creating the directory tree, including below a directory that does not exist yet, and repeating the call |
 | the download | that an archive is fetched and unpacked without the data lake ever seeing it, that the CSV reaches parquet unchanged, that the BIS file keeps only the columns the Silver layer reads, that a write that dies leaves the last good file, and that the connection is closed when the archive is broken |
-| the Silver layer | unpivoting the ECB table, dropping quotes a currency does not have, the precedence of the sources, filling the days between two quotes for a week at most, each source counting up to its own last day, a stable choice between two rows of one source, rebasing, the storage format and that the table replaces itself |
+| the Silver layer | unpivoting the ECB table, dropping quotes a currency does not have, the precedence of the sources, filling the days between two quotes for a week at most, each source counting up to its own last day and the table ending on the BIS's last day where the BIS is used, a stable choice between two rows of one source, rebasing, the storage format and that the table replaces itself |
 | `convert2ccy` | the conversion itself, the target currency passing through at a rate of 1, an unavailable currency yielding nothing, dates given as text, dates or timestamps and with a time of day, an unreadable date, a date column of any name, pandas and polars frames coming back as their own kind in their own order, a missing session, a frame converted into the target before being refused, and the columns passed in coming back unchanged |
 
 Some of these are worth naming, because they are pinned to rules that are easy

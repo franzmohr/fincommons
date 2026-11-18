@@ -63,7 +63,7 @@ _FILING_COLUMNS = [f.name for f in filings_schema.fields] + ["_ERROR"]
 def _error_frame(columns, cik, where):
     """One row carrying a traceback, in the shape the reading hands back."""
     row = {column: [None] for column in columns}
-    row["CIK"] = [cik]
+    row["cik"] = [cik]
     row["_ERROR"] = [f"{where}\n{traceback.format_exc()}"]
     return pandas.DataFrame(row, columns=columns)
 
@@ -106,7 +106,7 @@ def _read_all(frames, what, forms, chunk_rows=CHUNK_ROWS):
     """Read every company file a partition names."""
     for frame in frames:
         for row in frame.itertuples():
-            yield from _read_one(row.CIK, row.PATH, what, forms, chunk_rows)
+            yield from _read_one(row.cik, row.PATH, what, forms, chunk_rows)
 
 
 def build(spark, config_path, what, ciks=None, forms=PERIODIC_FORMS,
@@ -145,7 +145,7 @@ def build(spark, config_path, what, ciks=None, forms=PERIODIC_FORMS,
     schema = _FILINGS_PARSED if what == "filings" else _FACTS_PARSED
     listed = spark.createDataFrame(
         [(key, path_bronze_company(config_path, key)) for key in keys],
-        schema=StructType([StructField("CIK", StringType(), False),
+        schema=StructType([StructField("cik", StringType(), False),
                            StructField("PATH", StringType(), False)]),
     ).repartition(min(len(keys), 200))
 
@@ -156,12 +156,12 @@ def build(spark, config_path, what, ciks=None, forms=PERIODIC_FORMS,
 
 def _report_errors(frame, what):
     """Log the company files that could not be read, and return how many."""
-    failed = frame.where("_ERROR IS NOT NULL").select("CIK", "_ERROR").collect()
+    failed = frame.where("_ERROR IS NOT NULL").select("cik", "_ERROR").collect()
     for row in failed:
         logger.error(
             "The company file could not be read\n%s", row["_ERROR"],
             extra=context(module="sec", layer="silver", source=SOURCE,
-                          table=what, file=f"CIK{row['CIK']}.json"),
+                          table=what, file=f"CIK{row['cik']}.json"),
         )
     return len(failed)
 
@@ -206,9 +206,9 @@ def update_silver_sec(spark, config_path, ciks=None, forms=PERIODIC_FORMS,
         try:
             _report_errors(parsed, "facts")
             facts = parsed.where("_ERROR IS NULL").select(*facts_schema.names)
-            write_silver(rebalanced(facts, "FILEDYEAR"),
+            write_silver(rebalanced(facts, "filed_year"),
                          ref_silver_facts(config_path),
-                         file_format=file_format, partition_by=("FILEDYEAR",))
+                         file_format=file_format, partition_by=("filed_year",))
             outcome["facts"] = facts.count()
         finally:
             parsed.unpersist()

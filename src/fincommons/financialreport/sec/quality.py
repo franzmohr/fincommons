@@ -62,13 +62,13 @@ logger = logging.getLogger(__name__)
 DATASET = "sec"
 
 issues_schema = StructType() \
-    .add("CIK", StringType(), False) \
-    .add("FILEDYEAR", IntegerType(), False) \
-    .add("FILING", StringType(), False) \
-    .add("FACT", StringType(), True) \
-    .add("CONCEPT", StringType(), True) \
-    .add("ISSUE", StringType(), False) \
-    .add("CHECKED", DateType(), False)
+    .add("cik", StringType(), False) \
+    .add("filed_year", IntegerType(), False) \
+    .add("filing", StringType(), False) \
+    .add("fact", StringType(), True) \
+    .add("concept", StringType(), True) \
+    .add("issue", StringType(), False) \
+    .add("checked", DateType(), False)
 """The shape of the table of issues: one row per issue found.
 
 ``FILEDYEAR`` is the partition column, as it is on the table of facts, so that
@@ -157,13 +157,13 @@ CONCEPTS = {
 #: The columns that identify the record an issue is about. Every check returns
 #: these, with the two that name a fact left null where the issue is about the
 #: filing as a whole.
-KEYS = ("CIK", "FILEDYEAR", "FILING", "FACT", "CONCEPT")
+KEYS = ("cik", "filed_year", "filing", "fact", "concept")
 
 def _filing_level(frame):
     """A frame of filing-level issues: the keys, with no fact named."""
     return (frame
-            .withColumn("FACT", func.lit(None).cast("string"))
-            .withColumn("CONCEPT", func.lit(None).cast("string"))
+            .withColumn("fact", func.lit(None).cast("string"))
+            .withColumn("concept", func.lit(None).cast("string"))
             .select(*KEYS))
 
 
@@ -179,25 +179,25 @@ def annual_figures(facts, filings):
     first of them wins, which is the order :data:`CONCEPTS` lists.
     """
     annual = (filings
-              .where(func.regexp_replace("FORM", "/.*", "").isin(list(ANNUAL_FORMS)))
-              .where(func.col("PERIODEND").isNotNull())
-              .select("FILING", "PERIODEND"))
+              .where(func.regexp_replace("form", "/.*", "").isin(list(ANNUAL_FORMS)))
+              .where(func.col("period_end").isNotNull())
+              .select("filing", "period_end"))
 
     own = (facts
-           .join(annual, "FILING")
-           .where(func.col("VALUE").isNotNull())
-           .where(func.col("PRDEND") == func.col("PERIODEND"))
-           .where(func.col("PRDSTART").isNull()
-                  | (func.datediff("PRDEND", "PRDSTART").between(MIN_DAYS, MAX_DAYS))))
+           .join(annual, "filing")
+           .where(func.col("value").isNotNull())
+           .where(func.col("prd_end") == func.col("period_end"))
+           .where(func.col("prd_start").isNull()
+                  | (func.datediff("prd_end", "prd_start").between(MIN_DAYS, MAX_DAYS))))
 
     # One value per filing and concept. The same fact is often tagged twice in
     # one report, in the statements and again in the notes, with one value.
-    chosen = (own.groupBy("FILING", "CIK", "FILEDYEAR", "CONCEPT")
-              .agg(func.min("VALUE").alias("VALUE")))
+    chosen = (own.groupBy("filing", "cik", "filed_year", "concept")
+              .agg(func.min("value").alias("value")))
 
-    wide = chosen.groupBy("FILING", "CIK", "FILEDYEAR").pivot(
-        "CONCEPT", [c for names in CONCEPTS.values() for c in names]
-    ).agg(func.first("VALUE"))
+    wide = chosen.groupBy("filing", "cik", "filed_year").pivot(
+        "concept", [c for names in CONCEPTS.values() for c in names]
+    ).agg(func.first("value"))
 
     for key, names in CONCEPTS.items():
         column = func.lit(None).cast("double")
@@ -206,7 +206,7 @@ def annual_figures(facts, filings):
                 column = func.coalesce(func.col(f"`{name}`"), column)
         wide = wide.withColumn(key, column)
 
-    return wide.select("FILING", "CIK", "FILEDYEAR", *CONCEPTS)
+    return wide.select("filing", "cik", "filed_year", *CONCEPTS)
 
 
 def _imbalance(figures, difference, scale):
@@ -297,8 +297,8 @@ def check_missing_profit(state):
 def check_implausible_period(state):
     """A fact whose period ends before it begins."""
     return (state["facts"]
-            .where(func.col("PRDSTART").isNotNull()
-                   & (func.col("PRDSTART") > func.col("PRDEND")))
+            .where(func.col("prd_start").isNotNull()
+                   & (func.col("prd_start") > func.col("prd_end")))
             .select(*KEYS))
 
 
@@ -306,9 +306,9 @@ def check_filed_before_periodend(state):
     """A filing made before the period it reports on had ended."""
     return _filing_level(
         state["filings"]
-        .where(func.col("PERIODEND").isNotNull() & func.col("FILED").isNotNull())
-        .where(func.col("FILED") < func.col("PERIODEND"))
-        .select("CIK", "FILEDYEAR", "FILING"))
+        .where(func.col("period_end").isNotNull() & func.col("filed").isNotNull())
+        .where(func.col("filed") < func.col("period_end"))
+        .select("cik", "filed_year", "filing"))
 
 
 def check_implausible_fiscal_year(state):
@@ -320,9 +320,9 @@ def check_implausible_fiscal_year(state):
     """
     return _filing_level(
         state["filings"]
-        .where(func.col("FY").isNotNull() & func.col("PERIODEND").isNotNull())
-        .where(func.abs(func.col("FY") - func.year("PERIODEND")) > 1)
-        .select("CIK", "FILEDYEAR", "FILING"))
+        .where(func.col("fy").isNotNull() & func.col("period_end").isNotNull())
+        .where(func.abs(func.col("fy") - func.year("period_end")) > 1)
+        .select("cik", "filed_year", "filing"))
 
 
 def check_duplicate_fact_value(state):
@@ -338,8 +338,8 @@ def check_duplicate_fact_value(state):
     key matches nothing -- which would have let every balance sheet figure
     past. They are therefore filled before they are grouped and joined on.
     """
-    keys = ["FILING", "CONCEPT", "PRDSTART", "PRDEND", "UNIT"]
-    filled = state["facts"].where(func.col("VALUE").isNotNull())
+    keys = ["filing", "concept", "prd_start", "prd_end", "unit"]
+    filled = state["facts"].where(func.col("value").isNotNull())
     for key in keys:
         filled = filled.withColumn(
             f"_{key}",
@@ -347,7 +347,7 @@ def check_duplicate_fact_value(state):
     grouped = [f"_{key}" for key in keys]
 
     conflicting = (filled.groupBy(*grouped)
-                   .agg(func.countDistinct("VALUE").alias("_values"))
+                   .agg(func.countDistinct("value").alias("_values"))
                    .where(func.col("_values") > 1)
                    .select(*grouped))
     return filled.join(conflicting, grouped).select(*KEYS)
@@ -357,20 +357,20 @@ def check_mixed_unit(state):
     """One concept in two units in one filing."""
     facts = state["facts"]
     mixed = (facts
-             .where(func.col("UNIT").isNotNull())
-             .groupBy("FILING", "CONCEPT")
-             .agg(func.countDistinct("UNIT").alias("_units"))
+             .where(func.col("unit").isNotNull())
+             .groupBy("filing", "concept")
+             .agg(func.countDistinct("unit").alias("_units"))
              .where(func.col("_units") > 1)
              .drop("_units"))
-    return facts.join(mixed, ["FILING", "CONCEPT"]).select(*KEYS)
+    return facts.join(mixed, ["filing", "concept"]).select(*KEYS)
 
 
 def check_missing_framework(state):
     """A filing that tags against neither reporting taxonomy."""
     return _filing_level(
         state["filings"]
-        .where(func.col("FRAMEWORK").isNull())
-        .select("CIK", "FILEDYEAR", "FILING"))
+        .where(func.col("framework").isNull())
+        .select("cik", "filed_year", "filing"))
 
 
 def check_restated_materially(state):
@@ -386,51 +386,51 @@ def check_restated_materially(state):
     facts, filings = state["facts"], state["filings"]
 
     annual = (filings
-              .where(func.regexp_replace("FORM", "/.*", "").isin(list(ANNUAL_FORMS)))
-              .where(func.col("PERIODEND").isNotNull())
-              .select(func.col("FILING"), func.col("CIK").alias("_cik"),
-                      func.col("PERIODEND"), func.col("FILED").alias("_filed")))
+              .where(func.regexp_replace("form", "/.*", "").isin(list(ANNUAL_FORMS)))
+              .where(func.col("period_end").isNotNull())
+              .select(func.col("filing"), func.col("cik").alias("_cik"),
+                      func.col("period_end"), func.col("filed").alias("_filed")))
 
     # The facts of the annual reports, each carrying the day its own filing was
     # made, so that earlier and later can be told apart.
     pool = (facts
-            .where(func.col("VALUE").isNotNull())
-            .join(annual.select("FILING", "_filed"), "FILING"))
+            .where(func.col("value").isNotNull())
+            .join(annual.select("filing", "_filed"), "filing"))
 
     # The first report of a period is the one whose own period end it is.
-    own = (pool.join(annual.select(func.col("FILING").alias("_own_filing"),
-                                   func.col("PERIODEND")),
-                     pool.FILING == func.col("_own_filing"))
-           .where(func.col("PRDEND") == func.col("PERIODEND"))
-           .select(*KEYS, "PRDSTART", "PRDEND", "UNIT", "VALUE", "_filed"))
+    own = (pool.join(annual.select(func.col("filing").alias("_own_filing"),
+                                   func.col("period_end")),
+                     pool.filing == func.col("_own_filing"))
+           .where(func.col("prd_end") == func.col("period_end"))
+           .select(*KEYS, "prd_start", "prd_end", "unit", "value", "_filed"))
 
     later = (pool
-             .select(func.col("FILING").alias("_later_filing"),
-                     func.col("CONCEPT").alias("_concept"),
-                     func.col("PRDSTART").alias("_prdstart"),
-                     func.col("PRDEND").alias("_prdend"),
-                     func.col("UNIT").alias("_unit"),
-                     func.col("VALUE").alias("_value"),
+             .select(func.col("filing").alias("_later_filing"),
+                     func.col("concept").alias("_concept"),
+                     func.col("prd_start").alias("_prdstart"),
+                     func.col("prd_end").alias("_prdend"),
+                     func.col("unit").alias("_unit"),
+                     func.col("value").alias("_value"),
                      func.col("_filed").alias("_later_filed")))
 
     joined = own.join(
         later,
-        (own.CONCEPT == func.col("_concept"))
-        & (own.PRDEND == func.col("_prdend"))
-        & (own.UNIT.eqNullSafe(func.col("_unit")))
-        & (own.PRDSTART.eqNullSafe(func.col("_prdstart")))
+        (own.concept == func.col("_concept"))
+        & (own.prd_end == func.col("_prdend"))
+        & (own.unit.eqNullSafe(func.col("_unit")))
+        & (own.prd_start.eqNullSafe(func.col("_prdstart")))
         & (func.col("_later_filed") > func.col("_filed")))
 
     return (joined
-            .where(func.col("VALUE") != 0)
+            .where(func.col("value") != 0)
             # A share split restates every share count and per-share amount by
             # arithmetic rather than by judgement, and a registrant that has
             # split its stock would otherwise fill this check with figures
             # nothing is wrong with. NVIDIA's two splits accounted for 69 of
             # the 218 rows the check found before these units were left out.
-            .where(~func.col("UNIT").isin(list(SPLIT_RESTATED_UNITS)))
-            .where(func.abs(func.col("_value") - func.col("VALUE"))
-                   > func.abs(func.col("VALUE")) * RESTATEMENT_TOLERANCE)
+            .where(~func.col("unit").isin(list(SPLIT_RESTATED_UNITS)))
+            .where(func.abs(func.col("_value") - func.col("value"))
+                   > func.abs(func.col("value")) * RESTATEMENT_TOLERANCE)
             .select(*KEYS))
 
 
@@ -483,13 +483,13 @@ def find_issues(spark, config_path, ciks=None):
 
     if ciks:
         wanted = [str(cik).zfill(10) for cik in ciks]
-        facts = facts.where(func.col("CIK").isin(wanted))
-        filings = filings.where(func.col("CIK").isin(wanted))
+        facts = facts.where(func.col("cik").isin(wanted))
+        filings = filings.where(func.col("cik").isin(wanted))
 
     # The table of filings carries no FILEDYEAR of its own, and the issues are
     # partitioned by it, so it is taken from the day the filing was made --
     # which is what the column means on the table of facts.
-    filings = filings.withColumn("FILEDYEAR", func.year("FILED"))
+    filings = filings.withColumn("filed_year", func.year("filed"))
 
     state = {
         "facts": facts,
@@ -540,14 +540,14 @@ def update_silver_sec_quality(spark, config_path, ciks=None,
 
         if ciks and existing is not None:
             rechecked = [row[0] for row in
-                         found.select("FILEDYEAR").distinct().collect()]
-            to_write = merged_issues(found, existing, "FILEDYEAR", rechecked)
+                         found.select("filed_year").distinct().collect()]
+            to_write = merged_issues(found, existing, "filed_year", rechecked)
         else:
             to_write = found
 
-        write_silver(rebalanced(to_write, "FILEDYEAR"), ref,
+        write_silver(rebalanced(to_write, "filed_year"), ref,
                      file_format=file_format,
-                     partition_by=partitioning(to_write, "FILEDYEAR"))
+                     partition_by=partitioning(to_write, "filed_year"))
         outcome["issues"] = found.count()
         outcome["checks"] = len(CHECKS)
 

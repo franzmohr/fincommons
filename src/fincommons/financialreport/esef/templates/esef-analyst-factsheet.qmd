@@ -56,7 +56,7 @@ config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
 
 # The issuer, by its LEI. This is voestalpine AG; any other issuer whose
 # country the esef pipeline has collected can be put here.
-lei <- "529900ZAXBMQDIWPNB72"
+issuer_lei <- "529900ZAXBMQDIWPNB72"
 
 # The number of financial years shown, counted back from the latest filing.
 # One further year is read behind them, because a return puts a flow of a
@@ -78,11 +78,11 @@ chart_base_size <- 9
 # one in the language of the factsheet where there is one. voestalpine has
 # filed in German only since its report for 2021/22, so its texts are German
 # whatever the language set here.
-lang <- "en"
+report_lang <- "en"
 
 # The month names in the captions come from the system locale rather than
-# from the language set above, so the locale for dates is set from lang.
-invisible(Sys.setlocale("LC_TIME", if (lang == "de") "German" else "C"))
+# from the language set above, so the locale for dates is set from report_lang.
+invisible(Sys.setlocale("LC_TIME", if (report_lang == "de") "German" else "C"))
 
 # --------------------------------------------------------------------------
 # The concepts the factsheet is built from
@@ -290,11 +290,11 @@ for (table in c("filings", "facts")) {
 }
 
 filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
-  filter(LEI == lei) %>%
+  filter(lei == issuer_lei) %>%
   collect()
 
 if (nrow(filings_all) == 0) {
-  stop("The table of filings lists no filing of ", lei, ". The table lists ",
+  stop("The table of filings lists no filing of ", issuer_lei, ". The table lists ",
        "every country, so the LEI is likely wrong.")
 }
 
@@ -302,31 +302,31 @@ if (nrow(filings_all) == 0) {
 # again with corrections, is a filing of its own with facts of its own, and
 # the figures of the year are taken from one of them: the one in the
 # language of the factsheet, then the one with fewer validation errors, then
-# the one the repository processed last. A filing without a JSONURL has no
+# the one the repository processed last. A filing without a json_url has no
 # facts and is never chosen while another one is there.
 filings <- filings_all %>%
-  arrange(PERIODEND,
-          is.na(JSONURL),
-          coalesce(LANG, "") != lang,
-          coalesce(ERRORS, 0L),
-          desc(PROCESSED)) %>%
-  group_by(PERIODEND) %>%
+  arrange(period_end,
+          is.na(json_url),
+          coalesce(lang, "") != report_lang,
+          coalesce(errors, 0L),
+          desc(processed)) %>%
+  group_by(period_end) %>%
   slice(1) %>%
   ungroup() %>%
-  filter(!is.na(JSONURL)) %>%
-  arrange(PERIODEND) %>%
+  filter(!is.na(json_url)) %>%
+  arrange(period_end) %>%
   slice_tail(n = n_years + 1)
 
 if (nrow(filings) == 0) {
-  stop("No filing of ", lei, " has facts in the Silver layer. Run the esef ",
+  stop("No filing of ", issuer_lei, " has facts in the Silver layer. Run the esef ",
        "pipeline for the issuer's country first.")
 }
 
 latest <- filings %>% slice_tail(n = 1)
-issuer_name <- latest$NAME
+issuer_name <- latest$name
 
 facts <- open_dataset(file.path(path_silver, "facts")) %>%
-  filter(LEI == lei, FILING %in% filings$FILING) %>%
+  filter(lei == issuer_lei, filing %in% filings$filing) %>%
   collect()
 
 # --------------------------------------------------------------------------
@@ -341,18 +341,18 @@ facts <- open_dataset(file.path(path_silver, "facts")) %>%
 # reported without saying so. The same fact may be tagged more than once in
 # a report, in the statements and again in the notes, with the same value.
 figures <- facts %>%
-  filter(is.na(DIMENSIONS), !is.na(VALUE), PRDEND == PERIODEND,
-         is.na(PRDSTART) | PRDSTART == PERIODEND - 364 |
-           PRDSTART == PERIODEND - 365) %>%
-  distinct(PERIODEND, CONCEPT, UNIT, VALUE) %>%
-  group_by(PERIODEND, CONCEPT) %>%
+  filter(is.na(dimensions), !is.na(value), prd_end == period_end,
+         is.na(prd_start) | prd_start == period_end - 364 |
+           prd_start == period_end - 365) %>%
+  distinct(period_end, concept, unit, value) %>%
+  group_by(period_end, concept) %>%
   slice(1) %>%
   ungroup()
 
 currency <- figures %>%
-  filter(CONCEPT == concepts[["assets"]]) %>%
+  filter(concept == concepts[["assets"]]) %>%
   slice_tail(n = 1) %>%
-  pull("UNIT") %>%
+  pull("unit") %>%
   sub("^iso4217:", "", x = .)
 if (length(currency) == 0) currency <- ""
 
@@ -364,22 +364,22 @@ if (length(currency) == 0) currency <- ""
 # fail.
 keys_all <- c(names(concepts), names(extension_concepts))
 lookup <- bind_rows(
-  tibble(key = names(concepts), CONCEPT = unname(concepts),
+  tibble(key = names(concepts), concept = unname(concepts),
          preference = seq_along(concepts), extension = FALSE),
-  tibble(key = names(extension_concepts), CONCEPT = unname(extension_concepts),
+  tibble(key = names(extension_concepts), concept = unname(extension_concepts),
          preference = length(concepts) + seq_along(extension_concepts),
          extension = TRUE))
 
 tagged <- figures %>%
-  inner_join(lookup, by = "CONCEPT") %>%
-  group_by(PERIODEND, key) %>%
+  inner_join(lookup, by = "concept") %>%
+  group_by(period_end, key) %>%
   slice_min(preference, n = 1, with_ties = FALSE) %>%
   ungroup()
 
 wide <- tagged %>%
-  select(PERIODEND, key, VALUE) %>%
-  pivot_wider(names_from = "key", values_from = "VALUE") %>%
-  arrange(PERIODEND)
+  select(period_end, key, value) %>%
+  pivot_wider(names_from = "key", values_from = "value") %>%
+  arrange(period_end)
 for (key in setdiff(unique(keys_all), names(wide))) {
   wide[[key]] <- NA_real_
 }
@@ -389,7 +389,7 @@ for (key in setdiff(unique(keys_all), names(wide))) {
 # the page on the coverage of the tags lists them.
 extension_used <- tagged %>%
   filter(extension) %>%
-  count(key, CONCEPT, name = "years")
+  count(key, concept, name = "years")
 is_extension <- function(key) key %in% extension_used$key
 
 # --------------------------------------------------------------------------
@@ -418,8 +418,8 @@ is_extension <- function(key) key %in% extension_used$key
 # against EBIT or against the operating cash flow instead.
 wide <- wide %>%
   mutate(
-    year = fy_label(PERIODEND),
-    days = as.numeric(PERIODEND - lag(PERIODEND)),
+    year = fy_label(period_end),
+    days = as.numeric(period_end - lag(period_end)),
 
     # Income statement
     other_operating_net = gross_profit - coalesce(distribution_costs, 0) -
@@ -614,8 +614,8 @@ wide$f_score <- rowSums(wide[f_keys], na.rm = FALSE)
 if (nrow(wide) > n_years) wide <- wide %>% slice_tail(n = n_years)
 
 years <- wide$year
-max_date <- max(wide$PERIODEND)
-first_date <- min(wide$PERIODEND)
+max_date <- max(wide$period_end)
+first_date <- min(wide$period_end)
 n_shown <- nrow(wide)
 cur <- wide %>% slice_tail(n = 1) %>% as.list()
 prv <- if (n_shown > 1) wide %>% slice(n_shown - 1) %>% as.list() else cur
@@ -623,16 +623,16 @@ prv <- if (n_shown > 1) wide %>% slice(n_shown - 1) %>% as.list() else cur
 
 ```{r texts}
 texts <- facts %>%
-  filter(FILING == latest$FILING, !is.na(TEXT), is.na(DIMENSIONS)) %>%
+  filter(filing == latest$filing, !is.na(text), is.na(dimensions)) %>%
   inner_join(tibble(key = names(text_concepts),
-                    CONCEPT = unname(text_concepts)), by = "CONCEPT") %>%
-  arrange(key, coalesce(LANG, "") != lang) %>%
+                    concept = unname(text_concepts)), by = "concept") %>%
+  arrange(key, coalesce(lang, "") != report_lang) %>%
   group_by(key) %>%
   slice(1) %>%
   ungroup()
 
 text_of <- function(key) {
-  value <- texts$TEXT[texts$key == key]
+  value <- texts$text[texts$key == key]
   if (length(value) == 0) NA_character_ else gsub("\\s+", " ", value)
 }
 ```
@@ -643,8 +643,8 @@ text_of <- function(key) {
 # --------------------------------------------------------------------------
 
 # Numbers are written as the language of the factsheet writes them.
-big_mark <- if (lang == "de") "." else ","
-decimal_mark <- if (lang == "de") "," else "."
+big_mark <- if (report_lang == "de") "." else ","
+decimal_mark <- if (report_lang == "de") "," else "."
 
 fmt <- function(x, digits = 0) {
   # A figure that rounds to nothing is written as nothing rather than as a
@@ -666,7 +666,7 @@ fmt_signed <- function(x, digits = 1) {
 }
 
 # Translate a label: `tr("Revenue", "Umsatzerlöse")`.
-tr <- function(en, de) if (lang == "de") de else en
+tr <- function(en, de) if (report_lang == "de") de else en
 
 # A caption wider than the figure is clipped rather than wrapped, so it is
 # broken into lines once here.
@@ -679,14 +679,14 @@ source_caption <- caption_corporate_design(
   source = tr("ESEF annual financial reports, filings.xbrl.org.",
              "ESEF-Finanzberichte, filings.xbrl.org."),
   last = format(max_date, tr("%d %b %Y", "%d.%m.%Y")),
-  lang = lang)
+  lang = report_lang)
 
 amount_label <- tr(paste0(currency, " million"), paste0("Mio. ", currency))
 
 # The x-axis of every chart has one break per financial year, named as the
 # tables name it.
 scale_x_years <- function(...) {
-  scale_x_date(expand = c(.02, 0), breaks = wide$PERIODEND, labels = fy_label,
+  scale_x_date(expand = c(.02, 0), breaks = wide$period_end, labels = fy_label,
                ...)
 }
 
@@ -741,11 +741,79 @@ format_line <- function(values, unit, digits) {
          fmt(values, digits))
 }
 
+# Which lines of a statement the issuer did not state, and are therefore not
+# shown at all.
+#
+# A statement of an annual report has the lines the issuer presents and no
+# others: it does not carry a row of dashes for goodwill the group has none
+# of. A row of dashes also reads as a figure of nil, where what it means is
+# that the report says nothing. So a line no year of the window states is
+# left out, and a heading whose every line went with it is left out too.
+#
+# What was left out is named under the table rather than merely absent. The
+# difference between a group with no goodwill and a group that did not tag
+# its goodwill is one this page cannot see, and a reader who is reconciling
+# the page against the report in front of them needs to know which lines
+# were looked for.
+lines_dropped <- function(spec, data, core_only) {
+  label <- if (report_lang == "de") spec$de else spec$en
+  keep <- rep(TRUE, nrow(spec))
+  reason <- rep(NA_character_, nrow(spec))
+  for (j in seq_len(nrow(spec))) {
+    if (spec$style[j] == "head" || !nzchar(spec$key[j])) next
+    key <- spec$key[j]
+    if (core_only && is_extension(key)) {
+      keep[j] <- FALSE
+      reason[j] <- "extension"
+    } else if (!key %in% names(data) || all(is.na(data[[key]]))) {
+      keep[j] <- FALSE
+      reason[j] <- "untagged"
+    }
+  }
+  # A heading stands for the lines under it, which run to the next heading.
+  # With none of them left it has nothing to head.
+  heads <- which(spec$style == "head")
+  for (h in heads) {
+    next_head <- heads[heads > h]
+    last <- if (length(next_head)) min(next_head) - 1L else nrow(spec)
+    block <- seq.int(h + 1L, last)
+    if (length(block) && !any(keep[block])) keep[h] <- FALSE
+  }
+  list(keep = keep,
+       untagged = label[!is.na(reason) & reason == "untagged"],
+       extension = label[!is.na(reason) & reason == "extension"])
+}
+
 render_lines <- function(spec, data = wide, unit_header = NULL,
-                         cagr = FALSE, change = FALSE) {
-  label <- if (lang == "de") spec$de else spec$en
+                         cagr = FALSE, change = FALSE,
+                         drop_empty = FALSE, core_only = FALSE,
+                         newest_first = FALSE) {
+  # `drop_empty` and `core_only` are off unless a caller asks for them, so
+  # that the indicator tables further down keep showing a dash where a
+  # figure is missing: a screening table with its rows silently removed is
+  # a different table every year, and the dash is the point there.
+  omitted <- list(untagged = character(0), extension = character(0))
+  if (drop_empty || core_only) {
+    verdict <- lines_dropped(spec, data, core_only)
+    omitted <- verdict[c("untagged", "extension")]
+    spec <- spec[verdict$keep, , drop = FALSE]
+  }
+  if (nrow(spec) == 0) {
+    return(knitr::asis_output(paste0(
+      "*", tr("The report states none of the lines of this statement under a concept of the IFRS taxonomy.",
+              "Der Bericht zeichnet keine Zeile dieser Aufstellung unter einem Konzept der IFRS-Taxonomie aus."),
+      "*\n")))
+  }
+
+  label <- if (report_lang == "de") spec$de else spec$en
   out <- tibble(item = label)
-  for (i in seq_len(nrow(data))) {
+  # A statement of an annual report puts the year it is the statement of
+  # first and the comparative beside it, which is the other way about from
+  # a table read as a trend. The change and the growth below are computed
+  # from `data` itself and so are unaffected by the order the columns are
+  # written in.
+  years_order <- if (newest_first) rev(seq_len(nrow(data))) else seq_len(nrow(data))
+  for (i in years_order) {
     column <- character(nrow(spec))
     for (j in seq_len(nrow(spec))) {
       if (spec$style[j] == "head" || !nzchar(spec$key[j])) {
@@ -791,8 +859,36 @@ render_lines <- function(spec, data = wide, unit_header = NULL,
   }
 
   header <- c(if (is.null(unit_header)) "" else unit_header, names(out)[-1])
-  knitr::kable(out, col.names = header,
-               align = paste0("l", strrep("r", ncol(out) - 1)))
+  table <- knitr::kable(out, col.names = header,
+                        align = paste0("l", strrep("r", ncol(out) - 1)))
+  if (length(omitted$untagged) == 0 && length(omitted$extension) == 0) {
+    return(table)
+  }
+
+  # Under the table and not in a caption: a caption passed to knitr::kable
+  # is read into a float the Typst writer emits without one, so it would be
+  # dropped in silence.
+  note <- character(0)
+  if (length(omitted$untagged)) {
+    note <- c(note, tr(
+      paste0("Not shown, the report stating no figure for them in any of the ",
+             nrow(data), " years: ",
+             paste(omitted$untagged, collapse = ", "), "."),
+      paste0("Nicht gezeigt, weil der Bericht in keinem der ", nrow(data),
+             " Jahre eine Zahl dafür ausweist: ",
+             paste(omitted$untagged, collapse = ", "), ".")))
+  }
+  if (length(omitted$extension)) {
+    note <- c(note, tr(
+      paste0("Not shown, the figure standing in the report under a concept ",
+             "of the issuer's own rather than one of the taxonomy: ",
+             paste(omitted$extension, collapse = ", "), "."),
+      paste0("Nicht gezeigt, weil die Zahl im Bericht unter einem eigenen ",
+             "Konzept des Emittenten und nicht unter einem der Taxonomie ",
+             "steht: ", paste(omitted$extension, collapse = ", "), ".")))
+  }
+  knitr::asis_output(paste0(paste(table, collapse = "\n"),
+                            "\n\n*", paste(note, collapse = " "), "*\n"))
 }
 ```
 
@@ -805,8 +901,8 @@ render_lines <- function(spec, data = wide, unit_header = NULL,
 # are to be read, and leaves the corporate design to the sourced script.
 chart_data <- function(keys, labels, scale_by = scale, data = wide) {
   data %>%
-    select(all_of(c("PERIODEND", keys))) %>%
-    pivot_longer(-"PERIODEND", names_to = "var") %>%
+    select(all_of(c("period_end", keys))) %>%
+    pivot_longer(-"period_end", names_to = "var") %>%
     mutate(value = value / scale_by,
            var = factor(var, levels = keys, labels = wrap_labels(labels, 34)))
 }
@@ -814,7 +910,7 @@ chart_data <- function(keys, labels, scale_by = scale, data = wide) {
 chart_stacked <- function(keys, labels, subtitle = amount_label,
                           scale_by = scale, ncol = 2, data = wide) {
   ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = PERIODEND, y = value, fill = var)) +
+         aes(x = period_end, y = value, fill = var)) +
     geom_col(width = 250) +
     geom_zeroline() +
     scale_x_years() +
@@ -829,7 +925,7 @@ chart_stacked <- function(keys, labels, subtitle = amount_label,
 chart_bars <- function(keys, labels, subtitle = amount_label,
                        scale_by = scale, digits = 0, ncol = 3, data = wide) {
   ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = PERIODEND, y = value, fill = var)) +
+         aes(x = period_end, y = value, fill = var)) +
     geom_col(position = position_dodge(width = 260), width = 240) +
     geom_zeroline() +
     scale_x_years() +
@@ -844,7 +940,7 @@ chart_bars <- function(keys, labels, subtitle = amount_label,
 chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
                         digits = 0, zero = TRUE, ncol = 3, data = wide) {
   g <- ggplot(chart_data(keys, labels, scale_by, data) %>% filter(!is.na(value)),
-              aes(x = PERIODEND, y = value, colour = var)) +
+              aes(x = period_end, y = value, colour = var)) +
     geom_line(linewidth = linewidth_corporate_design) +
     geom_point(size = 1.4) +
     scale_x_years() +
@@ -886,7 +982,7 @@ typst_kv <- function(items) {
 period_range <- paste0(years[1], " – ", years[n_shown])
 
 identity_items <- list()
-identity_items[[tr("Legal entity identifier", "Rechtsträgerkennung")]] <- lei
+identity_items[[tr("Legal entity identifier", "Rechtsträgerkennung")]] <- issuer_lei
 identity_items[[tr("Legal form", "Rechtsform")]] <- text_of("legal_form")
 identity_items[[tr("Domicile", "Sitz")]] <-
   coalesce(text_of("domicile"), text_of("address"))
@@ -895,7 +991,7 @@ identity_items[[tr("Financial years", "Geschäftsjahre")]] <- period_range
 identity_items[[tr("Latest period end", "Letzter Stichtag")]] <-
   format(max_date, tr("%d %B %Y", "%d.%m.%Y"))
 identity_items[[tr("Language of the report", "Sprache des Berichts")]] <-
-  coalesce(latest$LANG, "–")
+  coalesce(latest$lang, "–")
 identity_items[[tr("Filings read", "Gelesene Einreichungen")]] <-
   as.character(nrow(filings))
 
@@ -1132,7 +1228,7 @@ change_of <- function(key, unit) {
 temp <- panel %>%
   rowwise() %>%
   mutate(
-    item = paste0(if (lang == "de") de else en, mark_of(key)),
+    item = paste0(if (report_lang == "de") de else en, mark_of(key)),
     unit_shown = case_when(unit == "amount" ~ amount_label,
                            unit == "pct" ~ "%",
                            unit == "raw" ~ currency,
@@ -1166,9 +1262,9 @@ chart_bars(c("revenue", "gross_profit", "ebit", "operating_cash_flow"),
 ## `r tr("The issuer", "Der Emittent")`
 
 ```{r profile}
-viewer <- if (is.na(latest$VIEWERURL)) "" else
+viewer <- if (is.na(latest$viewer_url)) "" else
   paste0("[", tr("View the report", "Bericht ansehen"),
-         "](https://filings.xbrl.org", latest$VIEWERURL, ")")
+         "](https://filings.xbrl.org", latest$viewer_url, ")")
 
 temp <- tibble(
   item = c(tr("Name in the report", "Name im Bericht"),
@@ -1186,19 +1282,19 @@ temp <- tibble(
            tr("Validation errors and warnings", "Validierungsfehler und -warnungen"),
            tr("Report", "Bericht")),
   value = c(coalesce(text_of("name"), issuer_name),
-            lei,
+            issuer_lei,
             text_of("legal_form"),
             text_of("domicile"),
             text_of("country_of_incorporation"),
             text_of("address"),
             text_of("principal_place"),
             text_of("parent"),
-            coalesce(latest$SYSTEM, ""),
-            coalesce(latest$COUNTRY, ""),
-            format(latest$PERIODEND, tr("%d %B %Y", "%d.%m.%Y")),
-            coalesce(latest$LANG, ""),
-            paste0(coalesce(latest$ERRORS, 0L), " / ",
-                   coalesce(latest$WARNINGS, 0L)),
+            coalesce(latest$system, ""),
+            coalesce(latest$country, ""),
+            format(latest$period_end, tr("%d %B %Y", "%d.%m.%Y")),
+            coalesce(latest$lang, ""),
+            paste0(coalesce(latest$errors, 0L), " / ",
+                   coalesce(latest$warnings, 0L)),
             viewer))
 
 knitr::kable(temp %>% filter(!is.na(value), value != ""),
@@ -1226,7 +1322,13 @@ render_lines(line_spec(
 
 {{< pagebreak >}}
 
-## `r tr("Statement of profit or loss", "Gewinn- und Verlustrechnung")`
+## `r tr("The primary statements", "Die Hauptabschlussrechnungen")`
+
+`r tr("The three statements an annual report opens its financial section with, in the order it puts them in: the statement of profit or loss, then the two sides of the statement of financial position. They are presented as statements and not as trend tables -- the latest year first and the comparatives beside it, the subtotals of the statement in bold, and no growth column, those being readings of the statements rather than part of them and shown in the sections that follow.", "Die drei Rechnungen, mit denen ein Jahresfinanzbericht seinen Abschluss eröffnet, in dessen Reihenfolge: Gewinn- und Verlustrechnung, dann die beiden Seiten der Bilanz. Sie stehen hier als Abschlussrechnungen und nicht als Zeitreihen -- das jüngste Jahr zuerst, die Vergleichsjahre daneben, die Zwischensummen fett, und keine Wachstumsspalte; diese sind Auswertungen der Rechnungen und stehen in den folgenden Abschnitten.")`
+
+`r tr("Every line is read from a concept of the IFRS taxonomy. A line the issuer tagged under a concept of its own is not shown here, because such a concept is the issuer's to name and to rename from one year to the next, and a statement is the one place on this page where every row has to mean the same thing in every column. A line the report states nowhere in the window is left out rather than carried as a row of dashes: a dash reads as nil, and what it would mean is that the report is silent. Each statement names underneath it the lines that were looked for and left out, so that a reader reconciling this page against the report can tell an absent line from an absent figure.", "Jede Zeile stammt aus einem Konzept der IFRS-Taxonomie. Eine Zeile, die der Emittent unter einem eigenen Konzept ausgezeichnet hat, steht hier nicht: ein solches Konzept benennt und umbenennt der Emittent selbst, und eine Abschlussrechnung ist die eine Stelle dieser Seite, an der jede Zeile in jeder Spalte dasselbe bedeuten muss. Eine Zeile, die der Bericht im gezeigten Zeitraum nirgends ausweist, wird weggelassen statt als Strichzeile geführt -- ein Strich liest sich als Null, gemeint ist aber das Schweigen des Berichts. Jede Rechnung nennt darunter die Zeilen, die gesucht und weggelassen wurden.")`
+
+### `r tr("Statement of profit or loss", "Gewinn- und Verlustrechnung")`
 
 ```{r income-statement}
 # The income statement as the issuer presents it, by function. The lines the
@@ -1255,8 +1357,106 @@ render_lines(line_spec(
   "profit",              "Profit for the year",             "Jahresergebnis",                           "amount", 0,        1,    "total",
   "profit_owners",       "Owners of the parent",            "Eigentümer des Mutterunternehmens",   "amount", 0,        1,    "sub",
   "profit_nci",          "Non-controlling interests",       "Nicht beherrschende Anteile",              "amount", 0,        1,    "sub"
-), unit_header = amount_label, change = TRUE, cagr = TRUE)
+), unit_header = amount_label, drop_empty = TRUE, core_only = TRUE,
+   newest_first = TRUE)
 ```
+
+{{< pagebreak >}}
+
+### `r tr("Statement of financial position: assets", "Bilanz: Aktiva")`
+
+```{r assets-table}
+render_lines(line_spec(
+  ~key,                          ~en,                              ~de,                                       ~unit,    ~digits, ~sign, ~style,
+  "",                            "Non-current assets",             "Langfristige Vermögenswerte",        "amount", 0,        1,    "head",
+  "ppe",                         "Property, plant and equipment",  "Sachanlagen",                             "amount", 0,        1,    "sub",
+  "goodwill",                    "Goodwill",                       "Firmenwerte",                             "amount", 0,        1,    "sub",
+  "intangibles",                 "Other intangible assets",        "Sonstige immaterielle Vermögenswerte", "amount", 0,      1,    "sub",
+  "equity_method",               "Investments in associates",      "Anteile an assoziierten Unternehmen",     "amount", 0,        1,    "sub",
+  "financial_assets_noncurrent", "Other financial assets",         "Sonstige finanzielle Vermögenswerte", "amount", 0,        1,    "sub",
+  "deferred_tax_assets",         "Deferred tax assets",            "Aktive latente Steuern",                  "amount", 0,        1,    "sub",
+  "assets_other_noncurrent",     "Other non-current assets",       "Sonstige langfristige Vermögenswerte", "amount", 0,       1,    "sub",
+  "noncurrent_assets",           "Total non-current assets",       "Summe langfristige Vermögenswerte",   "amount", 0,        1,    "total",
+  "",                            "Current assets",                 "Kurzfristige Vermögenswerte",        "amount", 0,        1,    "head",
+  "inventories",                 "Inventories",                    "Vorräte",                            "amount", 0,        1,    "sub",
+  "receivables",                 "Trade and other receivables",    "Forderungen",                             "amount", 0,        1,    "sub",
+  "financial_assets_current",    "Other financial assets",         "Sonstige finanzielle Vermögenswerte", "amount", 0,        1,    "sub",
+  "cash",                        "Cash and cash equivalents",      "Zahlungsmittel",                          "amount", 0,        1,    "sub",
+  "assets_other_current",        "Other current assets",           "Sonstige kurzfristige Vermögenswerte", "amount", 0,       1,    "sub",
+  "current_assets",              "Total current assets",           "Summe kurzfristige Vermögenswerte",   "amount", 0,        1,    "total",
+  "assets",                      "Total assets",                   "Bilanzsumme",                             "amount", 0,        1,    "total"
+), unit_header = amount_label, drop_empty = TRUE, core_only = TRUE,
+   newest_first = TRUE)
+```
+
+```{r assets-chart}
+chart_stacked(
+  c("ppe", "goodwill", "intangibles", "equity_method",
+    "assets_rest_noncurrent", "inventories", "receivables", "cash",
+    "assets_rest_current"),
+  c(tr("Property, plant and equipment", "Sachanlagen"),
+    tr("Goodwill", "Firmenwerte"),
+    tr("Other intangible assets", "Sonstige immaterielle Vermögenswerte"),
+    tr("Investments in associates", "Assoziierte Unternehmen"),
+    tr("Other non-current assets", "Sonstige langfristige Aktiva"),
+    tr("Inventories", "Vorräte"),
+    tr("Trade and other receivables", "Forderungen"),
+    tr("Cash and cash equivalents", "Zahlungsmittel"),
+    tr("Other current assets", "Sonstige kurzfristige Aktiva")),
+  ncol = 3)
+```
+
+{{< pagebreak >}}
+
+### `r tr("Statement of financial position: equity and liabilities", "Bilanz: Passiva")`
+
+```{r equity-liabilities-table}
+render_lines(line_spec(
+  ~key,                               ~en,                             ~de,                                    ~unit,    ~digits, ~sign, ~style,
+  "",                                 "Equity",                        "Eigenkapital",                         "amount", 0,        1,    "head",
+  "issued_capital",                   "Issued capital",                "Grundkapital",                         "amount", 0,        1,    "sub",
+  "additional_paid_in",               "Additional paid-in capital",    "Kapitalrücklagen",                 "amount", 0,        1,    "sub",
+  "retained_earnings",                "Retained earnings",             "Gewinnrücklagen",                  "amount", 0,        1,    "sub",
+  "other_reserves",                   "Other reserves",                "Sonstige Rücklagen",               "amount", 0,        1,    "sub",
+  "treasury_shares",                  "Treasury shares",               "Eigene Anteile",                       "amount", 0,       -1,    "sub",
+  "equity_owners",                    "Equity, owners of the parent",  "Eigenkapital der Eigentümer",      "amount", 0,        1,    "total",
+  "nci",                              "Non-controlling interests",     "Nicht beherrschende Anteile",          "amount", 0,        1,    "sub",
+  "equity",                           "Total equity",                  "Summe Eigenkapital",                   "amount", 0,        1,    "total",
+  "",                                 "Non-current liabilities",       "Langfristige Schulden",                "amount", 0,        1,    "head",
+  "financial_liabilities_noncurrent", "Financial liabilities",         "Finanzverbindlichkeiten",              "amount", 0,        1,    "sub",
+  "employee_provisions",              "Provisions for employee benefits", "Rückstellungen für Mitarbeiter", "amount", 0,  1,    "sub",
+  "deferred_tax_liabilities",         "Deferred tax liabilities",      "Passive latente Steuern",              "amount", 0,        1,    "sub",
+  "liabilities_other_noncurrent",     "Other non-current liabilities", "Sonstige langfristige Schulden",       "amount", 0,        1,    "sub",
+  "noncurrent_liabilities",           "Total non-current liabilities", "Summe langfristige Schulden",          "amount", 0,        1,    "total",
+  "",                                 "Current liabilities",           "Kurzfristige Schulden",                "amount", 0,        1,    "head",
+  "financial_liabilities_current",    "Financial liabilities",         "Finanzverbindlichkeiten",              "amount", 0,        1,    "sub",
+  "payables",                         "Trade and other payables",      "Verbindlichkeiten",                    "amount", 0,        1,    "sub",
+  "current_provisions",               "Provisions",                    "Rückstellungen",                   "amount", 0,        1,    "sub",
+  "current_tax_liabilities",          "Current tax liabilities",       "Steuerschulden",                       "amount", 0,        1,    "sub",
+  "liabilities_other_current",        "Other current liabilities",     "Sonstige kurzfristige Schulden",       "amount", 0,        1,    "sub",
+  "current_liabilities",              "Total current liabilities",     "Summe kurzfristige Schulden",          "amount", 0,        1,    "total",
+  "equity_and_liabilities",           "Total equity and liabilities",  "Summe Passiva",                        "amount", 0,        1,    "total"
+), unit_header = amount_label, drop_empty = TRUE, core_only = TRUE,
+   newest_first = TRUE)
+```
+
+```{r funding-chart}
+chart_stacked(
+  c("equity_owners", "nci", "financial_liabilities_noncurrent",
+    "liabilities_rest_noncurrent", "financial_liabilities_current",
+    "liabilities_rest_current"),
+  c(tr("Equity, owners of the parent", "Eigenkapital der Eigentümer"),
+    tr("Non-controlling interests", "Nicht beherrschende Anteile"),
+    tr("Non-current financial liabilities", "Langfristige Finanzverbindlichkeiten"),
+    tr("Other non-current liabilities", "Sonstige langfristige Schulden"),
+    tr("Current financial liabilities", "Kurzfristige Finanzverbindlichkeiten"),
+    tr("Other current liabilities", "Sonstige kurzfristige Schulden")),
+  ncol = 2)
+```
+
+{{< pagebreak >}}
+
+## `r tr("What revenue was spent on", "Wofür der Umsatz verwendet wurde")`
 
 ### `r tr("The statement as a share of revenue", "Die Aufstellung in Prozent des Umsatzes")`
 
@@ -1285,10 +1485,6 @@ render_lines(line_spec(
   "share_profit",              "Profit for the year",      "Jahresergebnis",                        "pct", 1,        1,    "total"
 ), data = temp, unit_header = tr("% of revenue", "% des Umsatzes"))
 ```
-
-{{< pagebreak >}}
-
-## `r tr("What revenue was spent on", "Wofür der Umsatz verwendet wurde")`
 
 ```{r uses-of-revenue}
 # The parts add up to revenue: cost of sales and gross profit are revenue,
@@ -1363,97 +1559,6 @@ chart_lines(c("gross_margin", "ebit_margin", "net_margin", "ocf_margin"),
               tr("Operating cash flow to revenue",
                  "Operativer Cashflow zu Umsatz")),
             digits = 1, ncol = 4)
-```
-
-{{< pagebreak >}}
-
-## `r tr("Statement of financial position: assets", "Bilanz: Aktiva")`
-
-```{r assets-table}
-render_lines(line_spec(
-  ~key,                          ~en,                              ~de,                                       ~unit,    ~digits, ~sign, ~style,
-  "",                            "Non-current assets",             "Langfristige Vermögenswerte",        "amount", 0,        1,    "head",
-  "ppe",                         "Property, plant and equipment",  "Sachanlagen",                             "amount", 0,        1,    "sub",
-  "goodwill",                    "Goodwill",                       "Firmenwerte",                             "amount", 0,        1,    "sub",
-  "intangibles",                 "Other intangible assets",        "Sonstige immaterielle Vermögenswerte", "amount", 0,      1,    "sub",
-  "equity_method",               "Investments in associates",      "Anteile an assoziierten Unternehmen",     "amount", 0,        1,    "sub",
-  "financial_assets_noncurrent", "Other financial assets",         "Sonstige finanzielle Vermögenswerte", "amount", 0,        1,    "sub",
-  "deferred_tax_assets",         "Deferred tax assets",            "Aktive latente Steuern",                  "amount", 0,        1,    "sub",
-  "assets_other_noncurrent",     "Other non-current assets",       "Sonstige langfristige Vermögenswerte", "amount", 0,       1,    "sub",
-  "noncurrent_assets",           "Total non-current assets",       "Summe langfristige Vermögenswerte",   "amount", 0,        1,    "total",
-  "",                            "Current assets",                 "Kurzfristige Vermögenswerte",        "amount", 0,        1,    "head",
-  "inventories",                 "Inventories",                    "Vorräte",                            "amount", 0,        1,    "sub",
-  "receivables",                 "Trade and other receivables",    "Forderungen",                             "amount", 0,        1,    "sub",
-  "financial_assets_current",    "Other financial assets",         "Sonstige finanzielle Vermögenswerte", "amount", 0,        1,    "sub",
-  "cash",                        "Cash and cash equivalents",      "Zahlungsmittel",                          "amount", 0,        1,    "sub",
-  "assets_other_current",        "Other current assets",           "Sonstige kurzfristige Vermögenswerte", "amount", 0,       1,    "sub",
-  "current_assets",              "Total current assets",           "Summe kurzfristige Vermögenswerte",   "amount", 0,        1,    "total",
-  "assets",                      "Total assets",                   "Bilanzsumme",                             "amount", 0,        1,    "total"
-), unit_header = amount_label, change = TRUE)
-```
-
-```{r assets-chart}
-chart_stacked(
-  c("ppe", "goodwill", "intangibles", "equity_method",
-    "assets_rest_noncurrent", "inventories", "receivables", "cash",
-    "assets_rest_current"),
-  c(tr("Property, plant and equipment", "Sachanlagen"),
-    tr("Goodwill", "Firmenwerte"),
-    tr("Other intangible assets", "Sonstige immaterielle Vermögenswerte"),
-    tr("Investments in associates", "Assoziierte Unternehmen"),
-    tr("Other non-current assets", "Sonstige langfristige Aktiva"),
-    tr("Inventories", "Vorräte"),
-    tr("Trade and other receivables", "Forderungen"),
-    tr("Cash and cash equivalents", "Zahlungsmittel"),
-    tr("Other current assets", "Sonstige kurzfristige Aktiva")),
-  ncol = 3)
-```
-
-{{< pagebreak >}}
-
-## `r tr("Statement of financial position: equity and liabilities", "Bilanz: Passiva")`
-
-```{r equity-liabilities-table}
-render_lines(line_spec(
-  ~key,                               ~en,                             ~de,                                    ~unit,    ~digits, ~sign, ~style,
-  "",                                 "Equity",                        "Eigenkapital",                         "amount", 0,        1,    "head",
-  "issued_capital",                   "Issued capital",                "Grundkapital",                         "amount", 0,        1,    "sub",
-  "additional_paid_in",               "Additional paid-in capital",    "Kapitalrücklagen",                 "amount", 0,        1,    "sub",
-  "retained_earnings",                "Retained earnings",             "Gewinnrücklagen",                  "amount", 0,        1,    "sub",
-  "other_reserves",                   "Other reserves",                "Sonstige Rücklagen",               "amount", 0,        1,    "sub",
-  "treasury_shares",                  "Treasury shares",               "Eigene Anteile",                       "amount", 0,       -1,    "sub",
-  "equity_owners",                    "Equity, owners of the parent",  "Eigenkapital der Eigentümer",      "amount", 0,        1,    "total",
-  "nci",                              "Non-controlling interests",     "Nicht beherrschende Anteile",          "amount", 0,        1,    "sub",
-  "equity",                           "Total equity",                  "Summe Eigenkapital",                   "amount", 0,        1,    "total",
-  "",                                 "Non-current liabilities",       "Langfristige Schulden",                "amount", 0,        1,    "head",
-  "financial_liabilities_noncurrent", "Financial liabilities",         "Finanzverbindlichkeiten",              "amount", 0,        1,    "sub",
-  "employee_provisions",              "Provisions for employee benefits", "Rückstellungen für Mitarbeiter", "amount", 0,  1,    "sub",
-  "deferred_tax_liabilities",         "Deferred tax liabilities",      "Passive latente Steuern",              "amount", 0,        1,    "sub",
-  "liabilities_other_noncurrent",     "Other non-current liabilities", "Sonstige langfristige Schulden",       "amount", 0,        1,    "sub",
-  "noncurrent_liabilities",           "Total non-current liabilities", "Summe langfristige Schulden",          "amount", 0,        1,    "total",
-  "",                                 "Current liabilities",           "Kurzfristige Schulden",                "amount", 0,        1,    "head",
-  "financial_liabilities_current",    "Financial liabilities",         "Finanzverbindlichkeiten",              "amount", 0,        1,    "sub",
-  "payables",                         "Trade and other payables",      "Verbindlichkeiten",                    "amount", 0,        1,    "sub",
-  "current_provisions",               "Provisions",                    "Rückstellungen",                   "amount", 0,        1,    "sub",
-  "current_tax_liabilities",          "Current tax liabilities",       "Steuerschulden",                       "amount", 0,        1,    "sub",
-  "liabilities_other_current",        "Other current liabilities",     "Sonstige kurzfristige Schulden",       "amount", 0,        1,    "sub",
-  "current_liabilities",              "Total current liabilities",     "Summe kurzfristige Schulden",          "amount", 0,        1,    "total",
-  "equity_and_liabilities",           "Total equity and liabilities",  "Summe Passiva",                        "amount", 0,        1,    "total"
-), unit_header = amount_label, change = TRUE)
-```
-
-```{r funding-chart}
-chart_stacked(
-  c("equity_owners", "nci", "financial_liabilities_noncurrent",
-    "liabilities_rest_noncurrent", "financial_liabilities_current",
-    "liabilities_rest_current"),
-  c(tr("Equity, owners of the parent", "Eigenkapital der Eigentümer"),
-    tr("Non-controlling interests", "Nicht beherrschende Anteile"),
-    tr("Non-current financial liabilities", "Langfristige Finanzverbindlichkeiten"),
-    tr("Other non-current liabilities", "Sonstige langfristige Schulden"),
-    tr("Current financial liabilities", "Kurzfristige Finanzverbindlichkeiten"),
-    tr("Other current liabilities", "Sonstige kurzfristige Schulden")),
-  ncol = 2)
 ```
 
 {{< pagebreak >}}
@@ -1779,13 +1884,13 @@ render_lines(line_spec(
 # way the issuer presents it. The members are named as the taxonomy names
 # them, an issuer's own member included.
 members <- facts %>%
-  filter(CONCEPT == concepts[["equity"]], !is.na(VALUE), is.na(PRDSTART),
-         PRDEND == PERIODEND, !is.na(DIMENSIONS),
-         grepl("^ifrs-full:ComponentsOfEquityAxis=[^;]+$", DIMENSIONS)) %>%
-  mutate(member = sub("^[^=]+=", "", DIMENSIONS),
+  filter(concept == concepts[["equity"]], !is.na(value), is.na(prd_start),
+         prd_end == period_end, !is.na(dimensions),
+         grepl("^ifrs-full:ComponentsOfEquityAxis=[^;]+$", dimensions)) %>%
+  mutate(member = sub("^[^=]+=", "", dimensions),
          label = gsub("([a-z])([A-Z])", "\\1 \\2",
                       sub("Member$", "", sub("^[^:]+:", "", member)))) %>%
-  distinct(PERIODEND, member, label, VALUE)
+  distinct(period_end, member, label, value)
 
 if (nrow(members) == 0) {
   cat(tr(paste("The statement of changes in equity of this issuer tags no",
@@ -1798,15 +1903,15 @@ if (nrow(members) == 0) {
 } else {
   order_of <- members %>%
     group_by(member, label) %>%
-    summarise(size = max(abs(VALUE)), .groups = "drop") %>%
+    summarise(size = max(abs(value)), .groups = "drop") %>%
     arrange(desc(size))
   temp <- members %>%
-    mutate(year = fy_label(PERIODEND),
+    mutate(year = fy_label(period_end),
            label = factor(label, levels = order_of$label)) %>%
     filter(year %in% years) %>%
-    select("year", "label", "VALUE") %>%
-    mutate(VALUE = fmt(VALUE / scale)) %>%
-    pivot_wider(names_from = "year", values_from = "VALUE",
+    select("year", "label", "value") %>%
+    mutate(value = fmt(value / scale)) %>%
+    pivot_wider(names_from = "year", values_from = "value",
                 values_fill = "–") %>%
     arrange(label) %>%
     rename(item = "label")
@@ -1895,7 +2000,7 @@ score_rows <- tribble(
   "f_turnover",  "Asset turnover higher than last year",            "Kapitalumschlag höher als im Vorjahr"
 )
 
-temp <- tibble(item = if (lang == "de") score_rows$de else score_rows$en)
+temp <- tibble(item = if (report_lang == "de") score_rows$de else score_rows$en)
 for (i in seq_len(n_shown)) {
   temp[[years[i]]] <- vapply(score_rows$key, function(k) {
     v <- wide[[k]][i]
@@ -1946,15 +2051,15 @@ chart_lines(c("z_score", "f_score"),
 # tags most of its lines with concepts of its own is a report whose figures
 # only its own filings can be put beside.
 coverage <- facts %>%
-  filter(FILING %in% (filings %>%
-                        filter(PERIODEND %in% wide$PERIODEND))$FILING,
-         !is.na(VALUE)) %>%
-  group_by(PERIODEND) %>%
+  filter(filing %in% (filings %>%
+                        filter(period_end %in% wide$period_end))$filing,
+         !is.na(value)) %>%
+  group_by(period_end) %>%
   summarise(facts_numeric = n(),
-            facts_dimensional = sum(!is.na(DIMENSIONS)),
-            extension_share = mean(!startsWith(CONCEPT, "ifrs-full:")) * 100,
+            facts_dimensional = sum(!is.na(dimensions)),
+            extension_share = mean(!startsWith(concept, "ifrs-full:")) * 100,
             .groups = "drop") %>%
-  mutate(year = fy_label(PERIODEND))
+  mutate(year = fy_label(period_end))
 
 found <- tibble(year = years) %>%
   left_join(coverage, by = "year") %>%
@@ -1992,7 +2097,7 @@ if (nrow(extension_used) == 0) {
 } else {
   temp <- extension_used %>%
     arrange(desc(years), key) %>%
-    transmute(key, CONCEPT, years = paste0(years, " / ", n_shown))
+    transmute(key, concept, years = paste0(years, " / ", n_shown))
   knitr::kable(temp, col.names = c(tr("Line", "Zeile"),
                                    tr("Concept of the issuer", "Konzept des Emittenten"),
                                    tr("Years found", "Jahre gefunden")),
@@ -2015,7 +2120,7 @@ if (length(missing) == 0) {
   temp <- lookup %>%
     filter(key %in% missing) %>%
     group_by(key) %>%
-    summarise(concepts = paste(CONCEPT, collapse = ", "), .groups = "drop") %>%
+    summarise(concepts = paste(concept, collapse = ", "), .groups = "drop") %>%
     arrange(key)
   knitr::kable(temp, col.names = c(tr("Line", "Zeile"),
                                    tr("Concepts looked for", "Gesuchte Konzepte")),
@@ -2078,7 +2183,7 @@ check_rows <- tribble(
   "diff_cash",        "Movement in cash less the three cash flows",                "Veränderung der Zahlungsmittel abzüglich der drei Cashflows"
 )
 
-temp <- tibble(item = if (lang == "de") check_rows$de else check_rows$en)
+temp <- tibble(item = if (report_lang == "de") check_rows$de else check_rows$en)
 for (i in seq_len(n_shown)) {
   value <- unlist(checks[i, check_rows$key])
   # A difference of less than a hundredth of a million is a rounding of the
@@ -2103,16 +2208,16 @@ knitr::kable(temp, col.names = c(amount_label, years),
 # not. An issuer may file the same report twice -- in two languages, or
 # corrected -- and each filing is a row with facts of its own.
 temp <- filings_all %>%
-  filter(PERIODEND %in% wide$PERIODEND) %>%
-  arrange(desc(PERIODEND), FILING) %>%
-  transmute(FILING,
-            PERIODEND = format(PERIODEND, "%Y-%m-%d"),
-            LANG = coalesce(LANG, ""),
-            used = ifelse(FILING %in% filings$FILING, "✔", ""),
-            ERRORS = coalesce(ERRORS, 0L),
-            WARNINGS = coalesce(WARNINGS, 0L),
-            INCONSISTENCIES = coalesce(INCONSISTENCIES, 0L),
-            PROCESSED = format(PROCESSED, "%Y-%m-%d"))
+  filter(period_end %in% wide$period_end) %>%
+  arrange(desc(period_end), filing) %>%
+  transmute(filing,
+            period_end = format(period_end, "%Y-%m-%d"),
+            lang = coalesce(lang, ""),
+            used = ifelse(filing %in% filings$filing, "✔", ""),
+            errors = coalesce(errors, 0L),
+            warnings = coalesce(warnings, 0L),
+            inconsistencies = coalesce(inconsistencies, 0L),
+            processed = format(processed, "%Y-%m-%d"))
 
 col_names <- c(tr("Filing", "Einreichung"), tr("Period end", "Stichtag"),
                tr("Language", "Sprache"), tr("Used", "Verwendet"),
@@ -2144,7 +2249,7 @@ definitions <- tribble(
   "**Z''-score** -- Altman's variant for an issuer whose shares are not valued in the figures: 3.25 + 6.56 times net current assets, 3.26 times retained earnings and 6.72 times the operating result, each over total assets, plus 1.05 times equity over liabilities.", "**Z''-Score** -- Altmans Variante mit dem Buchwert des Eigenkapitals: 3,25 + 6,56 mal Netto-Umlaufvermögen, 3,26 mal Gewinnrücklagen und 6,72 mal Betriebsergebnis, je über der Bilanzsumme, plus 1,05 mal Eigenkapital zu Schulden.",
   "**A dagger (†)** -- the figure was read from a concept of the issuer's own taxonomy rather than from the IFRS taxonomy. **A dash (–)** -- the issuer did not tag the figure in that year, or a figure the indicator needs is missing.", "**Ein Kreuz (†)** -- die Zahl wurde aus einem eigenen Konzept des Emittenten gelesen. **Ein Strich (–)** -- der Emittent hat die Zahl in diesem Jahr nicht ausgezeichnet.")
 
-cat(paste0("- ", if (lang == "de") definitions$de else definitions$en,
+cat(paste0("- ", if (report_lang == "de") definitions$de else definitions$en,
            collapse = "\n"))
 ```
 

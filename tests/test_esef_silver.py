@@ -91,13 +91,13 @@ def test_the_table_of_filings_lists_every_filing_of_the_indexes(
 
     assert outcome["filings"] == 4
     filings = esef.connect_to_esef_filings(spark, data_lake).toPandas() \
-        .set_index("FILING")
+        .set_index("filing")
     assert sorted(filings.index) == sorted(
         [AT, AT2, DE, NO_JSON])
-    assert filings.loc[AT, "NAME"] == "Erste Beispiel AG"
-    assert filings.loc[AT, "PERIODEND"] == datetime.date(2026, 3, 31)
+    assert filings.loc[AT, "name"] == "Erste Beispiel AG"
+    assert filings.loc[AT, "period_end"] == datetime.date(2026, 3, 31)
     # A null, which pandas 3 hands back as NaN and pandas 2 as None.
-    assert pandas.isna(filings.loc[NO_JSON, "JSONURL"])
+    assert pandas.isna(filings.loc[NO_JSON, "json_url"])
 
 
 def test_the_table_of_facts_holds_every_fact_of_every_report(
@@ -107,21 +107,21 @@ def test_the_table_of_facts_holds_every_fact_of_every_report(
     assert outcome["written"] == 2 and outcome["failed"] == 0
     frame = facts(spark, data_lake)
     assert outcome["rows"] == len(frame) == 9  # three facts of each report
-    assert set(frame["COUNTRY"]) == {"AT", "DE"}
+    assert set(frame["country"]) == {"AT", "DE"}
 
-    revenue = frame[(frame["FILING"] == AT)
-                    & (frame["CONCEPT"] == "ifrs-full:Revenue")].iloc[0]
-    assert revenue["LEI"] == LEI_AT
-    assert revenue["PERIODEND"] == datetime.date(2026, 3, 31)
-    assert revenue["PRDSTART"] == datetime.date(2025, 4, 1)
-    assert revenue["PRDEND"] == datetime.date(2026, 3, 31)
-    assert revenue["VALUE"] == 430569203.0
-    assert revenue["UNIT"] == "iso4217:EUR"
+    revenue = frame[(frame["filing"] == AT)
+                    & (frame["concept"] == "ifrs-full:Revenue")].iloc[0]
+    assert revenue["lei"] == LEI_AT
+    assert revenue["period_end"] == datetime.date(2026, 3, 31)
+    assert revenue["prd_start"] == datetime.date(2025, 4, 1)
+    assert revenue["prd_end"] == datetime.date(2026, 3, 31)
+    assert revenue["value"] == 430569203.0
+    assert revenue["unit"] == "iso4217:EUR"
 
     expected = esef.facts_from_report(load(report_name(AT)))
-    mine = frame[frame["FILING"] == AT].sort_values("FACT")
-    assert list(mine["FACT"]) == list(expected["FACT"])
-    assert list(mine["TEXT"].fillna("")) == list(expected["TEXT"].fillna(""))
+    mine = frame[frame["filing"] == AT].sort_values("fact")
+    assert list(mine["fact"]) == list(expected["fact"])
+    assert list(mine["text"].fillna("")) == list(expected["text"].fillna(""))
 
 
 def test_only_the_countries_whose_reports_changed_are_rebuilt(
@@ -139,7 +139,7 @@ def test_only_the_countries_whose_reports_changed_are_rebuilt(
 
     assert outcome["written"] == 1
     frame = facts(spark, data_lake)
-    revenue = frame[frame["CONCEPT"] == "ifrs-full:Revenue"].set_index("LEI")["VALUE"]
+    revenue = frame[frame["concept"] == "ifrs-full:Revenue"].set_index("lei")["value"]
     assert revenue[LEI_DE] == 7.0
     assert revenue[LEI_AT] == 430569203.0
     assert len(frame) == 9
@@ -164,7 +164,7 @@ def test_a_report_that_cannot_be_read_is_set_aside_and_its_country_not_marked(
 
     assert outcome["failed_sources"] == [f"silver/{AT2}"]
     frame = facts(spark, data_lake)
-    assert set(frame["FILING"]) == {AT, DE}
+    assert set(frame["filing"]) == {AT, DE}
     # The country is tried again on the next run, Germany is not.
     assert list(esef.pending_countries(data_lake)) == ["AT"]
 
@@ -207,10 +207,10 @@ def test_the_pipeline_runs_from_the_repository_to_the_tables(
 
     assert outcome["failed"] == 0
     frame = facts(spark, data_lake)
-    assert set(frame["COUNTRY"]) == {"AT"}
-    assert set(frame["FILING"]) == {AT, AT2}
+    assert set(frame["country"]) == {"AT"}
+    assert set(frame["filing"]) == {AT, AT2}
     filings = esef.connect_to_esef_filings(spark, data_lake).toPandas()
-    assert set(filings["COUNTRY"]) == {"AT", "DE"}
+    assert set(filings["country"]) == {"AT", "DE"}
 
 
 def test_the_signature_of_a_country_does_not_depend_on_the_order():

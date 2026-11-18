@@ -311,31 +311,31 @@ def read_pillars(spark, prices, refdt, currencies = None):
     prefixes = {f"OIS-{SWAP_INDEX[ccy]}-": ccy for ccy in currencies}
 
     quotes = prices \
-        .filter(func.col("REFDT") <= func.lit(refdt)) \
-        .filter(func.col("VALUE").isNotNull())
+        .filter(func.col("ref_date") <= func.lit(refdt)) \
+        .filter(func.col("value").isNotNull())
 
-    keep = func.col("INSTRID").isin(list(wanted))
+    keep = func.col("instr_id").isin(list(wanted))
     for prefix in prefixes:
-        keep = keep | func.col("INSTRID").startswith(prefix)
+        keep = keep | func.col("instr_id").startswith(prefix)
     quotes = quotes.filter(keep)
 
     # One row per instrument: the most recent quote at or before the date.
     latest = quotes \
-        .groupBy("INSTRID") \
-        .agg(func.max("REFDT").alias("REFDT")) \
-        .join(quotes, ["INSTRID", "REFDT"], "inner") \
-        .select("INSTRID", "REFDT", "VALUE") \
+        .groupBy("instr_id") \
+        .agg(func.max("ref_date").alias("ref_date")) \
+        .join(quotes, ["instr_id", "ref_date"], "inner") \
+        .select("instr_id", "ref_date", "value") \
         .collect()
 
     pillars = {}
     oldest = None
     for row in latest:
-        if row.INSTRID in wanted:
-            currency, tenor = wanted[row.INSTRID]
+        if row.instr_id in wanted:
+            currency, tenor = wanted[row.instr_id]
         else:
             currency = next(ccy for prefix, ccy in prefixes.items()
-                            if row.INSTRID.startswith(prefix))
-            tenor = row.INSTRID.rsplit("-", 1)[1]
+                            if row.instr_id.startswith(prefix))
+            tenor = row.instr_id.rsplit("-", 1)[1]
 
         try:
             years = tenor_in_years(tenor)
@@ -343,14 +343,14 @@ def read_pillars(spark, prices, refdt, currencies = None):
             logger.warning(
                 "A quote was left out of a curve because its tenor could not be read",
                 extra=context(module="marketpricedata", table="curves",
-                              instrid=row.INSTRID, reason=str(problem)),
+                              instrid=row.instr_id, reason=str(problem)),
             )
             continue
 
         # The sources publish rates in percent, the valuation works in decimal
         # fractions. This is the one place the two meet.
-        pillars.setdefault(currency, {})[years] = row.VALUE / 100
-        oldest = row.REFDT if oldest is None else min(oldest, row.REFDT)
+        pillars.setdefault(currency, {})[years] = row.value / 100
+        oldest = row.ref_date if oldest is None else min(oldest, row.ref_date)
 
     missing = [ccy for ccy in currencies if ccy not in pillars]
     if missing:

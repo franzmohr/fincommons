@@ -72,13 +72,13 @@ logger = logging.getLogger(__name__)
 DATASET = "edinet"
 
 issues_schema = StructType() \
-    .add("EDINETCODE", StringType(), True) \
-    .add("FILEDYEAR", IntegerType(), False) \
-    .add("FILING", StringType(), False) \
-    .add("FACT", StringType(), True) \
-    .add("CONCEPT", StringType(), True) \
-    .add("ISSUE", StringType(), False) \
-    .add("CHECKED", DateType(), False)
+    .add("edinet_code", StringType(), True) \
+    .add("filed_year", IntegerType(), False) \
+    .add("filing", StringType(), False) \
+    .add("fact", StringType(), True) \
+    .add("concept", StringType(), True) \
+    .add("issue", StringType(), False) \
+    .add("checked", DateType(), False)
 """The shape of the table of issues: one row per issue found.
 
 ``FILEDYEAR`` is the partition column, as it is on the tables of facts and of
@@ -202,18 +202,18 @@ DEI = {
 #: The columns that identify the record an issue is about. Every check returns
 #: these, with the two that name a fact left null where the issue is about the
 #: filing as a whole.
-KEYS = ("EDINETCODE", "FILEDYEAR", "FILING", "FACT", "CONCEPT")
+KEYS = ("edinet_code", "filed_year", "filing", "fact", "concept")
 
 
 def _filing_level(frame):
     """A frame of filing-level issues: the keys, with no fact named."""
     return (frame
-            .withColumn("FACT", func.lit(None).cast("string"))
-            .withColumn("CONCEPT", func.lit(None).cast("string"))
+            .withColumn("fact", func.lit(None).cast("string"))
+            .withColumn("concept", func.lit(None).cast("string"))
             .select(*KEYS))
 
 
-def _local(column="CONCEPT"):
+def _local(column="concept"):
     """The element's local name: what a check matches on."""
     return func.regexp_replace(func.col(column), r"^[^:]*:", "")
 
@@ -232,15 +232,15 @@ def dei_of(facts):
     if "_LOCAL" not in facts.columns:
         facts = facts.withColumn("_LOCAL", _local())
     wanted = facts.where(func.col("_LOCAL").isin(list(DEI.values())))
-    wide = (wanted.groupBy("FILING")
+    wide = (wanted.groupBy("filing")
             .pivot("_LOCAL", list(DEI.values()))
-            .agg(func.first("TEXT")))
+            .agg(func.first("text")))
     for key, element in DEI.items():
         wide = wide.withColumn(
             key,
             func.col(f"`{element}`") if element in wide.columns
             else func.lit(None).cast("string"))
-    return wide.select("FILING", *DEI)
+    return wide.select("filing", *DEI)
 
 
 def annual_figures(facts, filings):
@@ -263,32 +263,32 @@ def annual_figures(facts, filings):
         facts = facts.withColumn("_LOCAL", _local())
 
     annual = (filings
-              .where(func.col("DOCTYPE").isin(list(ANNUAL_DOCTYPES)))
-              .where(func.col("PERIODEND").isNotNull())
-              .select("FILING", "PERIODEND"))
+              .where(func.col("doc_type").isin(list(ANNUAL_DOCTYPES)))
+              .where(func.col("period_end").isNotNull())
+              .select("filing", "period_end"))
 
     dei = dei_of(facts)
 
     own = (facts
-           .join(annual, "FILING")
-           .join(dei.select("FILING", "consolidated"), "FILING")
-           .where(func.col("VALUE").isNotNull())
-           .where(func.col("PRDEND") == func.col("PERIODEND"))
+           .join(annual, "filing")
+           .join(dei.select("filing", "consolidated"), "filing")
+           .where(func.col("value").isNotNull())
+           .where(func.col("prd_end") == func.col("period_end"))
            # The basis the filing says it reports on, and no other.
            .where(func.when(func.col("consolidated") == "true",
-                            func.col("DIMENSIONS").isNull())
-                  .otherwise(func.col("DIMENSIONS") == NON_CONSOLIDATED)))
+                            func.col("dimensions").isNull())
+                  .otherwise(func.col("dimensions") == NON_CONSOLIDATED)))
 
     names = [name for group in CONCEPTS.values() for name in group]
     # One value per filing and element. A figure is often tagged twice in one
     # report, in the statements and again in the notes, with one value.
     chosen = (own.where(func.col("_LOCAL").isin(names))
-              .groupBy("FILING", "EDINETCODE", "FILEDYEAR", "_LOCAL")
-              .agg(func.min("VALUE").alias("VALUE")))
+              .groupBy("filing", "edinet_code", "filed_year", "_LOCAL")
+              .agg(func.min("value").alias("value")))
 
-    wide = (chosen.groupBy("FILING", "EDINETCODE", "FILEDYEAR")
+    wide = (chosen.groupBy("filing", "edinet_code", "filed_year")
             .pivot("_LOCAL", names)
-            .agg(func.first("VALUE")))
+            .agg(func.first("value")))
 
     for key, group in CONCEPTS.items():
         column = func.lit(None).cast("double")
@@ -297,7 +297,7 @@ def annual_figures(facts, filings):
                 column = func.coalesce(func.col(f"`{name}`"), column)
         wide = wide.withColumn(key, column)
 
-    return wide.select("FILING", "EDINETCODE", "FILEDYEAR", *CONCEPTS)
+    return wide.select("filing", "edinet_code", "filed_year", *CONCEPTS)
 
 
 def _imbalance(figures, difference, scale):
@@ -502,17 +502,17 @@ def check_missing_consolidated(state):
     from it on the consolidated basis is missing rather than wrong.
     """
     annual = (state["filings"]
-              .where(func.col("DOCTYPE").isin(list(ANNUAL_DOCTYPES)))
-              .select("EDINETCODE", "FILEDYEAR", "FILING"))
+              .where(func.col("doc_type").isin(list(ANNUAL_DOCTYPES)))
+              .select("edinet_code", "filed_year", "filing"))
     saying = (state["dei"].where(func.col("consolidated") == "true")
-              .select("FILING"))
+              .select("filing"))
     stating = (state["facts"]
-               .where(func.col("DIMENSIONS").isNull())
-               .where(func.col("VALUE").isNotNull())
+               .where(func.col("dimensions").isNull())
+               .where(func.col("value").isNotNull())
                .where(_local().isin(CONCEPTS["assets"] + CONCEPTS["revenue"]))
-               .select("FILING").distinct())
+               .select("filing").distinct())
     return _filing_level(
-        annual.join(saying, "FILING").join(stating, "FILING", "left_anti"))
+        annual.join(saying, "filing").join(stating, "filing", "left_anti"))
 
 
 def check_period_shift_inexact(state):
@@ -542,14 +542,14 @@ def check_period_shift_inexact(state):
                       & func.col("_prior").isNotNull())
                .where(func.abs(func.col("_current") - func.col("_prior"))
                       > YEAR_LENGTH_SLACK)
-               .select("FILING"))
+               .select("filing"))
     # Only a filing that actually has a shifted period is named: a report
     # stating two years and no more has nothing to be out by.
     shifted = (state["facts"]
-               .where(func.col("CONTEXT").rlike("Prior[2-9]"))
-               .where(func.col("PRDEND").isNotNull())
-               .select("EDINETCODE", "FILEDYEAR", "FILING").distinct())
-    return _filing_level(shifted.join(lengths, "FILING"))
+               .where(func.col("context").rlike("Prior[2-9]"))
+               .where(func.col("prd_end").isNotNull())
+               .select("edinet_code", "filed_year", "filing").distinct())
+    return _filing_level(shifted.join(lengths, "filing"))
 
 
 def check_period_unresolved(state):
@@ -561,17 +561,17 @@ def check_period_unresolved(state):
     anything, which is worth counting rather than discovering later.
     """
     return (state["facts"]
-            .where(func.col("PRDEND").isNull())
-            .where(func.col("VALUE").isNotNull()
-                   | func.col("TEXT").isNotNull())
+            .where(func.col("prd_end").isNull())
+            .where(func.col("value").isNotNull()
+                   | func.col("text").isNotNull())
             .select(*KEYS))
 
 
 def check_implausible_period(state):
     """A fact whose period ends before it begins."""
     return (state["facts"]
-            .where(func.col("PRDSTART").isNotNull()
-                   & (func.col("PRDSTART") > func.col("PRDEND")))
+            .where(func.col("prd_start").isNotNull()
+                   & (func.col("prd_start") > func.col("prd_end")))
             .select(*KEYS))
 
 
@@ -585,21 +585,21 @@ def check_index_period_differs(state):
     matters to anything selecting filings by period without opening them.
     """
     annual = (state["filings"]
-              .where(func.col("DOCTYPE").isin(list(ANNUAL_DOCTYPES)))
-              .where(func.col("PERIODEND").isNotNull())
-              .select("EDINETCODE", "FILEDYEAR", "FILING", "PERIODEND"))
+              .where(func.col("doc_type").isin(list(ANNUAL_DOCTYPES)))
+              .where(func.col("period_end").isNotNull())
+              .select("edinet_code", "filed_year", "filing", "period_end"))
     stated = state["dei"].select(
-        "FILING", func.to_date("current_end").alias("_stated"))
+        "filing", func.to_date("current_end").alias("_stated"))
     return _filing_level(
-        annual.join(stated, "FILING")
+        annual.join(stated, "filing")
         .where(func.col("_stated").isNotNull())
-        .where(func.col("PERIODEND") != func.col("_stated")))
+        .where(func.col("period_end") != func.col("_stated")))
 
 
 def check_missing_fact_value(state):
     """A fact carrying neither a number nor a text."""
     return (state["facts"]
-            .where(func.col("VALUE").isNull() & func.col("TEXT").isNull())
+            .where(func.col("value").isNull() & func.col("text").isNull())
             .select(*KEYS))
 
 
@@ -616,11 +616,11 @@ def check_basis_contradicts_dimension(state):
     """
     facts = state["facts"]
     member = func.array_contains(
-        func.split(func.coalesce(func.col("DIMENSIONS"), func.lit("")), "_"),
+        func.split(func.coalesce(func.col("dimensions"), func.lit("")), "_"),
         NON_CONSOLIDATED)
     return (facts
-            .where(((func.col("BASIS") == "連結") & member)
-                   | ((func.col("BASIS") == "個別") & ~member))
+            .where(((func.col("basis") == "連結") & member)
+                   | ((func.col("basis") == "個別") & ~member))
             .select(*KEYS))
 
 
@@ -634,8 +634,8 @@ def check_duplicate_fact_value(state):
     of them a reader should use cannot be decided here, so both facts are
     named.
     """
-    keys = ["FILING", "CONCEPT", "CONTEXT", "UNIT"]
-    filled = state["facts"].where(func.col("VALUE").isNotNull())
+    keys = ["filing", "concept", "context", "unit"]
+    filled = state["facts"].where(func.col("value").isNotNull())
     for key in keys:
         filled = filled.withColumn(
             f"_{key}",
@@ -643,7 +643,7 @@ def check_duplicate_fact_value(state):
     grouped = [f"_{key}" for key in keys]
 
     conflicting = (filled.groupBy(*grouped)
-                   .agg(func.countDistinct("VALUE").alias("_values"))
+                   .agg(func.countDistinct("value").alias("_values"))
                    .where(func.col("_values") > 1)
                    .select(*grouped))
     return filled.join(conflicting, grouped).select(*KEYS)
@@ -653,12 +653,12 @@ def check_mixed_unit(state):
     """One concept in two units in one filing."""
     facts = state["facts"]
     mixed = (facts
-             .where(func.col("UNIT").isNotNull())
-             .groupBy("FILING", "CONCEPT")
-             .agg(func.countDistinct("UNIT").alias("_units"))
+             .where(func.col("unit").isNotNull())
+             .groupBy("filing", "concept")
+             .agg(func.countDistinct("unit").alias("_units"))
              .where(func.col("_units") > 1)
              .drop("_units"))
-    return facts.join(mixed, ["FILING", "CONCEPT"]).select(*KEYS)
+    return facts.join(mixed, ["filing", "concept"]).select(*KEYS)
 
 
 def check_unit_is_not_a_ratio(state):
@@ -676,8 +676,8 @@ def check_unit_is_not_a_ratio(state):
     same report under ``RatioOfOwnersEquityToGrossAssetsIFRS...`` as 0.60.
     """
     return (state["facts"]
-            .where(func.col("VALUE").isNotNull())
-            .where(func.col("UNIT").isNotNull() & (func.col("UNIT") != "pure"))
+            .where(func.col("value").isNotNull())
+            .where(func.col("unit").isNotNull() & (func.col("unit") != "pure"))
             .where(_local().rlike(r"Ratio([A-Z][A-Za-z]*)?$"))
             .select(*KEYS))
 
@@ -691,16 +691,16 @@ def check_high_extension_share(state):
     1.7 to 7.1 per cent, so the threshold is far above what an ordinary
     report reaches.
     """
-    facts = state["facts"].where(func.col("VALUE").isNotNull())
-    taxonomy = func.regexp_replace(func.col("CONCEPT"), r":.*", "")
+    facts = state["facts"].where(func.col("value").isNotNull())
+    taxonomy = func.regexp_replace(func.col("concept"), r":.*", "")
     share = (facts
              .withColumn("_own",
                          func.when(taxonomy.isin(list(TAXONOMY_PREFIXES)),
                                    func.lit(0)).otherwise(func.lit(1)))
-             .groupBy("EDINETCODE", "FILEDYEAR", "FILING")
+             .groupBy("edinet_code", "filed_year", "filing")
              .agg(func.avg("_own").alias("_share"))
              .where(func.col("_share") > EXTENSION_SHARE)
-             .select("EDINETCODE", "FILEDYEAR", "FILING"))
+             .select("edinet_code", "filed_year", "filing"))
     return _filing_level(share)
 
 
@@ -763,8 +763,8 @@ def find_issues(spark, config_path, codes=None):
 
     if codes:
         wanted = [str(code).strip().upper() for code in codes]
-        facts = facts.where(func.col("EDINETCODE").isin(wanted))
-        filings = filings.where(func.col("EDINETCODE").isin(wanted))
+        facts = facts.where(func.col("edinet_code").isin(wanted))
+        filings = filings.where(func.col("edinet_code").isin(wanted))
 
     # The local name is what every check matches on, so it is derived once
     # rather than in each of them.
@@ -822,14 +822,14 @@ def update_silver_edinet_quality(spark, config_path, codes=None,
 
         if codes and existing is not None:
             rechecked = [row[0] for row in
-                         found.select("FILEDYEAR").distinct().collect()]
-            to_write = merged_issues(found, existing, "FILEDYEAR", rechecked)
+                         found.select("filed_year").distinct().collect()]
+            to_write = merged_issues(found, existing, "filed_year", rechecked)
         else:
             to_write = found
 
-        write_silver(rebalanced(to_write, "FILEDYEAR"), ref,
+        write_silver(rebalanced(to_write, "filed_year"), ref,
                      file_format=file_format,
-                     partition_by=partitioning(to_write, "FILEDYEAR"))
+                     partition_by=partitioning(to_write, "filed_year"))
         outcome["issues"] = found.count()
         outcome["checks"] = len(CHECKS)
 

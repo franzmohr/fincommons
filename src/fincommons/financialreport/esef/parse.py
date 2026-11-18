@@ -31,8 +31,8 @@ import re
 import pandas
 
 #: The columns :func:`facts_from_report` returns, in order.
-FACT_COLUMNS = ["FACT", "LEI", "CONCEPT", "PRDSTART", "PRDEND", "UNIT",
-                "DIMENSIONS", "VALUE", "TEXT", "DECIMALS", "LANG"]
+FACT_COLUMNS = ["fact", "lei", "concept", "prd_start", "prd_end", "unit",
+                "dimensions", "value", "text", "decimals", "lang"]
 
 #: The dimensions every fact of xBRL-JSON may carry, which the table gives a
 #: column of their own. The others are the dimensions of the taxonomy, which
@@ -265,26 +265,26 @@ def facts_from_report(document):
             except (TypeError, ValueError):
                 number = None
         rows.append({
-            "FACT": fact_id,
-            "LEI": entity.split(":", 1)[-1],
-            "CONCEPT": concept,
-            "PRDSTART": start,
-            "PRDEND": end,
-            "UNIT": unit,
-            "DIMENSIONS": ";".join(others) or None,
-            "VALUE": number,
+            "fact": fact_id,
+            "lei": entity.split(":", 1)[-1],
+            "concept": concept,
+            "prd_start": start,
+            "prd_end": end,
+            "unit": unit,
+            "dimensions": ";".join(others) or None,
+            "value": number,
             # A value with a unit that is not a number is kept as text rather
             # than lost.
-            "TEXT": None if number is not None else str(value),
-            "DECIMALS": _decimals(fact.get("decimals")),
-            "LANG": dimensions.get("language"),
+            "text": None if number is not None else str(value),
+            "decimals": _decimals(fact.get("decimals")),
+            "lang": dimensions.get("language"),
         })
     # The columns are built as Python objects and the numbers typed after.
     # pandas 3 would otherwise infer its string type for the text columns and
     # give a missing text as NaN where pandas 2 gives None.
     frame = pandas.DataFrame(rows, columns=FACT_COLUMNS, dtype=object)
-    frame["VALUE"] = frame["VALUE"].astype("float64")
-    frame["DECIMALS"] = frame["DECIMALS"].astype("Int32")
+    frame["value"] = frame["value"].astype("float64")
+    frame["decimals"] = frame["decimals"].astype("Int32")
     return frame
 
 

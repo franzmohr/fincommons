@@ -1,14 +1,14 @@
 """What a column of the data sets holds.
 
 The Silver and Gold tables name their columns in the compressed style of
-ISO 20022 -- ``TRADGVN``, ``NTNLCCY``, ``BUYRDCSNMAKRFRSTNM`` -- and each
+snake_case -- ``trading_venue``, ``notional_currency`` -- and each
 module builds them from its own sources, so what a name means is spread
 across the translation code of the modules. :func:`describe_column` answers
 it for one name::
 
     >>> import fincommons
-    >>> print(fincommons.describe_column("TRADGVN"))
-    TRADGVN in firds -- tables firds.silver
+    >>> print(fincommons.describe_column("trading_venue"))
+    trading_venue in firds -- tables firds.silver
       ...
 
 A name can mean different things in different data sets -- ``ACTNTP`` is the
@@ -43,6 +43,7 @@ import pandas as pd
 
 __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
            "defined_columns", "CATALOGUED_MODULES", "CATALOGUES",
+           "SNAKE_CASE_MODULES", "NOT_COLUMNS",
            "MODULE_FOLDERS"]
 
 #: The modules whose data sets the catalogue of this package covers.
@@ -52,6 +53,22 @@ __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
 CATALOGUED_MODULES = ("firds", "entitymasterdata", "exchangerate",
                       "famafrenchdata", "esef", "sec", "edinet",
                       "financialreport")
+
+#: Lower-case names a module aliases that are not columns of any table, and
+#: that the leading underscore cannot be used to mark. ``src`` and ``tgt`` are
+#: the two sides of a Delta MERGE, named by the condition the merge is given,
+#: and :func:`_named_column` cannot tell a data frame's alias from a column's.
+#: ``checksum`` belongs to the landing register of ``firds``, which is neither
+#: a Bronze nor a Silver table and is read with Polars rather than Spark.
+NOT_COLUMNS = frozenset({"src", "tgt", "checksum"})
+
+#: The modules whose tables name their columns in snake_case. The tables are
+#: being moved to it from the compressed upper case of ISO 20022 one module at
+#: a time, and this is how far that has come; see :func:`_is_column`. A module
+#: named here has to mark every intermediate column with a leading underscore,
+#: since upper case no longer does it.
+SNAKE_CASE_MODULES = ("exchangerate", "entitymasterdata", "famafrenchdata",
+                      "esef", "sec", "edinet", "financialreport", "firds")
 
 #: The modules that declare their schemas with ``StructType().add`` rather
 #: than building their columns with ``withColumn``; see :func:`defined_columns`.
@@ -156,7 +173,7 @@ def describe_column(name, dataset=None, catalogues=None):
     Parameters
     ----------
     name: str
-        The column name as the tables hold it, e.g. ``"TRADGVN"``. Case does
+        The column name as the tables hold it, e.g. ``"trading_venue"``. Case does
         not matter.
     dataset: str, optional
         The module whose data set is meant, e.g. ``"firds"``. Without it every
@@ -176,15 +193,20 @@ def describe_column(name, dataset=None, catalogues=None):
 
     Examples
     --------
-    >>> print(describe_column("ACTNTP"))
-    >>> describe_column("TRADGVN", dataset="firds")[0].source
+    >>> print(describe_column("action_type"))
+    >>> describe_column("trading_venue", dataset="firds")[0].source
     """
-    name = str(name).strip().upper()
+    # Folded rather than upper-cased: the tables name their columns in
+    # snake_case, so a name asked for in any case has to find the row it
+    # belongs to, and upper-casing it would find none.
+    name = str(name).strip()
+    folded = name.casefold()
     catalogue = column_catalogue(dataset, catalogues)
-    rows = catalogue[catalogue["column"] == name]
+    rows = catalogue[catalogue["column"].str.casefold() == folded]
     if rows.empty:
         where = f"the {dataset} data set" if dataset else "any catalogued data set"
-        close = sorted(c for c in set(catalogue["column"]) if name[:4] and c.startswith(name[:4]))[:8]
+        close = sorted(c for c in set(catalogue["column"])
+                       if folded[:4] and c.casefold().startswith(folded[:4]))[:8]
         raise KeyError(f"{name} is not a column of {where}."
                        + (f" Similar: {', '.join(close)}." if close else ""))
     return ColumnDescriptions(
@@ -194,14 +216,32 @@ def describe_column(name, dataset=None, catalogues=None):
         for row in rows.itertuples())
 
 
-def _is_column(name):
+def _is_column(name, snake_case=False):
     # A leading underscore is how the modules mark a helper column they drop
     # before writing, so it is not a column of any table.
-    return (not name.startswith("_") and name.replace("_", "").isalnum()
-            and name == name.upper() and any(c.isalpha() for c in name))
+    #
+    # Upper case is what marks a column in a module that has not yet been
+    # migrated: there, a lower-case name is an intermediate, a data frame
+    # alias for a MERGE, or a field of somebody else's metadata, and counting
+    # it would hold the catalogue to names no table carries. A migrated
+    # module has no upper case left to mark a column with, so there the
+    # leading underscore carries the distinction on its own and a lower-case
+    # name counts. See :data:`SNAKE_CASE_MODULES`.
+    if name.startswith("_") or not name.replace("_", "").isalnum() \
+            or not any(c.isalpha() for c in name):
+        return False
+    if name in NOT_COLUMNS:
+        return False
+    if snake_case:
+        # The module keeps the upper-case names of a Bronze input it reads --
+        # the proprietary file of ``exchangerate`` is one -- beside the
+        # snake_case names of its own tables, so both count.
+        return name in (name.upper(), name.lower())
+    return name == name.upper()
 
 
-def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES):
+def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES,
+                    snake_case=SNAKE_CASE_MODULES):
     """The columns the catalogued modules' code defines, by module.
 
     Read from the source rather than from data: every ``withColumn``,
@@ -219,6 +259,11 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES):
     exists for out of the catalogue -- and out of what this function can hold
     the catalogue to.
 
+    ``snake_case`` names the modules whose tables have been converted to
+    snake_case, :data:`SNAKE_CASE_MODULES` by default. A package that builds
+    on this one passes its own, since how far its modules have been converted
+    is its own business and not this package's.
+
     ``catalogues`` names the packages and modules to read, as for
     :func:`column_catalogue`; ``schema_declaring`` the modules whose
     ``StructType().add`` calls count as defining a column. Where a data set's
@@ -227,6 +272,7 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES):
     data set: a column of ``esef`` is written in ``financialreport.esef.common``.
     """
     catalogues = CATALOGUES if catalogues is None else catalogues
+    snake_case = frozenset(snake_case or ())
     found = {}
     for owner, module in [(p, m) for p, ms in catalogues.items() for m in ms]:
         package = os.path.dirname(os.path.abspath(
@@ -244,7 +290,7 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES):
                 constants = _module_constants(tree)
                 for node in ast.walk(tree):
                     name = _named_column(node, module, schema_declaring,
-                                         constants)
+                                         constants, snake_case)
                     if name:
                         tables = found.setdefault((module, name), [])
                         if table not in tables:
@@ -269,7 +315,7 @@ def _module_constants(tree):
 
 
 def _named_column(node, module, schema_declaring=SCHEMA_DECLARING_MODULES,
-                  constants=None):
+                  constants=None, snake_case=SNAKE_CASE_MODULES):
     """The column a call names, if it is one that defines a column.
 
     ``constants`` maps the module-level string constants of the file to their
@@ -299,4 +345,5 @@ def _named_column(node, module, schema_declaring=SCHEMA_DECLARING_MODULES,
         name = text(args[0])
     else:
         return None
-    return name if name and _is_column(name) else None
+    return (name if name and _is_column(name, module in snake_case)
+            else None)

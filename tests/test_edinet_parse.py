@@ -64,17 +64,17 @@ def test_a_fact_is_identified_even_where_the_element_and_context_repeat():
     real report, so the element and the context do not identify a fact."""
     facts = read()
     employees = [f for f in facts
-                 if f["CONCEPT"] == "jpcrp_cor:NumberOfEmployees"]
+                 if f["concept"] == "jpcrp_cor:NumberOfEmployees"]
 
-    assert len({f["FACT"] for f in facts}) == len(facts)
+    assert len({f["fact"] for f in facts}) == len(facts)
     if len(employees) > 1:
-        assert len({f["FACT"] for f in employees}) == len(employees)
+        assert len({f["fact"] for f in employees}) == len(employees)
 
 
 def test_the_document_a_fact_came_from_is_named():
     facts = read()
 
-    assert {f["DOCFORM"] for f in facts} == {"jpcrp030000-asr"}
+    assert {f["doc_form"] for f in facts} == {"jpcrp030000-asr"}
 
 
 # The periods, which are resolved rather than reported
@@ -103,19 +103,19 @@ def test_the_filings_own_dates_beat_the_index():
                               period_end=date(2025, 12, 31), filed=FILED)
     facts = [dict(zip(NAMES, row)) for row in rows]
     current = next(f for f in facts
-                   if f["CONTEXT"] == "CurrentYearDuration_NonConsolidatedMember")
+                   if f["context"] == "CurrentYearDuration_NonConsolidatedMember")
 
-    assert current["PRDSTART"] == date(2025, 9, 1)
-    assert current["PRDEND"] == date(2026, 8, 31)
+    assert current["prd_start"] == date(2025, 9, 1)
+    assert current["prd_end"] == date(2026, 8, 31)
 
 
 def test_the_five_year_series_lands_on_the_filers_own_month_end():
     """Kojima closes in August, so every year of the series ends on 31
     August and none of them in March."""
     series = sorted(
-        (f["PRDSTART"], f["PRDEND"], f["VALUE"]) for f in read()
-        if f["CONCEPT"].endswith("NetSalesSummaryOfBusinessResults")
-        and f["VALUE"] is not None)
+        (f["prd_start"], f["prd_end"], f["value"]) for f in read()
+        if f["concept"].endswith("NetSalesSummaryOfBusinessResults")
+        and f["value"] is not None)
 
     assert len(series) == 5
     assert [str(end) for _, end, _ in series] == [
@@ -128,10 +128,10 @@ def test_the_five_year_series_lands_on_the_filers_own_month_end():
 
 def test_an_instant_has_no_start():
     facts = read()
-    instants = [f for f in facts if f["SHAPE"] == "時点"]
+    instants = [f for f in facts if f["shape"] == "時点"]
 
     assert instants
-    assert all(f["PRDSTART"] is None for f in instants)
+    assert all(f["prd_start"] is None for f in instants)
 
 
 def test_the_filing_date_instant_is_the_day_it_was_submitted():
@@ -179,7 +179,7 @@ def test_the_context_carries_the_dimensions():
 
 def test_the_dimensions_reach_the_table():
     facts = read()
-    members = {f["DIMENSIONS"] for f in facts if f["DIMENSIONS"]}
+    members = {f["dimensions"] for f in facts if f["dimensions"]}
 
     assert "NonConsolidatedMember" in members
 
@@ -194,28 +194,28 @@ def test_a_figure_marked_not_applicable_is_no_number_and_no_zero():
     and called float on it would raise on a sound filing."""
     facts = read()
     dashed = [f for f in facts
-              if f["CONCEPT"].endswith(
+              if f["concept"].endswith(
                   "EquityInEarningsLossesOfAffiliates"
                   "IfEquityMethodIsAppliedSummaryOfBusinessResults")]
 
     assert dashed
-    assert all(f["VALUE"] is None for f in dashed)
-    assert all(f["VALUE"] != 0 for f in dashed)
+    assert all(f["value"] is None for f in dashed)
+    assert all(f["value"] != 0 for f in dashed)
     # What it said is kept, because it says the figure does not apply.
-    assert all(f["TEXT"] == "－" for f in dashed)
+    assert all(f["text"] == "－" for f in dashed)
 
 
 def test_a_number_and_a_text_are_never_both_set():
     for fact in read():
-        assert fact["VALUE"] is None or fact["TEXT"] is None
+        assert fact["value"] is None or fact["text"] is None
 
 
 def test_the_japanese_label_survives():
     facts = read()
     sales = next(f for f in facts
-                 if f["CONCEPT"].endswith("NetSalesSummaryOfBusinessResults"))
+                 if f["concept"].endswith("NetSalesSummaryOfBusinessResults"))
 
-    assert sales["LABEL"] == "売上高、経営指標等"
+    assert sales["label"] == "売上高、経営指標等"
 
 
 # Extensions

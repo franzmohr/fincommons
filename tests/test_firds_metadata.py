@@ -107,7 +107,7 @@ def test_initialise_resets_an_existing_table(spark, config):
 def test_update_is_timestamped(spark, config):
     metadata.initialise_metadata(spark, config, maxdate="2024-01-05")
 
-    assert metadata.read_metadata(spark, config).collect()[0]["UPDATED"] is not None
+    assert metadata.read_metadata(spark, config).collect()[0]["updated"] is not None
 
 
 def test_the_store_is_a_delta_table(spark, config):

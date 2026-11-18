@@ -34,7 +34,7 @@ VNDIRECT_PRICE_UNIT = 1000.0
 
 def _latest_delivery(bronze, keys):
     """Each row once, as the most recent download delivered it."""
-    downloads = Window.partitionBy(*keys).orderBy(func.col("LASTDT").desc())
+    downloads = Window.partitionBy(*keys).orderBy(func.col("last_date").desc())
     return bronze \
         .withColumn("DELIVERY", func.row_number().over(downloads)) \
         .filter(func.col("DELIVERY") == 1) \
@@ -70,17 +70,20 @@ def update_silver_vndirect(spark, config_path, full=False):
             extra=context(module="marketpricedata", layer="silver",
                           source="VNDIRECT"))
     else:
+        # Read straight from the Bronze layer rather than through
+        # ``read_bronze``, so the Silver names are taken on here.
         listings = _latest_delivery(
-            spark.read.parquet(path_bronze_vndirect_listings(config_path))
-                 .filter(func.col("ISIN").isNotNull()),
-            ["CODE"]).select("CODE", "ISIN")
-        traded = _latest_delivery(prices, ["CODE", "REFDT"]) \
+            with_silver_names(
+                spark.read.parquet(path_bronze_vndirect_listings(config_path)))
+            .filter(func.col("isin").isNotNull()),
+            ["CODE"]).select("CODE", "isin")
+        traded = _latest_delivery(prices, ["CODE", "ref_date"]) \
             .filter((func.coalesce(func.col("NM_VOLUME"), func.lit(0.0))
                      + func.coalesce(func.col("PT_VOLUME"), func.lit(0.0)) > 0)
                     & (func.col("CLOSE") > 0))
         named = traded.join(listings, on="CODE", how="left")
         unnamed = [row["CODE"] for row in
-                   named.filter(func.col("ISIN").isNull())
+                   named.filter(func.col("isin").isNull())
                         .select("CODE").distinct().collect()]
         if unnamed:
             logger.warning(
@@ -88,11 +91,11 @@ def update_silver_vndirect(spark, config_path, full=False):
                 len(unnamed), ", ".join(sorted(unnamed)),
                 extra=context(module="marketpricedata", layer="silver",
                               source="VNDIRECT"))
-        closes = named.filter(func.col("ISIN").isNotNull()) \
-            .select("REFDT", func.col("ISIN").alias("INSTRID"),
+        closes = named.filter(func.col("isin").isNotNull()) \
+            .select("ref_date", func.col("isin").alias("instr_id"),
                     # Rounded, since 32.3 thousand in binary floating point
                     # comes back as 32,299.999999999996 dong.
-                    func.round(func.col("CLOSE") * VNDIRECT_PRICE_UNIT, 2).alias("VALUE"))
+                    func.round(func.col("CLOSE") * VNDIRECT_PRICE_UNIT, 2).alias("value"))
         standard_upsert(spark, config_path, closes)
         write_watermark(config_path, "VNDIRECT", watermark)
 
@@ -108,10 +111,10 @@ def update_silver_vndirect(spark, config_path, full=False):
 
     names = func.create_map(*[x for code, name in VNDIRECT_INDICES.items()
                               for x in (func.lit(code), func.lit(name))])
-    levels = _latest_delivery(indices, ["CODE", "REFDT"]) \
+    levels = _latest_delivery(indices, ["CODE", "ref_date"]) \
         .filter(func.col("CLOSE") > 0) \
-        .select("REFDT", names[func.col("CODE")].alias("INSTRID"),
-                func.col("CLOSE").alias("VALUE")) \
-        .filter(func.col("INSTRID").isNotNull())
+        .select("ref_date", names[func.col("CODE")].alias("instr_id"),
+                func.col("CLOSE").alias("value")) \
+        .filter(func.col("instr_id").isNotNull())
     standard_upsert(spark, config_path, levels)
     write_watermark(config_path, "VNDIRECT-INDICES", watermark)

@@ -130,17 +130,17 @@ def test_a_hanoi_share_reaches_the_table_by_isin_in_dong(spark, data_lake, servi
     mp.update_silver_vndirect(spark, data_lake)
 
     table = mp.connect_to_marketpricedata(spark, data_lake).toPandas()
-    shs = table[table["INSTRID"] == "VN000000SHS3"].sort_values("REFDT")
+    shs = table[table["instr_id"] == "VN000000SHS3"].sort_values("ref_date")
     # The day nothing traded is not a price.
-    assert [str(d) for d in shs["REFDT"]] == \
+    assert [str(d) for d in shs["ref_date"]] == \
         ["2026-09-21", "2026-09-22", "2026-09-24", "2026-09-25"]
     # 13.7 thousand dong is 13,700 dong, the scale of Yahoo's HOSE closes.
-    assert shs["VALUE"].iloc[-1] == 13700.0
+    assert shs["value"].iloc[-1] == 13700.0
     # Exactly, not 32,299.999999999996: dong prices are whole numbers.
-    assert (shs["VALUE"] == shs["VALUE"].round(0)).all()
-    hnx = table[table["INSTRID"] == "IX-HNX"]
-    assert sorted(hnx["VALUE"]) == [260.4, 262.1]
-    assert {"IX-HNX30", "IX-VNINDEX", "IX-VN30"} <= set(table["INSTRID"])
+    assert (shs["value"] == shs["value"].round(0)).all()
+    hnx = table[table["instr_id"] == "IX-HNX"]
+    assert sorted(hnx["value"]) == [260.4, 262.1]
+    assert {"IX-HNX30", "IX-VNINDEX", "IX-VN30"} <= set(table["instr_id"])
 
 
 def test_a_second_run_carries_on_and_a_new_share_brings_its_history(

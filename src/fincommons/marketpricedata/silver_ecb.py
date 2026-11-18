@@ -175,11 +175,11 @@ def update_silver_ecb_estr(spark, config_path):
             .filter((func.col("FREQ") == "B") & \
                     (func.col("BENCHMARK_ITEM") == "EU000A2X2A25") & \
                     (func.col("DATA_TYPE_EST") == "WT")) \
-            .withColumn("INSTRID", func.lit("ON-ESTR")) \
-            .withColumnRenamed("TIME_PERIOD", "REFDT") \
-            .withColumnRenamed("OBS_VALUE", "VALUE") \
-            .withColumn("VALUE", func.col("VALUE")) \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumn("instr_id", func.lit("ON-ESTR")) \
+            .withColumnRenamed("TIME_PERIOD", "ref_date") \
+            .withColumnRenamed("OBS_VALUE", "value") \
+            .withColumn("value", func.col("value")) \
+            .select("ref_date", "instr_id", "value")
 
         standard_upsert(spark, config_path, bronze)
 
@@ -237,10 +237,10 @@ def update_silver_ecb_fm(spark, config_path):
             .filter((func.col("FREQ") == "D") &
                     (func.col("DATA_TYPE_FM") == "LEV") &
                     func.col("PROVIDER_FM_ID").isin(list(ECB_KEY_RATES))) \
-            .withColumn("INSTRID", named[func.col("PROVIDER_FM_ID")]) \
-            .withColumn("REFDT", func.to_date(func.col("TIME_PERIOD"), "yyyy-MM-dd")) \
-            .withColumnRenamed("OBS_VALUE", "VALUE") \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumn("instr_id", named[func.col("PROVIDER_FM_ID")]) \
+            .withColumn("ref_date", func.to_date(func.col("TIME_PERIOD"), "yyyy-MM-dd")) \
+            .withColumnRenamed("OBS_VALUE", "value") \
+            .select("ref_date", "instr_id", "value")
 
         standard_upsert(spark, config_path, bronze)
 
@@ -298,12 +298,12 @@ def update_silver_ecb_fm_monthly_us(spark, config_path):
         bronze = bronze \
             .filter((func.col("FREQ") == "M") &
                     func.col("PROVIDER_FM_ID").isin(list(ECB_MONTHLY_US))) \
-            .withColumn("INSTRID", named[func.col("PROVIDER_FM_ID")]) \
-            .withColumn("REFDT", func.last_day(
+            .withColumn("instr_id", named[func.col("PROVIDER_FM_ID")]) \
+            .withColumn("ref_date", func.last_day(
                 func.to_date(func.concat_ws("-", func.col("TIME_PERIOD"),
                                             func.lit("01"))))) \
-            .withColumnRenamed("OBS_VALUE", "VALUE") \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumnRenamed("OBS_VALUE", "value") \
+            .select("ref_date", "instr_id", "value")
 
         standard_upsert(spark, config_path, bronze)
 
@@ -352,11 +352,11 @@ def update_silver_ecb_fm_monthly_ea(spark, config_path):
             .filter((func.col("FREQ") == "M") &
                     (func.col("REF_AREA") == "U2") &
                     func.col("PROVIDER_FM_ID").isin(list(ECB_MONTHLY_EA))) \
-            .withColumn("INSTRID", named[func.col("PROVIDER_FM_ID")]) \
-            .withColumn("REFDT", func.last_day(
+            .withColumn("instr_id", named[func.col("PROVIDER_FM_ID")]) \
+            .withColumn("ref_date", func.last_day(
                 func.to_date(func.concat_ws("-", func.col("TIME_PERIOD"),
                                             func.lit("01"))))) \
-            .withColumnRenamed("OBS_VALUE", "VALUE") \
-            .select("REFDT", "INSTRID", "VALUE")
+            .withColumnRenamed("OBS_VALUE", "value") \
+            .select("ref_date", "instr_id", "value")
 
         standard_upsert(spark, config_path, bronze)

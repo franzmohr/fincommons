@@ -136,11 +136,11 @@ def lake(spark, tmp_path):
     def write(facts, filings):
         write_silver(
             spark.createDataFrame(facts, common.facts_schema),
-            common.ref_silver_facts(config_path), partition_by=("FILEDYEAR",))
+            common.ref_silver_facts(config_path), partition_by=("filed_year",))
         write_silver(
             spark.createDataFrame(filings, common.filings_schema),
             common.ref_silver_filings(config_path),
-            partition_by=("FILEDYEAR",))
+            partition_by=("filed_year",))
         return config_path
 
     return write
@@ -149,7 +149,7 @@ def lake(spark, tmp_path):
 def codes(spark, config, **kwargs):
     """The codes the checks report over a lake."""
     found = quality.find_issues(spark, config, **kwargs)
-    return sorted({row["ISSUE"] for row in found.collect()})
+    return sorted({row["issue"] for row in found.collect()})
 
 
 def sound_facts(member=MEMBER, consolidated="false"):
@@ -196,11 +196,11 @@ def test_a_fault_reaches_the_table_with_the_day_it_was_found(spark, lake):
     quality.update_silver_edinet_quality(spark, config)
     rows = common.connect_to_edinet(spark, config, "issues").collect()
 
-    assert [row["ISSUE"] for row in rows] == ["IMBAL_INCOME"]
-    assert rows[0]["CHECKED"] == date.today()
+    assert [row["issue"] for row in rows] == ["IMBAL_INCOME"]
+    assert rows[0]["checked"] == date.today()
     # A filing-level fault names no fact: the data cannot say which of the
     # three figures is the wrong one.
-    assert rows[0]["FACT"] is None
+    assert rows[0]["fact"] is None
 
 
 # The arithmetic

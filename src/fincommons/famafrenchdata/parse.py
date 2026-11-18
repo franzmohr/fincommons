@@ -377,7 +377,7 @@ def read_tables(dataset: str, lines) -> list[Table]:
 
 
 #: The columns of the long records, in their order.
-COLUMNS = ["REFDT", "TABLE", "FREQUENCY", "SERIES", "VALUE", "TITLE"]
+COLUMNS = ["ref_date", "table", "frequency", "series", "value", "title"]
 
 
 def _refdt(periods):
@@ -473,16 +473,16 @@ def parse_lines(dataset: str, lines) -> pandas.DataFrame:
         cols = numpy.tile(numpy.arange(k), n)[keep]
         refdt = _refdt(periods).to_numpy()
         frames.append(pandas.DataFrame({
-            "REFDT": refdt[rows],
-            "TABLE": code,
-            "FREQUENCY": frequencies[rows],
-            "SERIES": numpy.asarray(table.columns, dtype="object")[cols],
-            "VALUE": flat[keep],
-            "TITLE": table.title,
+            "ref_date": refdt[rows],
+            "table": code,
+            "frequency": frequencies[rows],
+            "series": numpy.asarray(table.columns, dtype="object")[cols],
+            "value": flat[keep],
+            "title": table.title,
         }))
     if not frames:
-        return pandas.DataFrame({c: pandas.Series(dtype="datetime64[ns]" if c == "REFDT"
-                                                  else "float64" if c == "VALUE"
+        return pandas.DataFrame({c: pandas.Series(dtype="datetime64[ns]" if c == "ref_date"
+                                                  else "float64" if c == "value"
                                                   else "object")
                                  for c in COLUMNS})
     return pandas.concat(frames, ignore_index=True)[COLUMNS]

@@ -306,12 +306,12 @@ def test_the_closes_and_indices_reach_the_price_table(spark, data_lake,
     mp.update_silver_dse(spark, data_lake)
 
     table = mp.connect_to_marketpricedata(spark, data_lake).toPandas()
-    city = table[table["INSTRID"] == "DSE-CITYBANK"].sort_values("REFDT")
+    city = table[table["instr_id"] == "DSE-CITYBANK"].sort_values("ref_date")
     # The record date, on which it did not trade, is not a price.
-    assert [str(d) for d in city["REFDT"]] == \
+    assert [str(d) for d in city["ref_date"]] == \
         ["2025-05-20", "2025-05-21", "2025-05-24", "2025-05-25"]
-    assert city["VALUE"].tolist() == [23.0, 22.8, 19.0, 18.9]
-    assert set(table["INSTRID"]) == {"DSE-CITYBANK", "IX-DSEX", "IX-DS30"}
+    assert city["value"].tolist() == [23.0, 22.8, 19.0, 18.9]
+    assert set(table["instr_id"]) == {"DSE-CITYBANK", "IX-DSEX", "IX-DS30"}
 
 
 def test_the_prices_are_asked_for_one_security_at_a_time(spark, data_lake,
@@ -331,9 +331,9 @@ def test_the_corporate_actions_are_a_table_of_their_own(spark, data_lake,
     mp.update_silver_dse_corporate_actions(spark, data_lake)
 
     events = mp.connect_to_dse_corporate_actions(spark, data_lake).toPandas()
-    assert sorted(events["KIND"]) == ["bonus", "cash"]
-    assert set(events["INSTRID"]) == {"DSE-CITYBANK"}
-    assert [str(d) for d in events["EXDATE"].unique()] == ["2025-05-24"]
+    assert sorted(events["kind"]) == ["bonus", "cash"]
+    assert set(events["instr_id"]) == {"DSE-CITYBANK"}
+    assert [str(d) for d in events["ex_date"].unique()] == ["2025-05-24"]
 
 
 def test_a_second_run_carries_on_from_the_first(spark, data_lake,

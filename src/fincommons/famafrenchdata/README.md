@@ -188,19 +188,19 @@ The archives are downloaded into a temporary directory on the driver, not into t
 
 ## The Silver table
 
-One table, `famafrenchdata`, with a row per file, table, series and period, partitioned by `DATASET`:
+One table, `famafrenchdata`, with a row per file, table, series and period, partitioned by `dataset`:
 
 | Column | Meaning |
 | --- | --- |
-| `REFDT` | the date of the period: the day for daily and weekly rows (a weekly row is keyed by the last day of its week), the last day of the month for monthly rows, 31 December for annual rows |
-| `DATASET` | the file, e.g. `F-F_Research_Data_Factors`, `6_Portfolios_2x3` |
-| `TABLE` | the kind of table within the file, a code of the vocabulary below |
-| `FREQUENCY` | `D`, `W`, `M` or `A` |
-| `SERIES` | the column as the file's header names it, trimmed: `Mkt-RF`, `SMALL LoBM`, `NoDur` |
-| `VALUE` | the value as published: returns and factors in percent, numbers of firms, average size in millions of dollars, ratios as the table states them |
-| `TITLE` | the title of the table as published, whitespace collapsed, for traceability; empty for the untitled first table of a factor file and for breakpoints |
+| `ref_date` | the date of the period: the day for daily and weekly rows (a weekly row is keyed by the last day of its week), the last day of the month for monthly rows, 31 December for annual rows |
+| `dataset` | the file, e.g. `F-F_Research_Data_Factors`, `6_Portfolios_2x3` |
+| `table` | the kind of table within the file, a code of the vocabulary below |
+| `frequency` | `D`, `W`, `M` or `A` |
+| `series` | the column as the file's header names it, trimmed: `Mkt-RF`, `SMALL LoBM`, `NoDur` |
+| `value` | the value as published: returns and factors in percent, numbers of firms, average size in millions of dollars, ratios as the table states them |
+| `title` | the title of the table as published, whitespace collapsed, for traceability; empty for the untitled first table of a factor file and for breakpoints |
 
-No column is ever null. The library writes a missing value as `-99.99` or `-999`, and such a value is left out of the table rather than written as a null, so a series has a row for the periods it has a value for. Filter on `DATASET` first: the table is partitioned by it.
+No column is ever null. The library writes a missing value as `-99.99` or `-999`, and such a value is left out of the table rather than written as a null, so a series has a row for the periods it has a value for. Filter on `dataset` first: the table is partitioned by it.
 
 The table is rebuilt file by file: each file whose Bronze collection the table was not built from is read again and replaces its partition, and the other partitions are left as they are. A mark per file, `silver/_watermarks/<DATASET>.json`, records the SHA-256 of the text the partition was built from; it is written after the partition is in place, so a run that dies leaves the mark behind and the next run builds the file again. The table is written as parquet or Delta as for the other modules (`file_format`); as Delta a rebuild replaces its partitions in one transaction, as parquet a reader of a partition being rewritten may find it missing for a moment.
 
@@ -214,9 +214,9 @@ Run over all 297 files of the 202609 edition, the reader gives 86,029,613 values
 
 ### The vocabulary of tables
 
-The titles are prose and vary from file to file; 57 distinct titles occur in the 202609 edition. Each is mapped onto a code, and the frequency is not part of the code -- the monthly and the annual returns of a file are both `RET_VW`, told apart by `FREQUENCY`. Nor is the treatment of dividends, which the library publishes as files of their own (`..._Wout_Div`), told apart by `DATASET`.
+The titles are prose and vary from file to file; 57 distinct titles occur in the 202609 edition. Each is mapped onto a code, and the frequency is not part of the code -- the monthly and the annual returns of a file are both `RET_VW`, told apart by `frequency`. Nor is the treatment of dividends, which the library publishes as files of their own (`..._Wout_Div`), told apart by `dataset`.
 
-| `TABLE` | What it holds | Published as, e.g. |
+| `table` | What it holds | Published as, e.g. |
 | --- | --- | --- |
 | `FACTORS` | the factor returns of a factor file, in percent | the untitled first table; `Annual Factors: January-December` |
 | `BREAKPOINTS` | the breakpoints of a sort: counts of firms and percentiles | the `*_Breakpoints` files |

@@ -238,16 +238,16 @@ def test_a_filing_is_read_into_the_columns_of_the_table(config):
 
     assert len(rows) == 1
     assert len(rows[0]) == len(names)
-    assert row["FILING"] == "S100VWVY"
-    assert row["EDINETCODE"] == "E02144"
-    assert row["SECCODE"] == "72030"
-    assert row["JCN"] == "1180301018771"
-    assert row["DOCTYPE"] == "120"
-    assert row["PERIODSTART"] == datetime.date(2024, 4, 1)
-    assert row["PERIODEND"] == datetime.date(2025, 3, 31)
-    assert row["SUBMITTED"] == datetime.datetime(2025, 6, 18, 15, 30)
-    assert row["HASCSV"] == "1"
-    assert row["INDEXDATE"] == datetime.date(2025, 6, 18)
+    assert row["filing"] == "S100VWVY"
+    assert row["edinet_code"] == "E02144"
+    assert row["sec_code"] == "72030"
+    assert row["jcn"] == "1180301018771"
+    assert row["doc_type"] == "120"
+    assert row["period_start"] == datetime.date(2024, 4, 1)
+    assert row["period_end"] == datetime.date(2025, 3, 31)
+    assert row["submitted"] == datetime.datetime(2025, 6, 18, 15, 30)
+    assert row["has_csv"] == "1"
+    assert row["index_date"] == datetime.date(2025, 6, 18)
 
 
 def test_the_year_filed_comes_from_the_submission_and_not_the_index(config):
@@ -258,8 +258,8 @@ def test_the_year_filed_comes_from_the_submission_and_not_the_index(config):
     names = [f.name for f in common.filings_schema.fields]
     row = dict(zip(names, rows[0]))
 
-    assert row["FILEDYEAR"] == 2025
-    assert row["INDEXDATE"] == datetime.date(2025, 7, 2)
+    assert row["filed_year"] == 2025
+    assert row["index_date"] == datetime.date(2025, 7, 2)
 
 
 def test_an_entry_with_no_document_number_is_passed_over(config):
@@ -354,12 +354,12 @@ def test_the_filers_list_is_read_past_the_line_that_is_not_a_header(
 
     assert len(rows) == 2
     first = dict(zip(names, rows[0]))
-    assert first["EDINETCODE"] == "E00004"
-    assert first["NAMEEN"] == "KANEKO SEEDS CO., LTD."
-    assert first["SECCODE"] == "13760"
-    assert first["JCN"] == "5070001000715"
+    assert first["edinet_code"] == "E00004"
+    assert first["name_en"] == "KANEKO SEEDS CO., LTD."
+    assert first["sec_code"] == "13760"
+    assert first["jcn"] == "5070001000715"
     # Carried as the agency writes it, there being no year in it.
-    assert first["YEAREND"] == "5月31日"
+    assert first["year_end"] == "5月31日"
 
 
 def test_the_japanese_encoding_survives(monkeypatch, config):
@@ -370,8 +370,8 @@ def test_the_japanese_encoding_survives(monkeypatch, config):
     names = [f.name for f in common.filers_schema.fields]
     toyota = dict(zip(names, rows[1]))
 
-    assert toyota["NAME"] == "トヨタ自動車株式会社"
-    assert "�" not in toyota["NAME"]
+    assert toyota["name"] == "トヨタ自動車株式会社"
+    assert "�" not in toyota["name"]
 
 
 def test_a_lake_with_no_filers_list_is_told_it_needs_none_of_a_key(config):

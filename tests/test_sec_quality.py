@@ -58,7 +58,7 @@ def fact(concept, flow, value, filing=FILING, prdend=PERIODEND,
 def filing_row(filing=FILING, form="10-K", filed=FILED, periodend=PERIODEND,
                fy=2026, framework="US-GAAP", facts=len(SOUND)):
     """One row of the table of filings."""
-    return (filing, CIK, "NVIDIA CORP", form, filed, periodend, fy, "FY",
+    return (filing, CIK, "NVIDIA CORP", form, filed, periodend, fy, "fy",
             "dei;us-gaap", framework, facts)
 
 
@@ -84,7 +84,7 @@ def lake(spark, tmp_path):
     def write(facts, filings):
         write_silver(
             spark.createDataFrame(facts, common.facts_schema),
-            common.ref_silver_facts(config_path), partition_by=("FILEDYEAR",))
+            common.ref_silver_facts(config_path), partition_by=("filed_year",))
         write_silver(
             spark.createDataFrame(filings, common.filings_schema),
             common.ref_silver_filings(config_path))
@@ -96,7 +96,7 @@ def lake(spark, tmp_path):
 def codes(spark, config, **kwargs):
     """The codes the checks report over a lake."""
     found = quality.find_issues(spark, config, **kwargs)
-    return sorted({row["ISSUE"] for row in found.collect()})
+    return sorted({row["issue"] for row in found.collect()})
 
 
 def sound_facts():
@@ -131,11 +131,11 @@ def test_a_fault_reaches_the_table_with_the_day_it_was_found(spark, lake):
     quality.update_silver_sec_quality(spark, config)
     rows = common.connect_to_sec(spark, config, "issues").collect()
 
-    assert [row["ISSUE"] for row in rows] == ["IMBAL_INCOME"]
-    assert rows[0]["CHECKED"] == date.today()
+    assert [row["issue"] for row in rows] == ["IMBAL_INCOME"]
+    assert rows[0]["checked"] == date.today()
     # A filing-level fault names no fact: the data cannot say which of the
     # three figures is the wrong one.
-    assert rows[0]["FACT"] is None
+    assert rows[0]["fact"] is None
 
 
 # The arithmetic
@@ -235,10 +235,10 @@ def test_a_period_that_ends_before_it_begins_is_reported(spark, lake):
     config = lake(facts, [filing_row()])
 
     found = quality.find_issues(spark, config)
-    rows = [row for row in found.collect() if row["ISSUE"] == "IMPL_PERIOD"]
+    rows = [row for row in found.collect() if row["issue"] == "IMPL_PERIOD"]
     assert len(rows) == 1
     # A fault of one fact names that fact.
-    assert rows[0]["FACT"] is not None
+    assert rows[0]["fact"] is not None
 
 
 def test_one_figure_tagged_twice_with_two_values_is_reported(spark, lake):
@@ -261,7 +261,7 @@ def test_an_instant_tagged_twice_is_reported_too(spark, lake):
     config = lake(facts, [filing_row()])
 
     found = quality.find_issues(spark, config)
-    rows = [row for row in found.collect() if row["ISSUE"] == "DUPL_FACT_VALUE"]
+    rows = [row for row in found.collect() if row["issue"] == "DUPL_FACT_VALUE"]
     assert len(rows) == 2
 
 
@@ -339,10 +339,10 @@ def test_a_figure_a_later_report_restates_is_reported(spark, lake):
 
     found = quality.find_issues(spark, config)
     rows = [row for row in found.collect()
-            if row["ISSUE"] == "RESTATED_MATERIALLY"]
+            if row["issue"] == "RESTATED_MATERIALLY"]
     assert len(rows) == 1
     # The fact named is the one the year's own report stated.
-    assert rows[0]["FILING"] == FILING
+    assert rows[0]["filing"] == FILING
 
 
 def test_a_share_split_is_not_a_restatement(spark, lake):
@@ -390,7 +390,7 @@ def test_a_run_over_one_registrant_keeps_what_is_known_of_the_others(spark, lake
                   date(2025, 12, 31), None))
     filings = [filing_row(),
                ("0001177394-25-000001", other, "OTHER", "10-K",
-                date(2025, 12, 31), date(2025, 11, 30), 2025, "FY",
+                date(2025, 12, 31), date(2025, 11, 30), 2025, "fy",
                 "dei;us-gaap", "US-GAAP", 1)]
     config = lake(facts, filings)
 
@@ -403,5 +403,5 @@ def test_a_run_over_one_registrant_keeps_what_is_known_of_the_others(spark, lake
     quality.update_silver_sec_quality(spark, config, ciks=[CIK])
     after = common.connect_to_sec(spark, config, "issues")
 
-    assert {row["CIK"] for row in after.collect()} == {other}
+    assert {row["cik"] for row in after.collect()} == {other}
     assert after.count() == before

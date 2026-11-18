@@ -234,8 +234,8 @@ if (!dir.exists(file.path(path_silver, "issues"))) {
 }
 
 filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
-  select(CIK, FILING, NAME, FORM, FP, FY, FILED, PERIODEND, FACTS,
-         FRAMEWORK) %>%
+  select(cik, filing, name, form, fp, fy, filed, period_end, facts,
+         framework) %>%
   collect()
 
 if (nrow(filings_all) == 0) {
@@ -256,23 +256,23 @@ if (nrow(issues_all) == 0) {
 # written partitioned and from the file when it is not, and arrow reads the
 # two as different types. One type here, so the joins below hold either way.
 issues_all <- issues_all %>%
-  mutate(across(c(CIK, FILING, ISSUE), as.character),
-         FILEDYEAR = as.integer(FILEDYEAR),
-         CHECKED = as.Date(CHECKED))
+  mutate(across(c(cik, filing, issue), as.character),
+         filed_year = as.integer(filed_year),
+         checked = as.Date(checked))
 
 # The table of filings carries no year of its own: the year filed is the
 # partition column of the facts and of the issues, and it is derived there
-# from FILED. Derived the same way here, or the join below would miss.
+# from filed. Derived the same way here, or the join below would miss.
 filings_all <- filings_all %>%
-  mutate(CIK = as.character(CIK),
-         FILING = as.character(FILING),
-         FILEDYEAR = as.integer(format(FILED, "%Y")),
-         annual = base_form(FORM) %in% annual_forms)
+  mutate(cik = as.character(cik),
+         filing = as.character(filing),
+         filed_year = as.integer(format(filed, "%Y")),
+         annual = base_form(form) %in% annual_forms)
 
 # A code in the table that the catalogue does not describe is a check that
 # was removed or renamed and whose rows were left behind. The report cannot
 # say what it means, so it stops rather than print a bare code.
-uncatalogued <- setdiff(unique(issues_all$ISSUE), catalogue$code)
+uncatalogued <- setdiff(unique(issues_all$issue), catalogue$code)
 if (length(uncatalogued) > 0) {
   stop("The table of issues holds codes the catalogue does not describe: ",
        paste(uncatalogued, collapse = ", "), ". Run the checks again, which ",
@@ -283,7 +283,7 @@ if (length(uncatalogued) > 0) {
 # settings that the table does not list is an error rather than an empty
 # column, because a report that silently covers less than it says is worse
 # than one that does not render.
-ciks_held <- sort(unique(filings_all$CIK))
+ciks_held <- sort(unique(filings_all$cik))
 if (is.null(report_ciks)) {
   report_ciks <- ciks_held
 } else {
@@ -296,7 +296,7 @@ if (is.null(report_ciks)) {
   }
 }
 
-years_held <- sort(unique(filings_all$FILEDYEAR[!is.na(filings_all$FILEDYEAR)]))
+years_held <- sort(unique(filings_all$filed_year[!is.na(filings_all$filed_year)]))
 if (is.null(report_years)) {
   report_years <- tail(years_held, n_years)
 } else {
@@ -318,8 +318,8 @@ year_labels <- as.character(report_years)
 # one it amends; the factsheet in this directory is the one that picks a
 # filing per period.
 filings <- filings_all %>%
-  filter(CIK %in% report_ciks, FILEDYEAR %in% report_years) %>%
-  rename(fy = FILEDYEAR)
+  filter(cik %in% report_ciks, filed_year %in% report_years) %>%
+  rename(fy = filed_year)
 
 if (nrow(filings) == 0) {
   stop("No filing of the table falls in the registrants and years of this ",
@@ -330,26 +330,26 @@ if (nrow(filings) == 0) {
 # either a partition every check passed or a partition no check has run
 # over. Nothing in the two tables tells the two apart, so the report names
 # the years it cannot speak for rather than count them as sound.
-checked_years <- sort(unique(issues_all$FILEDYEAR))
+checked_years <- sort(unique(issues_all$filed_year))
 silent_years <- setdiff(report_years, checked_years)
 
 issues <- issues_all %>%
-  rename(fy = FILEDYEAR) %>%
-  inner_join(filings %>% select(CIK, fy, FILING, NAME, FORM, PERIODEND,
-                                FILED, annual),
-             by = c("CIK", "fy", "FILING")) %>%
-  left_join(catalogue %>% select(ISSUE = code, severity, title, population),
-            by = "ISSUE")
+  rename(fy = filed_year) %>%
+  inner_join(filings %>% select(cik, fy, filing, name, form, period_end,
+                                filed, annual),
+             by = c("cik", "fy", "filing")) %>%
+  left_join(catalogue %>% select(issue = code, severity, title, population),
+            by = "issue")
 
 # An issue row whose filing the table of filings does not list is a row left
 # over from a filing the Commission no longer carries in the company file.
 # It cannot be placed in a form or a registrant, so it is counted and set
 # aside.
 orphans <- issues_all %>%
-  rename(fy = FILEDYEAR) %>%
-  anti_join(filings_all %>% rename(fy = FILEDYEAR) %>%
-              select(CIK, fy, FILING),
-            by = c("CIK", "fy", "FILING"))
+  rename(fy = filed_year) %>%
+  anti_join(filings_all %>% rename(fy = filed_year) %>%
+              select(cik, fy, filing),
+            by = c("cik", "fy", "filing"))
 
 # --------------------------------------------------------------------------
 # What the checks found
@@ -373,39 +373,39 @@ n_annual <- sum(filings$annual)
 # One row per code: the rows it wrote, the filings those rows name, and that
 # count against the filings the check could have fired on at all.
 by_code <- issues %>%
-  group_by(ISSUE) %>%
+  group_by(issue) %>%
   summarise(findings = n(),
-            affected = n_distinct(FILING),
+            affected = n_distinct(filing),
             .groups = "drop") %>%
-  right_join(catalogue %>% select(ISSUE = code, severity, title, population),
-             by = "ISSUE") %>%
+  right_join(catalogue %>% select(issue = code, severity, title, population),
+             by = "issue") %>%
   mutate(findings = coalesce(findings, 0L),
          affected = coalesce(affected, 0L),
          denominator = ifelse(population == "annual", n_annual, n_filed),
          share = ifelse(denominator > 0, affected / denominator * 100,
                         NA_real_)) %>%
-  arrange(severity, desc(affected), ISSUE)
+  arrange(severity, desc(affected), issue)
 
 # One row per filing the checks named, with the severity of the worst thing
 # found in it. A filing with no row here is one every check passed -- which,
 # for a year no check has run over, is a statement this report does not
 # make.
 per_filing <- issues %>%
-  group_by(CIK, fy, FILING) %>%
+  group_by(cik, fy, filing) %>%
   summarise(findings = n(),
-            codes = n_distinct(ISSUE),
+            codes = n_distinct(issue),
             errors = sum(severity == "error"),
             warnings = sum(severity == "warning"),
             infos = sum(severity == "info"),
             worst = severities[min(as.integer(severity))],
-            which = paste(sort(unique(ISSUE)), collapse = ", "),
+            which = paste(sort(unique(issue)), collapse = ", "),
             .groups = "drop")
 
 # Every filing of the selection, with a zero where no check named it.
 filing_state <- filings %>%
-  select(CIK, fy, FILING, NAME, FORM, FP, PERIODEND, FILED, FACTS,
-         FRAMEWORK, annual) %>%
-  left_join(per_filing, by = c("CIK", "fy", "FILING")) %>%
+  select(cik, fy, filing, name, form, fp, period_end, filed, facts,
+         framework, annual) %>%
+  left_join(per_filing, by = c("cik", "fy", "filing")) %>%
   mutate(across(c(findings, codes, errors, warnings, infos),
                 ~ coalesce(.x, 0L)),
          worst = coalesce(worst, "none"),
@@ -430,7 +430,7 @@ by_year <- filing_state %>%
   group_by(fy) %>%
   summarise(filed = n(),
             annual = sum(annual),
-            registrants = n_distinct(CIK),
+            registrants = n_distinct(cik),
             findings = sum(findings),
             .groups = "drop") %>%
   left_join(rated %>%
@@ -445,7 +445,7 @@ by_year <- filing_state %>%
             by = "fy")
 
 by_form <- filing_state %>%
-  mutate(form = base_form(FORM)) %>%
+  mutate(form = base_form(form)) %>%
   group_by(form) %>%
   summarise(filed = n(),
             findings = sum(findings),
@@ -457,16 +457,16 @@ by_form <- filing_state %>%
   arrange(desc(filed), form)
 
 by_registrant <- filing_state %>%
-  group_by(CIK, NAME) %>%
+  group_by(cik, name) %>%
   summarise(filed = n(),
             annual = sum(annual),
             findings = sum(findings),
             errors = sum(errors),
             .groups = "drop") %>%
   left_join(rated %>%
-              group_by(CIK) %>%
+              group_by(cik) %>%
               summarise(clean = sum(clean) / n() * 100, .groups = "drop"),
-            by = "CIK") %>%
+            by = "cik") %>%
   arrange(desc(errors), desc(findings))
 
 # The five identities, which are the checks that say the figures of an
@@ -475,13 +475,13 @@ by_registrant <- filing_state %>%
 identity_codes <- catalogue$code[grepl("^IMBAL_", catalogue$code)]
 identity_state <- rated %>%
   left_join(issues %>%
-              filter(ISSUE %in% identity_codes) %>%
-              distinct(CIK, fy, FILING) %>%
+              filter(issue %in% identity_codes) %>%
+              distinct(cik, fy, filing) %>%
               mutate(fails_identity = TRUE),
-            by = c("CIK", "fy", "FILING")) %>%
+            by = c("cik", "fy", "filing")) %>%
   mutate(fails_identity = coalesce(fails_identity, FALSE))
 
-checked_on <- range(issues_all$CHECKED)
+checked_on <- range(issues_all$checked)
 ```
 
 ```{r formats}
@@ -500,7 +500,7 @@ wrap_caption <- function(text, width = 125) {
   paste(strwrap(text, width = width), collapse = "\n")
 }
 
-max_date <- max(filings$FILED, na.rm = TRUE)
+max_date <- max(filings$filed, na.rm = TRUE)
 period_range <- paste0(min(report_years), " – ", max(report_years))
 
 source_caption <- caption_corporate_design(
@@ -612,7 +612,7 @@ n_findings <- sum(filing_state$findings)
 n_errors <- sum(by_code$findings[by_code$severity == "error"])
 n_warnings <- sum(by_code$findings[by_code$severity == "warning"])
 n_infos <- sum(by_code$findings[by_code$severity == "info"])
-n_registrants <- n_distinct(filing_state$CIK)
+n_registrants <- n_distinct(filing_state$cik)
 share_clean <- mean(rated$clean) * 100
 share_spotless <- mean(rated$spotless) * 100
 share_identity <- mean(!identity_state$fails_identity) * 100
@@ -842,10 +842,10 @@ if (length(silent_years) > 0) {
 
 ```{r record-framework, results='asis'}
 temp <- filing_state %>%
-  count(FRAMEWORK) %>%
-  mutate(FRAMEWORK = coalesce(FRAMEWORK, "none stated"))
+  count(framework) %>%
+  mutate(framework = coalesce(framework, "none stated"))
 cat("\nThe filings tag against ",
-    paste(sprintf("%s (%s)", temp$FRAMEWORK, fmt(temp$n)),
+    paste(sprintf("%s (%s)", temp$framework, fmt(temp$n)),
           collapse = ", "),
     ". The framework is read off the taxonomies a filing tagged against, ",
     "and a filing that tags only cover-page facts states none, which the ",
@@ -917,7 +917,7 @@ chart_ranked(by_code %>% filter(affected > 0),
 
 ```{r found-code-table}
 temp <- by_code %>%
-  transmute(code = paste0("`", ISSUE, "`"),
+  transmute(code = paste0("`", issue, "`"),
             severity = severity_label(severity),
             Findings = fmt(findings),
             Filings = fmt(affected),
@@ -988,15 +988,15 @@ chart_by_year(temp, share, severity,
 # the filing, and not by findings, which a single noisy filing dominates.
 knitr::kable(by_registrant %>%
                slice_head(n = top_n) %>%
-               transmute(NAME = substr(NAME, 1, 36),
-                         CIK,
+               transmute(name = substr(name, 1, 36),
+                         cik,
                          Filings = fmt(filed),
                          Annual = fmt(annual),
                          Findings = fmt(findings),
                          Errors = fmt(errors),
                          `Free of errors` = fmt(clean, 1)),
              align = "llrrrrr",
-             col.names = c("Registrant", "CIK", "Filings", "Annual",
+             col.names = c("Registrant", "cik", "Filings", "Annual",
                            "Findings", "Errors",
                            "Annual free of errors, %"))
 ```
@@ -1050,7 +1050,7 @@ cat("All five hold in ", fmt(sum(!identity_state$fails_identity)),
 
 ```{r identities-table}
 temp <- by_code %>%
-  filter(ISSUE %in% identity_codes) %>%
+  filter(issue %in% identity_codes) %>%
   transmute(title,
             Filings = fmt(affected),
             Share = fmt(share, 1))
@@ -1064,7 +1064,7 @@ knitr::kable(temp, align = "lrr",
 # An identity can only be tested where the filing tags both sides of it. A
 # filing that tags neither passes by silence, which is a different thing
 # from passing, and the MISS_ checks are what makes that visible.
-miss <- by_code %>% filter(grepl("^MISS_", ISSUE), ISSUE != "MISS_FRAMEWORK")
+miss <- by_code %>% filter(grepl("^MISS_", issue), issue != "MISS_FRAMEWORK")
 cat("\nAn identity is only tested where the filing tags the lines it rests ",
     "on. A filing that tags neither side of one passes it by silence, which ",
     "is not the same as passing it: ",
@@ -1085,10 +1085,10 @@ cat("\nAn identity is only tested where the filing tags the lines it rests ",
 # reason it is here: a company file carries every filing's account of every
 # period, so the figure a year's own report stated can be set beside the
 # figure a later report states for the same year.
-restated <- by_code %>% filter(ISSUE == "RESTATED_MATERIALLY")
+restated <- by_code %>% filter(issue == "RESTATED_MATERIALLY")
 restated_filings <- issues %>%
-  filter(ISSUE == "RESTATED_MATERIALLY") %>%
-  distinct(CIK, FILING)
+  filter(issue == "RESTATED_MATERIALLY") %>%
+  distinct(cik, filing)
 
 cat("A company file is organised by concept and carries every filing's ",
     "account of every period, which is what makes a restatement visible at ",
@@ -1110,10 +1110,10 @@ cat("A restatement, a reclassification and a correction all look the same ",
 
 ```{r restatement-concepts}
 temp <- issues %>%
-  filter(ISSUE == "RESTATED_MATERIALLY", !is.na(CONCEPT)) %>%
-  count(CONCEPT, sort = TRUE) %>%
+  filter(issue == "RESTATED_MATERIALLY", !is.na(concept)) %>%
+  count(concept, sort = TRUE) %>%
   slice_head(n = top_n) %>%
-  transmute(concept = paste0("`", CONCEPT, "`"), Facts = fmt(n))
+  transmute(concept = paste0("`", concept, "`"), Facts = fmt(n))
 
 if (nrow(temp) > 0) {
   knitr::kable(temp, align = "lr",
@@ -1132,9 +1132,9 @@ temp <- filing_state %>%
   filter(findings > 0) %>%
   arrange(desc(errors), desc(findings)) %>%
   slice_head(n = top_n) %>%
-  transmute(NAME = substr(NAME, 1, 28),
-            FORM,
-            Filed = format(FILED, "%Y-%m-%d"),
+  transmute(name = substr(name, 1, 28),
+            form,
+            Filed = format(filed, "%Y-%m-%d"),
             Findings = fmt(findings),
             Errors = fmt(errors),
             Codes = which)
@@ -1225,7 +1225,7 @@ for (level in severities) {
                     info = "Notes")
   cat("\n### ", heading, "\n\n", sep = "")
   for (i in seq_len(nrow(rows))) {
-    found <- by_code %>% filter(ISSUE == rows$code[i])
+    found <- by_code %>% filter(issue == rows$code[i])
     cat("**`", rows$code[i], "` — ", rows$title[i], ".** ",
         rows$meaning[i], " ",
         "*Found in ", fmt(found$affected), " of the ",
@@ -1268,7 +1268,7 @@ temp <- tibble(
             period_range,
             fmt(n_filed),
             fmt(n_annual),
-            fmt(sum(filing_state$FACTS, na.rm = TRUE)),
+            fmt(sum(filing_state$facts, na.rm = TRUE)),
             fmt(n_checks),
             fmt(sum(by_code$affected > 0)),
             fmt(n_findings),

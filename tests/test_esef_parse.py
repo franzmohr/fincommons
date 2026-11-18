@@ -116,32 +116,32 @@ def test_a_period_is_the_days_it_covers(text, expected):
 
 def test_a_report_gives_one_row_per_fact_without_its_text_blocks():
     facts = esef.facts_from_report(
-        load(f"{LEI_AT}-2026-03-31-1-de.json")).set_index("FACT")
+        load(f"{LEI_AT}-2026-03-31-1-de.json")).set_index("fact")
 
     # f-4 is the note on goodwill, a text block.
     assert list(facts.index) == ["f-1", "f-2", "f-3"]
 
     revenue = facts.loc["f-1"]
-    assert revenue["CONCEPT"] == "ifrs-full:Revenue"
-    assert revenue["LEI"] == LEI_AT
-    assert revenue["VALUE"] == 430569203.0
-    assert revenue["TEXT"] is None
-    assert revenue["UNIT"] == "iso4217:EUR"
-    assert (revenue["PRDSTART"], revenue["PRDEND"]) == (D(2025, 4, 1), D(2026, 3, 31))
-    assert revenue["DECIMALS"] == 0
-    assert revenue["DIMENSIONS"] is None
+    assert revenue["concept"] == "ifrs-full:Revenue"
+    assert revenue["lei"] == LEI_AT
+    assert revenue["value"] == 430569203.0
+    assert revenue["text"] is None
+    assert revenue["unit"] == "iso4217:EUR"
+    assert (revenue["prd_start"], revenue["prd_end"]) == (D(2025, 4, 1), D(2026, 3, 31))
+    assert revenue["decimals"] == 0
+    assert revenue["dimensions"] is None
 
     equity = facts.loc["f-2"]
-    assert equity["PRDSTART"] is None and equity["PRDEND"] == D(2026, 3, 31)
-    assert equity["DIMENSIONS"] == (
+    assert equity["prd_start"] is None and equity["prd_end"] == D(2026, 3, 31)
+    assert equity["dimensions"] == (
         "ifrs-full:ComponentsOfEquityAxis=ifrs-full:RetainedEarningsMember")
-    assert pandas.isna(equity["DECIMALS"])  # INF, an exact value
+    assert pandas.isna(equity["decimals"])  # INF, an exact value
 
     name = facts.loc["f-3"]
-    assert name["TEXT"] == "Parent AG"
-    assert name["LANG"] == "de"
-    assert name["UNIT"] is None
-    assert pandas.isna(name["VALUE"])
+    assert name["text"] == "Parent AG"
+    assert name["lang"] == "de"
+    assert name["unit"] is None
+    assert pandas.isna(name["value"])
 
 
 def test_the_dimensions_of_a_fact_are_sorted():
@@ -150,7 +150,7 @@ def test_the_dimensions_of_a_fact_are_sorted():
 
     facts = esef.facts_from_report(document)
 
-    assert facts.loc[0, "DIMENSIONS"] == "a:A=m:1;b:Z=m:2"
+    assert facts.loc[0, "dimensions"] == "a:A=m:1;b:Z=m:2"
 
 
 def test_a_nil_fact_is_left_out_and_a_unit_that_is_no_number_is_kept_as_text():
@@ -161,8 +161,8 @@ def test_a_nil_fact_is_left_out_and_a_unit_that_is_no_number_is_kept_as_text():
 
     facts = esef.facts_from_report(document)
 
-    assert list(facts["FACT"]) == ["odd"]
-    assert facts.loc[0, "TEXT"] == "n/a"
+    assert list(facts["fact"]) == ["odd"]
+    assert facts.loc[0, "text"] == "n/a"
 
 
 def test_a_short_text_is_kept_and_a_note_with_markup_is_not():

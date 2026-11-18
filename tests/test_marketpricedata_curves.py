@@ -18,9 +18,9 @@ from fincommons.marketpricedata import curves
 
 
 PRICES = StructType([
-    StructField("REFDT", DateType()),
-    StructField("INSTRID", StringType()),
-    StructField("VALUE", DoubleType()),
+    StructField("ref_date", DateType()),
+    StructField("instr_id", StringType()),
+    StructField("value", DoubleType()),
 ])
 
 REFDT = "2025-06-30"

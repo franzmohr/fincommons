@@ -46,34 +46,34 @@ def test_every_entry_is_described_with_a_known_kind():
 
 
 def test_a_column_is_described_for_the_data_sets_of_this_package_alone():
-    described = describe_column("tradgvn")  # case does not matter
+    described = describe_column("TRADING_VENUE")  # case does not matter
 
     # Data sets of packages built on fincommons may carry the column too, but
     # those packages ship their own catalogue; fincommons describes its own.
     assert [d.dataset for d in described] == ["firds"]
     firds = described[0]
-    assert firds.column == "TRADGVN"
+    assert firds.column == "trading_venue"
     assert firds.tables == ["firds.silver"]
     assert "TradgVnRltdAttrbts.Id" in firds.source
 
 
 def test_a_data_set_narrows_the_answer_to_one():
-    described = describe_column("ACTNTP", dataset="FIRDS")
+    described = describe_column("action_type", dataset="FIRDS")
 
     assert len(described) == 1
     assert described[0].dataset == "firds"
 
 
 def test_the_description_prints_as_a_record():
-    text = str(fincommons.describe_column("TRADGVN", dataset="firds"))
+    text = str(fincommons.describe_column("trading_venue", dataset="firds"))
 
-    assert text.splitlines()[0] == "TRADGVN in firds -- tables firds.silver"
+    assert text.splitlines()[0] == "trading_venue in firds -- tables firds.silver"
     assert "  description  " in text
 
 
 def test_an_unknown_column_is_an_error_that_suggests_close_names():
-    with pytest.raises(KeyError, match="Similar: .*TRADGVN"):
-        describe_column("TRADGVNX")
+    with pytest.raises(KeyError, match="Similar: .*trading_venue"):
+        describe_column("trading_venuex")
     with pytest.raises(KeyError, match="not a catalogued data set"):
         column_catalogue("marketpricedata")
     with pytest.raises(KeyError, match="not a catalogued data set"):

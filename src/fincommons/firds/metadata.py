@@ -29,15 +29,15 @@ from ..addressing import delta_table, delta_table_exists, read_delta, write_delt
 from . import common
 
 
-#: The columns of the watermark table. ``MAXDATE`` is the reference date of the
-#: newest file that has been applied to ``NAME``, spelled the way
+#: The columns of the watermark table. ``max_date`` is the reference date of the
+#: newest file that has been applied to ``name``, spelled the way
 #: :func:`fincommons.firds.silver.format_reference_date` spells it, and
-#: ``UPDATED`` records when that last happened.
+#: ``updated`` records when that last happened.
 METADATA_SCHEMA = types.StructType(
     [
-        types.StructField("NAME", types.StringType(), nullable=False),
-        types.StructField("MAXDATE", types.StringType(), nullable=False),
-        types.StructField("UPDATED", types.TimestampType(), nullable=True),
+        types.StructField("name", types.StringType(), nullable=False),
+        types.StructField("max_date", types.StringType(), nullable=False),
+        types.StructField("updated", types.TimestampType(), nullable=True),
     ]
 )
 
@@ -84,7 +84,7 @@ def initialise_metadata(spark, config_path, maxdate):
 def _write_single_row(spark, config_path, table, maxdate):
     """Create the watermark table from scratch, holding one row."""
     rows = spark.createDataFrame([(table, maxdate, None)], schema=METADATA_SCHEMA)
-    rows = rows.withColumn("UPDATED", func.current_timestamp())
+    rows = rows.withColumn("updated", func.current_timestamp())
 
     write_delta(
         rows,
@@ -124,14 +124,14 @@ def update_metadata_maxdate(spark, config_path, table, maxdate):
     )
 
     delta_table(spark, ref).alias("tgt").merge(
-        incoming.alias("src"), "tgt.NAME = src.NAME"
+        incoming.alias("src"), "tgt.name = src.name"
     ).whenMatchedUpdate(
-        set={"MAXDATE": "src.MAXDATE", "UPDATED": "current_timestamp()"}
+        set={"max_date": "src.max_date", "updated": "current_timestamp()"}
     ).whenNotMatchedInsert(
         values={
-            "NAME": "src.NAME",
-            "MAXDATE": "src.MAXDATE",
-            "UPDATED": "current_timestamp()",
+            "name": "src.name",
+            "max_date": "src.max_date",
+            "updated": "current_timestamp()",
         }
     ).execute()
 
@@ -158,13 +158,13 @@ def get_metadata_maxdate(spark, config_path, table):
 
     rows = (
         read_delta(spark, common.ref_metadata(config_path))
-        .where(func.col("NAME") == table)
-        .select("MAXDATE")
+        .where(func.col("name") == table)
+        .select("max_date")
         .limit(1)
         .collect()
     )
 
-    return rows[0]["MAXDATE"] if rows else None
+    return rows[0]["max_date"] if rows else None
 
 
 def read_metadata(spark, config_path):

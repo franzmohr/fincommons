@@ -117,7 +117,7 @@ em.download_ecb_psri(config_path)
 
 The lists of payment statistics relevant institutions -- payment service providers and payment system operators -- yearly until 2021, `PSRIs_<year>.xlsx`, and half-yearly since, `PSRIs_<year>_H<half>.xlsx`, all in one archive and stored in `{landing zone of entitymasterdata}/ecb/psri`. The first run puts every list since 2014 into the landing zone. Each is imported under the last day of its period, and with the columns as that list names them: the lists until 2021 spell `Country of residence` and have a column `PSP Geo Scope`, the later ones spell `Country of Residence`.
 
-The FVCs and the PSRIs are imported into the Bronze layer but not yet part of the entity master data set: where they rank among the other registers in the field `SECTOR` is still to be decided.
+The FVCs and the PSRIs are imported into the Bronze layer but not yet part of the entity master data set: where they rank among the other registers in the field `sector` is still to be decided.
 
 ### 1.3 EIOPA data
 
@@ -181,7 +181,7 @@ em.update_from_landing_to_bronze(config_path)
 
 ### 3.1 Public entity master data set
 
-Function `update_silver_entitymasterdata_public` combines the most recent version of every register in the Bronze layer into one row per LEI. The result is stored in the Silver layer under `{silver layer of entitymasterdata}/public`.
+Function `update_silver_entitymasterdata_public` combines the most recent version of every register in the Bronze layer into one row per lei. The result is stored in the Silver layer under `{silver layer of entitymasterdata}/public`.
 
 
 ```python
@@ -192,29 +192,29 @@ em.update_silver_entitymasterdata_public(spark, config_path)
 
 * `file_format`: The format the table is stored in, `'parquet'` or `'delta'`. Where it is left out, the configuration file decides: a Silver layer addressed by path is written as parquet, and a table that exists already keeps the format it is stored in. See section 3.2 for what the choice amounts to.
 
-GLEIF Level 1 supplies the row itself, with the name and the country. The sectoral registers supply `SECTOR` and, where they have one, `SUBSECTOR`:
+GLEIF Level 1 supplies the row itself, with the name and the country. The sectoral registers supply `sector` and, where they have one, `subsector`:
 
-| Register | `SECTOR` |
+| Register | `sector` |
 | --- | --- |
-| ESMA list of CCPs | `CCP`, with the type of CCP as `SUBSECTOR` |
+| ESMA list of CCPs | `CCP`, with the type of CCP as `subsector` |
 | EIOPA insurance undertakings | `INUN` |
 | EIOPA IORPs | `ORPI` |
 | ECB MFIs | `CB`, `CDTI`, `OFI` or `MMF`, after the category of the register, and `MFI` where the category is not one of the four |
-| ECB investment funds | `UCIT`, `AIFD` or `INVF`, after what the register says about UCITS compliance, with the investment policy as `SUBSECTOR` |
+| ECB investment funds | `UCIT`, `AIFD` or `INVF`, after what the register says about UCITS compliance, with the investment policy as `subsector` |
 
-Every register is joined on the LEI as text, so an LEI is first written the way GLEIF writes it: blanks removed -- the non-breaking space a spreadsheet leaves among them -- and letters in upper case. An LEI holds neither, so this changes no LEI that was well-formed, and it is what the registers need: the ESMA list of CCPs of September 2026 carried six LEIs with a trailing space and the EIOPA IORP register three in lower case, which, joined as they stand, leave two central counterparties and three pension funds without a sector. An LEI that still does not look like one -- eighteen letters or digits and two check digits -- is kept, but named in a warning with the register it came from, because it will not match GLEIF.
+Every register is joined on the lei as text, so an lei is first written the way GLEIF writes it: blanks removed -- the non-breaking space a spreadsheet leaves among them -- and letters in upper case. An lei holds neither, so this changes no lei that was well-formed, and it is what the registers need: the ESMA list of CCPs of September 2026 carried six LEIs with a trailing space and the EIOPA IORP register three in lower case, which, joined as they stand, leave two central counterparties and three pension funds without a sector. An lei that still does not look like one -- eighteen letters or digits and two check digits -- is kept, but named in a warning with the register it came from, because it will not match GLEIF.
 
-The table carries the columns of section 5 except for `ID` and the `INTERNALID_*` columns, which the entity master data set itself adds, plus `REFDATE`: the reference date of the GLEIF Level 1 file it was built from, which is what dates the table.
+The table carries the columns of section 5 except for `id` and the `internal_id_*` columns, which the entity master data set itself adds, plus `ref_date`: the reference date of the GLEIF Level 1 file it was built from, which is what dates the table.
 
-An entity can stand in more than one of them -- a central counterparty is licensed as a credit institution as well -- and the narrower description wins, in the order of the table. A register can also carry the same LEI twice: a central counterparty authorised under more than one heading stands in the list of CCPs once per heading, and an institution licensed in several member states stands in the list of MFIs once per state. The order of the table settles nothing there, so the choice runs on through the sector and the subsector, preferring a row that states one to a row that does not and otherwise taking the alphabetical one. That decides nothing anyone asked about, but it decides it the same way on every run, which is what the table has to do to be comparable with itself. The insurance register stands above the register of institutions for occupational retirement provision because the entities in both are insurers running occupational pension business, and the insurance register states the authorisation the entity holds while the IORP register states an activity carried on under it.
+An entity can stand in more than one of them -- a central counterparty is licensed as a credit institution as well -- and the narrower description wins, in the order of the table. A register can also carry the same lei twice: a central counterparty authorised under more than one heading stands in the list of CCPs once per heading, and an institution licensed in several member states stands in the list of MFIs once per state. The order of the table settles nothing there, so the choice runs on through the sector and the subsector, preferring a row that states one to a row that does not and otherwise taking the alphabetical one. That decides nothing anyone asked about, but it decides it the same way on every run, which is what the table has to do to be comparable with itself. The insurance register stands above the register of institutions for occupational retirement provision because the entities in both are insurers running occupational pension business, and the insurance register states the authorisation the entity holds while the IORP register states an activity carried on under it.
 
-`IF_POLICY`, `IF_TYPE` and `IF_UCITS_COMPL` are not part of this contest. They are facts about a fund that no other register carries, so they are taken from the fund register whichever register ends up describing the entity. A money market fund is the case this matters for, because it stands on the list of MFIs by definition and that register wins the sector; taken from the winning row, the fund characteristics would be lost along with the row the contest discards.
+`if_policy`, `if_type` and `if_ucits_compl` are not part of this contest. They are facts about a fund that no other register carries, so they are taken from the fund register whichever register ends up describing the entity. A money market fund is the case this matters for, because it stands on the list of MFIs by definition and that register wins the sector; taken from the winning row, the fund characteristics would be lost along with the row the contest discards.
 
-`SUBSECTOR` is part of the contest, and stays the statement of the register that won it. It is the refinement that register offers, so filling it in from the fund register once another register has taken the sector would pair a sector from one taxonomy with a refinement from another. A fund loses nothing by that, because the investment policy the fund register would have contributed as `SUBSECTOR` is what `IF_POLICY` carries.
+`subsector` is part of the contest, and stays the statement of the register that won it. It is the refinement that register offers, so filling it in from the fund register once another register has taken the sector would pair a sector from one taxonomy with a refinement from another. A fund loses nothing by that, because the investment policy the fund register would have contributed as `subsector` is what `if_policy` carries.
 
 The `MFI` sector is the fallback for a category the module does not recognise. A category the ECB relabels, or a list converted by hand in a way that alters the spelling, would otherwise leave the sector empty -- and an empty sector is what an entity no register covers carries, which is the one thing an institution that is on the register is not. The categories that fell through are named in a warning, so the run says where the description is coarser than the register would allow.
 
-GLEIF Level 2 supplies `ULTPAR_LEI` from the `IS_ULTIMATELY_CONSOLIDATED_BY` relationship and `AMC` from `IS_FUND-MANAGED_BY`. Only a relationship the golden copy still marks `ACTIVE` is read. The file is a record of what has been reported rather than of what holds today: a relationship that has ended stays in it, marked `INACTIVE`, so an entity whose parent changed stands in two records of the same type and only one of them says who consolidates it now. An entity whose only record is an inactive one is left without a parent, which is what it has.
+GLEIF Level 2 supplies `ultimate_parent_lei` from the `IS_ULTIMATELY_CONSOLIDATED_BY` relationship and `amc` from `IS_FUND-MANAGED_BY`. Only a relationship the golden copy still marks `ACTIVE` is read. The file is a record of what has been reported rather than of what holds today: a relationship that has ended stays in it, marked `INACTIVE`, so an entity whose parent changed stands in two records of the same type and only one of them says who consolidates it now. An entity whose only record is an inactive one is left without a parent, which is what it has.
 
 ### 3.2 Final entity master data set
 
@@ -236,9 +236,9 @@ em.update_silver_entitymasterdata(spark, config_path)
 
 * `file_format`: The format the table is stored in, `'parquet'` or `'delta'`, decided as for the public table where it is left out. It says nothing about the format of the public table this one is built from, which is read in whichever format it was written in, so the two tables need not agree.
 
-Where an LEI is described by both, the proprietary description wins in full: the public row is dropped rather than filled in from, because a list an organisation maintains itself states what that organisation holds the entity to be. Entities the proprietary list carries without an LEI are all kept, since there is nothing to match them on.
+Where an lei is described by both, the proprietary description wins in full: the public row is dropped rather than filled in from, because a list an organisation maintains itself states what that organisation holds the entity to be. Entities the proprietary list carries without an lei are all kept, since there is nothing to match them on.
 
-The table also carries two catch-all entities that no register does: `Other` under the LEI `XOTHERX0000000000064` (`LEI_OTHER`), which collects what an aggregation does not show on its own -- the EMIR and SFTR data quality monitoring files the reporting counterparties below its top fifteen under it -- and `Unknown` under `XUNKNOWNX00000000025` (`LEI_UNKNOWN`), for an entity that could not be identified. Both LEIs have the form ISO 17442 gives an LEI, check digits included, so they pass wherever an LEI is checked. No LEI of the GLEIF golden copy of 8 September 2026 begins with `XOTH` or `XUNK`. A proprietary list that describes either of them takes precedence, as it does for any other entity.
+The table also carries two catch-all entities that no register does: `Other` under the lei `XOTHERX0000000000064` (`LEI_OTHER`), which collects what an aggregation does not show on its own -- the EMIR and SFTR data quality monitoring files the reporting counterparties below its top fifteen under it -- and `Unknown` under `XUNKNOWNX00000000025` (`LEI_UNKNOWN`), for an entity that could not be identified. Both LEIs have the form ISO 17442 gives an lei, check digits included, so they pass wherever an lei is checked. No lei of the GLEIF golden copy of 8 September 2026 begins with `XOTH` or `XUNK`. A proprietary list that describes either of them takes precedence, as it does for any other entity.
 
 Each update replaces its table rather than adding to it. Parquet is the default, because it is the format every engine reads without a further dependency. Delta is worth asking for where a table may be queried while it is rebuilt: a Delta update replaces the table in a single transaction, so a reader sees either the previous version in full or the new one, never a half-written file, and the previous versions remain readable. A parquet update deletes the table before it writes the new one, which leaves a window in which a reader finds it missing or half-written.
 
@@ -314,15 +314,15 @@ The entity master data set carries one row per entity:
 
 | Column | Content |
 | --- | --- |
-| `ID` | A running number over the table. It is assigned by the update and is not stable across rebuilds. |
-| `LEI` | The LEI of the entity, where it has one. |
-| `INTERNALID_1` to `INTERNALID_4` | The identifiers of the proprietary list, empty where there is none. |
-| `NAME` | The legal name of the entity. |
-| `CTRY` | The ISO-2 code of the country of its legal address. |
-| `SECTOR`, `SUBSECTOR` | What the entity does, see section 3.1. |
-| `ULTPAR_LEI` | The LEI of the entity that ultimately consolidates it. |
-| `AMC` | For a fund, the LEI of the company that manages it. |
-| `IF_POLICY`, `IF_TYPE`, `IF_UCITS_COMPL` | For a fund, its investment policy, whether it is an ETF or a PEF, and whether it is UCITS compliant. They are filled for every entity the ECB fund register covers, including one another register describes -- a money market fund, say, whose `SECTOR` is `MMF`. |
+| `id` | A running number over the table. It is assigned by the update and is not stable across rebuilds. |
+| `lei` | The lei of the entity, where it has one. |
+| `internal_id_1` to `internal_id_4` | The identifiers of the proprietary list, empty where there is none. |
+| `name` | The legal name of the entity. |
+| `country` | The ISO-2 code of the country of its legal address. |
+| `sector`, `subsector` | What the entity does, see section 3.1. |
+| `ultimate_parent_lei` | The lei of the entity that ultimately consolidates it. |
+| `amc` | For a fund, the lei of the company that manages it. |
+| `if_policy`, `if_type`, `if_ucits_compl` | For a fund, its investment policy, whether it is an ETF or a PEF, and whether it is UCITS compliant. They are filled for every entity the ECB fund register covers, including one another register describes -- a money market fund, say, whose `sector` is `MMF`. |
 
 ## Tests
 

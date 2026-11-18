@@ -61,7 +61,7 @@ revenue = (facts
     .select("LEI", "NAME", "PERIODEND", "UNIT", "VALUE"))
 ```
 
-An issuer may file the same report more than once -- in two languages, or corrected -- and each filing is a row of `filings` with facts of its own. The facts are keyed by `LEI`, which joins them with the entity master data of `fincommons.entitymasterdata`, and an amount is converted into another currency with `fincommons.exchangerate`.
+An issuer may file the same report more than once -- in two languages, or corrected -- and each filing is a row of `filings` with facts of its own. The facts are keyed by `lei`, which joins them with the entity master data of `fincommons.entitymasterdata`, and an amount is converted into another currency with `fincommons.exchangerate`.
 
 ## Keeping the tables up to date
 
@@ -145,35 +145,35 @@ One row per filing of the indexes, every country and year, whether its report wa
 
 | Column | Meaning |
 |--------|---------|
-| `FILING` | the identifier of the filing at the repository, e.g. `529900...-2025-12-31-ESEF-AT-0` |
-| `LEI`, `NAME` | the issuer |
-| `COUNTRY` | the country, as the repository codes it |
-| `SYSTEM` | the filing system: `ESEF` (which the repository uses for the United Kingdom too) or `UAIFRS` |
-| `PERIODEND` | the last day of the period the filing reports on |
-| `LANG` | the language of the report, where the name of its file says |
-| `PUBLISHED`, `ADDED`, `PROCESSED` | when the source published the filing, when the repository added it and when it last processed it |
-| `ERRORS`, `WARNINGS`, `INCONSISTENCIES` | what the repository's validation found |
-| `PACKAGEURL`, `REPORTURL`, `VIEWERURL`, `JSONURL` | where the files are, relative to `https://filings.xbrl.org`; no `JSONURL` means no facts |
-| `PACKAGESHA256` | the SHA-256 of the report package |
+| `filing` | the identifier of the filing at the repository, e.g. `529900...-2025-12-31-ESEF-AT-0` |
+| `lei`, `name` | the issuer |
+| `country` | the country, as the repository codes it |
+| `system` | the filing system: `ESEF` (which the repository uses for the United Kingdom too) or `UAIFRS` |
+| `period_end` | the last day of the period the filing reports on |
+| `lang` | the language of the report, where the name of its file says |
+| `published`, `added`, `processed` | when the source published the filing, when the repository added it and when it last processed it |
+| `errors`, `warnings`, `inconsistencies` | what the repository's validation found |
+| `package_url`, `report_url`, `viewer_url`, `json_url` | where the files are, relative to `https://filings.xbrl.org`; no `json_url` means no facts |
+| `package_sha256` | the SHA-256 of the report package |
 
 ### `facts`
 
-One row per fact of a report collected, partitioned by `COUNTRY`.
+One row per fact of a report collected, partitioned by `country`.
 
 | Column | Meaning |
 |--------|---------|
-| `COUNTRY`, `FILING`, `LEI`, `PERIODEND` | the filing the fact is reported in |
-| `FACT` | the identifier of the fact within its report |
-| `CONCEPT` | the concept, e.g. `ifrs-full:Revenue`, or an extension concept of the issuer |
-| `PRDSTART`, `PRDEND` | the first and the last day of the period, both included; an instant, such as a balance, has no `PRDSTART` |
-| `UNIT` | the unit of a number, e.g. `iso4217:EUR` |
-| `DIMENSIONS` | the axes and members, as `axis=member;...`; empty for the total |
-| `VALUE` | a number, as reported and in full units |
-| `TEXT` | any other value |
-| `DECIMALS` | the accuracy the issuer states for a number |
-| `LANG` | the language of a text |
+| `country`, `filing`, `lei`, `period_end` | the filing the fact is reported in |
+| `fact` | the identifier of the fact within its report |
+| `concept` | the concept, e.g. `ifrs-full:Revenue`, or an extension concept of the issuer |
+| `prd_start`, `prd_end` | the first and the last day of the period, both included; an instant, such as a balance, has no `prd_start` |
+| `unit` | the unit of a number, e.g. `iso4217:EUR` |
+| `dimensions` | the axes and members, as `axis=member;...`; empty for the total |
+| `value` | a number, as reported and in full units |
+| `text` | any other value |
+| `decimals` | the accuracy the issuer states for a number |
+| `lang` | the language of a text |
 
-xBRL-JSON writes the end of a period as the start of the following day, so that a financial year to 31 March 2026 ends at `2026-04-01T00:00:00`; `PRDEND` is the day it stands for, 31 March. A fact reported as nil is left out.
+xBRL-JSON writes the end of a period as the start of the following day, so that a financial year to 31 March 2026 ends at `2026-04-01T00:00:00`; `prd_end` is the day it stands for, 31 March. A fact reported as nil is left out.
 
 **Text blocks are left out.** Most of a report, by size, is its notes, tagged whole as text blocks: the note on intangible assets of one report is half a megabyte of HTML, tagged again for goodwill and for intangible assets and goodwill together. The concept does not say that it is a text block -- that is a type of the taxonomy, which the report does not carry -- but the value does, and a text with markup in it is the note as the report presents it rather than a value to compare. The Bronze layer keeps the whole report.
 
@@ -263,9 +263,9 @@ FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-sector-factsheet.qmd
 
 ### The panel is a stated list
 
-**This is the one thing about the template to understand before using it.** An ESEF report carries no sector code: a filing states the issuer's legal entity identifier and nothing about what the issuer does, and the sector classification this package does hold -- `SECTOR` in `fincommons.entitymasterdata` -- is filled from the registers of the ECB, EIOPA and ESMA and covers financial entities only. So whoever writes the panel decides what the sector is. A different panel gives different totals and different medians, which is why the panel is printed in full at the front of the rendered document and why the disclaimer on the last page says in as many words that the page is about the issuers named and about no population wider than them.
+**This is the one thing about the template to understand before using it.** An ESEF report carries no sector code: a filing states the issuer's legal entity identifier and nothing about what the issuer does, and the sector classification this package does hold -- `sector` in `fincommons.entitymasterdata` -- is filled from the registers of the ECB, EIOPA and ESMA and covers financial entities only. So whoever writes the panel decides what the sector is. A different panel gives different totals and different medians, which is why the panel is printed in full at the front of the rendered document and why the disclaimer on the last page says in as many words that the page is about the issuers named and about no population wider than them.
 
-A panel of nine fits in the template. A panel of a hundred and forty-five does not, so the panel may instead be read from a csv named in `FINCOMMONS_PANEL`, with `LEI`, `SHORT` and `GROUP` required and `NACE`, `COUNTRY`, `NAME`, `ACTIVITY_EN` and `ACTIVITY_DE` used where the file has them. `NAME` there is for whoever maintains the file; the page names an issuer as its own report names it.
+A panel of nine fits in the template. A panel of a hundred and forty-five does not, so the panel may instead be read from a csv named in `FINCOMMONS_PANEL`, with `lei`, `SHORT` and `GROUP` required and `NACE`, `country`, `name`, `ACTIVITY_EN` and `ACTIVITY_DE` used where the file has them. `name` there is for whoever maintains the file; the page names an issuer as its own report names it.
 
 Each row carries a group, and the groups are the reason the template exists in this shape rather than as one list of issuers. A contractor turns its balance sheet several times a year on advance payments, a developer holds a project for years and reports the result when it sells, a materials maker runs plant and carries inventory, a merchant holds stock and no projects at all. A median over all of them hides the thing a reader came for, so every table and chart is shown by group as well as for the panel as a whole, and the colour of a line is its group. The European panel uses five: contractors, developers, building materials, building technology, and merchants and distribution.
 
@@ -293,7 +293,7 @@ A panel in one currency needs none of this, reads no rate table, and needs no `e
 
 ### A panel that reaches past one regime
 
-A panel row is keyed by the identifier its regime uses: an `LEI` for a filing under ESEF, a `CIK` for one with the Commission. Neither body publishes a mapping between the two -- which is why the combined table carries both columns and fills one of them in every row -- so the template does the same, and a row needs one or the other. `templates/esef-sector-panel-crossregime.csv` is the example: the 145 European issuers of the panel above together with 86 American ones, 231 in all.
+A panel row is keyed by the identifier its regime uses: an `lei` for a filing under ESEF, a `cik` for one with the Commission. Neither body publishes a mapping between the two -- which is why the combined table carries both columns and fills one of them in every row -- so the template does the same, and a row needs one or the other. `templates/esef-sector-panel-crossregime.csv` is the example: the 145 European issuers of the panel above together with 86 American ones, 231 in all.
 
 What crosses the frameworks is **the eight measures of the catalogue and nothing else**. Everything the template reads from the ESEF concepts -- the operating result, the cash flow, the inventories, the net debt -- reaches the European members alone, because no pair of concepts for an operating result is in the catalogue: `describe_measure("ebit")` returns nothing. Pairing `ifrs-full:ProfitLossFromOperatingActivities` with `us-gaap:OperatingIncomeLoss` would be this template inventing a mapping the `combined` module declines to make, so it does not. The cross-regime tables are built from the measures and the per-issuer tables keep saying what each regime's filer tagged.
 
@@ -307,11 +307,11 @@ The result and the equity a pooled question wants are the total where the filer 
 
 ### The benchmark, and what counts as a bank
 
-The benchmark is read from the combined table through the materialised `MEASURE` column rather than by resolving a measure per filing. That is the division of labour the combined README argues for, and it has a cost the page states: only the first concept of each framework carries a measure, so a filing that stated revenue as IFRS 15 revenue alone is in the tables of the panel and not in the quartiles, and every count beside a benchmark figure is a count of filings that stated **and named** the figure rather than a population. Which filings are in scope is three lines -- source, country, framework -- so a lake that has run `sec` or `edinet` widens the same page to those regimes, with the warning that module makes about measures that are not skewed alike between them. Left out, the countries are the ones the panel itself filed in, which is the right default rather than a convenient one -- the market a panel is held against is the market it was filed in -- and which also removes a trap: the panel can be replaced by a file without touching that list, and a country written out there would quietly measure a European panel against one national market.
+The benchmark is read from the combined table through the materialised `measure` column rather than by resolving a measure per filing. That is the division of labour the combined README argues for, and it has a cost the page states: only the first concept of each framework carries a measure, so a filing that stated revenue as IFRS 15 revenue alone is in the tables of the panel and not in the quartiles, and every count beside a benchmark figure is a count of filings that stated **and named** the figure rather than a population. Which filings are in scope is three lines -- source, country, framework -- so a lake that has run `sec` or `edinet` widens the same page to those regimes, with the warning that module makes about measures that are not skewed alike between them. Left out, the countries are the ones the panel itself filed in, which is the right default rather than a convenient one -- the market a panel is held against is the market it was filed in -- and which also removes a trap: the panel can be replaced by a file without touching that list, and a country written out there would quietly measure a European panel against one national market.
 
 Banks and insurers are shown apart rather than dropped, because an equity ratio of ten per cent in the same column as one of forty says something worth seeing about what the ratio means. Two tests identify them, and the second exists because the first has a hole in it:
 
-* the **sectoral registers** -- the ECB's register of monetary financial institutions, EIOPA's of insurance undertakings and of institutions for occupational retirement provision, and ESMA's list of central counterparties, which is where `SECTOR` of `fincommons.entitymasterdata` gets its answer. The LEIs are read from a file named in `FINCOMMONS_FINANCIAL`, one per line, which `entitymasterdata.download_ecb_mfi` and its siblings are enough to produce; GLEIF is not needed for this one question;
+* the **sectoral registers** -- the ECB's register of monetary financial institutions, EIOPA's of insurance undertakings and of institutions for occupational retirement provision, and ESMA's list of central counterparties, which is where `sector` of `fincommons.entitymasterdata` gets its answer. The LEIs are read from a file named in `FINCOMMONS_FINANCIAL`, one per line, which `entitymasterdata.download_ecb_mfi` and its siblings are enough to produce; GLEIF is not needed for this one question;
 * the **filings themselves**, for a filer whose primary statements carry a line only a financial undertaking has: interest revenue computed with the effective interest method, or one of the IFRS 17 insurance lines. The concepts are named in the first chunk.
 
 The hole is twofold and is what the second test closes. A register lists the authorised entity, and what files an annual financial report is usually the group above it -- BAWAG P.S.K. is on the register and BAWAG Group AG, which files, is not. And the registers are European, so a British bank has not been on them since 2020, which for a lake holding the United Kingdom would leave the largest banks in the population unflagged. Over the Austrian filings the registers alone reach 22 of the 27 the two tests together find; the five they miss are holding companies, and their own statements name them.

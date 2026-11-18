@@ -51,24 +51,24 @@ SOURCES = {"esef": "fincommons.financialreport.esef",
 
 
 fact_schema = StructType() \
-    .add("SOURCE", StringType(), False) \
-    .add("FILING", StringType(), False) \
-    .add("FACT", StringType(), False) \
-    .add("LEI", StringType(), True) \
-    .add("CIK", StringType(), True) \
-    .add("EDINETCODE", StringType(), True) \
-    .add("JCN", StringType(), True) \
-    .add("FRAMEWORK", StringType(), True) \
-    .add("PERIODEND", DateType(), True) \
-    .add("PERIODYEAR", IntegerType(), True) \
-    .add("CONCEPT", StringType(), False) \
-    .add("MEASURE", StringType(), True) \
-    .add("PRDSTART", DateType(), True) \
-    .add("PRDEND", DateType(), False) \
-    .add("UNIT", StringType(), True) \
-    .add("VALUE", DoubleType(), True) \
-    .add("TEXT", StringType(), True) \
-    .add("DIMENSIONS", StringType(), True)
+    .add("source", StringType(), False) \
+    .add("filing", StringType(), False) \
+    .add("fact", StringType(), False) \
+    .add("lei", StringType(), True) \
+    .add("cik", StringType(), True) \
+    .add("edinet_code", StringType(), True) \
+    .add("jcn", StringType(), True) \
+    .add("framework", StringType(), True) \
+    .add("period_end", DateType(), True) \
+    .add("period_year", IntegerType(), True) \
+    .add("concept", StringType(), False) \
+    .add("measure", StringType(), True) \
+    .add("prd_start", DateType(), True) \
+    .add("prd_end", DateType(), False) \
+    .add("unit", StringType(), True) \
+    .add("value", DoubleType(), True) \
+    .add("text", StringType(), True) \
+    .add("dimensions", StringType(), True)
 """The shape of the combined table of facts: one row per fact of a filing.
 
 ``SOURCE`` says which module the row came from and is the first partition
@@ -233,19 +233,19 @@ of accounts at once.
 """
 
 filing_schema = StructType() \
-    .add("SOURCE", StringType(), False) \
-    .add("FILING", StringType(), False) \
-    .add("LEI", StringType(), True) \
-    .add("CIK", StringType(), True) \
-    .add("EDINETCODE", StringType(), True) \
-    .add("JCN", StringType(), True) \
-    .add("NAME", StringType(), True) \
-    .add("FRAMEWORK", StringType(), True) \
-    .add("COUNTRY", StringType(), True) \
-    .add("FORM", StringType(), True) \
-    .add("PERIODEND", DateType(), True) \
-    .add("PERIODYEAR", IntegerType(), True) \
-    .add("FACTS", IntegerType(), False)
+    .add("source", StringType(), False) \
+    .add("filing", StringType(), False) \
+    .add("lei", StringType(), True) \
+    .add("cik", StringType(), True) \
+    .add("edinet_code", StringType(), True) \
+    .add("jcn", StringType(), True) \
+    .add("name", StringType(), True) \
+    .add("framework", StringType(), True) \
+    .add("country", StringType(), True) \
+    .add("form", StringType(), True) \
+    .add("period_end", DateType(), True) \
+    .add("period_year", IntegerType(), True) \
+    .add("facts", IntegerType(), False)
 """The shape of the combined table of filings: one row per filing.
 
 ``COUNTRY`` is filled for an ESEF filing, which is filed with the mechanism of
@@ -264,7 +264,7 @@ codes mean.
 #: first, because most questions are scoped to one regime; then the year of
 #: the period reported on, which is what a question about a figure is scoped
 #: to after that.
-FACT_PARTITION_BY = ("SOURCE", "PERIODYEAR")
+FACT_PARTITION_BY = ("source", "period_year")
 
 
 def path_silver_base(config_path):
@@ -343,7 +343,7 @@ def coverage():
             "facts": "every fact of the report, as xBRL-JSON",
             "dimensions": True,
             "text": True,
-            "entity": "LEI",
+            "entity": "lei",
             "note": "The repository collects what it can from the national "
                     "mechanisms, which is a large part of the population and "
                     "not the whole of it.",
@@ -354,7 +354,7 @@ def coverage():
             "facts": "the undimensioned numeric facts of the filing",
             "dimensions": False,
             "text": False,
-            "entity": "CIK",
+            "entity": "cik",
             "note": "A quarterly report stating 941 facts is carried as 321: "
                     "the breakdowns by segment and by class are absent, and "
                     "the narrative with them.",
@@ -365,7 +365,7 @@ def coverage():
             "facts": "every fact of the report, as the agency's own CSV",
             "dimensions": True,
             "text": True,
-            "entity": "EDINETCODE",
+            "entity": "edinet_code",
             "note": "A report that consolidates states every figure twice, "
                     "the group's without a dimension and the parent "
                     "company's under NonConsolidatedMember; and the period "

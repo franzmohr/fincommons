@@ -75,17 +75,17 @@ SOURCE = "sec.gov"
 
 
 filings_schema = StructType() \
-    .add("FILING", StringType(), False) \
-    .add("CIK", StringType(), False) \
-    .add("NAME", StringType(), True) \
-    .add("FORM", StringType(), False) \
-    .add("FILED", DateType(), False) \
-    .add("PERIODEND", DateType(), True) \
-    .add("FY", IntegerType(), True) \
-    .add("FP", StringType(), True) \
-    .add("TAXONOMIES", StringType(), True) \
-    .add("FRAMEWORK", StringType(), True) \
-    .add("FACTS", IntegerType(), False)
+    .add("filing", StringType(), False) \
+    .add("cik", StringType(), False) \
+    .add("name", StringType(), True) \
+    .add("form", StringType(), False) \
+    .add("filed", DateType(), False) \
+    .add("period_end", DateType(), True) \
+    .add("fy", IntegerType(), True) \
+    .add("fp", StringType(), True) \
+    .add("taxonomies", StringType(), True) \
+    .add("framework", StringType(), True) \
+    .add("facts", IntegerType(), False)
 """The shape of the table of filings: one row per filing the facts name.
 
 ``FILING`` is the accession number, which identifies a filing with the
@@ -102,18 +102,18 @@ for a US GAAP filer because of where it filed.
 """
 
 facts_schema = StructType() \
-    .add("CIK", StringType(), False) \
-    .add("FILING", StringType(), False) \
-    .add("FILEDYEAR", IntegerType(), False) \
-    .add("FACT", StringType(), False) \
-    .add("CONCEPT", StringType(), False) \
-    .add("PRDSTART", DateType(), True) \
-    .add("PRDEND", DateType(), False) \
-    .add("UNIT", StringType(), True) \
-    .add("VALUE", DoubleType(), True) \
-    .add("FORM", StringType(), True) \
-    .add("FILED", DateType(), True) \
-    .add("FRAME", StringType(), True)
+    .add("cik", StringType(), False) \
+    .add("filing", StringType(), False) \
+    .add("filed_year", IntegerType(), False) \
+    .add("fact", StringType(), False) \
+    .add("concept", StringType(), False) \
+    .add("prd_start", DateType(), True) \
+    .add("prd_end", DateType(), False) \
+    .add("unit", StringType(), True) \
+    .add("value", DoubleType(), True) \
+    .add("form", StringType(), True) \
+    .add("filed", DateType(), True) \
+    .add("frame", StringType(), True)
 """The shape of the table of facts: one row per fact of a filing.
 
 The columns a fact shares with :data:`fincommons.financialreport.esef.common.facts_schema`
