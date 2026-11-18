@@ -128,6 +128,7 @@ DOCUMENTED = [
     "create_directory_tree", "connect_to_firds", "update_landing_import",
     "update_from_landing_to_bronze", "update_from_bronze_to_silver_main",
     "update_from_silver_main_to_silver_compact", "declare_silver_main_layout",
+    "compact_silver_main", "COMPACT_WEEKLY", "COMPACT_NEVER",
     "read_metadata", "get_metadata_maxdate", "update_metadata_maxdate",
     "write_silver", "file_format_on_disk", "SILVER_FORMATS", "history",
 ]

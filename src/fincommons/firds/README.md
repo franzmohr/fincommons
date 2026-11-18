@@ -46,9 +46,9 @@ from pyspark.sql import SparkSession
 from delta import configure_spark_with_delta_pip
 
 builder = SparkSession.builder \
-                    .master("local[10]") \
+                    .master("local[8]") \
                     .appName("fincommons") \
-                    .config("spark.driver.memory", "30g") \
+                    .config("spark.driver.memory", "32g") \
                     .config("spark.local.dir", "/data/spark-tmp") \
                     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
                     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
@@ -146,6 +146,35 @@ can be brought up to it:
 ```python
 firds.declare_silver_main_layout(spark, config_path)
 ```
+
+`compact` says how often the historical database is compacted while the dates
+are applied. The default, `'weekly'`, compacts on the delta file of each
+Friday, which is what the daily job has always done. The compaction clusters
+the files written since the last one, and it also rewrites the files in which
+the rows the merges marked deleted have accumulated -- most of the table -- so
+its cost follows the size of the history rather than the number of dates since
+the last one. A daily run pays that once a week. A backfill applies the dates
+of months or years in one run, and the weekly cadence then rewrites a growing
+history once per week of the period being built, some forty times over a year,
+for a clustering the end of the run would have given it once.
+
+A backfill therefore names a cadence of its own: a whole number of applied
+dates, or `'never'`. What it must not do is end uncompacted, because the rows
+the merges mark deleted stay in the files they were written to until something
+rewrites them, and every later merge reads those files to find the versions in
+force:
+
+```python
+# A backfill of several hundred delta files, compacted every forty dates and
+# once more at the end.
+firds.update_from_bronze_to_silver_main(spark, config_path, compact = 40)
+firds.compact_silver_main(spark, config_path)
+```
+
+Which figure is right is a property of the machine and of the period, so it is
+asked for rather than guessed. `compact = 'never'` with the one compaction at
+the end is the fastest run and the one that leaves the merges reading the most
+deleted rows; the daily cadence is the other end of that trade.
 
 A run stops rather than building a history around a gap: at a day whose delta
 file is not fully imported, at a record that does not say which instrument it

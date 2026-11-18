@@ -1996,3 +1996,146 @@ def test_a_partition_without_a_file_is_reported_as_such(spark, config):
 
     with pytest.raises(RuntimeError, match="holds no file"):
         read_partition(spark, config, date(2016, 9, 4))
+
+
+# How often the history is compacted
+# --------------------------------------------------------------------------
+
+
+def compaction_log(monkeypatch):
+    """Record the compactions a run makes instead of making them.
+
+    What these tests are about is when the compaction is run, and an OPTIMIZE
+    of a history of a few rows says nothing about that while being the slowest
+    thing in them. The watermark is written before the compaction is reached,
+    so recording it names the date the run had just applied.
+    """
+    compacted = []
+
+    def record(spark, config_path):
+        compacted.append(common.get_metadata_maxdate(spark, config_path, "MAIN"))
+
+    monkeypatch.setattr(silver, "compact_silver_main", record)
+    return compacted
+
+
+#: Days of a fortnight whose delta files each change one instrument. The
+#: history starts on Friday 2 September 2016, so the Fridays among them are the
+#: 9th and the 16th.
+FORTNIGHT = [date(2016, 9, day) for day in range(5, 19)]
+
+
+def changes_over(spark, config, days):
+    """A history and one delta file per day of ``days``."""
+    full = full_file(spark, [("ISIN1", "MIC1", "Company X", date(2016, 9, 2))])
+    path = start_history(spark, config, full)
+    files = [
+        (day, [("ISIN1", "MIC1", f"Name {day.day}", day, "ModfdRcrd")])
+        for day in days
+    ]
+    write_bronze(spark, config, files)
+    finished(config, *[f"DLTINS_{day:%Y%m%d}_01of01.zip" for day in days])
+    return path, files
+
+
+def test_the_default_compacts_on_the_delta_file_of_each_friday(
+    monkeypatch, spark, config
+):
+    """What the daily job has always done, and what a run that names no
+    cadence still gets."""
+    compacted = compaction_log(monkeypatch)
+    changes_over(spark, config, FORTNIGHT)
+
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    assert compacted == ["2016-09-09", "2016-09-16"]
+
+
+def test_a_backfill_can_ask_for_no_compaction_at_all(monkeypatch, spark, config):
+    """The cadence of the daily job rewrites a growing history once per week of
+    the period being built, which is what a backfill is asking to be spared."""
+    compacted = compaction_log(monkeypatch)
+    changes_over(spark, config, FORTNIGHT)
+
+    silver.update_from_bronze_to_silver_main(
+        spark, config, compact=silver.COMPACT_NEVER
+    )
+
+    assert compacted == []
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2016-09-18"
+
+
+def test_a_cadence_counts_the_dates_the_run_applied(monkeypatch, spark, config):
+    compacted = compaction_log(monkeypatch)
+    changes_over(spark, config, FORTNIGHT)
+
+    silver.update_from_bronze_to_silver_main(spark, config, compact=5)
+
+    assert compacted == ["2016-09-09", "2016-09-14"]
+
+
+def test_a_date_that_held_no_records_does_not_count_towards_the_cadence(
+    monkeypatch, spark, config
+):
+    """Such a date writes nothing, so there is nothing it could leave to
+    compact; counting it would compact over an unchanged history."""
+    compacted = compaction_log(monkeypatch)
+    changes_over(spark, config, [date(2016, 9, 6), date(2016, 9, 7)])
+    os.makedirs(os.path.join(common.path_bronze_auth_036_001_03(config),
+                             silver.PARTITION_PREFIX + "2016-09-05"))
+    finished(config, "DLTINS_20160905_01of01.zip")
+
+    silver.update_from_bronze_to_silver_main(spark, config, compact=2)
+
+    assert compacted == ["2016-09-07"]
+
+
+@pytest.mark.parametrize(
+    "cadence", [True, False, 0, -1, 2.5, None, "sometimes"]
+)
+def test_a_cadence_that_names_nothing_is_refused(monkeypatch, spark, config,
+                                                 cadence):
+    """``True`` is among them although it is an int: it reads as "yes,
+    compact" and would mean compacting after every single date."""
+    compacted = compaction_log(monkeypatch)
+    changes_over(spark, config, [date(2016, 9, 6)])
+
+    with pytest.raises(ValueError, match="compact is"):
+        silver.update_from_bronze_to_silver_main(spark, config, compact=cadence)
+
+    # Refused before anything was applied, rather than after some of it.
+    assert compacted == []
+    assert common.get_metadata_maxdate(spark, config, "MAIN") == "2000-01-01"
+
+
+def test_the_cadence_does_not_change_the_history_that_is_built(spark, config):
+    """The argument says when the files are rewritten and nothing about what
+    is in them."""
+    days = [date(2016, 9, 8), date(2016, 9, 9), date(2016, 9, 12)]
+    path, files = changes_over(spark, config, days)
+
+    silver.update_from_bronze_to_silver_main(
+        spark, config, compact=silver.COMPACT_NEVER
+    )
+
+    full = full_file(spark, [("ISIN1", "MIC1", "Company X", date(2016, 9, 2))])
+    assert versions(spark.read.format("delta").load(path)) == versions(
+        through_reference(spark, full, files)
+    )
+
+
+def test_the_compaction_leaves_the_history_as_it_found_it(spark, config):
+    """The one test that runs a real OPTIMIZE: it is what a backfill calls
+    when its run is done, and it must be safe to call at any time."""
+    path, _ = changes_over(spark, config, [date(2016, 9, 6), date(2016, 9, 7)])
+    silver.update_from_bronze_to_silver_main(
+        spark, config, compact=silver.COMPACT_NEVER
+    )
+    before = versions(spark.read.format("delta").load(path))
+
+    silver.compact_silver_main(spark, config)
+
+    assert versions(spark.read.format("delta").load(path)) == before
+    # And again on a history that has just been compacted.
+    silver.compact_silver_main(spark, config)
+    assert versions(spark.read.format("delta").load(path)) == before

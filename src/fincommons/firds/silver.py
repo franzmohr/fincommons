@@ -47,6 +47,21 @@ USER_METADATA_CONF = "spark.databricks.delta.commitInfo.userMetadata"
 #: The operations after which the history of the table starts afresh.
 REWRITING_OPERATIONS = ("CREATE TABLE", "REPLACE TABLE", "CREATE OR REPLACE TABLE")
 
+#: Compact on the delta file of each Friday, which is what the daily job has
+#: always done and what a run that asks for nothing gets. The cadence is a
+#: week because the cost of a compaction follows the size of the history and
+#: not the number of files it has to bin; see :func:`compact_silver_main`.
+COMPACT_WEEKLY = "weekly"
+
+#: Do not compact while the dates are applied. This is what a backfill asks
+#: for, and it leaves the caller to compact once at the end with
+#: :func:`compact_silver_main`.
+COMPACT_NEVER = "never"
+
+#: The weekday :data:`COMPACT_WEEKLY` compacts on, as :meth:`date.weekday`
+#: numbers them.
+COMPACTION_WEEKDAY = 4
+
 
 def parse_reference_date(datadt):
     """Return the reference date spelled by ``datadt`` as a date."""
@@ -393,7 +408,8 @@ def _partition_holds_records(config_path, datadt):
     )
 
 
-def update_from_bronze_to_silver_main(spark, config_path):
+def update_from_bronze_to_silver_main(spark, config_path,
+                                      compact=COMPACT_WEEKLY):
     """Update the historical FIRDS database from the Bronze layer.
 
     The function initialises the database from the full file if it does not
@@ -428,7 +444,42 @@ def update_from_bronze_to_silver_main(spark, config_path):
     config_path: str
         Path to the configuration file, where paths are specified. This must be
         a yaml-file.
+    compact: str or int, optional
+        How often the historical database is compacted while the dates are
+        applied.
+
+        :data:`COMPACT_WEEKLY`, the default, compacts on the delta file of
+        each Friday, which is what the daily job has always done and what a
+        run that names nothing gets. A whole number *n* compacts after every
+        *n* dates the run applied records for. :data:`COMPACT_NEVER` does not
+        compact at all and leaves it to the caller.
+
+        The argument exists because the cost of a compaction follows the size
+        of the history rather than the number of dates since the last one; see
+        :func:`compact_silver_main`. A daily run applies one date and pays
+        that cost once a week, which is the trade deletion vectors are there
+        to make. A backfill applies the dates of months or years in one run,
+        and the weekly cadence then rewrites a growing history once per week
+        of the period being built -- some forty times over a year -- for a
+        clustering that the end of the run would have given it once.
+
+        A backfill is therefore the case for naming something here, and what
+        it wants is a cadence loose enough that the rewrites are few and tight
+        enough that the merges are not left reading a history whose deleted
+        rows have been accumulating for months. Which is the right figure is a
+        property of the machine and of the period, not something this function
+        can know, so it is asked for rather than guessed; what the run must
+        not do is end uncompacted, so a run that names
+        :data:`COMPACT_NEVER` or a cadence its last date did not fall on is
+        expected to call :func:`compact_silver_main` when it is done.
+
+    Raises
+    ------
+    ValueError
+        If ``compact`` names neither of the two cadences nor a whole number of
+        dates of at least one.
     """
+    compact = _checked_compaction(compact)
     with pipeline_run(
         logger,
         "update_from_bronze_to_silver_main",
@@ -436,11 +487,13 @@ def update_from_bronze_to_silver_main(spark, config_path):
         layer="silver",
         table="MAIN",
         config_path=config_path,
+        compact=compact,
     ) as outcome:
-        _update_from_bronze_to_silver_main(spark, config_path, outcome)
+        _update_from_bronze_to_silver_main(spark, config_path, outcome, compact)
 
 
-def _update_from_bronze_to_silver_main(spark, config_path, outcome):
+def _update_from_bronze_to_silver_main(spark, config_path, outcome,
+                                       compact=COMPACT_WEEKLY):
     """Do the work of :func:`update_from_bronze_to_silver_main`."""
 
     state = read_landing_state(config_path)
@@ -566,6 +619,7 @@ def _update_from_bronze_to_silver_main(spark, config_path, outcome):
     in_bronze = set(dltins_reference_dates(config_path))
     outcome["periods"] = 0
     outcome["empty"] = 0
+    outcome["compactions"] = 0
 
     for d in periods:
         datadt = format_reference_date(d)
@@ -620,28 +674,19 @@ def _update_from_bronze_to_silver_main(spark, config_path, outcome):
             spark=spark, bronze=bronze, config_path=config_path, datadt=datadt
         )
 
-        # Cluster the files written since the last run (every Friday, i.e.
-        # weekday == 4). On a clustered table this is incremental: it takes
-        # the files that have arrived since the previous OPTIMIZE and leaves
-        # the ones it has already clustered alone, so the cost follows the
-        # week rather than the size of the history.
-        #
-        # The files are sized to OPTIMIZE_FILE_SIZE rather than to Delta's
-        # gigabyte; see compaction_file_size.
-        if d.weekday() == 4:
+        outcome["periods"] += 1
 
-            logger.debug(
-                "Compacting the historical database",
-                extra=context(
-                    module="firds", layer="silver", table="MAIN", datadt=datadt
-                ),
-            )
-            dt = common.delta_table(spark, common.ref_silver_main(config_path))
-            with compaction_file_size(spark):
-                dt.optimize().executeCompaction()
+        # Cluster the files written since the last compaction, at the cadence
+        # the caller asked for. Only half of what this does is incremental,
+        # and the other half rewrites most of the history, which is why the
+        # cadence is an argument and why a backfill has one to choose; see
+        # compact_silver_main and the compact argument of
+        # update_from_bronze_to_silver_main.
+        if _compaction_is_due(compact, d, outcome["periods"]):
+            compact_silver_main(spark, config_path)
+            outcome["compactions"] += 1
 
         outcome["datadt"] = datadt
-        outcome["periods"] += 1
         # The landing zone cannot read the watermark of the historical
         # database and needs to know how far it stands, so that it can tell a
         # file for a day still to come from one for a day left behind.
@@ -786,6 +831,89 @@ def compaction_file_size(spark, size=OPTIMIZE_FILE_SIZE):
                 spark.conf.unset(key)
             else:
                 spark.conf.set(key, value)
+
+
+def compact_silver_main(spark, config_path):
+    """Cluster and compact the files of the historical database.
+
+    Two things at once, and only one of them is incremental. The clustering
+    takes the files that have arrived since the previous compaction and leaves
+    the ones it has already clustered alone. The rewriting does not: the table
+    carries deletion vectors, so the compaction also rewrites the files in
+    which the rows the merges marked deleted have accumulated, and a delta
+    file touches instruments all over the table, so that is most of it.
+    Measured on a history of 17 million versions it took 87 seconds and
+    rewrote all 17 million rows.
+
+    The cost therefore follows the size of the history and not the number of
+    dates applied since the last compaction, which is what makes the cadence
+    worth choosing rather than fixing: a run that applies one date pays it
+    once a week, and a backfill that applies three hundred would pay it some
+    forty times over a history that is growing the whole while. See the
+    ``compact`` argument of :func:`update_from_bronze_to_silver_main`.
+
+    Leaving it undone has a cost of its own, which is why a backfill wants a
+    compaction at the end rather than none at all. The rows the merges mark
+    deleted stay in the files they were written to until something rewrites
+    them, and every later merge reads those files to find the versions in
+    force. A history left uncompacted is read with its deleted rows still in
+    it, and the files a day appends are never binned into the 128 megabytes
+    :data:`OPTIMIZE_FILE_SIZE` names.
+
+    The files are sized to :data:`OPTIMIZE_FILE_SIZE` rather than to Delta's
+    gigabyte; see :func:`compaction_file_size`.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be
+        a yaml-file.
+    """
+    logger.info(
+        "Compacting the historical database",
+        extra=context(module="firds", layer="silver", table="MAIN"),
+    )
+    table = common.delta_table(spark, common.ref_silver_main(config_path))
+    with compaction_file_size(spark):
+        table.optimize().executeCompaction()
+
+
+def _compaction_is_due(compact, day, applied):
+    """Whether the date just applied is one the run compacts after.
+
+    ``applied`` counts the dates this run has applied records for, the one
+    just applied included, so that a cadence given as a number counts the
+    dates that wrote something rather than the days of the calendar. A date
+    whose delta file held no records writes nothing and leaves nothing to
+    compact.
+    """
+    if compact == COMPACT_NEVER:
+        return False
+    if compact == COMPACT_WEEKLY:
+        return day.weekday() == COMPACTION_WEEKDAY
+    return applied % compact == 0
+
+
+def _checked_compaction(compact):
+    """Return ``compact`` where it names a cadence, and raise where it does not.
+
+    ``True`` is refused although it is an :class:`int`, because it reads as
+    "yes, compact" and would mean compacting after every single date, which is
+    the most expensive cadence there is and the opposite of what the caller
+    that wrote it meant.
+    """
+    if compact in (COMPACT_WEEKLY, COMPACT_NEVER):
+        return compact
+    if isinstance(compact, bool) or not isinstance(compact, int) or compact < 1:
+        raise ValueError(
+            f"compact is {compact!r}; it names the cadence the historical "
+            f"database is compacted at, which is {COMPACT_WEEKLY!r} for the "
+            f"delta file of each Friday, {COMPACT_NEVER!r} for not at all "
+            "while the dates are applied, or a whole number of applied dates."
+        )
+    return compact
 
 
 def migrate_silver_main_to_decimal(spark, config_path):
@@ -1959,6 +2087,9 @@ translate_xml_to_analytics_schema_036_001_03 = translate_xml_to_analytics_schema
 __all__ = [
     "ANALYTICS_COLUMNS",
     "COMMIT_TAG_PREFIX",
+    "COMPACTION_WEEKDAY",
+    "COMPACT_NEVER",
+    "COMPACT_WEEKLY",
     "DECIMAL_COLUMNS",
     "OPTIMIZE_FILE_SIZE",
     "OPTIMIZE_SIZE_CONFS",
@@ -1973,6 +2104,7 @@ __all__ = [
     "check_publication_period",
     "commit_tag",
     "committed_steps",
+    "compact_silver_main",
     "declare_silver_main_layout",
     "dltins_partitions",
     "dltins_reference_dates",
