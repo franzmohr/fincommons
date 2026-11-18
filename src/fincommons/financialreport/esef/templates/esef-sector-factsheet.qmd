@@ -39,7 +39,15 @@ knitr:
     fig-width: 6.8
     fig-height: 2.5
 execute:
-  error: true
+  # A chunk that fails stops the render. This is Quarto's default and is
+  # named here because the opposite was set once: under `error: true` a
+  # report whose chunks had all failed still rendered and still exited 0 --
+  # the coverage report over a lake it could not read produced a PDF whose
+  # pages were `object 'period_end' not found` -- and a scheduler only sees
+  # the exit code. Inline `r` does not honour the setting either way, so
+  # under `error: true` the render died at the first inline reference to a
+  # variable the failed chunk never created, three sections past the fault.
+  error: false
 ---
 
 ```{r setup}
@@ -155,6 +163,12 @@ for (optional in c("NACE", "COUNTRY", "ACTIVITY_EN", "ACTIVITY_DE", "CIK",
   if (!optional %in% names(panel)) panel[[optional]] <- NA_character_
 }
 
+# A panel keeps the upper-case names it has always had -- `LEI`, `CIK`,
+# `SHORT`, `GROUP`, `NACE`, `COUNTRY` -- because it is a file kept by hand
+# and those are the names in it, while the Silver columns it is joined to
+# carry theirs. Every join between the two therefore names both sides,
+# `by = c("lei" = "LEI")`, rather than assuming one spelling reaches across.
+#
 # The key a panel row is matched on, in the shape the combined table keys a
 # filing: the identifier its regime uses, with the other side empty.
 # A csv writes an absent identifier as an empty field, which reads back as
@@ -934,7 +948,7 @@ flow_keys <- c("revenue", "ebit", "profit_before_tax", "income_tax", "profit",
 # indicator that would rest on EBITDA is shown against EBIT or against the
 # operating cash flow instead.
 wide <- wide %>%
-  left_join(panel, by = "lei") %>%
+  left_join(panel, by = c("lei" = "LEI")) %>%
   group_by(lei) %>%
   arrange(fy, .by_group = TRUE) %>%
   mutate(
@@ -1010,9 +1024,10 @@ latest <- shown %>% filter(fy == latest_year)
 # with the Commission has no LEI and never had an ESEF year to stop filing,
 # and listing it here would read as a filer that went quiet.
 absent_latest <- panel %>%
-  filter(!is.na(lei), lei %in% wide$lei, !lei %in% latest$lei) %>%
+  filter(!is.na(LEI), LEI %in% wide$lei, !LEI %in% latest$lei) %>%
   left_join(wide %>% group_by(lei) %>%
-              summarise(last_year = max(fy), .groups = "drop"), by = "lei") %>%
+              summarise(last_year = max(fy), .groups = "drop"),
+            by = c("LEI" = "lei")) %>%
   arrange(desc(last_year), SHORT)
 
 # --------------------------------------------------------------------------
@@ -1194,8 +1209,8 @@ bench_ratio_labels <- c(
 # the same figure across frameworks. Putting an EBIT column beside a
 # US-GAAP row would promise a comparison the catalogue refuses to make.
 panel_regimes <- panel %>%
-  mutate(REGIME = ifelse(is.na(lei), "SEC", "ESEF")) %>%
-  select(KEY, SHORT, GROUP, country, REGIME)
+  mutate(REGIME = ifelse(is.na(LEI), "SEC", "ESEF")) %>%
+  select(KEY, SHORT, GROUP, COUNTRY, REGIME)
 
 cross_regime <- NULL
 if (has_combined && !is.null(bench_values)) {
@@ -1480,7 +1495,7 @@ if (!needs_fx) {
 }
 if (nrow(unconverted) > 0) {
   missing <- unconverted %>%
-    left_join(panel %>% select(lei, SHORT), by = "lei") %>%
+    left_join(panel %>% select(LEI, SHORT), by = c("lei" = "LEI")) %>%
     mutate(txt = paste0(SHORT, " ", fy, " (", CCY, ")"))
   cat("\n\n", tr(
     paste0("The rate table does not quote ", nrow(unconverted),
@@ -1536,7 +1551,7 @@ temp <- panel %>%
                         first_year = fy_label(min(period_end)),
                         last_year = fy_label(max(period_end)),
                         filings = n(), .groups = "drop"),
-            by = "lei") %>%
+            by = c("LEI" = "lei")) %>%
   mutate(GROUP = factor(GROUP, levels = group_levels)) %>%
   arrange(GROUP, SHORT) %>%
   transmute(
@@ -1547,7 +1562,7 @@ temp <- panel %>%
     !!tr("Issuer", "Emittent") := coalesce(name, PANEL_NAME, SHORT),
     !!tr("Group", "Gruppe") := group_label(as.character(GROUP)),
     !!tr("NACE", "NACE") := NACE,
-    !!tr("Country", "Land") := country,
+    !!tr("Country", "Land") := COUNTRY,
     !!tr("What it does", "Tätigkeit") :=
       if (report_lang == "de") ACTIVITY_DE else ACTIVITY_EN,
     # `filings` is the ESEF table, so an issuer that files with the

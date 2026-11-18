@@ -4,6 +4,85 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
+## Unreleased
+
+### Changed
+
+- The run table of the coverage report and of the two quality reports no
+  longer names the Silver layer it read. The value is a path on the machine
+  that rendered the report, which tells a reader nothing and travels with the
+  PDF wherever it is sent; what the table is for is saying what was read, and
+  the countries, the years and the counts say that. No report carries a local
+  address now.
+
+### Fixed
+
+- `esef`: the analyst factsheet's `lines_dropped` answers to both of the
+  arguments that ask for a line to be left out. It took only `core_only` and
+  dropped the untagged lines whatever the caller asked, so
+  `drop_empty = FALSE` with `core_only = TRUE` would have removed them and
+  named them in the note. Every caller asks for both, so no rendered page
+  was wrong.
+- `esef`: a heading of the analyst factsheet that heads no lines is left out,
+  which is what it was always meant to do. `seq.int(h + 1L, last)` counts
+  down where the heading is the last row of a statement or is followed
+  straight by another, so the block of lines under it came back with two
+  rows instead of none and the heading survived. No statement the template
+  ships has a heading in either place.
+- `esef`: every count of a report read in the coverage report, and every
+  rate taken over the reports read, is over the filings the lake holds facts
+  for. It read the `json_url` of the index instead, which says the
+  repository publishes facts for a filing and not that the pipeline has
+  collected them; since `per_filing` joins the facts to that population and
+  only the filings with facts survive the join, the numerators and the
+  denominators were different populations. A lake of one country read as
+  though the whole repository had been read: 16,764 reports read and 0.3 per
+  cent listed without facts, where the facts came from 315 reports and 97.9
+  per cent of what is listed was never collected. A lake holding every
+  country the repository lists is unaffected, which is why nothing caught it.
+- The categorical colour scales ask the palette for as many colours as the
+  chart has groups. `scale_colour_corporate_design` and its fill counterpart
+  handed `scale_*_manual` the ten colours of the palette, and a manual scale
+  given ten values for an eleventh group is an error, so a chart of more
+  groups than that halted the render: the coverage report colours a line per
+  country and the repository lists twenty-seven.
+  `palette_corporate_design` already ramps through the ten for any caller
+  that passes `n`, and the scales now do.
+- `esef`: the coverage report leaves the FIRDS comparison out where the
+  `firds` module has a Silver layer that was never built, as it says it
+  does. It tested the directory and `create_directory_tree` makes the
+  directory of every table whether a run has filled it or not, so an empty
+  one passed the test and `open_dataset` then had no columns to select.
+- `esef`: the sector factsheet renders its panel again. Six references
+  reached for a panel column by the lower-case name the rename of 0.5.0 gave
+  it -- `lei` in four joins, `lei` and `country` in two more -- while the
+  panel kept the upper-case names 0.5.1 restored to it. The first of them
+  emptied every figure on the page; the last was never reached. A join
+  between a panel and a Silver table now names both sides.
+- `esef`: the analyst factsheet renders for an issuer whose extension members
+  were renamed. The equity-by-component table takes the member of the
+  components-of-equity axis for the identity of a component, and an issuer
+  renames its extension members from one year to the next as it renames its
+  extension concepts: PORR tags its other reserves and its hybrid capital
+  under `porr:` to 2023 and under `PORR:` from 2024. One component then
+  became two rows and `factor` was handed the same level twice, which halted
+  the render. The label is the identity instead, so the prefix may change
+  without splitting a component; where two members of one year do share a
+  label the table shows both figures rather than choosing one in silence.
+- `esef`: the columns of that same table are the financial years in order.
+  `pivot_wider` names its columns in the order the rows reach it, which is
+  the order the facts were read, so the years came out shuffled --
+  2020, 2021, 2025, 2022, 2024, 2023 for PORR.
+- A Quarto template whose chunk fails now fails the render. Every template of
+  `financialreport` set `execute: error: true` in its header, which turns a
+  failure into a clean exit: the coverage report over a lake written before
+  the rename of 0.5.0 rendered a PDF whose pages were
+  `object 'period_end' not found` and exited 0, and a scheduler only sees the
+  exit code. The templates name `error: false` -- Quarto's default -- with the
+  reason beside it, so the render now stops at the chunk that is at fault.
+  Inline `r` never honoured the setting, so under `error: true` a broken chunk
+  surfaced three sections downstream as a missing variable instead.
+
 ## 0.5.1
 
 What 0.5.0 left behind in the files the test suite does not run: a template,

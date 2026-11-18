@@ -39,7 +39,15 @@ knitr:
     fig-width: 6.8
     fig-height: 2.5
 execute:
-  error: true
+  # A chunk that fails stops the render. This is Quarto's default and is
+  # named here because the opposite was set once: under `error: true` a
+  # report whose chunks had all failed still rendered and still exited 0 --
+  # the coverage report over a lake it could not read produced a PDF whose
+  # pages were `object 'period_end' not found` -- and a scheduler only sees
+  # the exit code. Inline `r` does not honour the setting either way, so
+  # under `error: true` the render died at the first inline reference to a
+  # variable the failed chunk never created, three sections past the fault.
+  error: false
 ---
 
 ```{r setup}
@@ -755,7 +763,14 @@ format_line <- function(values, unit, digits) {
 # its goodwill is one this page cannot see, and a reader who is reconciling
 # the page against the report in front of them needs to know which lines
 # were looked for.
-lines_dropped <- function(spec, data, core_only) {
+# Each of the two reasons for leaving a line out answers to its own
+# argument, so that a caller may ask for one without the other: `core_only`
+# drops a line the issuer tagged under a concept of its own, `drop_empty` a
+# line the report states nowhere in the window. Both are passed rather than
+# only `core_only`, which dropped the untagged lines whatever the caller
+# asked -- harmless while every caller asks for both, and wrong the moment
+# one does not.
+lines_dropped <- function(spec, data, drop_empty, core_only) {
   label <- if (report_lang == "de") spec$de else spec$en
   keep <- rep(TRUE, nrow(spec))
   reason <- rep(NA_character_, nrow(spec))
@@ -765,19 +780,24 @@ lines_dropped <- function(spec, data, core_only) {
     if (core_only && is_extension(key)) {
       keep[j] <- FALSE
       reason[j] <- "extension"
-    } else if (!key %in% names(data) || all(is.na(data[[key]]))) {
+    } else if (drop_empty &&
+               (!key %in% names(data) || all(is.na(data[[key]])))) {
       keep[j] <- FALSE
       reason[j] <- "untagged"
     }
   }
   # A heading stands for the lines under it, which run to the next heading.
-  # With none of them left it has nothing to head.
+  # With none of them left it has nothing to head. A heading that is the last
+  # row of a spec, or that is followed straight by another, heads no lines at
+  # all: `seq.int(h + 1L, last)` counts *down* where `last` is below the
+  # first, which is a block of two rows rather than the empty one the test
+  # below reads it as.
   heads <- which(spec$style == "head")
   for (h in heads) {
     next_head <- heads[heads > h]
     last <- if (length(next_head)) min(next_head) - 1L else nrow(spec)
-    block <- seq.int(h + 1L, last)
-    if (length(block) && !any(keep[block])) keep[h] <- FALSE
+    block <- if (last > h) seq.int(h + 1L, last) else integer(0)
+    if (length(block) == 0 || !any(keep[block])) keep[h] <- FALSE
   }
   list(keep = keep,
        untagged = label[!is.na(reason) & reason == "untagged"],
@@ -794,7 +814,7 @@ render_lines <- function(spec, data = wide, unit_header = NULL,
   # a different table every year, and the dash is the point there.
   omitted <- list(untagged = character(0), extension = character(0))
   if (drop_empty || core_only) {
-    verdict <- lines_dropped(spec, data, core_only)
+    verdict <- lines_dropped(spec, data, drop_empty, core_only)
     omitted <- verdict[c("untagged", "extension")]
     spec <- spec[verdict$keep, , drop = FALSE]
   }
@@ -1890,7 +1910,7 @@ members <- facts %>%
   mutate(member = sub("^[^=]+=", "", dimensions),
          label = gsub("([a-z])([A-Z])", "\\1 \\2",
                       sub("Member$", "", sub("^[^:]+:", "", member)))) %>%
-  distinct(period_end, member, label, value)
+  distinct(period_end, label, value)
 
 if (nrow(members) == 0) {
   cat(tr(paste("The statement of changes in equity of this issuer tags no",
@@ -1901,18 +1921,36 @@ if (nrow(members) == 0) {
                "Eigenkapitalbestandteile aus, sodass das Eigenkapital hier",
                "nicht aufgeteilt werden kann.")))
 } else {
+  # The label is the identity of a component here, not the member it was
+  # read from. An issuer's extension members change their names from one
+  # year to the next as its extension concepts do: PORR tags its other
+  # reserves and its hybrid capital under `porr:` up to 2023 and under
+  # `PORR:` from 2024, a change of case and nothing else. Grouped by the
+  # member, one component becomes two rows with holes in them and `factor`
+  # is handed the same level twice, which halts the render rather than
+  # merely misprinting a table.
   order_of <- members %>%
-    group_by(member, label) %>%
+    group_by(label) %>%
     summarise(size = max(abs(value)), .groups = "drop") %>%
     arrange(desc(size))
+  # The years are a factor of the years the page shows, in that order, and
+  # the pivot below is told to sort its names: `pivot_wider` otherwise lays
+  # the columns out in the order the rows arrive in, which is the order the
+  # facts were read and is not chronological. A year outside the window
+  # falls outside the levels and is dropped with the NA it becomes.
   temp <- members %>%
-    mutate(year = fy_label(period_end),
+    mutate(year = factor(fy_label(period_end), levels = years),
            label = factor(label, levels = order_of$label)) %>%
-    filter(year %in% years) %>%
+    filter(!is.na(year)) %>%
     select("year", "label", "value") %>%
     mutate(value = fmt(value / scale)) %>%
+    # Two members of one year can still share a label, where an issuer
+    # extends a concept whose name the taxonomy already uses. The page
+    # cannot tell those apart, so it shows both figures rather than
+    # choosing one in silence.
     pivot_wider(names_from = "year", values_from = "value",
-                values_fill = "–") %>%
+                values_fill = "–", names_sort = TRUE,
+                values_fn = function(x) paste(unique(x), collapse = " / ")) %>%
     arrange(label) %>%
     rename(item = "label")
   knitr::kable(temp, col.names = c(amount_label, names(temp)[-1]),

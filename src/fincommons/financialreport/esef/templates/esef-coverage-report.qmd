@@ -39,7 +39,15 @@ knitr:
     fig-width: 6.8
     fig-height: 2.5
 execute:
-  error: true
+  # A chunk that fails stops the render. This is Quarto's default and is
+  # named here because the opposite was set once: under `error: true` a
+  # report whose chunks had all failed still rendered and still exited 0 --
+  # the coverage report over a lake it could not read produced a PDF whose
+  # pages were `object 'period_end' not found` -- and a scheduler only sees
+  # the exit code. Inline `r` does not honour the setting either way, so
+  # under `error: true` the render died at the first inline reference to a
+  # variable the failed chunk never created, three sections past the fault.
+  error: false
 ---
 
 ```{r setup}
@@ -318,11 +326,26 @@ if (is.null(report_years)) {
   }
 }
 
+# Which filings this lake holds facts for, which is what every count of a
+# report read and every rate over the reports read is taken over. The
+# `json_url` of the index is a different thing: it says the repository
+# publishes facts for a filing, not that the pipeline has collected them,
+# and the pipeline collects the reports of the countries it is given. Read
+# as the one for the other, a lake of one country reported as though the
+# whole repository had been read -- 16,764 reports read against the 594 the
+# facts came from -- because `per_filing` joins the facts to this population
+# and only the filings with facts survive that join. One query of the same
+# kind as the four below: a row per filing, not a row per fact.
+filings_with_facts <- open_dataset(file.path(path_silver, "facts")) %>%
+  select("filing") %>%
+  distinct() %>%
+  collect()
+
 filings_all <- filings_all %>%
   mutate(fy = as.integer(format(period_end, "%Y"))) %>%
   filter(fy %in% report_years) %>%
   mutate(year = fy_label(period_end),
-         has_facts = !is.na(json_url),
+         has_facts = filing %in% filings_with_facts$filing,
          lag_days = as.numeric(as.Date(published) - period_end),
          deadline = add_months(period_end, deadline_months),
          late = as.Date(published) > deadline)
@@ -358,7 +381,8 @@ if (nrow(selected) == 0) {
 # back a result of the size of the market rather than of the size of the
 # lake. The table of facts is the largest table of the module -- a year of
 # the repository is a few thousand reports of a few thousand facts each --
-# and none of these collects it.
+# and none of these collects it, nor does the query above that asks which
+# filings it holds.
 facts_ds <- open_dataset(file.path(path_silver, "facts")) %>%
   filter(filing %in% selected$filing)
 
@@ -1053,7 +1077,16 @@ if (is.list(firds_silver)) firds_silver <- firds_silver[["path"]]
 firds_compact <- if (is.null(firds_silver)) NULL else
   file.path(firds_silver, "compact")
 
-if (is.null(firds_compact) || !dir.exists(firds_compact)) {
+# An empty directory is no table. `create_directory_tree` makes the
+# directory of every table of a module whether a run has filled it or not,
+# so a lake whose firds module has been set up and never built holds the
+# directory and nothing else. `open_dataset` on it has no columns to select,
+# which halted the chunk where the comparison was meant to be left out.
+firds_built <- !is.null(firds_compact) && dir.exists(firds_compact) &&
+  length(list.files(firds_compact, pattern = "\\.parquet$",
+                    recursive = TRUE)) > 0
+
+if (!firds_built) {
   cat(tr(paste("The config file names no Silver layer of the `firds` module,",
                "or it holds no compact table, so this comparison is left",
                "out. Build it with `firds.update_from_silver_main_to_silver_compact`",
@@ -1615,9 +1648,11 @@ cat(paste(limits, collapse = "\n\n"))
 ### `r tr("The run", "Der Lauf")`
 
 ```{r run}
+# The table says what was read, not where it was read from. A path on the
+# machine that rendered the report tells a reader nothing and travels with
+# the PDF to wherever it is sent, so no local address goes in a report.
 temp <- tibble(
-  item = c(tr("Silver layer", "Silver-Layer"),
-           tr("Countries", "Länder"),
+  item = c(tr("Countries", "Länder"),
            tr("Financial years", "Geschäftsjahre"),
            tr("Filings listed", "Gelistete Einreichungen"),
            tr("Of those, without facts", "Davon ohne Fakten"),
@@ -1630,8 +1665,7 @@ temp <- tibble(
            tr("Lines looked for", "Gesuchte Zeilen"),
            tr("Indicators tested", "Geprüfte Kennzahlen"),
            tr("Rendered on", "Erstellt am")),
-  value = c(path_silver,
-            paste(report_countries, collapse = ", "),
+  value = c(paste(report_countries, collapse = ", "),
             period_range,
             fmt(n_filings),
             fmt(sum(!filings_all$has_facts)),
