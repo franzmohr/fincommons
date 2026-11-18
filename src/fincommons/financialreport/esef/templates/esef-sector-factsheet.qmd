@@ -39,7 +39,15 @@ knitr:
     fig-width: 6.8
     fig-height: 2.5
 execute:
-  error: true
+  # A chunk that fails stops the render. This is Quarto's default and is
+  # named here because the opposite was set once: under `error: true` a
+  # report whose chunks had all failed still rendered and still exited 0 --
+  # the coverage report over a lake it could not read produced a PDF whose
+  # pages were `object 'period_end' not found` -- and a scheduler only sees
+  # the exit code. Inline `r` does not honour the setting either way, so
+  # under `error: true` the render died at the first inline reference to a
+  # variable the failed chunk never created, three sections past the fault.
+  error: false
 ---
 
 ```{r setup}

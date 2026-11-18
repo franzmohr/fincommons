@@ -4,6 +4,20 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
+## Unreleased
+
+### Fixed
+
+- A Quarto template whose chunk fails now fails the render. Every template of
+  `financialreport` set `execute: error: true` in its header, which turns a
+  failure into a clean exit: the coverage report over a lake written before
+  the rename of 0.5.0 rendered a PDF whose pages were
+  `object 'period_end' not found` and exited 0, and a scheduler only sees the
+  exit code. The templates name `error: false` -- Quarto's default -- with the
+  reason beside it, so the render now stops at the chunk that is at fault.
+  Inline `r` never honoured the setting, so under `error: true` a broken chunk
+  surfaced three sections downstream as a missing variable instead.
+
 ## 0.5.1
 
 What 0.5.0 left behind in the files the test suite does not run: a template,
