@@ -305,14 +305,19 @@ def read_filings(config_path, days=None):
     -------
     list of tuple
         One row per filing, in the order of
-        :data:`fincommons.financialreport.edinet.common.filings_schema`. A day
+        :data:`fincommons.financialreport.edinet.common.filings_schema`, from
+        the last listing of it the indexes hold. A day
         whose index cannot be read is skipped with a warning rather than
         failing the lot of them.
     """
     wanted = [d if isinstance(d, str) else d.isoformat() for d in days] \
         if days else collected_indexes(config_path)
-    rows = []
-    for day in wanted:
+    # The agency lists a filing again, on the day and in the order it was
+    # changed, whenever its details are edited: a form corrected, a parent
+    # added. The last listing read is its present account, days being read in
+    # order and a day's index being in the order of operations.
+    rows = {}
+    for day in sorted(wanted):
         document = read_json(path_bronze_index(config_path, day))
         if document is None:
             logger.warning(
@@ -321,8 +326,10 @@ def read_filings(config_path, days=None):
                               file=f"{day}.json"),
             )
             continue
-        rows.extend(filings_from_index(document, day))
-    return rows
+        for row in filings_from_index(document, day):
+            rows.pop(row[0], None)
+            rows[row[0]] = row
+    return list(rows.values())
 
 
 def collect_document(config_path, doc, key=None, kind="csv", force=False):

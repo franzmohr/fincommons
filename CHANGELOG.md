@@ -79,6 +79,29 @@ release may change the public API, which `tests/test_public_api.py` lists.
   for, not the latest year a filing is listed for. That was the year now
   being filed, over which a lake collected with `years` had read nothing,
   and the comparison on the cover printed dashes and a bare per cent sign.
+- `edinet`: the table of filings has one row per filing, as it says. The
+  agency lists a filing again, on the day of the edit, whenever its details
+  are edited -- S100Z1QI was filed as a large-holding report and corrected
+  the next day to a report of change -- and every listing was a row. The last
+  listing read is now the one kept. Each extra row had its archive read again
+  as well, so its facts were in the table of facts twice, and the combined
+  tables, which join the two on the document number, held them more often
+  still: 49 filings in thirty days of indexes.
+- `edinet`: the facts of the series of one fund no longer share an
+  identifier. A fund manager files one document per series under one form,
+  `jpsps040000-srs-001_G03898-001` and `..._G03898-002`, and the identifier
+  named the form alone, so the same element in the same context of two
+  series was one fact twice with two values; 232 filings in thirty days held
+  such pairs. The identifier now names the series where the document is not
+  the filing's main one, `-000`; a company's own report keeps the identifier
+  it had.
+- `edinet`: the quality checks run over a filing that states a date as not
+  applicable. The conversion writes `－` there, and Spark's ANSI mode stops on
+  it as a date where it was meant to be no date, so one such filing stopped
+  all twenty-six checks.
+- `financialreport`: a Japanese filing the accounting standard does not apply
+  to, a large-holding report or a fund's, has no framework. It was given the
+  conversion's mark for not applicable, `－`, as its framework.
 
 ## 0.5.2
 

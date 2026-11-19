@@ -301,6 +301,24 @@ def _form_of(member):
     return re.sub(r"-\d+_.*$", "", base) or None
 
 
+def _series_of(member):
+    """The series a member of the archive belongs to, where it is not the main one.
+
+    The name after the form is the code of the entity the document is about
+    and a series number: ``..._E03270-000_...`` for a company's own report.
+    A filing by a fund manager carries one document per series of a fund,
+    ``..._G03898-001_...`` and ``..._G03898-002_...``, under the same form,
+    and the series is then the only thing that tells their facts apart.
+    ``None`` for the main document, ``-000``, which is what every report a
+    company files is.
+    """
+    base = member.rsplit("/", 1)[-1]
+    found = re.match(r"^[^_]+_([^_]+-\d+)_", base)
+    if not found or found.group(1).endswith("-000"):
+        return None
+    return found.group(1)
+
+
 def facts_from_csv(text, filing, member=None, period_start=None,
                    period_end=None, filed=None, edinet_code=None,
                    filed_year=None):
@@ -343,6 +361,10 @@ def facts_from_csv(text, filing, member=None, period_start=None,
         )
 
     form = _form_of(member) if member else None
+    # The form names the document in the identifier, and the series with it
+    # where the filing holds one document of that form per series.
+    series = _series_of(member) if member else None
+    document = f"{form or ''}_{series}" if series else (form or '')
     year = filed_year if filed_year is not None else (filed.year if filed else None)
     # Read once for the dates the filing states about itself, then again for
     # the facts: a context is resolved against what the filing says rather
@@ -373,7 +395,7 @@ def facts_from_csv(text, filing, member=None, period_start=None,
             # The conversion gives a fact no identifier. This one is made of
             # what identifies it within the filing, plus an occurrence
             # number, the element and the context not being unique.
-            f"{filing}:{form or ''}:{concept}:{context}:{occurrence}",
+            f"{filing}:{document}:{concept}:{context}:{occurrence}",
             concept,
             label or None,
             context,

@@ -380,6 +380,15 @@ def test_the_japanese_framework_is_read_from_the_filing(spark, config):
             silver.combine(spark, config, "fact").collect()} == {"JP-GAAP"}
 
 
+def test_a_filing_no_standard_applies_to_has_no_framework(spark, config):
+    """A large-holding report states the conversion's mark for not applicable
+    where a company's report states its standard, and that is no framework.
+    """
+    write_edinet(spark, config, standard="－")
+    assert {row["framework"] for row in
+            silver.combine(spark, config, "filing").collect()} == {None}
+
+
 def test_a_japanese_group_reporting_under_ifrs_is_told_from_one_that_is_not(
         spark, config):
     """A filing is one document and takes the framework it states, even

@@ -205,6 +205,18 @@ DEI = {
 KEYS = ("edinet_code", "filed_year", "filing", "fact", "concept")
 
 
+def _stated_date(column):
+    """A date the filing states in its document and entity information.
+
+    The text is the conversion's, which writes ``－`` where a date does not
+    apply (see :data:`~fincommons.financialreport.edinet.parse.NOT_APPLICABLE`).
+    That is not a date, and it is not a fault either: it is null here, as any
+    other text that does not read as a date is, rather than an error that
+    stops every check.
+    """
+    return func.try_to_date(func.col(column))
+
+
 def _filing_level(frame):
     """A frame of filing-level issues: the keys, with no fact named."""
     return (frame
@@ -533,11 +545,11 @@ def check_period_shift_inexact(state):
     dei = state["dei"]
     lengths = (dei
                .withColumn("_current",
-                           func.datediff(func.to_date("current_end"),
-                                         func.to_date("current_start")))
+                           func.datediff(_stated_date("current_end"),
+                                         _stated_date("current_start")))
                .withColumn("_prior",
-                           func.datediff(func.to_date("prior_end"),
-                                         func.to_date("prior_start")))
+                           func.datediff(_stated_date("prior_end"),
+                                         _stated_date("prior_start")))
                .where(func.col("_current").isNotNull()
                       & func.col("_prior").isNotNull())
                .where(func.abs(func.col("_current") - func.col("_prior"))
@@ -589,7 +601,7 @@ def check_index_period_differs(state):
               .where(func.col("period_end").isNotNull())
               .select("edinet_code", "filed_year", "filing", "period_end"))
     stated = state["dei"].select(
-        "filing", func.to_date("current_end").alias("_stated"))
+        "filing", _stated_date("current_end").alias("_stated"))
     return _filing_level(
         annual.join(stated, "filing")
         .where(func.col("_stated").isNotNull())

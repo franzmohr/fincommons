@@ -273,6 +273,29 @@ def test_a_day_with_nothing_filed_reads_as_no_rows(config):
     assert bronze.filings_from_index({}, "2026-01-01") == []
 
 
+def test_a_filing_listed_again_is_one_row_as_last_listed(config):
+    """The agency lists a filing again whenever its details are edited, on
+    the day and in the order of the edit. S100Z1QI was filed as a
+    large-holding report and corrected the next day to a report of change."""
+    first = an_index(docID="S100Z1QI", formCode="010000")
+    later = an_index(docID="S100Z1QI", formCode="010002",
+                     docInfoEditStatus="1")
+    same_day = an_index(docID="S100Z1QI", formCode="010003",
+                        docInfoEditStatus="1")
+    later["results"] = later["results"] + same_day["results"]
+    common.write_json(common.path_bronze_index(config, "2026-10-20"), first)
+    common.write_json(common.path_bronze_index(config, "2026-10-21"), later)
+
+    rows = bronze.read_filings(config)
+    form = [field.name for field in common.filings_schema.fields].index("form")
+    indexed = [field.name for field in
+               common.filings_schema.fields].index("index_date")
+
+    assert len(rows) == 1
+    assert rows[0][form] == "010003"
+    assert rows[0][indexed] == datetime.date(2026, 10, 21)
+
+
 def test_an_index_that_cannot_be_read_is_skipped_rather_than_fatal(config):
     """One unreadable day must not cost the other three thousand."""
     common.write_json(common.path_bronze_index(config, "2026-01-05"),
