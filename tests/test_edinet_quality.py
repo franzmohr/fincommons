@@ -381,6 +381,24 @@ def test_a_leap_year_alone_is_not_reported(spark, lake):
     assert "PERIOD_SHIFT_INEXACT" not in codes(spark, config)
 
 
+def test_a_date_the_filing_states_as_not_applicable_is_no_date(spark, lake):
+    """The conversion writes a full-width dash where a date does not apply.
+
+    The period checks read it as no date, as they read any date the filing
+    does not state, instead of failing on it.
+    """
+    facts = [row for row in sound_facts()
+             if "PreviousFiscalYearStartDate" not in row[4]
+             and "CurrentFiscalYearEndDate" not in row[4]]
+    facts.append(dei_fact("jpdei_cor:PreviousFiscalYearStartDateDEI", "－"))
+    facts.append(dei_fact("jpdei_cor:CurrentFiscalYearEndDateDEI", "－"))
+    config = lake(facts, [filing_row()])
+
+    found = codes(spark, config)
+    assert "PERIOD_SHIFT_INEXACT" not in found
+    assert "INDEX_PERIOD_DIFFERS" not in found
+
+
 def test_a_fact_with_no_period_at_all_is_reported(spark, lake):
     """The module refuses to invent dates for a context it does not
     recognise, so the fact can be read and compared with nothing."""
