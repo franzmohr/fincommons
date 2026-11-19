@@ -206,9 +206,15 @@ def _stated_framework(facts):
 
     Mapped through :data:`JAPANESE_STANDARDS`; a filing stating a standard
     this module has no name for keeps it as filed rather than being called
-    something it is not.
+    something it is not. A filing the element does not apply to -- a
+    large-holding report, a fund's report -- states the conversion's mark for
+    not applicable, which is no standard at all and is empty here.
     """
+    from ..edinet.parse import NOT_APPLICABLE
+
     stated = func.trim(func.col("text"))
+    stated = func.when(stated.isin(list(NOT_APPLICABLE)),
+                       func.lit(None).cast("string")).otherwise(stated)
     named = func.lit(None).cast("string")
     for japanese, name in JAPANESE_STANDARDS.items():
         named = func.when(stated == japanese, func.lit(name)).otherwise(named)
