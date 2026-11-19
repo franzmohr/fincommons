@@ -124,20 +124,23 @@ if (nzchar(panel_file)) {
   panel <- utils::read.csv(panel_file, stringsAsFactors = FALSE,
                            fileEncoding = "UTF-8")
   # A panel row is keyed by whichever identifier its regime uses: an LEI for
-  # a filing under ESEF, a central index key for one with the Commission.
-  # Neither body publishes a mapping between them, which is why the combined
-  # table carries both columns and fills one, and why this does the same.
+  # a filing under ESEF, a central index key for one with the Commission, an
+  # EDINET code for one with the Financial Services Agency of Japan. No body
+  # publishes a mapping between them, which is why the combined table carries
+  # all three columns and fills one, and why this does the same.
   if (!"LEI" %in% names(panel)) panel$LEI <- NA_character_
   if (!"CIK" %in% names(panel)) panel$CIK <- NA_character_
+  if (!"EDINET_CODE" %in% names(panel)) panel$EDINET_CODE <- NA_character_
   required <- c("SHORT", "GROUP")
   if (!all(required %in% names(panel))) {
     stop("The panel file ", panel_file, " needs the columns ",
          paste(required, collapse = ", "), "; it has ",
          paste(names(panel), collapse = ", "), ".")
   }
-  if (any(is.na(panel$LEI) & is.na(panel$CIK))) {
-    stop("Every row of the panel file ", panel_file, " needs an LEI or a CIK; ",
-         sum(is.na(panel$LEI) & is.na(panel$CIK)), " row(s) have neither.")
+  unkeyed <- is.na(panel$LEI) & is.na(panel$CIK) & is.na(panel$EDINET_CODE)
+  if (any(unkeyed)) {
+    stop("Every row of the panel file ", panel_file, " needs an LEI, a CIK ",
+         "or an EDINET_CODE; ", sum(unkeyed), " row(s) have none.")
   }
   # A panel file may carry the issuer's name, which is useful to whoever
   # maintains the file and is not what the page prints: the name comes from
@@ -159,7 +162,7 @@ if (!"PANEL_NAME" %in% names(panel)) {
 # from. A column no row fills is dropped from the table rather than printed
 # as a column of dashes.
 for (optional in c("NACE", "COUNTRY", "ACTIVITY_EN", "ACTIVITY_DE", "CIK",
-                   "LEI")) {
+                   "LEI", "EDINET_CODE")) {
   if (!optional %in% names(panel)) panel[[optional]] <- NA_character_
 }
 
@@ -194,13 +197,26 @@ panel$CIK <- ifelse(is.na(panel$CIK), NA_character_,
                     formatC(as.integer(panel$CIK), width = 10, flag = "0",
                             format = "d"))
 
+# An EDINET code is the letter E and five digits, as the agency and the
+# Silver layer spell it. The securities code is not it, and a panel that
+# gave one would match nothing, so the shape is checked rather than trusted.
+panel$EDINET_CODE <- blank_to_na(panel$EDINET_CODE)
+if (any(!is.na(panel$EDINET_CODE) & !grepl("^E\\d{5}$", panel$EDINET_CODE))) {
+  stop("An EDINET code in the panel is not the letter E and five digits: ",
+       paste(unique(panel$EDINET_CODE[!is.na(panel$EDINET_CODE) &
+                                      !grepl("^E\\d{5}$", panel$EDINET_CODE)]),
+             collapse = ", "))
+}
+
 # Base R, because this runs before dplyr is attached further down.
 panel$KEY <- paste0(ifelse(is.na(panel$LEI), "", panel$LEI), "|",
-                    ifelse(is.na(panel$CIK), "", panel$CIK))
+                    ifelse(is.na(panel$CIK), "", panel$CIK), "|",
+                    ifelse(is.na(panel$EDINET_CODE), "", panel$EDINET_CODE))
 
-if (any(is.na(panel$LEI) & is.na(panel$CIK))) {
-  stop("Every row of the panel needs an LEI or a CIK; ",
-       sum(is.na(panel$LEI) & is.na(panel$CIK)), " row(s) have neither.")
+if (any(is.na(panel$LEI) & is.na(panel$CIK) & is.na(panel$EDINET_CODE))) {
+  stop("Every row of the panel needs an LEI, a CIK or an EDINET_CODE; ",
+       sum(is.na(panel$LEI) & is.na(panel$CIK) & is.na(panel$EDINET_CODE)),
+       " row(s) have none.")
 }
 
 # On the key rather than on the LEI: a panel of two regimes has an empty
@@ -336,7 +352,10 @@ financial_concepts <- c(
 # may be quarterly -- there are three 10-Q for every 10-K -- and a quarter's
 # profit over a year's equity is not a return. An ESEF filing is annual by
 # construction and carries no form, so a missing form is kept.
-annual_forms <- c("10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A")
+# EDINET records the document type as the agency codes it: 120 is the annual
+# securities report and 130 its amendment.
+annual_forms <- c("10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A",
+                  "120", "130")
 
 # The measures the benchmark is taken over. Named here rather than beside
 # the benchmark itself because the read of the facts filters on them, and
@@ -752,7 +771,8 @@ if (has_combined) {
     filter(period_year >= first_year_wanted,
            measure %in% measures_wanted, is.na(dimensions), !is.na(value),
            prd_end == period_end, filing %in% bench_filings$filing) %>%
-    select(source, filing, lei, cik, period_end, period_year, measure, value) %>%
+    select(source, filing, lei, cik, edinet_code, period_end, period_year,
+           measure, value) %>%
     collect()
 
   # The second test for a bank or an insurer: a filer whose own primary
@@ -770,11 +790,12 @@ if (has_combined) {
   financial_by_statement <- open_dataset(file.path(path_combined, "fact")) %>%
     filter(concept %in% financial_concepts,
            filing %in% bench_filings$filing) %>%
-    select(lei, cik) %>%
+    select(lei, cik, edinet_code) %>%
     collect() %>%
     distinct()
   financial_by_statement <- unique(c(financial_by_statement$lei,
-                                     financial_by_statement$cik))
+                                     financial_by_statement$cik,
+                                     financial_by_statement$edinet_code))
   financial_by_statement <- financial_by_statement[!is.na(financial_by_statement)]
 } else {
   bench_filings <- filings[0, ]
@@ -1139,7 +1160,8 @@ by_group <- shown %>%
 # ESEF filings.
 if (has_combined) {
   bench_values <- bench_facts %>%
-    distinct(source, filing, lei, cik, period_end, period_year, measure, value) %>%
+    distinct(source, filing, lei, cik, edinet_code, period_end, period_year,
+             measure, value) %>%
     distinct(filing, period_end, measure, .keep_all = TRUE) %>%
     pivot_wider(names_from = "measure", values_from = "value") %>%
     mutate(fy = period_year(period_end))
@@ -1154,14 +1176,16 @@ if (has_combined) {
   # not the LEI: a filing with the Commission has no LEI, so grouping on one
   # would collapse every American registrant into a single issuer.
   bench_values <- bench_values %>%
-    mutate(KEY = paste0(coalesce(lei, ""), "|", coalesce(cik, "")),
+    mutate(KEY = paste0(coalesce(lei, ""), "|", coalesce(cik, ""), "|",
+                        coalesce(edinet_code, "")),
            filled = rowSums(!is.na(across(all_of(measures_wanted))))) %>%
     arrange(KEY, fy, desc(filled), filing) %>%
     distinct(KEY, fy, .keep_all = TRUE) %>%
     mutate(
       financial = lei %in% financial_leis
                   | lei %in% financial_by_statement
-                  | cik %in% financial_by_statement,
+                  | cik %in% financial_by_statement
+                  | edinet_code %in% financial_by_statement,
       in_panel  = KEY %in% panel$KEY,
       # The figure a population question wants is the result attributable to
       # the parent, falling back to the total where there are no minorities
@@ -1221,7 +1245,8 @@ bench_ratio_labels <- c(
 # the same figure across frameworks. Putting an EBIT column beside a
 # US-GAAP row would promise a comparison the catalogue refuses to make.
 panel_regimes <- panel %>%
-  mutate(REGIME = ifelse(is.na(LEI), "SEC", "ESEF")) %>%
+  mutate(REGIME = ifelse(!is.na(LEI), "ESEF",
+                         ifelse(!is.na(CIK), "SEC", "EDINET"))) %>%
   select(KEY, SHORT, GROUP, COUNTRY, REGIME)
 
 cross_regime <- NULL
@@ -1369,17 +1394,43 @@ title <- tr(paste0(sector_name[["en"]], " in ", where),
 # regimes and how many issuers file under each instead of listing
 # eighteen country codes, which at this width wraps to three lines and
 # tells a reader nothing the panel table does not.
-regime_counts <- c(ESEF = sum(!is.na(panel$LEI)), SEC = sum(is.na(panel$LEI)))
+regime_counts <- c(
+  ESEF   = sum(!is.na(panel$LEI)),
+  SEC    = sum(is.na(panel$LEI) & !is.na(panel$CIK)),
+  EDINET = sum(is.na(panel$LEI) & is.na(panel$CIK) & !is.na(panel$EDINET_CODE)))
+
+# The members outside ESEF, by regime, in words: "6 filing with the
+# Securities and Exchange Commission and 10 filing with the Financial
+# Services Agency of Japan". Only a regime the panel has members of is named.
+regime_phrase <- list(
+  SEC    = c(en = "filing with the Securities and Exchange Commission",
+             de = "mit Bericht bei der Securities and Exchange Commission"),
+  EDINET = c(en = "filing with the Financial Services Agency of Japan",
+             de = "mit Bericht bei der japanischen Finanzaufsicht FSA"))
+join_words <- function(x, and) {
+  if (length(x) <= 1) return(paste(x, collapse = ""))
+  paste0(paste(head(x, -1), collapse = ", "), " ", and, " ", tail(x, 1))
+}
+others_in <- function(lang) {
+  present <- names(regime_phrase)[regime_counts[names(regime_phrase)] > 0]
+  join_words(vapply(present, function(r)
+    paste(regime_counts[[r]], regime_phrase[[r]][[lang]]), ""),
+    if (lang == "de") "und" else "and")
+}
+n_others <- sum(regime_counts[c("SEC", "EDINET")])
+n_regimes <- sum(regime_counts > 0)
+regimes_word <- c(en = c("two", "three")[n_regimes - 1],
+                  de = c("zwei", "drei")[n_regimes - 1])
+
 subtitle <- if (is_cross_regime) {
-  tr(paste0("A factsheet on ", nrow(panel), " issuers across two reporting ",
-            "regimes: ", regime_counts[["ESEF"]], " filing an ESEF annual ",
-            "financial report in Europe and ", regime_counts[["SEC"]],
-            " filing with the Securities and Exchange Commission"),
-     paste0("Ein Factsheet zu ", nrow(panel), " Emittenten aus zwei ",
-            "Berichtsregimen: ", regime_counts[["ESEF"]],
-            " mit ESEF-Jahresfinanzbericht in Europa und ",
-            regime_counts[["SEC"]], " mit Bericht bei der Securities and ",
-            "Exchange Commission"))
+  tr(paste0("A factsheet on ", nrow(panel), " issuers across ",
+            regimes_word[["en"]], " reporting regimes: ",
+            regime_counts[["ESEF"]], " filing an ESEF annual financial ",
+            "report in Europe, ", others_in("en")),
+     paste0("Ein Factsheet zu ", nrow(panel), " Emittenten aus ",
+            regimes_word[["de"]], " Berichtsregimen: ",
+            regime_counts[["ESEF"]],
+            " mit ESEF-Jahresfinanzbericht in Europa, ", others_in("de")))
 } else {
   tr(paste0("A factsheet on ", nrow(panel), " issuers, from their ESEF annual ",
             "financial reports",
@@ -1407,11 +1458,11 @@ provenance_note <- tr(
          "is shown as a dash, and a ratio whose two figures were not both ",
          "stated is not computed.",
          if (is_cross_regime)
-           paste0(" This panel also holds ", regime_counts[["SEC"]],
-                  " issuers that file with the Securities and Exchange ",
-                  "Commission rather than under ESEF. They are read from the ",
-                  "combined table of fincommons.financialreport, which holds ",
-                  "the measures the two frameworks have been agreed to tag ",
+           paste0(" This panel also holds ", n_others, " issuers that ",
+                  "file outside ESEF: ", others_in("en"), ". They are read ",
+                  "from the combined table of fincommons.financialreport, ",
+                  "which holds the measures the frameworks have been agreed ",
+                  "to tag ",
                   "alike, and they appear in the benchmark and in the ",
                   "cross-regime section at the end. The tables between here ",
                   "and there are read from the ESEF concepts and show the ",
@@ -1427,9 +1478,9 @@ provenance_note <- tr(
          "Kennzahl, deren beide Größen nicht beide angegeben wurden, wird ",
          "nicht berechnet.",
          if (is_cross_regime)
-           paste0(" Dieses Panel enthält zusätzlich ", regime_counts[["SEC"]],
-                  " Emittenten, die bei der Securities and Exchange ",
-                  "Commission und nicht unter ESEF einreichen. Sie stammen ",
+           paste0(" Dieses Panel enthält zusätzlich ", n_others,
+                  " Emittenten außerhalb von ESEF: ", others_in("de"),
+                  ". Sie stammen ",
                   "aus der kombinierten Tabelle von ",
                   "fincommons.financialreport und erscheinen im Benchmark ",
                   "und im Abschnitt über die Regime hinweg; die Tabellen ",
@@ -1534,17 +1585,17 @@ if (is_cross_regime) {
   cat("\n\n", tr(
     paste0("One table is outside this rule. The cross-regime table at the ",
            "end adds up the agreed measures as filed and converts nothing, ",
-           "because a report filed with the Commission is in dollars and ",
-           "the reference rates this lake holds are the euro rates of the ",
-           "European Central Bank. Its revenue column is an order of ",
-           "magnitude and not a sum in one currency; the medians beside it ",
+           "because a report filed with the Commission is in dollars, one ",
+           "filed through EDINET in yen, and each row of the table is one ",
+           "regime's members in their own currency. Its revenue column is ",
+           "compared within a regime and not across; the medians beside it ",
            "are ratios, which need no conversion."),
     paste0("Eine Tabelle steht ausserhalb dieser Regel. Die Tabelle über ",
            "die Regime hinweg am Ende addiert die vereinbarten Measures wie ",
            "eingereicht und rechnet nichts um, weil ein Bericht bei der ",
-           "Commission in Dollar lautet und dieser Lake die Eurokurse der ",
-           "Europäischen Zentralbank hält. Ihre Umsatzspalte ist eine ",
-           "Größenordnung und keine Summe in einer Währung; die Mediane ",
+           "Commission in Dollar und einer über EDINET in Yen lautet und ",
+           "jede Zeile die Mitglieder eines Regimes in deren Währung zeigt. ",
+           "Ihre Umsatzspalte wird innerhalb eines Regimes verglichen; die Mediane ",
            "daneben sind Kennzahlen und brauchen keine Umrechnung.")),
       "\n")
 }
@@ -1595,7 +1646,7 @@ temp <- temp[, vapply(temp, function(x) any(!is.na(x) & x != ""), logical(1)),
 knitr::kable(temp, align = paste(rep("l", ncol(temp)), collapse = ""))
 ```
 
-`r if (is_cross_regime) tr(paste0("The years and the report count are read from the ESEF tables, so they are a dash for the ", regime_counts[["SEC"]], " issuers that file with the Securities and Exchange Commission. Their reports are counted in the cross-regime section, which reads the combined table."), paste0("Jahre und Berichtsanzahl stammen aus den ESEF-Tabellen und stehen daher als Strich für die ", regime_counts[["SEC"]], " Emittenten, die bei der Securities and Exchange Commission einreichen. Ihre Berichte werden im Abschnitt über die Regime hinweg gezählt.")) else ""`
+`r if (is_cross_regime) tr(paste0("The years and the report count are read from the ESEF tables, so they are a dash for the ", n_others, " issuers that file outside ESEF. Their reports are counted in the cross-regime section, which reads the combined table."), paste0("Jahre und Berichtsanzahl stammen aus den ESEF-Tabellen und stehen daher als Strich für die ", n_others, " Emittenten außerhalb von ESEF. Ihre Berichte werden im Abschnitt über die Regime hinweg gezählt.")) else ""`
 
 `r if (nrow(absent_latest) > 0) tr(paste0("Not every issuer of the panel filed for ", latest_year, ". ", paste0(absent_latest$SHORT, " (", absent_latest$last_year, ")", collapse = ", "), " last filed for the year in brackets, and the totals of the later years are over the issuers that did file. The counts beside every total say how many those were."), paste0("Nicht jeder Emittent des Panels hat für ", latest_year, " eingereicht. ", paste0(absent_latest$SHORT, " (", absent_latest$last_year, ")", collapse = ", "), " hat zuletzt für das Jahr in Klammern eingereicht; die Summen der späteren Jahre umfassen nur die Emittenten, die eingereicht haben. Die Anzahl steht neben jeder Summe.")) else ""`
 
@@ -2071,11 +2122,16 @@ if (is_cross_regime) {
 
   kable_note(temp, tr(
       paste0("Financial year ", latest_year, ". Amounts are added up as ",
-             "filed and are not converted, so read the revenue column as an ",
-             "order of magnitude; a median of ratios needs no conversion, ",
-             "the currency cancelling in a quotient of one filing."),
+             "filed and are not converted: a row of one regime is in the ",
+             "currency its members file in, which is the dollar with the ",
+             "Commission and the yen with EDINET, so compare the revenue ",
+             "column within a regime only; a median of ratios needs no ",
+             "conversion, the currency cancelling in a quotient of one ",
+             "filing."),
       paste0("Geschäftsjahr ", latest_year, ". Beträge werden wie ",
-             "eingereicht addiert und nicht umgerechnet.")),
+             "eingereicht addiert und nicht umgerechnet: eine Zeile eines ",
+             "Regimes lautet in der Währung seiner Mitglieder, bei der ",
+             "Commission in Dollar und bei EDINET in Yen.")),
              align = "llrrrrr")
 }
 ```

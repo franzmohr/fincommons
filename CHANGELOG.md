@@ -54,6 +54,14 @@ release may change the public API, which `tests/test_public_api.py` lists.
   stops the render where it is given rather than at a page of empty tables
   several chunks later.
 
+- `esef`: the sector factsheet takes Japanese issuers. A panel row may be
+  keyed by an `EDINET_CODE` beside an `LEI` or a `CIK`, the benchmark counts
+  the annual securities report (`120`, and `130` amending it) as an annual
+  report, and the cover, the notes and the cross-regime section name the
+  regimes the panel holds rather than assuming the second is the
+  Commission's. The cross-regime table already added amounts up within a
+  regime, and its note now says that a Japanese row is in yen.
+
 ### Fixed
 
 - `esef`: the README names the columns of a sector panel file as the files
