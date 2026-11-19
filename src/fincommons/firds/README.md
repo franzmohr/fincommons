@@ -223,6 +223,30 @@ refusal names what it found. `firds.clear_late_day`,
 resolve them once someone has decided what the gap means; their docstrings say
 what each does, and the handbook says when each case arises.
 
+## Clean up the Silver layer: `vacuum`
+
+Every merge and every compaction leaves behind the files it replaced, which
+only the earlier versions of `main` still read, so the table on disk grows
+faster than the history in it: the lake built from 27 December 2025 to 17
+November 2026 took 39 gigabytes for 261 million versions.
+`firds.vacuum_silver_main` deletes the files no version within the retention
+reads. Nothing the history holds is removed; what goes is the ability to read
+the table as it stood before:
+
+```python
+# Routine upkeep, after the weekly compaction: a week of versions stays readable.
+firds.vacuum_silver_main(spark, config_path)
+
+# After a backfill and its final compaction: every replaced file is only hours
+# old, so the default frees nothing. Keep the current version alone.
+firds.vacuum_silver_main(spark, config_path, retention_hours = 0)
+```
+
+A retention below a week must not run while an update is writing to the
+table. The vacuum is refused while a batch has its merge committed and not its
+append, since the batch is resumed from the version before that merge; running
+the update again completes it.
+
 ## Update the Silver layer: `compact`
 
 An instrument traded on several venues has one row per venue in `main`, which
