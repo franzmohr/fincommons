@@ -1029,6 +1029,17 @@ def compaction_file_size(spark, size=OPTIMIZE_FILE_SIZE):
     size: int
         The size in bytes, :data:`OPTIMIZE_FILE_SIZE` by default.
     """
+    with _held_settings(spark, {key: size for key in OPTIMIZE_SIZE_CONFS}):
+        yield
+
+
+@contextlib.contextmanager
+def _held_settings(spark, settings):
+    """Put ``settings`` in place on the session and restore it afterwards.
+
+    A setting the session carried keeps its value, and one it did not carry is
+    unset again, also when the body raises.
+    """
     # Read with a default rather than bare, because that is what distinguishes
     # a setting the session carries from one that merely resolves to Delta's
     # own default. A bare read raises for a setting that is not there, but
@@ -1037,9 +1048,9 @@ def compaction_file_size(spark, size=OPTIMIZE_FILE_SIZE):
     # default instead and the two cannot be told apart. Restoring that default
     # as though the session had asked for it would pin the value of the Delta
     # in use into the session and hide a later one's.
-    previous = {key: spark.conf.get(key, None) for key in OPTIMIZE_SIZE_CONFS}
-    for key in OPTIMIZE_SIZE_CONFS:
-        spark.conf.set(key, str(size))
+    previous = {key: spark.conf.get(key, None) for key in settings}
+    for key, value in settings.items():
+        spark.conf.set(key, str(value))
     try:
         yield
     finally:
@@ -1048,6 +1059,49 @@ def compaction_file_size(spark, size=OPTIMIZE_FILE_SIZE):
                 spark.conf.unset(key)
             else:
                 spark.conf.set(key, value)
+
+
+#: The size a row group of the historical database is filled to, in bytes.
+#:
+#: A row group is the unit a Parquet reader holds in memory: each column of it
+#: is read as one chunk, and a chunk is allocated in one piece. Parquet's own
+#: default of 128 megabytes is a limit on the buffered size of the group, which
+#: the history's text columns more than triple once read -- the compaction of
+#: the main FIRDS lake wrote groups of 2.7 million rows, 380 megabytes read,
+#: whose ``full_name`` alone came to 136 megabytes. Eight tasks reading such
+#: groups at once exhausted a driver of 14 gigabytes on the first batch of a
+#: run, since allocations of that size need contiguous room on the heap and
+#: fail on a fragmented one with most of it free. A quarter of the default
+#: keeps the largest chunk to some 35 megabytes, while a file of
+#: :data:`OPTIMIZE_FILE_SIZE` still holds few enough groups for its footer to
+#: cost nothing.
+ROW_GROUP_SIZE = 32 * 1024 * 1024
+
+#: The setting :func:`row_group_size` holds. Spark copies the settings of the
+#: session into the Hadoop configuration a write is made with, so Parquet
+#: finds it there, for a Delta append, MERGE and OPTIMIZE alike.
+ROW_GROUP_SIZE_CONF = "parquet.block.size"
+
+
+@contextlib.contextmanager
+def row_group_size(spark, size=ROW_GROUP_SIZE):
+    """Hold the session at ``size`` for the row groups the writes write.
+
+    Delta has no property that records the size on the table, so it is held
+    on the session around every write to the historical database and restored
+    afterwards, as :func:`compaction_file_size` does for the size of a file.
+    It says what is written from now on: the groups already written keep
+    their size until a compaction rewrites their file.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    size: int
+        The size in bytes, :data:`ROW_GROUP_SIZE` by default.
+    """
+    with _held_settings(spark, {ROW_GROUP_SIZE_CONF: size}):
+        yield
 
 
 def compact_silver_main(spark, config_path):
@@ -1078,7 +1132,8 @@ def compact_silver_main(spark, config_path):
     :data:`OPTIMIZE_FILE_SIZE` names.
 
     The files are sized to :data:`OPTIMIZE_FILE_SIZE` rather than to Delta's
-    gigabyte; see :func:`compaction_file_size`.
+    gigabyte; see :func:`compaction_file_size`. Their row groups are held at
+    :data:`ROW_GROUP_SIZE`; see :func:`row_group_size`.
 
     Parameters
     ----------
@@ -1093,7 +1148,7 @@ def compact_silver_main(spark, config_path):
         extra=context(module="firds", layer="silver", table="MAIN"),
     )
     table = common.delta_table(spark, common.ref_silver_main(config_path))
-    with compaction_file_size(spark):
+    with compaction_file_size(spark), row_group_size(spark):
         table.optimize().executeCompaction()
 
 
@@ -1229,7 +1284,8 @@ def migrate_silver_main_to_decimal(spark, config_path):
     options = {"overwriteSchema": "true"}
     if watermark is not None:
         options["userMetadata"] = commit_tag(watermark, "decimal")
-    common.write_delta(migrated, ref, options=options)
+    with row_group_size(spark):
+        common.write_delta(migrated, ref, options=options)
     declare_silver_main_layout(spark, config_path)
 
     logger.warning(
@@ -1349,14 +1405,15 @@ def initialise_firds_database(spark, config_path):
     # which Delta will not widen into the decimals the Bronze layer is read
     # as, and refusing the write over a vintage that is being discarded
     # anyway would leave the history where it is.
-    common.write_delta(
-        df,
-        common.ref_silver_main(config_path),
-        options={
-            "userMetadata": commit_tag(maxdate, "init"),
-            "overwriteSchema": "true",
-        },
-    )
+    with row_group_size(spark):
+        common.write_delta(
+            df,
+            common.ref_silver_main(config_path),
+            options={
+                "userMetadata": commit_tag(maxdate, "init"),
+                "overwriteSchema": "true",
+            },
+        )
     declare_silver_main_layout(spark, config_path)
 
     common.initialise_metadata(spark, config_path, maxdate=maxdate)
@@ -2055,13 +2112,16 @@ def upsert_from_bronze(spark, bronze, config_path: str, dates):
         tag = func.col(f"src.{history.OPERATION}")
         spark.conf.set(USER_METADATA_CONF, commit_tag(label, "merge"))
         try:
-            table.alias("tgt").merge(changing.alias("src"), condition).whenMatchedUpdate(
-                condition=tag == func.lit(history.CLOSE_AND_INSERT),
-                set={"valid_to": "src.valid_to", "latest_record": func.lit(False)},
-            ).whenMatchedUpdate(
-                condition=tag == func.lit(history.REPLACE),
-                set={name: func.col(f"src.`{name}`") for name in columns},
-            ).execute()
+            with row_group_size(spark):
+                table.alias("tgt").merge(
+                    changing.alias("src"), condition
+                ).whenMatchedUpdate(
+                    condition=tag == func.lit(history.CLOSE_AND_INSERT),
+                    set={"valid_to": "src.valid_to", "latest_record": func.lit(False)},
+                ).whenMatchedUpdate(
+                    condition=tag == func.lit(history.REPLACE),
+                    set={name: func.col(f"src.`{name}`") for name in columns},
+                ).execute()
         finally:
             spark.conf.unset(USER_METADATA_CONF)
 
@@ -2071,10 +2131,11 @@ def upsert_from_bronze(spark, bronze, config_path: str, dates):
     # file would otherwise arrive as a few hundred files of a few kilobytes
     # each, which every later merge has to open again.
     inserting = history.records_to_insert(planned, columns)
-    common.write_delta(
-        inserting, ref, mode="append",
-        options={"userMetadata": commit_tag(label, "append")},
-    )
+    with row_group_size(spark):
+        common.write_delta(
+            inserting, ref, mode="append",
+            options={"userMetadata": commit_tag(label, "append")},
+        )
 
     planned.unpersist()
     incoming.unpersist()
@@ -2366,6 +2427,8 @@ __all__ = [
     "REFERENCE_DATE_FORMAT",
     "RESUME_COMMITS",
     "REWRITING_OPERATIONS",
+    "ROW_GROUP_SIZE",
+    "ROW_GROUP_SIZE_CONF",
     "SOURCE_FIELDS",
     "SPAN_SEPARATOR",
     "USER_METADATA_CONF",
@@ -2393,6 +2456,7 @@ __all__ = [
     "read_daily_changes",
     "read_dltins_partition",
     "read_fulins_partition",
+    "row_group_size",
     "span_bounds",
     "span_in_flight",
     "span_label",

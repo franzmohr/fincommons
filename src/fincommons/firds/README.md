@@ -203,6 +203,18 @@ batch began, which applied one after another is refused too. A batch holds its
 records in memory for the plan, so how large it can be is again a property of
 the machine.
 
+What a reading task holds is the other bound. Every write to the history --
+the merge, the append, the compaction -- fills its row groups to
+`silver.ROW_GROUP_SIZE`, 32 megabytes, a quarter of Parquet's default, because
+a task reads a row group one column chunk at a time and each chunk in one
+piece. At the default the compaction wrote groups of 2.7 million rows whose
+names alone came to 136 megabytes read, and a backfill on eight cores with a
+driver of 14 gigabytes ran out of memory on the first batch after one. Groups
+already written keep their size until a compaction rewrites their file. A
+history built before this release still holds them, and a run over it that
+runs out of memory is lighter on fewer cores (`local[4]`) until the next
+compaction has rewritten it.
+
 A run stops rather than building a history around a gap: at a day whose delta
 file is not fully imported, at a record that does not say which instrument it
 is about, and at a day ESMA published after the history had passed it. Each

@@ -1256,6 +1256,104 @@ def test_delta_s_own_default_is_not_taken_for_a_setting_of_the_session(
     assert spark.conf.get(key, None) is None
 
 
+# The size of a row group
+# --------------------------------------------------------------------------
+
+
+def test_the_row_groups_are_held_at_a_quarter_of_parquet_s_default(spark, config):
+    """Parquet's 128 megabytes left the compaction writing groups whose
+    largest column alone came to 136 megabytes read."""
+    with silver.row_group_size(spark):
+        inside = spark.conf.get(silver.ROW_GROUP_SIZE_CONF)
+
+    assert inside == str(silver.ROW_GROUP_SIZE)
+    assert silver.ROW_GROUP_SIZE == 32 * 1024 * 1024
+    assert silver.ROW_GROUP_SIZE_CONF == "parquet.block.size"
+
+
+def test_the_row_group_size_is_unset_again_afterwards(spark, config):
+    """A session shared with other tables is left as it was found."""
+    spark.conf.unset(silver.ROW_GROUP_SIZE_CONF)
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        with silver.row_group_size(spark):
+            raise RuntimeError("the write failed")
+
+    assert spark.conf.get(silver.ROW_GROUP_SIZE_CONF, None) is None
+
+
+def test_a_row_group_size_the_session_carried_is_kept(spark, config):
+    spark.conf.set(silver.ROW_GROUP_SIZE_CONF, "999999")
+    try:
+        with silver.row_group_size(spark):
+            pass
+        assert spark.conf.get(silver.ROW_GROUP_SIZE_CONF) == "999999"
+    finally:
+        spark.conf.unset(silver.ROW_GROUP_SIZE_CONF)
+
+
+def test_the_row_group_size_reaches_a_delta_write(spark, tmp_path):
+    """Spark copies the settings of the session into the Hadoop configuration
+    a write is made with, which is where Parquet looks for the size."""
+    import pyarrow.parquet as pq
+
+    path = str(tmp_path / "table")
+    frame = spark.range(20000).selectExpr(
+        "id", "sha2(cast(id as string), 512) as text"
+    ).coalesce(1)
+    with silver.row_group_size(spark, 64 * 1024):
+        frame.write.format("delta").save(path)
+
+    files = [name for name in os.listdir(path) if name.endswith(".parquet")]
+    groups = [
+        pq.ParquetFile(os.path.join(path, name)).metadata.num_row_groups
+        for name in files
+    ]
+    assert len(files) == 1
+    assert groups[0] > 1
+
+
+def test_every_write_to_the_history_holds_the_row_group_size(
+    spark, config, monkeypatch
+):
+    """The initialising write and the append of a delta file both write the
+    history, so both are held at the size."""
+    seen = []
+    write_delta = common.write_delta
+
+    def recording(df, ref, *args, **kwargs):
+        if ref == common.ref_silver_main(config):
+            seen.append(spark.conf.get(silver.ROW_GROUP_SIZE_CONF, None))
+        return write_delta(df, ref, *args, **kwargs)
+
+    monkeypatch.setattr(common, "write_delta", recording)
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2016, 9, 2))
+    finished(config, "FULINS_E_20160902_01of01.zip")
+    silver.update_from_bronze_to_silver_main(spark, config)
+
+    assert seen == [str(silver.ROW_GROUP_SIZE)]
+    assert spark.conf.get(silver.ROW_GROUP_SIZE_CONF, None) is None
+
+
+def test_the_compaction_holds_the_row_group_size(spark, config, monkeypatch):
+    """OPTIMIZE rewrites most of the history, so it is where the size
+    matters most."""
+    seen = []
+
+    class Table:
+        def optimize(self):
+            return self
+
+        def executeCompaction(self):
+            seen.append(spark.conf.get(silver.ROW_GROUP_SIZE_CONF, None))
+
+    monkeypatch.setattr(common, "delta_table", lambda spark, ref: Table())
+    silver.compact_silver_main(spark, config)
+
+    assert seen == [str(silver.ROW_GROUP_SIZE)]
+
+
 # A history whose start was moved back
 # --------------------------------------------------------------------------
 
