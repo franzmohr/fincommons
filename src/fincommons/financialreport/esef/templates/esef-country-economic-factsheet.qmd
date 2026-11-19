@@ -1,0 +1,1010 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  # A chunk that fails stops the render, so a factsheet over a lake it could
+  # not read never comes out as a PDF of error messages with exit code 0.
+  error: false
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a factsheet
+# --------------------------------------------------------------------------
+
+# The one country the factsheet is about, as the repository codes it. It is
+# taken from the environment variable FINCOMMONS_COUNTRY where that is set,
+# so that one copy of this template renders every country:
+#
+#   FINCOMMONS_COUNTRY=NL quarto render esef-country-economic-factsheet.qmd
+#
+# Everything else -- the years, the issuers, the largest and the movers --
+# follows from the lake.
+report_country <- toupper(Sys.getenv("FINCOMMONS_COUNTRY", "AT"))
+
+# The path to the config file, whose esef section names the Silver layer.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# The financial years shown, counted back from the latest the country has
+# reports with facts for. A financial year is named by the calendar year it
+# mostly falls in: a year ending on or before 30 June counts as the year
+# before, so a year to 31 March 2026 is 2025. The sector factsheet uses the
+# same rule.
+n_years <- 5
+
+# How many issuers the table of the largest shows, how many the tables of
+# the movers show, and the revenue of the year before an issuer needs to be
+# counted among the movers, in its own currency: a company growing from one
+# million to three is not a story about the economy.
+top_n <- 15
+movers_n <- 8
+movers_min_revenue <- 50e6
+
+# The currency the sums are in. An issuer reporting in another currency is
+# in every median and every ratio, which are free of currency, and in no
+# sum, since nothing here converts.
+sum_currency <- "EUR"
+
+# The share of the best-covered year's issuers a year needs to be shown.
+min_coverage <- 0.5
+
+# How close two reports' total assets and revenue, and their equity, have to
+# be for the two to be taken as the same group reported twice, by a listed
+# holding and by its listed subsidiary. Heineken Holding's assets are 0.5 %
+# below Heineken's, and ING Groep's revenue 0.6 % above ING Bank's; equity
+# differs more, by the minorities and by what the holding holds besides.
+twin_tolerance <- 0.02
+twin_equity_tolerance <- 0.10
+
+# The figures read, by concept of the IFRS taxonomy. A measure with two
+# concepts takes the first where the report tags it and the second where it
+# does not: revenue under IFRS 15 alone where the total is not tagged, the
+# parent's share of the result or of equity where the total is not.
+measures <- tibble::tribble(
+  ~measure,     ~concept,                                            ~rank, ~flow,
+  "revenue",    "ifrs-full:Revenue",                                     1, TRUE,
+  "revenue",    "ifrs-full:RevenueFromContractsWithCustomers",           2, TRUE,
+  "operating",  "ifrs-full:ProfitLossFromOperatingActivities",           1, TRUE,
+  "pretax",     "ifrs-full:ProfitLossBeforeTax",                         1, TRUE,
+  "profit",     "ifrs-full:ProfitLoss",                                  1, TRUE,
+  "profit",     "ifrs-full:ProfitLossAttributableToOwnersOfParent",      2, TRUE,
+  "staff",      "ifrs-full:EmployeeBenefitsExpense",                     1, TRUE,
+  "ocf",        "ifrs-full:CashFlowsFromUsedInOperatingActivities",      1, TRUE,
+  "dividends",  "ifrs-full:DividendsPaidClassifiedAsFinancingActivities", 1, TRUE,
+  "assets",     "ifrs-full:Assets",                                      1, FALSE,
+  "equity",     "ifrs-full:Equity",                                      1, FALSE,
+  "equity",     "ifrs-full:EquityAttributableToOwnersOfParent",          2, FALSE,
+  "cash",       "ifrs-full:CashAndCashEquivalents",                      1, FALSE,
+  "interest",   "ifrs-full:InterestRevenueCalculatedUsingEffectiveInterestMethod", 1, TRUE)
+
+# The lines a bank or an insurer presents and an industrial issuer does not,
+# as in the sector factsheet. A bank's revenue is interest, its balance sheet
+# is its business and its margins are not a manufacturer's, so banks and
+# insurers are shown on their own and kept out of the corporate figures.
+#
+# Interest revenue alone is not enough: a postal operator with a bank, or a
+# property company with loans to its ventures, presents it too. A company
+# is a bank here where its interest revenue is at least half its revenue,
+# or where it tags no revenue at all; an insurer is one wherever it presents
+# a line of IFRS 17.
+bank_interest_share <- 0.5
+financial_concepts <- c(
+  "ifrs-full:InsuranceRevenue",
+  "ifrs-full:InsuranceContractLiabilities",
+  "ifrs-full:InsuranceServiceResult",
+  "ifrs-full:InsuranceServiceExpenses")
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# --------------------------------------------------------------------------
+# The design and the libraries
+# --------------------------------------------------------------------------
+
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+if (!grepl("UTF-8", Sys.getlocale("LC_CTYPE"), ignore.case = TRUE)) {
+  stop("The session does not run in a UTF-8 locale, so the names of issuers ",
+       "and the typographic characters of this factsheet would print as ",
+       "<U+00D6> escapes. Render with LANG=en_US.UTF-8.")
+}
+
+period_year <- function(date) {
+  y <- as.integer(format(date, "%Y"))
+  ifelse(as.integer(format(date, "%m")) <= 6L, y - 1L, y)
+}
+
+country_names <- c(
+  AT = "Austria", BE = "Belgium", BG = "Bulgaria", CY = "Cyprus",
+  CZ = "Czechia", DE = "Germany", DK = "Denmark", EE = "Estonia",
+  ES = "Spain", FI = "Finland", FR = "France", GB = "the United Kingdom",
+  GR = "Greece", HR = "Croatia", HU = "Hungary", IE = "Ireland",
+  IS = "Iceland", IT = "Italy", LI = "Liechtenstein", LT = "Lithuania",
+  LU = "Luxembourg", LV = "Latvia", MT = "Malta", NL = "the Netherlands",
+  NO = "Norway", PL = "Poland", PT = "Portugal", RO = "Romania",
+  SE = "Sweden", SI = "Slovenia", SK = "Slovakia", UA = "Ukraine")
+country_name <- if (report_country %in% names(country_names))
+  country_names[[report_country]] else report_country
+Country_name <- paste0(toupper(substr(country_name, 1, 1)),
+                       substring(country_name, 2))
+
+short_name <- function(x, width = 40) {
+  x <- gsub("Aktiengesellschaft", "AG", x, ignore.case = TRUE)
+  x <- gsub("Gesellschaft m\\.?b\\.?H\\.?", "GmbH", x)
+  x <- gsub("Societas Europaea", "SE", x)
+  x <- gsub("\\s+", " ", trimws(x))
+  ifelse(nchar(x) > width, paste0(substr(x, 1, width - 1), "…"), x)
+}
+
+# --------------------------------------------------------------------------
+# The Silver layer
+# --------------------------------------------------------------------------
+
+yaml_paths <- read_yaml(config_path)
+path_silver <- yaml_paths[["esef"]][["silver"]]
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+if (is.null(path_silver)) {
+  stop("The config file ", config_path, " names no Silver layer for esef.")
+}
+for (table in c("filings", "facts")) {
+  if (dir.exists(file.path(path_silver, table, "_delta_log"))) {
+    stop("The ", table, " table of the esef module is a Delta table, which ",
+         "this template does not read. Write the Silver layer as parquet.")
+  }
+}
+
+filings <- open_dataset(file.path(path_silver, "filings")) %>%
+  filter(country == report_country) %>%
+  select(country, lei, filing, name, period_end, lang, processed) %>%
+  collect()
+if (nrow(filings) == 0) {
+  countries_held <- open_dataset(file.path(path_silver, "filings")) %>%
+    distinct(country) %>% collect() %>% pull(country) %>% sort()
+  stop("The table of filings lists no filing of ", report_country,
+       ". It lists ", paste(countries_held, collapse = ", "), ".")
+}
+
+facts_per_filing <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country == report_country) %>%
+  count(filing) %>%
+  collect() %>%
+  rename(facts = n)
+filings <- filings %>%
+  left_join(facts_per_filing, by = "filing") %>%
+  mutate(facts = coalesce(facts, 0L), read = facts > 0,
+         fy = period_year(period_end))
+if (!any(filings$read)) {
+  stop("The lake holds no facts for any filing of ", report_country, ". ",
+       "Collect the reports first: esef.update_esef(spark, '<paths.yaml>', ['",
+       report_country, "'], contact='<you@example.org>')")
+}
+
+latest_year <- max(filings$fy[filings$read])
+report_years <- seq(latest_year - n_years + 1, latest_year)
+
+# A year the lake holds only a few reports of is a year the pipeline was not
+# asked to collect -- a report filed late, or one whose period ends early --
+# and a trend through it would be a trend in what was collected. A year is
+# shown where it has at least `min_coverage` of the reports of the
+# best-covered year.
+issuers_per_year <- filings %>% filter(read) %>% distinct(lei, fy) %>% count(fy)
+covered <- issuers_per_year$fy[issuers_per_year$n >= min_coverage * max(issuers_per_year$n)]
+report_years <- report_years[report_years %in% covered]
+period_range <- if (length(report_years) == 1) as.character(report_years) else
+  paste0(min(report_years), "–", max(report_years))
+
+issuer_names <- filings %>%
+  arrange(lei, desc(period_end), desc(processed)) %>%
+  distinct(lei, .keep_all = TRUE) %>%
+  transmute(lei, issuer = short_name(name))
+
+# --------------------------------------------------------------------------
+# Whose report it is
+# --------------------------------------------------------------------------
+
+# A report states the name of the entity it is the report of. Where that
+# name shares nothing with the name the repository holds for the LEI it was
+# filed under, and no other report filed under the LEI does either, the
+# report is filed under someone else's LEI: a filing agent's test report
+# filed under the agent's own, or an issuer's report filed under the LEI of
+# the service that submitted it. A company that has been renamed states its
+# old name in its old reports and its new one in its new, so the LEI test
+# lets it pass. Such a report is left out of every figure here: its
+# figures are either not real or already counted under the right LEI.
+name_stop_words <- c("ag", "nv", "se", "plc", "sa", "spa", "gmbh", "kg", "bv",
+                     "the", "und", "and", "for", "fur", "der", "die", "das",
+                     "des", "holding", "holdings", "group", "gruppe",
+                     "aktiengesellschaft", "international", "limited", "ltd",
+                     "inc", "company", "beteiligungs", "europe", "european")
+plain <- function(x) {
+  x <- chartr("ÄÖÜäöüßÉéÈèÁáÀàÓóÍíÚúÇçÑñ", "AOUaousEeEeAaAaOoIiUuCcNn", x)
+  tolower(iconv(x, to = "ASCII", sub = " "))
+}
+name_tokens <- function(x) {
+  lapply(strsplit(gsub("[^a-z0-9]+", " ", plain(x)), " "),
+         function(t) setdiff(t[nchar(t) >= 3], name_stop_words))
+}
+# Two names agree where a word of one is in the other, run together so that
+# "LinzTextil" is "Linz Textil", or where a word of one is the initials of
+# the other, so that "SBO" is "Schoeller-Bleckmann Oilfield".
+names_agree <- function(a, b) {
+  ta <- name_tokens(a)
+  tb <- name_tokens(b)
+  sa <- gsub("[^a-z0-9]", "", plain(a))
+  sb <- gsub("[^a-z0-9]", "", plain(b))
+  mapply(function(x, y, p, q) {
+    if (length(x) == 0 || length(y) == 0) return(NA)
+    ix <- paste(substr(x, 1, 1), collapse = "")
+    iy <- paste(substr(y, 1, 1), collapse = "")
+    any(vapply(x, function(t) grepl(t, q, fixed = TRUE), logical(1))) ||
+      any(vapply(y, function(t) grepl(t, p, fixed = TRUE), logical(1))) ||
+      any(startsWith(iy, x)) || any(startsWith(ix, y))
+  }, ta, tb, sa, sb, USE.NAMES = FALSE)
+}
+stated_names <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country == report_country,
+         concept == "ifrs-full:NameOfReportingEntityOrOtherMeansOfIdentification",
+         is.na(dimensions), !is.na(text)) %>%
+  select(filing, stated = text) %>%
+  collect() %>%
+  distinct(filing, .keep_all = TRUE) %>%
+  mutate(stated = gsub("\\s+", " ", trimws(stated)))
+identity <- filings %>%
+  select(lei, filing, name) %>%
+  inner_join(stated_names, by = "filing") %>%
+  mutate(agree = names_agree(name, stated)) %>%
+  group_by(lei) %>%
+  mutate(lei_agrees = any(agree %in% TRUE)) %>%
+  ungroup() %>%
+  filter(agree %in% FALSE, !lei_agrees)
+
+# One report per issuer and financial year: the one with the most facts
+# and, between equals, the one the repository processed last. A correction
+# or a second language of the same year is the same accounts again.
+primary <- filings %>%
+  filter(read, fy %in% report_years, !filing %in% identity$filing) %>%
+  arrange(lei, fy, desc(period_end), desc(facts), desc(processed), filing) %>%
+  distinct(lei, fy, .keep_all = TRUE)
+
+# --------------------------------------------------------------------------
+# The figures
+# --------------------------------------------------------------------------
+
+raw <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country == report_country, concept %in% measures$concept,
+         is.na(dimensions), !is.na(value)) %>%
+  select(filing, lei, period_end, concept, prd_start, prd_end, unit, value) %>%
+  collect() %>%
+  semi_join(primary, by = "filing") %>%
+  left_join(measures, by = "concept", relationship = "many-to-many")
+
+# A report gives each figure for its own year and for the year before. The
+# year before is what makes a growth rate like for like: both figures come
+# from the same accounts, so a restatement or an acquisition accounted for
+# in both years does not show up as growth. A flow has to cover a year, so
+# that a quarter in the notes is not taken for the year; a stock has no
+# start.
+raw <- raw %>%
+  mutate(days = as.integer(prd_end - prd_start),
+         prior_end = as.Date(paste0(as.integer(format(period_end, "%Y")) - 1L,
+                                    format(period_end, "-%m-%d")),
+                             optional = TRUE),
+         prior_end = coalesce(prior_end, period_end - 365L),
+         role = case_when(prd_end == period_end ~ "current",
+                          abs(as.integer(prd_end - prior_end)) <= 7 ~ "prior",
+                          TRUE ~ NA_character_)) %>%
+  filter(!is.na(role),
+         (flow & !is.na(days) & days >= 330 & days <= 400) |
+           (!flow & (is.na(prd_start) | prd_start == prd_end)))
+
+# The currency of a report is the one most of these figures are in, and a
+# figure in another is left out rather than added to it.
+currency_of <- raw %>%
+  filter(grepl("^iso4217:", unit)) %>%
+  count(filing, unit) %>%
+  arrange(filing, desc(n)) %>%
+  distinct(filing, .keep_all = TRUE) %>%
+  transmute(filing, currency = sub("^iso4217:", "", unit))
+
+# One value per report, measure and year. A figure tagged twice with two
+# values is taken as the value tagged more often, and between equals the
+# larger: the statement and a note that rounds it differently agree more
+# often than they disagree, and the statement is the larger.
+values <- raw %>%
+  inner_join(currency_of, by = "filing") %>%
+  filter(unit == paste0("iso4217:", currency)) %>%
+  count(filing, measure, rank, role, value, name = "times") %>%
+  arrange(filing, measure, role, rank, desc(times), desc(abs(value))) %>%
+  distinct(filing, measure, role, .keep_all = TRUE) %>%
+  mutate(key = ifelse(role == "prior", paste0(measure, "_prior"), measure))
+
+basis <- values %>%
+  filter(role == "current") %>%
+  select(filing, measure, rank)
+
+insurer_leis <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country == report_country, concept %in% financial_concepts) %>%
+  distinct(lei) %>%
+  collect() %>%
+  pull(lei)
+
+wanted <- c(unique(measures$measure), paste0(unique(measures$measure), "_prior"))
+firms <- values %>%
+  select(filing, key, value) %>%
+  pivot_wider(names_from = "key", values_from = "value")
+for (k in setdiff(wanted, names(firms))) firms[[k]] <- NA_real_
+
+ratio <- function(a, b) ifelse(!is.na(b) & b > 0, 100 * a / b, NA_real_)
+growth <- function(a, b) ifelse(!is.na(b) & b > 0 & !is.na(a), 100 * (a / b - 1), NA_real_)
+
+firms <- primary %>%
+  select(lei, filing, fy, period_end) %>%
+  inner_join(firms, by = "filing") %>%
+  left_join(currency_of, by = "filing") %>%
+  left_join(issuer_names, by = "lei") %>%
+  group_by(lei) %>%
+  mutate(financial = lei %in% insurer_leis |
+           any(!is.na(interest) & interest > 0 &
+                 (is.na(revenue) | interest >= bank_interest_share * revenue))) %>%
+  ungroup() %>%
+  mutate(dividends = abs(dividends), dividends_prior = abs(dividends_prior),
+         op_margin = ratio(operating, revenue),
+         net_margin = ratio(profit, revenue),
+         equity_ratio = ratio(equity, assets),
+         roe = ratio(profit, equity),
+         roa = ratio(profit, assets),
+         revenue_growth = growth(revenue, revenue_prior),
+         loss = profit < 0,
+         in_sum = currency == sum_currency)
+
+# A listed holding and its listed subsidiary both report the same group:
+# Heineken Holding consolidates Heineken, ING Groep consolidates ING Bank.
+# Two reports of one year whose total assets agree to within
+# `twin_tolerance`, whose revenue does too where both state one, and whose
+# equity agrees to within `twin_equity_tolerance`, are taken to be one
+# group. The one with the larger equity -- the holding,
+# which carries the other's minorities -- stays in every sum, and the other
+# is shown in the tables and marked, but counted once.
+twins <- firms %>%
+  filter(!is.na(assets), assets > 0) %>%
+  select(fy, currency, lei, issuer, assets, revenue, equity) %>%
+  inner_join(., ., by = c("fy", "currency"), suffix = c("", "_other"),
+             relationship = "many-to-many") %>%
+  filter(lei != lei_other,
+         abs(assets / assets_other - 1) < twin_tolerance,
+         !is.na(equity), !is.na(equity_other), equity_other != 0,
+         abs(equity / equity_other - 1) < twin_equity_tolerance,
+         (is.na(revenue) & is.na(revenue_other)) |
+           (!is.na(revenue) & !is.na(revenue_other) & revenue_other != 0 &
+              abs(revenue / revenue_other - 1) < twin_tolerance),
+         coalesce(equity, -Inf) < coalesce(equity_other, -Inf) |
+           (coalesce(equity, -Inf) == coalesce(equity_other, -Inf) &
+              lei > lei_other)) %>%
+  distinct(fy, lei, .keep_all = TRUE) %>%
+  select(fy, lei, twin = issuer_other)
+
+firms <- firms %>%
+  left_join(twins, by = c("fy", "lei")) %>%
+  mutate(in_sum = in_sum & is.na(twin),
+         label = ifelse(is.na(twin), issuer, paste0(issuer, " ²")))
+
+corporates <- firms %>% filter(!financial)
+financials <- firms %>% filter(financial)
+
+if (nrow(corporates) == 0) {
+  stop("No report of ", report_country, " in the years shown carries a ",
+       "figure this factsheet reads.")
+}
+
+# --------------------------------------------------------------------------
+# The year by year
+# --------------------------------------------------------------------------
+
+# A like-for-like change: the sum over the issuers that state both years of
+# the figure in one report, this year's against the year before's.
+lfl <- function(data, key) {
+  prior <- paste0(key, "_prior")
+  d <- data[!is.na(data[[key]]) & !is.na(data[[prior]]) & data$in_sum, ]
+  if (nrow(d) == 0 || sum(d[[prior]]) == 0) return(NA_real_)
+  100 * (sum(d[[key]]) / sum(d[[prior]]) - 1)
+}
+lfl_n <- function(data, key) {
+  prior <- paste0(key, "_prior")
+  sum(!is.na(data[[key]]) & !is.na(data[[prior]]) & data$in_sum)
+}
+q <- function(x, p) if (sum(!is.na(x)) >= 3) unname(quantile(x, p, na.rm = TRUE)) else NA_real_
+
+by_year <- corporates %>%
+  filter(is.na(twin)) %>%
+  group_by(fy) %>%
+  group_modify(~ tibble(
+    issuers = nrow(.x),
+    with_revenue = sum(!is.na(.x$revenue)),
+    revenue_sum = sum(.x$revenue[.x$in_sum], na.rm = TRUE),
+    operating_sum = sum(.x$operating[.x$in_sum], na.rm = TRUE),
+    profit_sum = sum(.x$profit[.x$in_sum], na.rm = TRUE),
+    assets_sum = sum(.x$assets[.x$in_sum], na.rm = TRUE),
+    ocf_sum = sum(.x$ocf[.x$in_sum], na.rm = TRUE),
+    dividends_sum = sum(.x$dividends[.x$in_sum], na.rm = TRUE),
+    cash_sum = sum(.x$cash[.x$in_sum], na.rm = TRUE),
+    staff_sum = sum(.x$staff[.x$in_sum], na.rm = TRUE),
+    revenue_lfl = lfl(.x, "revenue"),
+    revenue_lfl_n = lfl_n(.x, "revenue"),
+    operating_lfl = lfl(.x, "operating"),
+    profit_lfl = lfl(.x, "profit"),
+    staff_lfl = lfl(.x, "staff"),
+    growth_median = q(.x$revenue_growth, .5),
+    op_margin_median = q(.x$op_margin, .5),
+    net_margin_median = q(.x$net_margin, .5),
+    equity_ratio_median = q(.x$equity_ratio, .5),
+    roe_median = q(.x$roe, .5),
+    loss_share = 100 * mean(.x$loss, na.rm = TRUE),
+    growing_share = 100 * mean(.x$revenue_growth > 0, na.rm = TRUE))) %>%
+  ungroup()
+
+latest <- corporates %>% filter(fy == latest_year)
+latest_fin <- financials %>% filter(fy == latest_year)
+ly <- by_year %>% filter(fy == latest_year)
+py <- by_year %>% filter(fy == latest_year - 1)
+
+# Whether the latest year is still being filed, which every figure of it
+# has to be read against: a sum over two-thirds of the issuers is not a fall.
+n_latest <- nrow(latest)
+n_before <- sum(corporates$fy == latest_year - 1)
+partial <- n_before > 0 && n_latest < 0.9 * n_before
+```
+
+```{r formats}
+fmt <- function(x, digits = 0) {
+  x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
+  ifelse(is.na(x), "–",
+         formatC(x, format = "f", digits = digits, big.mark = ",",
+                 decimal.mark = "."))
+}
+fmt_signed <- function(x, digits = 1) {
+  ifelse(is.na(x), "–", paste0(ifelse(x > 0, "+", ""), fmt(x, digits)))
+}
+bn <- function(x) fmt(x / 1e9, 1)
+mn <- function(x) fmt(x / 1e6, 0)
+wrap_caption <- function(text, width = 125) {
+  paste(strwrap(text, width = width), collapse = "\n")
+}
+source_caption <- caption_corporate_design(
+  source = "ESEF annual financial reports, filings.xbrl.org; fincommons esef module.",
+  lang = "en")
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", x)
+  gsub("\"", "\\\\\"", x)
+}
+ts <- function(x) {
+  x <- ifelse(is.na(x), "–", as.character(x))
+  paste0("\"", typst_string(x), "\"")
+}
+
+# A table written as Typst rather than as a Markdown table, which gives the
+# columns the widths they need instead of the ones Pandoc guesses.
+typst_table <- function(df, widths, align, size = 7.5, groups = NULL) {
+  cells <- vapply(seq_len(nrow(df)), function(i) {
+    row <- paste(ts(unlist(df[i, ], use.names = FALSE)), collapse = ", ")
+    if (!is.null(groups) && !is.na(groups[i]) && nzchar(groups[i])) {
+      row <- paste0("table.cell(colspan: ", ncol(df),
+                    ", inset: (top: 7pt, bottom: 3pt, x: 4pt), text(weight: \"bold\", ",
+                    ts(groups[i]), ")), ", row)
+    }
+    row
+  }, character(1))
+  paste0(
+    "\n```{=typst}\n#block(width: 100%, text(size: ", size, "pt, {\n",
+    "set par(justify: false)\ntable(\n",
+    "  columns: (", paste(widths, collapse = ", "), "),\n",
+    "  align: (", paste(align, collapse = ", "), "),\n",
+    "  inset: (x: 4pt, y: 2.8pt),\n",
+    "  stroke: (x, y) => if y == 0 { (top: 0.7pt + rgb(\"#22282E\"), ",
+    "bottom: 0.4pt + rgb(\"#22282E\")) } else { none },\n",
+    "  table.header(", paste0("text(weight: \"bold\", ", ts(names(df)), ")",
+                             collapse = ", "), "),\n  ",
+    paste(cells, collapse = ",\n  "),
+    ",\n  table.hline(stroke: 0.7pt + rgb(\"#22282E\"))\n)}))\n```\n\n")
+}
+
+cols <- design_colours()
+year_cols <- as.character(report_years)
+```
+
+```{r cover, results='asis'}
+title <- paste("Listed companies in", country_name)
+subtitle <- paste0("Recent facts and trends from their annual financial ",
+                   "reports, financial years ", period_range)
+
+tile <- function(value, label, colour) {
+  paste0("box(width: 100%, inset: (x: 8pt, y: 7pt), stroke: (left: 2pt + rgb(\"",
+         colour, "\")), [#text(size: 17pt, weight: \"bold\", ", ts(value),
+         ")\\ #text(size: 7.5pt, fill: rgb(\"#5C666F\"), ", ts(label), ")])")
+}
+
+direction <- function(x, up, down) ifelse(is.na(x), "", ifelse(x >= 0, up, down))
+change_word <- function(x) {
+  if (is.na(x)) return("could not be compared")
+  paste0(direction(x, "rose by ", "fell by "), fmt(abs(x), 1), " %")
+}
+
+top5_share <- {
+  d <- latest %>% filter(in_sum, !is.na(revenue)) %>% arrange(desc(revenue))
+  if (nrow(d) > 5) 100 * sum(head(d$revenue, 5)) / sum(d$revenue) else NA_real_
+}
+
+bullets <- c(
+  paste0("**Revenue.** Across the ", fmt(ly$revenue_lfl_n), " companies that ",
+         "report both years, revenue ", change_word(ly$revenue_lfl), " in ",
+         latest_year, " like for like",
+         if (nrow(py) == 1 && !is.na(py$revenue_lfl))
+           paste0(", after ", fmt_signed(py$revenue_lfl), " % in ", latest_year - 1)
+         else "", ". ", fmt(ly$growing_share), " % of them grew."),
+  paste0("**Profits.** Operating profit ", change_word(ly$operating_lfl),
+         " and the result for the year ", change_word(ly$profit_lfl), ". ",
+         fmt(ly$loss_share), " % of the companies made a loss",
+         if (nrow(py) == 1) paste0(", against ", fmt(py$loss_share), " % a year before")
+         else "", "."),
+  paste0("**Margins.** The median operating margin is ",
+         fmt(ly$op_margin_median, 1), " %",
+         if (nrow(py) == 1) paste0(" (", fmt(py$op_margin_median, 1), " % in ",
+                                   latest_year - 1, ")") else "",
+         ", the median return on equity ", fmt(ly$roe_median, 1), " %."),
+  paste0("**Balance sheets.** The median equity ratio is ",
+         fmt(ly$equity_ratio_median, 1), " %. The companies hold ",
+         sum_currency, " ", bn(ly$cash_sum), " bn in cash and paid out ",
+         sum_currency, " ", bn(ly$dividends_sum), " bn in dividends."),
+  if (!is.na(top5_share)) paste0("**Concentration.** The five largest ",
+         "companies account for ", fmt(top5_share), " % of the revenue of all ",
+         fmt(sum(latest$in_sum & !is.na(latest$revenue))), "."),
+  if (nrow(latest_fin) > 0) paste0("**Banks and insurers.** ",
+         fmt(nrow(latest_fin)), " of them report for ", latest_year,
+         ", with total assets of ", sum_currency, " ",
+         bn(sum(latest_fin$assets[latest_fin$in_sum], na.rm = TRUE)),
+         " bn; they are shown apart, on the last page."))
+
+cat("```{=typst}\n")
+cat("#set page(header: [#set text(size: 7pt, fill: rgb(\"#5C666F\"))\n",
+    "  #grid(columns: (1fr, auto), [#text(weight: \"bold\", ",
+    ts(paste("Listed companies ·", Country_name)), ") #h(6pt) #text(",
+    ts(paste("Financial years", period_range)), ")], [#text(",
+    ts("ESEF annual report data"), ")])\n",
+    "  #v(-4pt) #line(length: 100%, stroke: 0.5pt + rgb(\"#DCE1E5\"))],\n",
+    "  footer: [#set text(size: 7pt, fill: rgb(\"#5C666F\"))\n",
+    "  #line(length: 100%, stroke: 0.5pt + rgb(\"#DCE1E5\")) #v(-2pt)\n",
+    "  #grid(columns: (1fr, auto), [#text(",
+    ts("Source: ESEF annual financial reports, filings.xbrl.org; fincommons esef module. Own calculations."),
+    ")], [#context counter(page).display()])],\n  numbering: \"1\")\n", sep = "")
+cat("#text(size: 8pt, tracking: 1.6pt, fill: rgb(\"#5C666F\"), ",
+    ts(toupper(paste("Economic factsheet ·", Country_name))), ")\n", sep = "")
+cat("#v(2pt)\n#line(length: 100%, stroke: 1.2pt + rgb(\"#C10016\"))\n#v(8pt)\n")
+cat("#text(size: 21pt, weight: \"bold\", ", ts(title), ")\n#v(1pt)\n", sep = "")
+cat("#text(size: 10pt, fill: rgb(\"#5C666F\"), ", ts(subtitle), ")\n#v(10pt)\n", sep = "")
+cat("#grid(columns: (1fr, 1fr, 1fr, 1fr), column-gutter: 8pt,\n  ",
+    tile(paste(sum_currency, bn(ly$revenue_sum), "bn"),
+         paste("revenue,", latest_year), cols[["ink"]]), ",\n  ",
+    tile(paste0(fmt_signed(ly$revenue_lfl), " %"),
+         "revenue, like for like", cols[["blue"]]), ",\n  ",
+    tile(paste0(fmt(ly$op_margin_median, 1), " %"),
+         "median operating margin", cols[["blue"]]), ",\n  ",
+    tile(paste0(fmt(ly$loss_share), " %"),
+         "of companies made a loss", cols[["red"]]),
+    "\n)\n#v(8pt)\n", sep = "")
+cat("```\n\n")
+cat(paste0("The ", fmt(n_latest), " companies of ", country_name, " other than ",
+           "banks and insurers that filed an ESEF report with figures for the ",
+           "financial year ", latest_year, ".",
+           if (partial) paste0(" **That year is still being filed:** ",
+                               fmt(n_before), " companies reported for ",
+                               latest_year - 1, ", so its sums are short and its ",
+                               "like-for-like changes and medians are the ones to read.")
+           else ""), "\n\n")
+cat(paste0("- ", bullets[!is.na(bullets)], collapse = "\n"), "\n")
+```
+
+## The trend
+
+```{r trend-chart}
+#| fig-height: 2.5
+temp <- by_year %>%
+  select(fy, Revenue = revenue_lfl, `Operating profit` = operating_lfl,
+         `Result for the year` = profit_lfl) %>%
+  pivot_longer(-fy, names_to = "what", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  mutate(what = factor(what, levels = c("Revenue", "Operating profit",
+                                        "Result for the year")),
+         fy = factor(fy))
+ggplot(temp, aes(x = fy, y = value, fill = what)) +
+  geom_col(position = position_dodge(width = 0.78), width = 0.72) +
+  geom_text(aes(label = fmt_signed(value),
+                vjust = ifelse(value >= 0, -0.35, 1.25)),
+            position = position_dodge(width = 0.78), size = 2.5,
+            colour = cols[["ink"]]) +
+  geom_zeroline() +
+  scale_fill_manual(values = unname(cols[c("blue", "amber", "teal")])) +
+  scale_y_continuous(labels = function(x) fmt(x), expand = expansion(mult = .15)) +
+  labs(subtitle = paste("Change on the year before, like for like, %;",
+                        "companies other than banks and insurers"),
+       caption = wrap_caption(source_caption)) +
+  theme_corporate_design(base_size = chart_base_size,
+                         axis.title = element_blank())
+```
+
+```{r trend-table, results='asis'}
+row <- function(label, values, digits = 1, signed = FALSE) {
+  v <- setNames(rep(NA_real_, length(report_years)), year_cols)
+  v[as.character(by_year$fy)] <- values
+  c(label, if (signed) fmt_signed(v, digits) else fmt(v, digits))
+}
+rows <- rbind(
+  row("Companies", by_year$issuers, 0),
+  row(paste0("Revenue, ", sum_currency, " bn"), by_year$revenue_sum / 1e9),
+  row(paste0("Operating profit, ", sum_currency, " bn"), by_year$operating_sum / 1e9),
+  row(paste0("Result for the year, ", sum_currency, " bn"), by_year$profit_sum / 1e9),
+  row("Revenue, like for like, %", by_year$revenue_lfl, signed = TRUE),
+  row("Operating profit, like for like, %", by_year$operating_lfl, signed = TRUE),
+  row("Result, like for like, %", by_year$profit_lfl, signed = TRUE),
+  row("Staff costs, like for like, %", by_year$staff_lfl, signed = TRUE),
+  row("Revenue growth, median, %", by_year$growth_median, signed = TRUE),
+  row("Operating margin, median, %", by_year$op_margin_median),
+  row("Net margin, median, %", by_year$net_margin_median),
+  row("Return on equity, median, %", by_year$roe_median),
+  row("Equity ratio, median, %", by_year$equity_ratio_median),
+  row("Companies with a loss, %", by_year$loss_share))
+temp <- as.data.frame(rows, stringsAsFactors = FALSE)
+names(temp) <- c("", year_cols)
+cat(typst_table(temp, widths = c("1fr", rep("1.6cm", length(year_cols))),
+                align = c("left", rep("right", length(year_cols)))))
+cat(paste0("Sums are over the companies reporting in ", sum_currency,
+           "; a sum over a year with fewer reports is lower for that reason ",
+           "alone, which is why the changes are like for like: each company's ",
+           "figure for the year against the one its own report gives for the ",
+           "year before, summed over the companies stating both. ",
+           "Medians are over every company with the figures, in any currency.\n"))
+```
+
+```{r margin-chart}
+#| fig-height: 2.5
+temp <- corporates %>%
+  select(fy, `Operating margin` = op_margin, `Net margin` = net_margin,
+         `Return on equity` = roe, `Equity ratio` = equity_ratio) %>%
+  pivot_longer(-fy, names_to = "what", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  group_by(what, fy) %>%
+  filter(n() >= 3) %>%
+  summarise(q1 = quantile(value, .25), median = median(value),
+            q3 = quantile(value, .75), .groups = "drop") %>%
+  mutate(what = factor(what, levels = c("Operating margin", "Net margin",
+                                        "Return on equity", "Equity ratio")))
+ggplot(temp, aes(x = fy, y = median)) +
+  geom_ribbon(aes(ymin = q1, ymax = q3), fill = cols[["blue"]], alpha = 0.15) +
+  geom_line(colour = cols[["blue"]], linewidth = linewidth_corporate_design) +
+  geom_point(colour = cols[["blue"]], size = 1.4) +
+  geom_zeroline() +
+  facet_wrap(~what, nrow = 1, scales = "free_y") +
+  scale_x_continuous(breaks = report_years) +
+  labs(subtitle = "Median and interquartile range across the companies, %",
+       caption = wrap_caption(source_caption)) +
+  theme_corporate_design(base_size = chart_base_size,
+                         axis.title = element_blank())
+```
+
+## The largest companies, `r latest_year`
+
+```{r largest, results='asis'}
+temp <- latest %>%
+  filter(!is.na(revenue)) %>%
+  arrange(desc(currency == sum_currency), desc(revenue)) %>%
+  head(top_n) %>%
+  transmute(Company = label,
+            Revenue = paste(ifelse(currency == sum_currency, "", currency), mn(revenue)),
+            `Growth, %` = fmt_signed(revenue_growth),
+            `Op. margin, %` = fmt(op_margin, 1),
+            `Net margin, %` = fmt(net_margin, 1),
+            `Equity ratio, %` = fmt(equity_ratio, 1),
+            `ROE, %` = fmt(roe, 1))
+temp$Revenue <- trimws(temp$Revenue)
+names(temp)[2] <- paste0("Revenue, ", sum_currency, " m")
+cat(typst_table(temp, widths = c("1fr", rep("auto", 6)),
+                align = c("left", rep("right", 6))))
+others <- latest %>% filter(!is.na(revenue), currency != sum_currency)
+twin_note <- function(d) {
+  d <- d %>% filter(!is.na(twin))
+  if (nrow(d) == 0) return("")
+  paste0(" ² The same group as ", paste(unique(d$twin), collapse = ", "),
+         ": one listed company consolidates the other, and the group is ",
+         "counted once in every sum and median.")
+}
+cat(paste0("By revenue in ", sum_currency, ", from the report for ", latest_year,
+           ". Growth is against the figure the same report gives for the year ",
+           "before.",
+           if (nrow(others) > 0) paste0(" ", fmt(nrow(others)),
+             if (nrow(others) == 1) " company reports" else " companies report",
+             " in another currency (",
+             paste(sort(unique(others$currency)), collapse = ", "),
+             ") and ", if (nrow(others) == 1) "is" else "are",
+             " not ranked here.") else "",
+           if (partial) paste0(" Companies that have not yet filed for ",
+                               latest_year, " are missing from this list.") else "",
+           twin_note(latest %>% filter(!is.na(revenue)) %>%
+                       arrange(desc(currency == sum_currency), desc(revenue)) %>%
+                       head(top_n)),
+           "\n"))
+```
+
+```{r size-chart}
+#| fig-height: 2.4
+temp <- latest %>%
+  filter(in_sum, !is.na(revenue), revenue > 0) %>%
+  arrange(desc(revenue)) %>%
+  mutate(rank = row_number(), share = 100 * cumsum(revenue) / sum(revenue))
+if (nrow(temp) >= 5) {
+  ggplot(temp, aes(x = rank, y = share)) +
+    geom_step(colour = cols[["blue"]], linewidth = linewidth_corporate_design) +
+    geom_hline(yintercept = c(50, 80), colour = cols[["grid"]], linetype = "dashed") +
+    scale_y_continuous(limits = c(0, 100), labels = function(x) fmt(x)) +
+    scale_x_continuous(breaks = function(l) pretty(l)) +
+    labs(subtitle = paste0("Share of total revenue held by the largest n companies, %, ",
+                           latest_year),
+         caption = wrap_caption(source_caption)) +
+    theme_corporate_design(base_size = chart_base_size,
+                           axis.title = element_blank())
+}
+```
+
+## The movers
+
+```{r movers, results='asis'}
+eligible <- latest %>%
+  filter(!is.na(revenue_growth), !is.na(revenue_prior),
+         revenue_prior >= movers_min_revenue)
+mover_table <- function(d) {
+  d %>% transmute(Company = label,
+                  `Revenue, m` = paste(currency, mn(revenue)),
+                  `Year before, m` = mn(revenue_prior),
+                  `Growth, %` = fmt_signed(revenue_growth),
+                  `Op. margin, %` = fmt(op_margin, 1))
+}
+if (nrow(eligible) >= 4) {
+  up <- eligible %>% arrange(desc(revenue_growth)) %>% head(movers_n)
+  down <- eligible %>% arrange(revenue_growth) %>% head(movers_n) %>%
+    filter(!lei %in% up$lei)
+  cat("### Fastest growing\n\n")
+  cat(typst_table(mover_table(up), widths = c("1fr", rep("auto", 4)),
+                  align = c("left", rep("right", 4))))
+  cat("### Largest declines\n\n")
+  cat(typst_table(mover_table(down), widths = c("1fr", rep("auto", 4)),
+                  align = c("left", rep("right", 4))))
+  cat(paste0("Companies with revenue of at least ", fmt(movers_min_revenue / 1e6),
+             " million in their own currency the year before, ", latest_year,
+             " against ", latest_year - 1, " as stated in the ", latest_year,
+             " report. A large change is as often an acquisition, a disposal or ",
+             "a change of what is consolidated as it is trade.\n"))
+} else {
+  cat("Too few companies report revenue for two years to name movers.\n")
+}
+```
+
+```{r losses, results='asis'}
+loss_makers <- latest %>%
+  filter(!is.na(profit), profit < 0) %>%
+  arrange(profit) %>%
+  head(movers_n)
+if (nrow(loss_makers) > 0) {
+  cat("### The largest losses\n\n")
+  cat(typst_table(loss_makers %>%
+                    transmute(Company = label,
+                              `Result, m` = paste(currency, mn(profit)),
+                              `Year before, m` = mn(profit_prior),
+                              `Revenue, m` = mn(revenue),
+                              `Equity ratio, %` = fmt(equity_ratio, 1)),
+                  widths = c("1fr", rep("auto", 4)),
+                  align = c("left", rep("right", 4))))
+}
+```
+
+## Cash, investment and payouts
+
+```{r cash-table, results='asis'}
+rows <- rbind(
+  row(paste0("Operating cash flow, ", sum_currency, " bn"), by_year$ocf_sum / 1e9),
+  row(paste0("Dividends paid, ", sum_currency, " bn"), by_year$dividends_sum / 1e9),
+  row(paste0("Cash held, ", sum_currency, " bn"), by_year$cash_sum / 1e9),
+  row(paste0("Staff costs, ", sum_currency, " bn"), by_year$staff_sum / 1e9),
+  row("Dividends to the result, %",
+      ifelse(by_year$profit_sum > 0, 100 * by_year$dividends_sum / by_year$profit_sum, NA)),
+  row("Operating cash flow to operating profit, %",
+      ifelse(by_year$operating_sum > 0, 100 * by_year$ocf_sum / by_year$operating_sum, NA)))
+temp <- as.data.frame(rows, stringsAsFactors = FALSE)
+names(temp) <- c("", year_cols)
+cat(typst_table(temp, widths = c("1fr", rep("1.6cm", length(year_cols))),
+                align = c("left", rep("right", length(year_cols)))))
+coverage <- latest %>% filter(in_sum) %>%
+  summarise(ocf = sum(!is.na(ocf)), dividends = sum(!is.na(dividends)),
+            staff = sum(!is.na(staff)), n = n())
+cat(paste0("Sums over the companies reporting in ", sum_currency, " that tag the ",
+           "line: in ", latest_year, ", ", fmt(coverage$ocf), " of ", fmt(coverage$n),
+           " tag their operating cash flow, ", fmt(coverage$dividends),
+           " dividends paid and ", fmt(coverage$staff), " their staff costs. ",
+           "A company that pays no dividend usually tags nothing, so the sum ",
+           "of dividends is complete where the others may not be.\n"))
+```
+
+```{r spread-chart}
+#| fig-height: 2.6
+temp <- latest %>%
+  select(issuer, `Operating margin` = op_margin, `Net margin` = net_margin,
+         `Return on equity` = roe, `Equity ratio` = equity_ratio) %>%
+  pivot_longer(-issuer, names_to = "what", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  mutate(what = factor(what, levels = rev(c("Operating margin", "Net margin",
+                                            "Return on equity", "Equity ratio"))))
+clipped <- sum(temp$value < -50 | temp$value > 100)
+temp <- temp %>% mutate(value = pmin(pmax(value, -50), 100))
+ggplot(temp, aes(x = value, y = what)) +
+  geom_boxplot(outlier.shape = NA, width = 0.55, fill = cols[["seq_low"]],
+               colour = cols[["slate"]]) +
+  geom_jitter(height = 0.14, width = 0, size = 0.9, alpha = 0.55,
+              colour = cols[["blue"]]) +
+  geom_vline(xintercept = 0, colour = cols[["ink_soft"]], linewidth = 0.3) +
+  scale_x_continuous(limits = c(-50, 100), labels = function(x) fmt(x)) +
+  labs(subtitle = wrap_caption(paste0(
+         "Every company of ", latest_year, ", %; the box is the interquartile ",
+         "range", if (clipped > 0) paste0(" (", clipped, " values beyond -50 ",
+         "or 100 are drawn at the edge)") else ""), 100),
+       caption = wrap_caption(source_caption)) +
+  theme_corporate_design(base_size = chart_base_size, grid = "x",
+                         axis.title = element_blank())
+```
+
+## Banks and insurers
+
+```{r financials, results='asis'}
+if (nrow(latest_fin) == 0) {
+  cat("No bank or insurer of", country_name, "reports for", latest_year, ".\n")
+} else {
+  temp <- latest_fin %>%
+    arrange(desc(currency == sum_currency), desc(assets)) %>%
+    transmute(Company = label,
+              `Total assets, m` = trimws(paste(ifelse(currency == sum_currency, "", currency),
+                                               mn(assets))),
+              `Equity ratio, %` = fmt(equity_ratio, 1),
+              `Result, m` = mn(profit),
+              `Year before, m` = mn(profit_prior),
+              `ROE, %` = fmt(roe, 1),
+              `ROA, %` = fmt(roa, 2))
+  names(temp)[2] <- paste0("Total assets, ", sum_currency, " m")
+  cat(typst_table(temp, widths = c("1fr", rep("auto", 6)),
+                  align = c("left", rep("right", 6)), size = 7))
+  fin_lfl <- lfl(latest_fin, "profit")
+  cat(paste0("A company is counted as a bank where its interest revenue ",
+             "under the effective interest method is at least ",
+             fmt(bank_interest_share * 100), " % of its revenue, or where it ",
+             "tags no revenue at all, and as an insurer where it presents a ",
+             "line of IFRS 17. ",
+             "The result of those reporting both years ",
+             change_word(fin_lfl), " like for like. ",
+             "A group whose bank is a small part of it stays among the ",
+             "companies.", twin_note(latest_fin), "\n"))
+}
+```
+
+## How the figures are put together
+
+```{r method, results='asis'}
+cov <- filings %>%
+  filter(fy %in% report_years) %>%
+  group_by(fy) %>%
+  summarise(listed = n(), read = sum(read), .groups = "drop") %>%
+  left_join(firms %>% group_by(fy) %>%
+              summarise(companies = sum(!financial), financial = sum(financial),
+                        other_ccy = sum(!in_sum, na.rm = TRUE),
+                        .groups = "drop"), by = "fy") %>%
+  left_join(corporates %>% group_by(fy) %>%
+              summarise(revenue = sum(!is.na(revenue)),
+                        ifrs15 = sum(filing %in% basis$filing[basis$measure == "revenue" & basis$rank == 2]),
+                        .groups = "drop"), by = "fy")
+temp <- cov %>% transmute(`Financial year` = as.character(fy),
+                          `Reports listed` = fmt(listed),
+                          `With facts` = fmt(read),
+                          Companies = fmt(companies),
+                          `Banks, insurers` = fmt(financial),
+                          `With revenue` = fmt(revenue),
+                          other = fmt(other_ccy))
+names(temp)[7] <- paste0("Not in ", sum_currency)
+cat(typst_table(temp,
+                widths = c("1fr", rep("auto", 6)),
+                align = c("left", rep("right", 6))))
+notes <- c(
+  paste0("**What it reads.** The tables of filings and facts of the `esef` ",
+         "module of fincommons: the annual financial reports that issuers ",
+         "of ", country_name, " with securities on a regulated market file ",
+         "in the European Single Electronic Format, as collected by ",
+         "filings.xbrl.org. That is listed companies and issuers of listed ",
+         "bonds, not the economy as a whole: no private company and no ",
+         "public body is in it."),
+  paste0("**Which report.** One per company and financial year: where a year ",
+         "was filed more than once -- a correction, a second language -- the ",
+         "report with the most facts. A financial year ending on or before ",
+         "30 June is counted as the year before."),
+  paste0("**Which figures.** Only figures of the group as a whole, with no ",
+         "breakdown, for the twelve months or the balance-sheet date of the ",
+         "report. Revenue is IFRS revenue, or IFRS 15 revenue where that is ",
+         "all a report tags; the result is the total, or the parent's share ",
+         "where that is all; likewise equity. Ratios are of figures from the ",
+         "same report: operating and net margin on revenue, return on equity ",
+         "and the equity ratio on year-end equity and assets. A ratio over a ",
+         "denominator of zero or less is left out."),
+  paste0("**What is left out.** Banks and insurers from every corporate ",
+         "figure. A group reported both by a listed holding and by its listed ",
+         "subsidiary is counted once in every sum and median", if (nrow(twins) > 0)
+         paste0(" (", paste(unique(paste(firms$issuer[!is.na(firms$twin)], "under",
+                                          firms$twin[!is.na(firms$twin)])),
+                            collapse = "; "), ")") else "",
+         "; one consolidated into another only in part is not found and is ",
+         "counted twice. ", if (nrow(identity) > 0) paste0(
+         fmt(n_distinct(identity$filing)), " report", if (n_distinct(identity$filing) == 1) "" else "s",
+         " that name", if (n_distinct(identity$filing) == 1) "s" else "",
+         " another entity than the one ",
+         "of the LEI ", if (n_distinct(identity$filing) == 1) "it is" else "they are",
+         " filed under (", paste(unique(substr(identity$stated, 1, 40)), collapse = "; "),
+         "): a filing agent's test report or a report filed under the wrong ",
+         "LEI, whose figures are either not real or counted already. ") else "",
+         " A company that does not tag a line from every sum and ",
+         "median of that line -- the data quality factsheet of the same ",
+         "country says which issuers tag little. Nothing is converted between ",
+         "currencies."),
+  paste0("This factsheet is produced by a template of the open-source ",
+         "project fincommons. It reads a public record, is given without ",
+         "warranty as to correctness or completeness, and carries no ",
+         "association with the issuers, with XBRL International or with ESMA. ",
+         "It is not investment advice."))
+cat(paste(notes, collapse = "\n\n"))
+```

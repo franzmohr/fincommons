@@ -1,0 +1,1017 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  # A chunk that fails stops the render, so a factsheet over a lake it could
+  # not read never comes out as a PDF of error messages with exit code 0.
+  error: false
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a factsheet
+# --------------------------------------------------------------------------
+
+# The one country the factsheet is about, as the repository codes it. It is
+# taken from the environment variable FINCOMMONS_COUNTRY where that is set,
+# so that one copy of this template renders every country:
+#
+#   FINCOMMONS_COUNTRY=NL quarto render esef-country-quality-factsheet.qmd
+#
+# Everything else -- the years, the issuers, what is ranked -- follows from
+# the lake.
+report_country <- toupper(Sys.getenv("FINCOMMONS_COUNTRY", "AT"))
+
+# The path to the config file, whose esef section names the Silver layer.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# The financial years shown, counted back from the latest the country has
+# reports with facts for. A financial year is named by the calendar year it
+# mostly falls in: a year ending on or before 30 June counts as the year
+# before, so a year to 31 March 2026 is 2025. The sector factsheet uses the
+# same rule.
+n_years <- 3
+
+# How many issuers the ranking shows, and how many of them the detail pages
+# list finding by finding.
+top_n <- 15
+detail_n <- 10
+
+# The points a finding scores, which is what the ranking is ordered by.
+#
+# A check of the module scores once per filing it fires on, whatever the
+# number of facts it names: a filing with forty duplicated facts has one
+# problem with its tagging, not forty. A note describes a filing without
+# faulting it and scores nothing. The screens are this factsheet's own and
+# are described in the settings below.
+#
+# The weights are a judgement of how much a finding costs a reader, and
+# nothing more; they are set here so that a reader who disagrees can change
+# them in one place.
+points <- c(error = 3, warning = 1, info = 0,
+            scale = 3, sign = 3, currency = 3, identity = 3, jump = 2,
+            restated = 1)
+
+# --------------------------------------------------------------------------
+# The screens, which this factsheet runs itself
+# --------------------------------------------------------------------------
+
+# The checks of the module look at one filing at a time. Some of the most
+# telling mistakes only show when an issuer's filings are set beside one
+# another, which no single filing can reveal, so this factsheet adds four
+# screens over the headline figures of each issuer:
+#
+#   restated -- the figure a filing gives for the year before differs from
+#               the figure the filing of that year gave, by more than
+#               `restated_tolerance`. Restatements are legitimate (a new
+#               standard, an operation discontinued) and score little.
+#   scale    -- the same comparison, but the two differ by a factor of
+#               `scale_factor` or more: almost always a figure tagged in
+#               thousands where units were meant, or the other way round.
+#   sign     -- the same comparison, with the sign flipped.
+#   jump     -- within one filing, the figure for the year is
+#               `scale_factor` times the figure the same filing gives for
+#               the year before, or less than its reciprocal.
+#   currency -- a filing whose monetary facts are mostly in a currency the
+#               issuer does not report in in any other year.
+#   identity -- a report whose own statement of the entity's name shares
+#               nothing with the name of the LEI it is filed under, where no
+#               other report under that LEI does either.
+screen_concepts <- c(
+  "ifrs-full:Revenue"                                 = "Revenue",
+  "ifrs-full:ProfitLoss"                              = "Profit or loss",
+  "ifrs-full:Assets"                                  = "Total assets",
+  "ifrs-full:Equity"                                  = "Equity",
+  "ifrs-full:CashAndCashEquivalents"                  = "Cash",
+  "ifrs-full:CashFlowsFromUsedInOperatingActivities"  = "Operating cash flow")
+duration_concepts <- c("ifrs-full:Revenue", "ifrs-full:ProfitLoss",
+                       "ifrs-full:CashFlowsFromUsedInOperatingActivities")
+restated_tolerance <- 0.01
+scale_factor <- 50
+
+# The lines a bank or an insurer presents and an industrial issuer does not,
+# as in the sector factsheet: interest revenue under the effective interest
+# method, and the IFRS 17 lines. An issuer whose statements carry one is a
+# bank or an insurer here, and the checks named after it are not counted
+# for it -- a bank's revenue is interest income, tagged as such, so a
+# missing revenue line is what a bank's report looks like.
+financial_concepts <- c(
+  "ifrs-full:InterestRevenueCalculatedUsingEffectiveInterestMethod",
+  "ifrs-full:InsuranceRevenue",
+  "ifrs-full:InsuranceContractLiabilities",
+  "ifrs-full:InsuranceServiceResult",
+  "ifrs-full:InsuranceServiceExpenses")
+exempt_for_financials <- c("MISS_REVENUE")
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# --------------------------------------------------------------------------
+# The design and the libraries
+# --------------------------------------------------------------------------
+
+# One design script for the whole package, in the templates directory at
+# its root; a copy beside this template wins over it.
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+if (!grepl("UTF-8", Sys.getlocale("LC_CTYPE"), ignore.case = TRUE)) {
+  stop("The session does not run in a UTF-8 locale, so the names of issuers ",
+       "and the typographic characters of this factsheet would print as ",
+       "<U+00D6> escapes. Render with LANG=en_US.UTF-8.")
+}
+
+period_year <- function(date) {
+  y <- as.integer(format(date, "%Y"))
+  ifelse(as.integer(format(date, "%m")) <= 6L, y - 1L, y)
+}
+
+country_names <- c(
+  AT = "Austria", BE = "Belgium", BG = "Bulgaria", CY = "Cyprus",
+  CZ = "Czechia", DE = "Germany", DK = "Denmark", EE = "Estonia",
+  ES = "Spain", FI = "Finland", FR = "France", GB = "the United Kingdom",
+  GR = "Greece", HR = "Croatia", HU = "Hungary", IE = "Ireland",
+  IS = "Iceland", IT = "Italy", LI = "Liechtenstein", LT = "Lithuania",
+  LU = "Luxembourg", LV = "Latvia", MT = "Malta", NL = "the Netherlands",
+  NO = "Norway", PL = "Poland", PT = "Portugal", RO = "Romania",
+  SE = "Sweden", SI = "Slovenia", SK = "Slovakia", UA = "Ukraine")
+country_name <- if (report_country %in% names(country_names))
+  country_names[[report_country]] else report_country
+Country_name <- paste0(toupper(substr(country_name, 1, 1)),
+                       substring(country_name, 2))
+
+# A legal name shortened for a table: the legal form abbreviated, and the
+# rest cut to a width a column can hold.
+short_name <- function(x, width = 40) {
+  x <- gsub("Aktiengesellschaft", "AG", x, ignore.case = TRUE)
+  x <- gsub("Gesellschaft m\\.?b\\.?H\\.?", "GmbH", x)
+  x <- gsub("Societas Europaea", "SE", x)
+  x <- gsub("\\s+", " ", trimws(x))
+  ifelse(nchar(x) > width, paste0(substr(x, 1, width - 1), "…"), x)
+}
+
+# --------------------------------------------------------------------------
+# The catalogue of checks
+# --------------------------------------------------------------------------
+
+catalogue_file <- "dataquality_checks.csv"
+catalogue_path <- c(catalogue_file,
+                    file.path("..", "..", "..", "data", catalogue_file))
+catalogue_path <- catalogue_path[file.exists(catalogue_path)]
+if (length(catalogue_path) == 0) {
+  stop("The catalogue of checks ", catalogue_file, " is neither beside this ",
+       "template nor in the data directory of the package.")
+}
+severities <- c("error", "warning", "info")
+catalogue <- read.csv(catalogue_path[1], stringsAsFactors = FALSE,
+                      encoding = "UTF-8") %>%
+  filter(dataset == "esef") %>%
+  as_tibble() %>%
+  mutate(severity = factor(severity, levels = severities))
+
+# --------------------------------------------------------------------------
+# The Silver layer
+# --------------------------------------------------------------------------
+
+yaml_paths <- read_yaml(config_path)
+path_silver <- yaml_paths[["esef"]][["silver"]]
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+if (is.null(path_silver)) {
+  stop("The config file ", config_path, " names no Silver layer for esef.")
+}
+
+# arrow reads every parquet file under a directory, and a Delta table keeps
+# the files it has replaced, so a Delta table read this way would count a
+# row once per write. The factsheet counts rows, so it refuses one.
+for (table in c("filings", "facts", "issues")) {
+  if (dir.exists(file.path(path_silver, table, "_delta_log"))) {
+    stop("The ", table, " table of the esef module is a Delta table, which ",
+         "this template does not read. Write the Silver layer as parquet.")
+  }
+}
+if (!dir.exists(file.path(path_silver, "issues"))) {
+  stop("The esef module has no table of issues in ", path_silver, ". Run ",
+       "fincommons.financialreport.esef.quality.update_silver_esef_quality ",
+       "first.")
+}
+
+filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
+  select(country, lei, filing, name, period_end, lang, processed) %>%
+  collect() %>%
+  mutate(country = as.character(country))
+
+countries_held <- sort(unique(filings_all$country))
+if (!report_country %in% countries_held) {
+  stop("The table of filings lists no filing of ", report_country,
+       ". It lists ", paste(countries_held, collapse = ", "), ".")
+}
+
+# Which filings carry facts, over the whole lake: the comparison with the
+# rest of the lake needs the other countries as well.
+facts_per_filing <- open_dataset(file.path(path_silver, "facts")) %>%
+  count(country, lei, filing) %>%
+  collect() %>%
+  mutate(country = as.character(country)) %>%
+  rename(facts = n)
+
+filings_all <- filings_all %>%
+  left_join(facts_per_filing, by = c("country", "lei", "filing")) %>%
+  mutate(facts = coalesce(facts, 0L),
+         read = facts > 0,
+         fy = period_year(period_end))
+
+country_read <- filings_all %>% filter(country == report_country, read)
+if (nrow(country_read) == 0) {
+  stop("The lake holds no facts for any filing of ", report_country, ", so ",
+       "no check that reads a figure can have run. Collect the reports ",
+       "first: esef.update_esef(spark, '<paths.yaml>', ['", report_country,
+       "'], contact='<you@example.org>')")
+}
+
+latest_year <- max(country_read$fy)
+report_years <- seq(latest_year - n_years + 1, latest_year)
+report_years <- report_years[report_years %in% country_read$fy]
+period_range <- if (length(report_years) == 1) as.character(report_years) else
+  paste0(min(report_years), "–", max(report_years))
+
+filings <- filings_all %>%
+  filter(country == report_country, fy %in% report_years)
+
+# The name of an issuer is the one of its latest filing, since a company
+# renamed in the period is best known by its present name.
+issuer_names <- filings_all %>%
+  filter(country == report_country) %>%
+  arrange(lei, desc(period_end), desc(processed)) %>%
+  distinct(lei, .keep_all = TRUE) %>%
+  transmute(lei, issuer = short_name(name))
+
+issues_all <- open_dataset(file.path(path_silver, "issues")) %>%
+  collect() %>%
+  mutate(across(c(country, lei, filing, issue), as.character),
+         checked = as.Date(checked))
+
+uncatalogued <- setdiff(unique(issues_all$issue), catalogue$code)
+if (length(uncatalogued) > 0) {
+  stop("The table of issues holds codes the catalogue does not describe: ",
+       paste(uncatalogued, collapse = ", "), ". Run the checks again.")
+}
+if (!report_country %in% issues_all$country) {
+  stop("The checks have not run over ", report_country, ": the table of ",
+       "issues has no row for it, and a country no check has looked at is ",
+       "not a country whose filings are sound. Run ",
+       "update_silver_esef_quality first.")
+}
+checked_on <- max(issues_all$checked[issues_all$country == report_country])
+
+issues <- issues_all %>%
+  inner_join(filings %>% select(country, lei, filing, fy, read),
+             by = c("country", "lei", "filing")) %>%
+  left_join(catalogue %>% select(issue = code, severity, title),
+            by = "issue")
+```
+
+```{r screens}
+# --------------------------------------------------------------------------
+# The screens over the headline figures
+# --------------------------------------------------------------------------
+
+# One filing per issuer and period end. An issuer that files the same year
+# twice -- a correction, or a second language -- has its figures compared
+# once, from the filing with the most facts and, between equals, the one the
+# repository processed last.
+primary <- filings_all %>%
+  filter(country == report_country, read,
+         fy %in% c(min(report_years) - 1, report_years)) %>%
+  arrange(lei, period_end, desc(facts), desc(processed), filing) %>%
+  distinct(lei, period_end, .keep_all = TRUE)
+
+key_facts <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country == report_country,
+         concept %in% names(screen_concepts),
+         is.na(dimensions), !is.na(value)) %>%
+  select(filing, lei, period_end, concept, prd_start, prd_end, unit, value) %>%
+  collect() %>%
+  semi_join(primary, by = c("lei", "filing"))
+
+# A fact is the filing's figure for its own year or for the year before.
+# A flow has to cover a year, so that a quarter in the notes is not taken
+# for the year; a stock has no start.
+key_facts <- key_facts %>%
+  mutate(days = as.integer(prd_end - prd_start),
+         flow = concept %in% duration_concepts,
+         prior_end = as.Date(paste0(as.integer(format(period_end, "%Y")) - 1L,
+                                    format(period_end, "-%m-%d")),
+                             optional = TRUE),
+         prior_end = coalesce(prior_end, period_end - 365L),
+         role = case_when(
+           prd_end == period_end ~ "current",
+           abs(as.integer(prd_end - prior_end)) <= 7 ~ "prior",
+           TRUE ~ NA_character_)) %>%
+  filter(!is.na(role),
+         (flow & !is.na(days) & days >= 330 & days <= 400) |
+           (!flow & (is.na(prd_start) | prd_start == prd_end)))
+
+# A figure tagged twice with two values is what DUPL_FACT_VALUE reports,
+# and which of the two is meant cannot be told, so the screens leave it out
+# rather than compare the wrong one.
+key_values <- key_facts %>%
+  group_by(lei, filing, period_end, concept, role) %>%
+  summarise(values = n_distinct(value), value = first(value),
+            unit = first(unit), prd_end = first(prd_end), .groups = "drop") %>%
+  filter(values == 1) %>%
+  select(-values)
+
+compare <- function(a, b) {
+  # a: the later statement, b: the earlier one.
+  ratio <- abs(a) / abs(b)
+  case_when(
+    a == b ~ NA_character_,
+    a != 0 & b != 0 & sign(a) != sign(b) ~ "sign",
+    a != 0 & b != 0 & (ratio >= scale_factor | ratio <= 1 / scale_factor)
+      ~ "scale",
+    abs(a - b) / pmax(abs(a), abs(b)) > restated_tolerance ~ "restated",
+    TRUE ~ NA_character_)
+}
+
+# What a filing says of the year before, against what the filing of that
+# year said of it.
+comparatives <- key_values %>%
+  filter(role == "prior") %>%
+  inner_join(key_values %>%
+               filter(role == "current") %>%
+               select(lei, concept, prd_end, earlier_filing = filing,
+                      earlier_value = value, earlier_unit = unit),
+             by = c("lei", "concept", "prd_end")) %>%
+  filter(unit == earlier_unit) %>%
+  mutate(kind = compare(value, earlier_value)) %>%
+  filter(!is.na(kind))
+
+# Within one filing, the year against the year before.
+jumps <- key_values %>%
+  filter(role == "current") %>%
+  inner_join(key_values %>%
+               filter(role == "prior") %>%
+               select(filing, concept, prior_value = value, prior_unit = unit),
+             by = c("filing", "concept")) %>%
+  filter(unit == prior_unit, value != 0, prior_value != 0,
+         concept %in% c("ifrs-full:Revenue", "ifrs-full:Assets",
+                        "ifrs-full:Equity")) %>%
+  mutate(ratio = abs(value / prior_value)) %>%
+  filter(ratio >= scale_factor | ratio <= 1 / scale_factor)
+
+# The currency a filing reports in, as the one most of its monetary facts
+# are in, and the filings whose currency the issuer uses in no other year.
+currencies <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country == report_country, grepl("^iso4217:", unit)) %>%
+  count(lei, filing, unit) %>%
+  collect() %>%
+  semi_join(primary, by = c("lei", "filing")) %>%
+  arrange(filing, desc(n)) %>%
+  distinct(filing, .keep_all = TRUE) %>%
+  mutate(currency = sub("^iso4217:", "", unit))
+# The issuer's usual currency is the one most of its reports are in; a
+# report in another is a break only where the usual one is a clear majority,
+# so an issuer that moved its presentation currency once is not flagged
+# twice.
+currency_breaks <- currencies %>%
+  add_count(lei, name = "reports") %>%
+  add_count(lei, currency, name = "times") %>%
+  group_by(lei) %>%
+  mutate(usual = currency[which.max(times)],
+         usual_times = max(times)) %>%
+  ungroup() %>%
+  filter(currency != usual, usual_times > times, usual_times >= 2)
+
+# --------------------------------------------------------------------------
+# Whose report it is
+# --------------------------------------------------------------------------
+
+# A report states the name of the entity it is the report of. Where that
+# name shares nothing with the name the repository holds for the LEI it was
+# filed under, and no other report filed under the LEI does either, the
+# report is filed under someone else's LEI: a filing agent's test report
+# filed under the agent's own, or an issuer's report filed under the LEI of
+# the service that submitted it. A company that has been renamed states its
+# old name in its old reports and its new one in its new, so the LEI test
+# lets it pass.
+name_stop_words <- c("ag", "nv", "se", "plc", "sa", "spa", "gmbh", "kg", "bv",
+                     "the", "und", "and", "for", "fur", "der", "die", "das",
+                     "des", "holding", "holdings", "group", "gruppe",
+                     "aktiengesellschaft", "international", "limited", "ltd",
+                     "inc", "company", "beteiligungs", "europe", "european")
+plain <- function(x) {
+  x <- chartr("ÄÖÜäöüßÉéÈèÁáÀàÓóÍíÚúÇçÑñ", "AOUaousEeEeAaAaOoIiUuCcNn", x)
+  tolower(iconv(x, to = "ASCII", sub = " "))
+}
+name_tokens <- function(x) {
+  lapply(strsplit(gsub("[^a-z0-9]+", " ", plain(x)), " "),
+         function(t) setdiff(t[nchar(t) >= 3], name_stop_words))
+}
+# Two names agree where a word of one is in the other, run together so that
+# "LinzTextil" is "Linz Textil", or where a word of one is the initials of
+# the other, so that "SBO" is "Schoeller-Bleckmann Oilfield".
+names_agree <- function(a, b) {
+  ta <- name_tokens(a)
+  tb <- name_tokens(b)
+  sa <- gsub("[^a-z0-9]", "", plain(a))
+  sb <- gsub("[^a-z0-9]", "", plain(b))
+  mapply(function(x, y, p, q) {
+    if (length(x) == 0 || length(y) == 0) return(NA)
+    ix <- paste(substr(x, 1, 1), collapse = "")
+    iy <- paste(substr(y, 1, 1), collapse = "")
+    any(vapply(x, function(t) grepl(t, q, fixed = TRUE), logical(1))) ||
+      any(vapply(y, function(t) grepl(t, p, fixed = TRUE), logical(1))) ||
+      any(startsWith(iy, x)) || any(startsWith(ix, y))
+  }, ta, tb, sa, sb, USE.NAMES = FALSE)
+}
+stated_names <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country == report_country,
+         concept == "ifrs-full:NameOfReportingEntityOrOtherMeansOfIdentification",
+         is.na(dimensions), !is.na(text)) %>%
+  select(filing, stated = text) %>%
+  collect() %>%
+  distinct(filing, .keep_all = TRUE) %>%
+  mutate(stated = gsub("\\s+", " ", trimws(stated)))
+identity <- filings_all %>%
+  filter(country == report_country) %>%
+  select(lei, filing, name) %>%
+  inner_join(stated_names, by = "filing") %>%
+  mutate(agree = names_agree(name, stated)) %>%
+  group_by(lei) %>%
+  mutate(lei_agrees = any(agree %in% TRUE)) %>%
+  ungroup() %>%
+  filter(agree %in% FALSE, !lei_agrees)
+
+money <- function(x, unit) {
+  ccy <- sub("^iso4217:", "", unit)
+  m <- abs(x) / 1e6
+  txt <- ifelse(m >= 1, formatC(x / 1e6, format = "f", digits = 1,
+                                big.mark = ","),
+                formatC(x / 1e3, format = "f", digits = 0, big.mark = ","))
+  paste(ccy, txt, ifelse(m >= 1, "m", "k"))
+}
+
+screen_rows <- bind_rows(
+  comparatives %>%
+    transmute(lei, filing, kind, concept,
+              detail = paste0(screen_concepts[concept], " ", format(prd_end, "%Y"),
+                              ": ", money(value, unit), " here, ",
+                              money(earlier_value, unit), " as first filed")),
+  jumps %>%
+    transmute(lei, filing, kind = "jump", concept,
+              detail = paste0(screen_concepts[concept], ": ",
+                              money(value, unit), " against ",
+                              money(prior_value, unit), " the year before")),
+  currency_breaks %>%
+    transmute(lei, filing, kind = "currency", concept = NA_character_,
+              detail = paste0("Reported in ", currency, "; the issuer's other ",
+                              "filings are in ", usual)),
+  identity %>%
+    transmute(lei, filing, kind = "identity", concept = NA_character_,
+              detail = paste0("The report names itself ",
+                              substr(stated, 1, 60), "; the LEI is ", name)))
+
+screen_titles <- c(
+  scale = "A prior-year figure off by a factor of 50 or more",
+  sign = "A prior-year figure with its sign flipped",
+  restated = "A prior-year figure that differs from the one first filed",
+  jump = "A figure 50 times its own prior year, or a fiftieth of it",
+  currency = "A filing in a currency the issuer uses in no other year",
+  identity = "A report of another entity than the one its LEI names")
+
+screens <- screen_rows %>%
+  inner_join(filings %>% select(lei, filing, fy), by = c("lei", "filing")) %>%
+  mutate(issue = kind, severity = "screen", title = screen_titles[kind])
+```
+
+```{r ranking}
+# --------------------------------------------------------------------------
+# One row per issuer
+# --------------------------------------------------------------------------
+
+# Banks and insurers, found from their own statements: a filer that presents
+# a line only a bank or an insurer has is one. The sector factsheet uses the
+# same lines. They matter here for one check: a bank's revenue is interest
+# income and tagged as such, so MISS_REVENUE fires on every bank by
+# construction, and counted it would fill the ranking with banks that have
+# done nothing wrong.
+# Over the whole lake, since the comparison with the other countries
+# applies the same exemption.
+financial_all <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(concept %in% financial_concepts) %>%
+  distinct(country, lei) %>%
+  collect()
+financial_leis <- financial_all$lei[financial_all$country == report_country]
+
+# A fault is one check firing on one issuer in one financial year. A report
+# filed again for the same year -- a correction, a second language -- has
+# the same faults as the first, and counting them per report would rank an
+# issuer by how often it re-filed. DUPL_FILING_PERIOD says that it did.
+faults <- bind_rows(
+  issues %>%
+    filter(!(issue %in% exempt_for_financials & lei %in% financial_leis)) %>%
+    group_by(lei, fy, issue, severity = as.character(severity), title) %>%
+    summarise(findings = n(),
+              reports = n_distinct(filing),
+              concepts = paste(head(unique(na.omit(sub("^[^:]+:", "", concept))), 3),
+                               collapse = ", "),
+              more = pmax(n_distinct(concept, na.rm = TRUE) - 3, 0),
+              .groups = "drop") %>%
+    mutate(fact_level = findings > reports,
+           detail = case_when(
+             !fact_level ~ "",
+             more > 0 ~ paste0(findings, " facts: ", concepts, " and ", more,
+                               " more"),
+             TRUE ~ paste0(findings, " facts: ", concepts))),
+  screens %>%
+    group_by(lei, fy, issue, severity, title) %>%
+    summarise(findings = n(), reports = n_distinct(filing),
+              detail = paste(unique(detail), collapse = "; "),
+              .groups = "drop")) %>%
+  filter(severity != "info") %>%
+  mutate(points = ifelse(severity == "screen", unname(points[issue]),
+                         unname(points[severity])),
+         kind = tools::toTitleCase(severity)) %>%
+  left_join(issuer_names, by = "lei")
+
+issuer_scores <- faults %>%
+  group_by(lei) %>%
+  summarise(total = sum(points),
+            errors = sum(severity == "error"),
+            warnings = sum(severity == "warning"),
+            screens = sum(severity == "screen"),
+            error_points = sum(points * (severity == "error")),
+            warning_points = sum(points * (severity == "warning")),
+            screen_points = sum(points * (severity == "screen")),
+            .groups = "drop")
+
+issuers <- filings %>%
+  group_by(lei) %>%
+  summarise(years = n_distinct(fy[read]), listed = n(), read = sum(read),
+            .groups = "drop") %>%
+  left_join(issuer_names, by = "lei") %>%
+  left_join(issuer_scores, by = "lei") %>%
+  mutate(across(c(total, errors, warnings, screens, error_points,
+                  warning_points, screen_points), ~ coalesce(.x, 0)),
+         financial = lei %in% financial_leis) %>%
+  filter(read > 0) %>%
+  arrange(desc(total), desc(errors), issuer)
+
+ranked <- issuers %>% filter(total > 0) %>% head(top_n)
+
+n_issuers_read <- nrow(issuers)
+n_with_error <- sum(issuers$errors > 0)
+n_clean <- sum(issuers$total == 0)
+
+# The issuer-years with facts, which is what the shares by year are over.
+issuer_years <- filings %>%
+  filter(read) %>%
+  distinct(lei, fy) %>%
+  left_join(faults %>%
+              group_by(lei, fy) %>%
+              summarise(error = any(severity == "error"),
+                        screen = any(severity == "screen"),
+                        points = sum(points), .groups = "drop"),
+            by = c("lei", "fy")) %>%
+  mutate(error = coalesce(error, FALSE), screen = coalesce(screen, FALSE),
+         points = coalesce(points, 0))
+
+rated <- filings %>% filter(read)
+
+# The checks in this country against the rest of the lake, as the share of
+# issuer-years each fired in. Both over the issuer-years with facts of the
+# financial years shown, and with the same exemption for banks.
+others_read <- filings_all %>%
+  filter(country != report_country, read, fy %in% report_years)
+others_issues <- issues_all %>%
+  filter(country != report_country,
+         !(issue %in% exempt_for_financials & lei %in% financial_all$lei)) %>%
+  inner_join(others_read %>% select(country, lei, filing, fy),
+             by = c("country", "lei", "filing"))
+n_here <- nrow(issuer_years)
+n_there <- nrow(distinct(others_read, lei, fy))
+lake_compare <- catalogue %>%
+  filter(severity != "info") %>%
+  select(issue = code, severity, title) %>%
+  left_join(faults %>% filter(severity != "screen") %>% count(issue, name = "here"),
+            by = "issue") %>%
+  left_join(others_issues %>% distinct(issue, lei, fy) %>% count(issue, name = "there"),
+            by = "issue") %>%
+  mutate(here = coalesce(here, 0L), there = coalesce(there, 0L),
+         here_share = here / n_here * 100,
+         there_share = if (n_there > 0) there / n_there * 100 else NA_real_) %>%
+  arrange(severity, desc(here_share))
+other_countries <- sort(unique(others_read$country))
+```
+
+```{r formats}
+fmt <- function(x, digits = 0) {
+  x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
+  ifelse(is.na(x), "–",
+         formatC(x, format = "f", digits = digits, big.mark = ",",
+                 decimal.mark = "."))
+}
+wrap_caption <- function(text, width = 125) {
+  paste(strwrap(text, width = width), collapse = "\n")
+}
+source_caption <- caption_corporate_design(
+  source = paste("ESEF annual financial reports, filings.xbrl.org;",
+                 "checks of the fincommons esef module and screens of this",
+                 "factsheet."),
+  lang = "en")
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", x)
+  gsub("\"", "\\\\\"", x)
+}
+ts <- function(x) {
+  x <- ifelse(is.na(x), "–", as.character(x))
+  paste0("\"", typst_string(x), "\"")
+}
+
+# A table written as Typst rather than as a Markdown table, which gives the
+# columns the widths they need instead of the ones Pandoc guesses from the
+# length of their header. `groups`, where given, names a row that opens a
+# group and spans the whole table above the row it is given for.
+typst_table <- function(df, widths, align, size = 7.5, groups = NULL) {
+  cells <- vapply(seq_len(nrow(df)), function(i) {
+    row <- paste(ts(unlist(df[i, ], use.names = FALSE)), collapse = ", ")
+    if (!is.null(groups) && !is.na(groups[i]) && nzchar(groups[i])) {
+      row <- paste0("table.cell(colspan: ", ncol(df),
+                    ", inset: (top: 7pt, bottom: 3pt, x: 4pt), text(weight: \"bold\", ",
+                    ts(groups[i]), ")), ", row)
+    }
+    row
+  }, character(1))
+  paste0(
+    "\n```{=typst}\n#block(width: 100%, text(size: ", size, "pt, {\n",
+    "set par(justify: false)\ntable(\n",
+    "  columns: (", paste(widths, collapse = ", "), "),\n",
+    "  align: (", paste(align, collapse = ", "), "),\n",
+    "  inset: (x: 4pt, y: 2.8pt),\n",
+    "  stroke: (x, y) => if y == 0 { (top: 0.7pt + rgb(\"#22282E\"), ",
+    "bottom: 0.4pt + rgb(\"#22282E\")) } else { none },\n",
+    "  table.header(", paste0("text(weight: \"bold\", ", ts(names(df)), ")",
+                             collapse = ", "), "),\n  ",
+    paste(cells, collapse = ",\n  "),
+    ",\n  table.hline(stroke: 0.7pt + rgb(\"#22282E\"))\n)}))\n```\n\n")
+}
+
+cols <- design_colours()
+severity_colours <- c("Error" = cols[["red"]], "Warning" = cols[["amber"]],
+                      "Screen" = cols[["blue"]])
+```
+
+```{r cover, results='asis'}
+title <- paste("ESEF data quality in", country_name)
+subtitle <- paste0("Which issuers' figures to check before using them, ",
+                   "financial years ", period_range)
+
+tile <- function(value, label, colour) {
+  paste0("box(width: 100%, inset: (x: 8pt, y: 7pt), stroke: (left: 2pt + rgb(\"",
+         colour, "\")), [#text(size: 17pt, weight: \"bold\", ", ts(value),
+         ")\\ #text(size: 7.5pt, fill: rgb(\"#5C666F\"), ", ts(label), ")])")
+}
+
+worst <- ranked %>% head(5)
+lines <- c(
+  paste0(fmt(n_issuers_read), " issuers of ", country_name, " filed ",
+         fmt(nrow(rated)), " ESEF reports with facts for the financial years ",
+         period_range, "."),
+  paste0(fmt(n_with_error), " of them (", fmt(n_with_error / n_issuers_read * 100),
+         " %) have at least one year whose figures contradict one another, ",
+         "and ", fmt(n_clean), " have nothing found at all."),
+  if (nrow(worst) > 0) paste0("The most to check is in the reports of ",
+         paste(worst$issuer, collapse = "; "), "."))
+
+cat("```{=typst}\n")
+cat("#set page(header: [#set text(size: 7pt, fill: rgb(\"#5C666F\"))\n",
+    "  #grid(columns: (1fr, auto), [#text(weight: \"bold\", ",
+    ts(paste("ESEF data quality ·", Country_name)), ") #h(6pt) #text(",
+    ts(paste("Financial years", period_range)), ")], [#text(",
+    ts(paste("Checked on", format(checked_on, "%d %B %Y"))), ")])\n",
+    "  #v(-4pt) #line(length: 100%, stroke: 0.5pt + rgb(\"#DCE1E5\"))],\n",
+    "  footer: [#set text(size: 7pt, fill: rgb(\"#5C666F\"))\n",
+    "  #line(length: 100%, stroke: 0.5pt + rgb(\"#DCE1E5\")) #v(-2pt)\n",
+    "  #grid(columns: (1fr, auto), [#text(",
+    ts("Source: filings.xbrl.org; checks of the fincommons esef module. Not a finding of any regulator."),
+    ")], [#context counter(page).display()])],\n  numbering: \"1\")\n", sep = "")
+cat("#text(size: 8pt, tracking: 1.6pt, fill: rgb(\"#5C666F\"), ",
+    ts(toupper(paste("Data quality factsheet ·", Country_name))), ")\n", sep = "")
+cat("#v(2pt)\n#line(length: 100%, stroke: 1.2pt + rgb(\"#C10016\"))\n#v(8pt)\n")
+cat("#text(size: 21pt, weight: \"bold\", ", ts(title), ")\n#v(1pt)\n", sep = "")
+cat("#text(size: 10pt, fill: rgb(\"#5C666F\"), ", ts(subtitle), ")\n#v(10pt)\n", sep = "")
+cat("#grid(columns: (1fr, 1fr, 1fr, 1fr), column-gutter: 8pt,\n  ",
+    tile(fmt(n_issuers_read), "issuers with facts", cols[["ink"]]), ",\n  ",
+    tile(fmt(nrow(rated)), "reports read", cols[["ink"]]), ",\n  ",
+    tile(paste0(fmt(mean(issuer_years$error) * 100), " %"),
+         "of issuer-years with an error", cols[["red"]]), ",\n  ",
+    tile(fmt(sum(faults$severity == "screen")),
+         "figures that changed between reports", cols[["blue"]]),
+    "\n)\n#v(8pt)\n", sep = "")
+cat("```\n\n")
+cat(paste(lines, collapse = " "), "\n\n")
+
+# The reports whose figures should not be used at all, whatever their rank:
+# a report under someone else's LEI and a report in a currency the issuer
+# does not report in are wrong as a whole rather than in one line, and an
+# issuer with one such report and nothing else would not reach the ranking.
+set_aside <- bind_rows(
+  identity %>%
+    inner_join(filings %>% select(filing, fy), by = "filing") %>%
+    distinct(lei, fy, .keep_all = TRUE) %>%
+    transmute(text = paste0("**", short_name(name, 60), "**, ", fy, ": the report ",
+                            "names itself *", substr(stated, 1, 60), "*. ",
+                            "It is filed under another entity's LEI.")),
+  currency_breaks %>%
+    inner_join(filings %>% select(filing, fy), by = "filing") %>%
+    left_join(issuer_names, by = "lei") %>%
+    distinct(lei, fy, .keep_all = TRUE) %>%
+    transmute(text = paste0("**", issuer, "**, ", fy, ": reported in ", currency,
+                            ", while the issuer's other reports are in ",
+                            usual, ".")))
+if (nrow(set_aside) > 0) {
+  cat("```{=typst}\n#block(width: 100%, inset: (x: 9pt, y: 7pt), ",
+      "stroke: (left: 2pt + rgb(\"", cols[["red"]], "\")), ",
+      "fill: rgb(\"#FBF3F4\"))[\n", sep = "")
+  cat("```\n\n")
+  cat("**Reports to set aside.** These are wrong as a whole rather than in ",
+      "one line, so their figures should not be used at all.\n\n", sep = "")
+  cat(paste0("- ", set_aside$text, collapse = "\n"), "\n\n")
+  cat("```{=typst}\n]\n```\n\n")
+}
+```
+
+## The issuers with the most to check
+
+```{r ranking-chart}
+#| fig-height: 3.2
+if (nrow(ranked) > 0) {
+  temp <- ranked %>%
+    mutate(label = short_name(issuer, 34)) %>%
+    select(label, Error = error_points, Warning = warning_points,
+           Screen = screen_points) %>%
+    pivot_longer(-label, names_to = "kind", values_to = "points") %>%
+    mutate(kind = factor(kind, levels = c("Screen", "Warning", "Error")),
+           label = factor(label, levels = rev(short_name(ranked$issuer, 34))))
+  ggplot(temp, aes(x = points, y = label, fill = kind)) +
+    geom_col(width = 0.72) +
+    geom_zeroline(x = 0) +
+    scale_fill_manual(values = severity_colours,
+                      breaks = c("Error", "Warning", "Screen")) +
+    scale_x_continuous(expand = expansion(mult = c(0, .05))) +
+    labs(subtitle = wrap_caption(paste0(
+           "Points, ", period_range, ": ", points[["error"]], " per error and ",
+           points[["warning"]], " per warning, 1 to 3 per screen, each once ",
+           "per issuer and year"), 95),
+         caption = wrap_caption(source_caption)) +
+    theme_corporate_design(base_size = chart_base_size, grid = "x",
+                           axis.title = element_blank())
+}
+```
+
+```{r ranking-table, results='asis'}
+if (nrow(ranked) == 0) {
+  cat("No check and no screen fired on any report of ", country_name, ".\n")
+} else {
+  what <- faults %>%
+    filter(lei %in% ranked$lei) %>%
+    count(lei, issue, severity, name = "n") %>%
+    arrange(lei, match(severity, c("error", "warning", "screen")), desc(n), issue) %>%
+    group_by(lei) %>%
+    summarise(what = paste0(issue, ifelse(n > 1, paste0(" ×", n), ""),
+                            collapse = ", "), .groups = "drop")
+  temp <- ranked %>%
+    left_join(what, by = "lei") %>%
+    transmute(Issuer = paste0(issuer, ifelse(financial, " ¹", "")),
+              Years = fmt(years), Reports = fmt(read),
+              Err = fmt(errors), Warn = fmt(warnings), Scr = fmt(screens),
+              Points = fmt(total), `What fired` = what)
+  cat(typst_table(temp,
+                  widths = c("4.6cm", "auto", "auto", "auto", "auto", "auto",
+                             "auto", "1fr"),
+                  align = c("left", rep("right", 6), "left")))
+  cat(paste0("Err, Warn and Scr count issuer-years, not reports or facts: a ",
+             "check that names forty facts of one report counts once, and so ",
+             "does a report filed again for the same year. ×2 after a code ",
+             "means it fired in two of the issuer's years. ¹ A bank or an ",
+             "insurer, for which a missing revenue line is not counted. ",
+             fmt(n_issuers_read - sum(issuers$total > 0)), " of the ",
+             fmt(n_issuers_read), " issuers with facts scored no points at all.\n"))
+}
+```
+
+## Where the problems are
+
+```{r heatmap}
+#| fig-height: 3.9
+codes_shown <- faults %>%
+  filter(lei %in% ranked$lei) %>%
+  distinct(issue, severity) %>%
+  mutate(order = match(severity, c("error", "warning", "screen"))) %>%
+  arrange(order, issue)
+temp <- faults %>%
+  filter(lei %in% ranked$lei) %>%
+  count(lei, issue, kind, name = "n") %>%
+  left_join(ranked %>% select(lei, issuer), by = "lei") %>%
+  mutate(label = factor(short_name(issuer, 34),
+                        levels = rev(short_name(ranked$issuer, 34))),
+         issue = factor(issue, levels = codes_shown$issue),
+         kind = factor(kind, levels = c("Error", "Warning", "Screen")))
+if (nrow(temp) > 0) {
+  ggplot(temp, aes(x = issue, y = label, fill = kind)) +
+    geom_tile(colour = "white", linewidth = 0.8) +
+    geom_text(aes(label = n), size = 2.5, colour = "white", fontface = "bold") +
+    scale_fill_manual(values = severity_colours, drop = FALSE) +
+    scale_x_discrete(position = "top",
+                     labels = function(x) gsub("_", " ", x)) +
+    labs(subtitle = "Financial years of the issuer each check or screen fired in",
+         caption = wrap_caption(source_caption)) +
+    theme_corporate_design(base_size = chart_base_size, grid = "none",
+                           axis.title = element_blank()) +
+    theme(axis.text.x.top = element_text(angle = 35, hjust = 0, vjust = 0,
+                                         size = 6.3))
+}
+```
+
+### `r Country_name` against the rest of the lake
+
+```{r lake-table, results='asis'}
+temp <- lake_compare %>%
+  filter(here > 0 | there > 0) %>%
+  transmute(Check = issue, `What it finds` = title,
+            Severity = tools::toTitleCase(as.character(severity)),
+            `Issuer-years` = fmt(here),
+            `Here, %` = fmt(here_share, 1),
+            `Elsewhere, %` = fmt(there_share, 1))
+cat(typst_table(temp, widths = c("auto", "1fr", "auto", "auto", "auto", "auto"),
+                align = c("left", "left", "left", "right", "right", "right")))
+cat(if (length(other_countries) > 0) paste0(
+  "Both shares are of the issuer-years with facts in ", period_range, ": ",
+  fmt(n_here), " of ", country_name, " and ", fmt(n_there),
+  " of the rest of the lake (", paste(other_countries, collapse = ", "),
+  "). A check that fires much more often here than elsewhere points at a ",
+  "habit of the country's filers, or of their filing agents, rather than at ",
+  "one issuer.") else paste0(
+  "The lake holds no other country with facts, so there is nothing to set ",
+  country_name, " against."), "\n")
+```
+
+### By financial year
+
+```{r by-year, results='asis'}
+temp <- issuer_years %>%
+  group_by(fy) %>%
+  summarise(issuers = n(), error = mean(error) * 100,
+            screen = mean(screen) * 100, points = mean(points),
+            .groups = "drop") %>%
+  left_join(rated %>% count(fy, name = "reports"), by = "fy") %>%
+  transmute(`Financial year` = as.character(fy), Reports = fmt(reports),
+            Issuers = fmt(issuers),
+            `With an error, %` = fmt(error, 1),
+            `With a screen, %` = fmt(screen, 1),
+            `Points per issuer` = fmt(points, 1))
+cat(typst_table(temp, widths = c("1fr", rep("auto", 5)),
+                align = c("left", rep("right", 5))))
+n_last <- sum(issuer_years$fy == latest_year)
+n_before <- sum(issuer_years$fy == latest_year - 1)
+if (n_before > 0 && n_last < 0.9 * n_before) {
+  cat(paste0("The financial year ", latest_year, " is still being filed: it ",
+             "holds ", fmt(n_last), " issuers against ", fmt(n_before),
+             " the year before. A screen of that year can only compare with ",
+             "the reports already in.\n"))
+}
+```
+
+{{< pagebreak >}}
+
+## What to look at, issuer by issuer
+
+```{r detail, results='asis'}
+detail_issuers <- head(ranked$lei, detail_n)
+temp <- faults %>%
+  filter(lei %in% detail_issuers) %>%
+  mutate(order = match(lei, detail_issuers)) %>%
+  arrange(order, desc(fy), match(severity, c("error", "warning", "screen")),
+          issue) %>%
+  mutate(group = ifelse(duplicated(lei), NA_character_, issuer),
+         Detail = ifelse(reports > 1 & severity != "screen",
+                         paste0("In ", reports, " reports",
+                                ifelse(detail == "", "", paste0("; ", detail))),
+                         detail))
+if (nrow(temp) == 0) {
+  cat("Nothing to list.\n")
+} else {
+  cat(typst_table(temp %>% transmute(Year = as.character(fy), Kind = kind,
+                                     Check = issue, Finding = title, Detail),
+                  widths = c("auto", "auto", "auto", "1fr", "1fr"),
+                  align = rep("left", 5), size = 7, groups = temp$group))
+  cat(paste0("The ", min(detail_n, nrow(ranked)), " issuers ranked highest, ",
+             "every finding of theirs in ", period_range, ". For a figure ",
+             "that changed between reports, the year is that of the later ",
+             "report, the one that states the figure differently, which is ",
+             "not necessarily the one that is wrong.\n"))
+}
+```
+
+## How to read this factsheet
+
+```{r notes, results='asis'}
+notes <- c(
+  paste0("**What it reads.** The tables of filings, facts and issues of the ",
+         "`esef` module of fincommons. The issues are written by the ",
+         fmt(nrow(catalogue)), " checks of `fincommons.financialreport.esef.quality`, ",
+         "last run over ", country_name, " on ", format(checked_on, "%d %B %Y"),
+         "; this factsheet does not re-run them. The screens are its own."),
+  paste0("**What a finding means.** A record that failed a check of this ",
+         "project -- not a finding of a regulator, and not a statement that a ",
+         "figure is wrong. An *error* is a contradiction an analysis cannot ",
+         "read past, such as a balance sheet that does not balance. A ",
+         "*warning* needs a look before the figures are used. The data ",
+         "quality report of the module sets out every check and what it ",
+         "does not mean."),
+  paste0("**The screens.** The checks look at one report at a time; the ",
+         "screens set an issuer's reports beside one another, on ",
+         paste(unname(screen_concepts), collapse = ", "), ". A report's ",
+         "figure for the year before is compared with the figure that ",
+         "year's own report gave. A difference above ",
+         fmt(restated_tolerance * 100), " % is a *restatement*, which a new ",
+         "standard or a discontinued operation explains as often as a ",
+         "mistake does, and scores ", points[["restated"]], " point. A ",
+         "factor of ", scale_factor, " or more is a *scale* break -- almost ",
+         "always thousands tagged as units, or the reverse -- and a flipped ",
+         "sign a *sign* break; both score ", points[["scale"]], ". A *jump* ",
+         "is the same factor between the two years of one report, and a ",
+         "*currency* break a report in a currency the issuer uses in no ",
+         "other year. An *identity* break is a report whose own statement of ",
+         "the entity's name has nothing in common with the name of the LEI it ",
+         "is filed under, where no other report under that LEI matches ",
+         "either: a filing agent's test report, or an issuer's report filed ",
+         "under the LEI of whoever submitted it. A figure tagged twice with two values is left out of ",
+         "the screens, since which value is meant cannot be told."),
+  paste0("**What the ranking is.** Points per issuer over the years shown. ",
+         "Each check counts once per issuer and financial year, however many ",
+         "facts or reports it names: ", points[["error"]], " for an error, ",
+         points[["warning"]], " for a warning, nothing for a note. ",
+         "MISS_REVENUE is not counted for the ", fmt(length(financial_leis)),
+         " banks and insurers, whose revenue is interest or premium income ",
+         "and is tagged as such. The weights are a judgement, set at the top ",
+         "of the template; an issuer reporting in more years has more chances ",
+         "to score, so the years are given beside the points."),
+  paste0("**What it does not say.** A report with no finding has passed ",
+         "these checks, not an audit. An identity can only fail where a ",
+         "report tags both its sides, so a report that tags little passes by ",
+         "silence; the MISS_ checks are what show that. Reports listed ",
+         "without facts (", fmt(sum(!filings$read)), " here) are outside ",
+         "every share above."),
+  paste0("This factsheet is produced by a template of the open-source ",
+         "project fincommons. It reads a public record, is given without ",
+         "warranty as to correctness or completeness, and carries no ",
+         "association with the issuers, with XBRL International or with ESMA."))
+cat(paste(notes, collapse = "\n\n"))
+```

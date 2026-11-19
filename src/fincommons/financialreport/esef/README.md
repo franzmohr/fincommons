@@ -394,3 +394,48 @@ The comparison with FIRDS needs the `firds` module's Silver layer in the same co
 Four absences of the Silver tables decide what the report is, and it states them on a page of its own rather than in a footnote. A fact in xBRL-JSON carries no **presentation role**, so the statements the report groups its lines into are its own grouping and not the issuers' presentation. **Anchoring and the calculation relationships** live in the extension taxonomy of the report package, which the module collects only when asked and never reads, so the report counts extensions without saying what they were anchored to, and makes no check that a statement adds up. A **label** is in that taxonomy too, so two issuers count as having invented the same thing only where they spelt the local name the same way. And the **text blocks** of the notes are not in the table at all, so nothing here measures the tagging of the notes.
 
 The template reads the facts through four queries that arrow answers over the parquet files, each returning a result of the size of the market rather than of the size of the lake; the table of facts is never collected. A Delta Silver layer is refused for the same reason as in the factsheet, and the more sharply: this report counts facts, and a Delta table keeps the files it has replaced until it is vacuumed.
+
+## Two factsheets on one country
+
+Two short templates take a country and nothing else, and do the rest from the lake: the years shown are those the country has reports with facts for, and every issuer of it is in. Both read the Silver tables as parquet and render with Quarto to a PDF of four or five pages; the country is set in `FINCOMMONS_COUNTRY`, so one copy of a template renders every country the pipeline has collected:
+
+```bash
+FINCOMMONS_CONFIG=/path/to/paths.yaml FINCOMMONS_COUNTRY=NL quarto render esef-country-quality-factsheet.qmd -o quality-NL.pdf
+FINCOMMONS_CONFIG=/path/to/paths.yaml FINCOMMONS_COUNTRY=NL quarto render esef-country-economic-factsheet.qmd -o economy-NL.pdf
+```
+
+Both stop rather than render where the country has no facts, and both refuse a session that is not in a UTF-8 locale, which would print the names of issuers as `<U+00D6>` escapes.
+
+### Data quality
+
+`templates/esef-country-quality-factsheet.qmd` answers one question: whose figures to check before using them. Where the quality report reads the record as a whole, this ranks issuers. Each check of the module scores once per issuer and financial year, however many facts or reports it names -- a report filed again for the same year repeats the findings of the first, and counting them per report would rank an issuer by how often it re-filed. An error scores 3, a warning 1 and a note nothing; the weights are `points` in the first chunk. `MISS_REVENUE` is not counted for a bank or an insurer, whose revenue is interest or premium income and tagged as such.
+
+The checks look at one report at a time, and some of the telling mistakes only show when an issuer's reports are set side by side. So the template adds six screens over six headline figures:
+
+| Screen | What it finds |
+| --- | --- |
+| restated | a report's figure for the year before differs by more than 1 % from the figure that year's own report gave |
+| scale | the same, by a factor of 50 or more: thousands tagged as units, or the reverse |
+| sign | the same, with the sign flipped |
+| jump | within one report, a figure 50 times its own prior year, or a fiftieth of it |
+| currency | a report in a currency the issuer uses in no other year |
+| identity | a report that names another entity than the one of the LEI it is filed under, where no other report under the LEI matches either |
+
+The identity screen exists because of two Austrian filings found on the lake. One is a filing agent's test report, "Mustermandant AG" of "12345 Musterstadt", filed under the agent's own LEI with a revenue of 17.6 billion. The other is EVN's annual report filed under the LEI of the data vendor that submitted it. A renamed company passes, since its newer reports state the name the LEI carries. These reports, and reports in a stray currency, are listed on the first page whatever their rank, under *Reports to set aside*. The pages then give the ranking, a map of which check fired for which issuer, the country against the rest of the lake, the trend by year, and every finding of the ten issuers ranked highest.
+
+### Economic facts and trends
+
+`templates/esef-country-economic-factsheet.qmd` describes what a country's listed companies reported: revenue, operating profit and result, margins, returns, equity ratios, cash flow, dividends and staff costs. It shows the largest companies, the movers, the largest losses and the spread across companies. Banks and insurers are shown on their own page and kept out of every corporate figure.
+
+What makes the figures readable is how they are taken:
+
+- **Growth is like for like.** A company's figure for the year is set against the figure its own report gives for the year before, and the change is summed over the companies stating both. A year still being filed has a lower sum for that reason alone, so its like-for-like changes and medians are the ones to read, and the cover says when the latest year is short.
+- **One report per company and year,** the one with the most facts.
+- **Only group figures with no breakdown,** for the twelve months or the balance-sheet date of the report.
+- **A year is shown where it holds at least half the companies of the best-covered year.** A year the pipeline was not asked to collect is not drawn as a trend.
+- **Sums are in euros and convert nothing.** A company reporting in another currency is in every median and ratio and in no sum.
+- **A bank** is a company whose interest revenue under the effective interest method is at least half its revenue, or which tags no revenue. **An insurer** presents a line of IFRS 17. A postal operator with a bank stays among the companies.
+- **A group reported twice,** by a listed holding and by its listed subsidiary, is counted once. Heineken Holding and Heineken, and ING Groep and ING Bank, are the Dutch examples: total assets and revenue within 2 % and equity within 10 %.
+- **A report the identity screen of the quality factsheet catches is left out.** Its figures are either not real or already counted under the right LEI.
+
+The page covers listed companies and issuers of listed bonds, the population ESEF reaches. It says so, since the sums are not the economy as a whole.

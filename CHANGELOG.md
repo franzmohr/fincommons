@@ -8,6 +8,17 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `esef`: two factsheets on one country, `esef-country-quality-factsheet.qmd`
+  and `esef-country-economic-factsheet.qmd`. Each takes the country from
+  `FINCOMMONS_COUNTRY` and reads everything else from the lake. The quality
+  factsheet ranks issuers by what to check before using their figures. Each
+  check scores once per issuer and year. It adds screens that set an issuer's
+  reports side by side: restated, scale and sign breaks in the prior-year
+  figures, jumps, currency breaks, and reports filed under another entity's
+  LEI. The economic factsheet gives like-for-like growth, margins, returns,
+  the largest companies, the movers and the banks and insurers apart, and
+  counts a group reported by a holding and its subsidiary once.
+
 - `firds`: `update_from_bronze_to_silver_main` takes `batch`, the number of
   dates applied together, one by default. Each date applied on its own is a
   plan, a merge and an append, and the plan and the merge each read the whole
