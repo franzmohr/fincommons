@@ -64,6 +64,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `firds`: the writes to the historical database fill their Parquet row groups
+  to `silver.ROW_GROUP_SIZE`, 32 megabytes, rather than to Parquet's default
+  of 128. The default is a limit on the buffered size of a group, which the
+  history's text columns more than triple once read: the compaction of a
+  history of 260 million versions wrote groups of 2.7 million rows, 380
+  megabytes read, with 136 megabytes in `full_name` alone, and a backfill
+  reading them on eight cores exhausted a driver of 14 gigabytes, on the first
+  batch of a run that had just started. Delta has no table property for the
+  size, so `silver.row_group_size` holds `parquet.block.size` on the session
+  around the merge, the append, the compaction, the initialising write and the
+  decimal migration, and restores it afterwards; the restoring
+  `compaction_file_size` did is shared with it. The groups already written
+  keep their size until a compaction rewrites their file.
+
 - `esef`: the README names the columns of a sector panel file as the files
   and the template spell them. It had them in the lower case the rename of
   0.5.0 gave the Silver columns -- `lei`, `country`, `name` -- where a panel
