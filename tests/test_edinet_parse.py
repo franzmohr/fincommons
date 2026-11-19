@@ -71,6 +71,45 @@ def test_a_fact_is_identified_even_where_the_element_and_context_repeat():
         assert len({f["fact"] for f in employees}) == len(employees)
 
 
+def test_the_series_of_a_fund_tell_their_facts_apart():
+    """A fund manager files one document per series of a fund, under one
+    form, and the same element and context in each.
+
+    The archive is built here from the shape of S100YWNP, a semi-annual
+    report for two series of one fund.
+    """
+    header = CSV_DELIMITER.join(f'"{c}"' for c in CSV_COLUMNS)
+    line = CSV_DELIMITER.join(f'"{c}"' for c in (
+        "jppfs_cor:AccountsReceivableOther", "未収入金",
+        "CurrentYearInstant_NonConsolidatedMember", "当期末", "個別", "時点",
+        "JPY", "円", "{}"))
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        for series, value in (("000", "1"), ("001", "28564965"),
+                              ("002", "2568320")):
+            archive.writestr(
+                f"XBRL_TO_CSV/jpsps040000-srs-001_G03898-{series}"
+                "_2026-07-21_01_2026-10-21.csv",
+                (header + "\n" + line.format(value) + "\n")
+                .encode(CSV_ENCODING))
+
+    facts = [dict(zip(NAMES, row))
+             for row in facts_from_archive(data.getvalue(), "S100YWNP")]
+
+    assert len(facts) == 3
+    assert len({f["fact"] for f in facts}) == 3
+    assert {f["doc_form"] for f in facts} == {"jpsps040000-srs"}
+    assert sorted(f["value"] for f in facts) == [1, 2568320, 28564965]
+
+
+def test_a_companys_own_report_keeps_the_identifier_it_had():
+    """The main document of a filing is named by its form alone, as before
+    the series were told apart."""
+    fact = read()[0]["fact"]
+
+    assert fact.startswith(f"{FILING}:jpcrp030000-asr:")
+
+
 def test_the_document_a_fact_came_from_is_named():
     facts = read()
 
