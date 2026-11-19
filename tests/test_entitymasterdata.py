@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import shutil
 import uuid
 import zipfile
 
@@ -436,7 +437,7 @@ def test_the_update_carries_on_when_the_list_of_ccps_cannot_be_downloaded(
     monkeypatch.setattr(silver, "download_ecb_fvc", unreachable)
     monkeypatch.setattr(silver, "download_ecb_psri", unreachable)
     monkeypatch.setattr(silver, "update_from_landing_to_bronze",
-                        lambda config_path: stages.append("bronze"))
+                        lambda config_path, spark = None: stages.append("bronze"))
     monkeypatch.setattr(silver, "update_silver_entitymasterdata_public",
                         lambda **kwargs: stages.append("public"))
     monkeypatch.setattr(silver, "update_silver_entitymasterdata",
@@ -775,7 +776,7 @@ def test_a_gleif_link_given_to_the_update_is_used_rather_than_the_latest(
                  "download_eiopa_insurance_undertaking", "download_eiopa_iorp"):
         monkeypatch.setattr(silver, name, lambda config_path: None)
     for name in ("update_from_landing_to_bronze",):
-        monkeypatch.setattr(silver, name, lambda config_path: None)
+        monkeypatch.setattr(silver, name, lambda config_path, spark = None: None)
     monkeypatch.setattr(silver, "update_silver_entitymasterdata_public", lambda **kw: None)
     monkeypatch.setattr(silver, "update_silver_entitymasterdata", lambda **kw: None)
 
@@ -1210,6 +1211,73 @@ def test_an_import_that_dies_while_writing_leaves_no_bronze_file(monkeypatch, da
 
     assert os.listdir(em.path_bronze_gleif_level_1(data_lake)) == []
     assert os.path.isfile(landing)
+
+
+def test_the_golden_copy_read_with_spark_says_what_the_pandas_path_says(spark, data_lake):
+    """The Spark reader is there for the memory, not for a different answer.
+
+    The awkward value is the one that found the fault: a field holding a
+    single comma, beside the empty fields the golden copy is full of. Read
+    with the quote as the escape and without ``multiLine`` it swallowed the
+    delimiters that followed and put part of the address into the country.
+    """
+    leis = ["LEI1", "LEI2"]
+    names = ['UAB ""Aukstaitijos renovacija""', "Entity two"]
+    countries = ["LT", "AT"]
+
+    write_gleif_level_1(data_lake, leis, names, countries)
+    em.update_bronze_gleif_level_1(data_lake)
+    folder = em.path_bronze_gleif_level_1(data_lake)
+    with_pandas = pandas.read_parquet(os.path.join(folder, os.listdir(folder)[0]))
+    shutil.rmtree(folder)
+    os.makedirs(folder)
+
+    write_gleif_level_1(data_lake, leis, names, countries)
+    em.update_bronze_gleif_level_1(data_lake, spark)
+    entry = os.path.join(folder, os.listdir(folder)[0])
+    with_spark = spark.read.parquet(entry).toPandas()
+
+    assert sorted(with_spark.columns) == sorted(with_pandas.columns)
+    key = "LEI"
+    left = with_pandas.sort_values(key).reset_index(drop=True)
+    right = with_spark[with_pandas.columns].sort_values(key).reset_index(drop=True)
+    assert left.equals(right), f"pandas\n{left}\nspark\n{right}"
+
+
+def test_a_spark_import_that_dies_while_writing_leaves_no_bronze_entry(
+        monkeypatch, spark, data_lake):
+    """As for the pandas path: a half-written entry under the name of a
+    reference date would be taken by the Silver layer as the register."""
+    landing = write_gleif_level_1(data_lake, ["LEI1"], ["Entity one"], ["AT"])
+
+    def die(self, *args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("pyspark.sql.readwriter.DataFrameWriter.parquet", die)
+
+    with pytest.raises(OSError, match="disk full"):
+        em.update_bronze_gleif_level_1(data_lake, spark)
+
+    assert os.listdir(em.path_bronze_gleif_level_1(data_lake)) == []
+    assert os.path.isfile(landing)
+
+
+def test_the_golden_copy_is_read_with_pandas_where_no_session_is_given(
+        monkeypatch, data_lake):
+    """Which reader runs is the caller's choice and not an accident.
+
+    A stage that fell back to whatever session another stage had left active
+    would read the same file in two ways for reasons its caller cannot see.
+    """
+    write_gleif_level_1(data_lake, ["LEI1"], ["Entity one"], ["AT"])
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("the Spark reader was used without a session")
+
+    monkeypatch.setattr(
+        "fincommons.entitymasterdata.bronze.import_registers_with_spark", unexpected)
+
+    assert em.update_bronze_gleif_level_1(data_lake) == 1
 
 
 def test_two_lists_of_funds_ending_on_the_same_day_are_refused(data_lake):

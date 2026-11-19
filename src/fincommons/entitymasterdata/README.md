@@ -170,12 +170,18 @@ The list used to be taken from a reviewed copy kept by hand on GitHub. Reading E
 
 ## 2 Updating the Bronze layer
 
-The following function brings the content of every register the landing zone currently holds into a queryable format, one parquet file per register and reference date. A file is removed from the landing zone only once it has been written; a file that cannot be read stops the run and stays where it is, rather than leaving a gap in the Bronze layer that nothing points at.
+The following function brings the content of every register the landing zone currently holds into a queryable format, one parquet entry per register and reference date. A file is removed from the landing zone only once it has been written; a file that cannot be read stops the run and stays where it is, rather than leaving a gap in the Bronze layer that nothing points at.
 
 
 ```python
-em.update_from_landing_to_bronze(config_path)
+em.update_from_landing_to_bronze(config_path, spark)
 ```
+
+The session is what the GLEIF golden copies are read with, and it decides whether this stage runs at all on a small machine. The Level 1 copy is about half a gigabyte zipped and 4.7 GB as csv over some two hundred columns; read into one pandas frame it needs more memory than a machine of 8 GB has, where the kernel kills the import. Given a session, the copy is read in splits and written without ever being held, and the import stays near 1.3 GB. The other registers are small enough that the session does not matter, and the stage runs without one as it always has -- the two GLEIF functions then read with pandas, which is still the right thing on a machine with the memory for it.
+
+The session is asked for rather than taken from whichever one happens to be active. No module of this package opens a session, and a stage whose reader depended on one another stage had left behind would read the same file in two ways for reasons its caller cannot see.
+
+A GLEIF entry in the Bronze layer is therefore a parquet *directory* where a session was given and a parquet *file* where it was not. Both are read the same way, by `spark.read.parquet`, and the Silver layer picks up whichever is there.
 
 ## 3 Updating the Silver layer
 
