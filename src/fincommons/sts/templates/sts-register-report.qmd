@@ -395,11 +395,18 @@ knitr::kable(
 
 ## What the securitisations are backed by
 
-```{r exposures, fig.height=3.2}
+```{r exposures}
+#| fig-height: 4.6
+# The register names an exposure in the wording of the technical standards,
+# which runs to ninety-eight characters for the longest of the eight. The
+# label is wrapped rather than cut -- a label shortened here would be a
+# category of this report's making rather than one of the register's -- and
+# the chart is given the height that costs: a wrapped label needs more room
+# than the space between two bars, and the bars are spaced by the height.
 exposures <- notifications %>%
   mutate(exposure = ifelse(is.na(exposure), "not stated", exposure)) %>%
   count(exposure, sort = TRUE) %>%
-  mutate(exposure = wrap_labels(exposure, 42),
+  mutate(exposure = wrap_labels(exposure, 40),
          exposure = factor(exposure, levels = rev(exposure)))
 
 ggplot(exposures, aes(x = n, y = exposure)) +
@@ -415,7 +422,9 @@ ggplot(exposures, aes(x = n, y = exposure)) +
 
 ## When they were notified
 
-```{r notified-when, fig.height=2.6}
+```{r notified-when}
+#| fig-height: 2.6
+
 by_year <- notifications %>%
   mutate(year = as.integer(format(first_notified, "%Y"))) %>%
   count(year, type)
@@ -530,20 +539,32 @@ if (any(children$kind == "originator")) {
 
 ## What the notifications say of themselves
 
+```{r census-prepare}
+# Solr's own bookkeeping -- the document key, the version, the time the index
+# was written -- is on every document of every register and says nothing
+# about a notification, so the census shown is of the register's own fields.
+# It is counted out rather than dropped from the snapshot, which keeps what
+# was published.
+internal <- c("_root_", "_version_", "timestamp", "type_s", "entity_type")
+register_census <- census %>% filter(!field %in% internal)
+on_every <- sum(register_census$notifications == n_notifications)
+```
+
 ```{r census, results='asis'}
 cat(paste0(
-  "A notification in this snapshot carries one of ", nrow(census),
-  " field names. Thirteen of them are on every notification -- the ",
-  "identifiers, the class, the type, the status and the dates -- and the ",
-  "rest are the STS template, which only a public notification fills in. ",
-  "The table below is the head of the census the collection wrote beside ",
-  "the snapshot: comparing it with an older one is how a change to the ",
-  "register is noticed.\n"))
+  "A notification in this snapshot carries one of ", nrow(register_census),
+  " field names, beside the ", length(internal),
+  " the register keeps for its own bookkeeping. ", on_every,
+  " of them are on every notification -- the identifiers, the class, the ",
+  "type, the status and the dates -- and the rest are the STS template, ",
+  "which only a public notification fills in. The table below is the head ",
+  "of the census the collection wrote beside the snapshot: comparing it ",
+  "with an older one is how a change to the register is noticed.\n"))
 ```
 
 ```{r census-table}
 knitr::kable(
-  census %>%
+  register_census %>%
     head(top_n) %>%
     mutate(share = sprintf("%.0f%%", 100 * notifications / n_notifications)) %>%
     rename(Field = field, Notifications = notifications, Share = share),
