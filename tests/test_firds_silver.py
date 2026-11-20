@@ -1354,6 +1354,96 @@ def test_the_compaction_holds_the_row_group_size(spark, config, monkeypatch):
     assert seen == [str(silver.ROW_GROUP_SIZE)]
 
 
+# Vacuuming the history
+# --------------------------------------------------------------------------
+
+
+def history_written_twice(spark, config, tag=None):
+    """A historical database of two versions, the second replacing the files
+    of the first, as a merge or a compaction leaves it."""
+    common.create_directory_tree(config)
+    ref = common.ref_silver_main(config)
+    common.write_delta(spark.range(10).toDF("value"), ref)
+    options = {"userMetadata": tag} if tag else None
+    common.write_delta(spark.range(20).toDF("value"), ref, options=options)
+    return ref
+
+
+def parquet_files(ref):
+    return sorted(name for name in os.listdir(ref.path) if name.endswith(".parquet"))
+
+
+def test_the_default_vacuum_keeps_a_week_of_the_history(spark, config):
+    """Files replaced hours ago are still read by the versions before."""
+    ref = history_written_twice(spark, config)
+    before = parquet_files(ref)
+
+    silver.vacuum_silver_main(spark, config)
+
+    assert parquet_files(ref) == before
+    assert len(common.read_delta_version(spark, ref, 0).collect()) == 10
+
+
+def test_a_vacuum_without_retention_keeps_the_current_version_alone(spark, config):
+    """What a backfill wants: every file it replaced is only hours old."""
+    ref = history_written_twice(spark, config)
+    before = parquet_files(ref)
+
+    silver.vacuum_silver_main(spark, config, retention_hours=0)
+
+    assert len(parquet_files(ref)) < len(before)
+    assert common.read_delta(spark, ref).count() == 20
+    # Read the rows rather than count them: Delta answers a count from the
+    # statistics of its log without opening a file.
+    with pytest.raises(Exception):
+        common.read_delta_version(spark, ref, 0).collect()
+
+
+def test_the_retention_check_is_lifted_for_the_vacuum_alone(spark, config):
+    """Delta refuses a retention below the table's, and a session shared with
+    other tables keeps that refusal."""
+    history_written_twice(spark, config)
+    spark.conf.unset(silver.RETENTION_CHECK_CONF)
+
+    silver.vacuum_silver_main(spark, config, retention_hours=0)
+
+    assert spark.conf.get(silver.RETENTION_CHECK_CONF, None) is None
+    assert silver.RETENTION_CHECK_CONF == (
+        "spark.databricks.delta.retentionDurationCheck.enabled"
+    )
+
+
+def test_a_batch_whose_append_is_missing_is_not_vacuumed_away(spark, config):
+    """The batch is resumed from the version before its merge, which a short
+    retention would remove."""
+    tag = silver.commit_tag(silver.span_label(["2026-01-01", "2026-01-02"]), "merge")
+    ref = history_written_twice(spark, config, tag=tag)
+    before = parquet_files(ref)
+
+    with pytest.raises(RuntimeError, match="2026-01-01..2026-01-02"):
+        silver.vacuum_silver_main(spark, config, retention_hours=0)
+
+    assert parquet_files(ref) == before
+
+
+def test_a_batch_that_was_appended_can_be_vacuumed(spark, config):
+    tag = silver.commit_tag(silver.span_label(["2026-01-01", "2026-01-02"]), "append")
+    ref = history_written_twice(spark, config, tag=tag)
+    before = parquet_files(ref)
+
+    silver.vacuum_silver_main(spark, config, retention_hours=0)
+
+    assert len(parquet_files(ref)) < len(before)
+
+
+@pytest.mark.parametrize("retention", [True, "0", None, -1])
+def test_a_retention_that_is_not_a_number_of_hours_is_refused(
+    spark, config, retention
+):
+    with pytest.raises((TypeError, ValueError), match="retention_hours"):
+        silver.vacuum_silver_main(spark, config, retention_hours=retention)
+
+
 # A history whose start was moved back
 # --------------------------------------------------------------------------
 

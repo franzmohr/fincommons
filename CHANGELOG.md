@@ -8,6 +8,17 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `firds`: `vacuum_silver_main` deletes the files of the historical database
+  that no version within `retention_hours` reads, a week by default as in
+  Delta. Every merge and compaction leaves the files it replaced behind, so
+  the table grew faster than the history in it: 39 gigabytes for 261 million
+  versions in a lake built over eleven months. A backfill wants
+  `retention_hours=0`, since everything it replaced is only hours old; Delta's
+  check against a retention below the table's own is lifted for that vacuum
+  alone and restored afterwards. The vacuum is refused while the latest commit
+  of the update is a merge without its append, because that batch is resumed
+  from the version before the merge, which a short retention would delete.
+
 - `esef`: two factsheets on one country, `esef-country-quality-factsheet.qmd`
   and `esef-country-economic-factsheet.qmd`. Each takes the country from
   `FINCOMMONS_COUNTRY` and reads everything else from the lake. The quality
