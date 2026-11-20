@@ -8,7 +8,7 @@ It holds no data of its own and collects nothing. There is no Bronze layer here,
 
 ### What it does, and what it deliberately does not
 
-**It takes nothing away from the two source modules.** Their tables stay authoritative and complete, neither imports this one, and neither knows it exists. An ESEF-only lake builds nothing here and loses nothing by it; the factsheet and the coverage report that `esef` ships keep working untouched, as does the factsheet of `sec`. The dependency runs one way, and only one way.
+**It takes nothing away from the source modules.** Their tables stay authoritative and complete, neither imports this one, and neither knows it exists. An ESEF-only lake builds nothing here and loses nothing by it; the factsheet and the coverage report that `esef` ships keep working untouched, as do the factsheets of `sec` and `edinet`. The dependency runs one way, and only one way.
 
 **It does not join the regimes by entity, because it cannot.** ESEF prescribes the legal entity identifier; a filing with the Commission states a central index key; and neither body publishes a mapping between the two. What GLEIF does publish is the register an entity is registered in, and for some tens of thousands of records that register is EDGAR -- but nearly all of those are funds, named by a series identifier rather than by a central index key, while an operating company's record points at its state register instead. NVIDIA's names Delaware, by a file number that is not its central index key. The issuers these tables hold are exactly the ones it does not reach. Both columns are carried and exactly one of them is filled in any row. It is the one thing a lake holding both regimes would most like to do, and the honest shape of the table says so rather than filling a column with a guess.
 
@@ -162,9 +162,9 @@ financialreport:
         table: fincommons.financialreport.combined
 ```
 
-Unlike `esef` and `sec`, no `path` is needed beside the `table`: those two keep marks on disk recording what their tables were built from, and this module keeps none.
+Unlike the source modules, no `path` is needed beside the `table`: they keep marks on disk recording what their tables were built from, and this module keeps none.
 
-The sections of the sources have to be there as well, because this module reads their tables. Which sources a run combines is decided by which of the two have tables to read, not by this module: a lake that has collected only ESEF filings gets a combined table of ESEF filings, which is the same question answered over the population there is.
+The sections of the sources have to be there as well, because this module reads their tables. Which sources a run combines is decided by which of the three have tables to read, not by this module: a lake that has collected only ESEF filings gets a combined table of ESEF filings, which is the same question answered over the population there is.
 
 ## The module in five minutes
 
@@ -174,7 +174,7 @@ from fincommons.financialreport import combined
 # Rebuild both tables from whichever sources the lake holds.
 combined.update_silver_financialreport(spark, "paths.yaml")
 
-combined.available_sources(spark, "paths.yaml")          # ['esef', 'sec']
+combined.available_sources(spark, "paths.yaml")          # ['esef', 'sec', 'edinet']
 
 facts = combined.connect_to_financialreport(spark, "paths.yaml", "fact")
 filings = combined.connect_to_financialreport(spark, "paths.yaml", "filing")
@@ -183,7 +183,8 @@ filings = combined.connect_to_financialreport(spark, "paths.yaml", "filing")
 # was filed under, taken by the best concept the filing states.
 revenue = (
     combined.measure_values(facts.where("framework = 'IFRS'"), "revenue")
-    .select("source", "lei", "cik", "period_end", "concept", "unit", "value"))
+    .select("source", "lei", "cik", "edinet_code", "period_end", "concept",
+            "unit", "value"))
 
 # What that rests on, before it is published.
 print(combined.describe_measure("revenue"))
@@ -260,7 +261,7 @@ One gap is known and is a gap rather than a judgement: a filer whose revenue is 
 | `caveat` | where the two frameworks do not actually agree |
 | `source` | who decided |
 
-The namespace is deliberately not used: a published taxonomy takes a new one every year, and neither source table carries it. The prefix is what both tables hold -- the ESEF rows because xBRL-JSON names a concept that way, the SEC rows because the Commission keys its facts by taxonomy.
+The namespace is deliberately not used: a published taxonomy takes a new one every year, and neither source table carries it. The prefix is what all three tables hold -- the ESEF rows because xBRL-JSON names a concept that way, the SEC rows because the Commission keys its facts by taxonomy, the EDINET rows because the agency's conversion writes the element identifier as prefix and name.
 
 **Nothing in this catalogue is authoritative, and the module says so.** There is no official correspondence between IFRS and US GAAP: the convergence programme of the two boards did not produce one, and the data quality rules published for filings with the Commission do not cross frameworks. What is shipped is a starting point a deployment should review and extend, and the `source` column exists so that a row somebody has reviewed can be told from a row nobody has.
 
