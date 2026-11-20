@@ -23,5 +23,5 @@ __version__ = "0.5.2"
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 # The column catalogue needs neither Spark nor a data lake, so it is offered
-# at the top of the package: fincommons.describe_column("TRADGVN").
+# at the top of the package: fincommons.describe_column("trading_venue").
 from .columns import column_catalogue, describe_column  # noqa: E402,F401

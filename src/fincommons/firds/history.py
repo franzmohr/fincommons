@@ -13,8 +13,8 @@ The algorithm associates two pieces of bookkeeping with every record:
 ``latest_record``
     whether the version is the most recent one received for its instrument.
 
-An instrument is identified by the pair ``(ISIN, TRADGVN)`` -- the ISIN and the
-MIC of the trading venue -- and ``valid_from`` is taken from
+An instrument is identified by the pair ``(isin, trading_venue)`` -- the ISIN
+and the MIC of the trading venue -- and ``valid_from`` is taken from
 ``TechAttrbts/PblctnPrd/FrDt`` of the record, as the instructions prescribe.
 
 The logic is expressed as transformations of data frames and does not depend on

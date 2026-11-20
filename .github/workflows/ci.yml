@@ -236,7 +236,7 @@ jobs:
 
           # The promise at the top of fincommons/__init__.py.
           print(fincommons.__version__)
-          print(fincommons.describe_column("TRADGVN"))
+          print(fincommons.describe_column("trading_venue"))
           PY
 
       # Kept so that a release can be inspected as it was built, and so that
