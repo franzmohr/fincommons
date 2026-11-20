@@ -14,6 +14,7 @@ than what those two happen to be serving that day.
 
 from __future__ import annotations
 
+import datetime
 import io
 import logging
 import os
@@ -189,8 +190,8 @@ def write_iorp(config_path, leis, file_name="20260724.xlsx"):
     return path
 
 
-def write_ccp(config_path, rows):
-    """Write the list of CCPs from ``(lei, sector, subsector)`` triples."""
+def write_ccp(config_path, rows, day="20261001"):
+    """Write the list of CCPs of ``day`` from ``(lei, sector, subsector)`` triples."""
     frame = pandas.DataFrame(
         {
             "LEI": [r[0] for r in rows],
@@ -198,7 +199,7 @@ def write_ccp(config_path, rows):
             "SUBSECTOR": [r[2] for r in rows],
         }
     )
-    path = os.path.join(em.path_landing_esma_ccp(config_path), "ccp_list.csv")
+    path = os.path.join(em.path_landing_esma_ccp(config_path), f"{day}.csv")
     frame.to_csv(path, index=False)
     return path
 
@@ -660,26 +661,27 @@ def serve_esma(monkeypatch, eu=EU_LIST, tc=TC_LIST):
 def test_the_list_of_ccps_is_downloaded_into_the_landing_zone(monkeypatch, data_lake):
     serve_esma(monkeypatch)
 
-    assert em.download_esma_ccp(data_lake) == 5
+    assert em.download_esma_ccp(data_lake, today=datetime.date(2026, 11, 20)) == 5
 
-    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["ccp_list.csv"]
-    path = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
+    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["20261120.csv"]
+    path = os.path.join(em.path_landing_esma_ccp(data_lake), "20261120.csv")
     assert io.open(path, encoding="utf-8").readline().strip() == "LEI,SECTOR,SUBSECTOR"
 
 
 def test_an_answer_that_is_not_a_list_does_not_replace_the_list_of_ccps(
         monkeypatch, data_lake):
-    """The list is not named after a reference date, so a failed download would
-    overwrite the copy already held rather than sit beside it."""
+    """A second download on the same day would replace the list of that day, so
+    one that fails must leave it as it was."""
+    today = datetime.date(2026, 11, 20)
     serve_esma(monkeypatch)
-    em.download_esma_ccp(data_lake)
+    em.download_esma_ccp(data_lake, today=today)
 
     serve_esma(monkeypatch, tc=b"<html>502 Bad Gateway</html>")
     with pytest.raises(ValueError, match="did not answer with a pdf"):
-        em.download_esma_ccp(data_lake)
+        em.download_esma_ccp(data_lake, today=today)
 
-    path = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
-    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["ccp_list.csv"]
+    path = os.path.join(em.path_landing_esma_ccp(data_lake), "20261120.csv")
+    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["20261120.csv"]
     assert "F226TOH6YD6XJB17KS62,CCP,T2CCP" in io.open(path, encoding="utf-8").read()
 
 
@@ -1335,14 +1337,72 @@ def test_a_workbook_the_module_reads_is_not_named_in_a_warning(data_lake, caplog
 
 
 def test_the_list_of_ccps_leaves_the_landing_zone_when_it_is_imported(data_lake):
-    """The list is the one register whose name carries no reference date, so a
-    copy left behind is indistinguishable from one just downloaded, and a run
-    whose download failed would import it and report it as the register."""
     write_ccp(data_lake, [("LEI1", "CCP", "EUCCP")])
 
     assert em.update_bronze_esma_ccp(data_lake) == 1
     assert os.listdir(em.path_landing_esma_ccp(data_lake)) == []
-    assert os.listdir(em.path_bronze_esma_ccp(data_lake)) == ["ccp_list.parquet"]
+    assert os.listdir(em.path_bronze_esma_ccp(data_lake)) == ["20261001.parquet"]
+
+
+def test_a_list_of_ccps_is_kept_for_every_day_it_was_downloaded(
+        monkeypatch, data_lake):
+    """ESMA publishes only the current list, so the lists kept are the only
+    record of how it changed: a later list sits beside the earlier one."""
+    serve_esma(monkeypatch)
+    em.download_esma_ccp(data_lake, today=datetime.date(2026, 11, 19))
+    em.update_bronze_esma_ccp(data_lake)
+    em.download_esma_ccp(data_lake, today=datetime.date(2026, 11, 20))
+    em.update_bronze_esma_ccp(data_lake)
+
+    assert sorted(os.listdir(em.path_bronze_esma_ccp(data_lake))) == [
+        "20261119.parquet", "20261120.parquet",
+    ]
+    bronze = pandas.read_parquet(
+        os.path.join(em.path_bronze_esma_ccp(data_lake), "20261120.parquet")
+    )
+    assert set(bronze["REFDT"]) == {"2026-11-20"}
+    assert list(bronze.columns) == ["LEI", "SECTOR", "SUBSECTOR", "REFDT"]
+
+
+def written_on(path, day):
+    stamp = datetime.datetime.combine(day, datetime.time(12)).timestamp()
+    os.utime(path, (stamp, stamp))
+
+
+def test_an_undated_list_of_ccps_is_dated_by_the_day_it_was_written(data_lake):
+    """An earlier version stored the list as ccp_list, which sorts after every
+    date and would be taken for the latest list."""
+    landing = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
+    pandas.DataFrame({"LEI": ["LEI1"], "SECTOR": ["CCP"], "SUBSECTOR": ["EUCCP"]}) \
+        .to_csv(landing, index=False)
+    written_on(landing, datetime.date(2026, 11, 2))
+    bronze = os.path.join(em.path_bronze_esma_ccp(data_lake), "ccp_list.parquet")
+    pandas.DataFrame({"LEI": ["LEI0"], "SECTOR": ["CCP"], "SUBSECTOR": ["EUCCP"]}) \
+        .to_parquet(bronze)
+    written_on(bronze, datetime.date(2026, 10, 15))
+
+    assert em.update_bronze_esma_ccp(data_lake) == 1
+
+    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == []
+    assert sorted(os.listdir(em.path_bronze_esma_ccp(data_lake))) == [
+        "20261015.parquet", "20261102.parquet",
+    ]
+
+
+def test_an_undated_list_of_ccps_does_not_replace_a_dated_one(data_lake):
+    write_ccp(data_lake, [("LEI1", "CCP", "EUCCP")], day="20261102")
+    em.update_bronze_esma_ccp(data_lake)
+    bronze = os.path.join(em.path_bronze_esma_ccp(data_lake), "ccp_list.parquet")
+    pandas.DataFrame({"LEI": ["LEI0"], "SECTOR": ["CCP"], "SUBSECTOR": ["EUCCP"]}) \
+        .to_parquet(bronze)
+    written_on(bronze, datetime.date(2026, 11, 2))
+
+    with pytest.raises(FileExistsError, match="ccp_list.parquet"):
+        em.update_bronze_esma_ccp(data_lake)
+
+    assert sorted(os.listdir(em.path_bronze_esma_ccp(data_lake))) == [
+        "20261102.parquet", "ccp_list.parquet",
+    ]
 
 
 def test_a_quarterly_list_of_investment_funds_is_dated_at_the_end_of_the_quarter(data_lake):

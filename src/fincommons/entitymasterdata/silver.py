@@ -630,9 +630,7 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
         .withColumn("sector", func.lit("ORPI")) \
         .transform(lambda data: text_columns(data, ["lei", "sector"]))
 
-    # ESMA CCPs. The list is not kept per reference date, so the folder holds
-    # the one file, but it is looked up the same way as the others so that a
-    # Bronze layer the list has never reached says so in the same words.
+    # ESMA CCPs, one list per day of download, the latest of which is current.
     ccp = spark.read.parquet(
             latest_bronze_file(common.path_bronze_esma_ccp(config_path))
         ).transform(with_silver_names) \

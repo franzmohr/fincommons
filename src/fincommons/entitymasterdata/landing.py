@@ -466,30 +466,40 @@ def esma_ccp_list(eu, tc):
         .drop_duplicates("LEI", keep="last")
 
 
-def download_esma_ccp(config_path):
+def download_esma_ccp(config_path, today=None):
     """Download ESMA's lists of CCPs into the landing zone, as one list.
 
     ESMA publishes the CCPs authorised in the Union and the recognised
     third-country CCPs as pdf files; the two are read, see
-    :func:`ccps_from_pdf`, and stored as ``ccp_list.csv`` with the columns
-    ``LEI``, ``SECTOR`` and ``SUBSECTOR``, which the Bronze import reads.
-    Nothing is stored where either list cannot be read; see
-    :func:`esma_ccp_list`.
+    :func:`ccps_from_pdf`, and stored with the columns ``LEI``, ``SECTOR`` and
+    ``SUBSECTOR``, which the Bronze import reads. Nothing is stored where
+    either list cannot be read; see :func:`esma_ccp_list`.
+
+    ESMA publishes only the current lists and dates neither, so the list is
+    stored as ``YYYYMMDD.csv`` under the day of the download, as EIOPA's
+    registers are, and the Bronze layer keeps one list per day. A history of
+    the register can only be built from the lists kept, since a list once
+    replaced cannot be fetched again. A second download on the same day
+    replaces the first.
 
     Parameters
     ----------
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
+    today: datetime.date, optional
+        The day the list is stored under. The present where left out.
 
     Returns
     -------
     int
         The number of current CCPs stored.
     """
+    today = today or datetime.date.today()
+    target = os.path.join(common.path_landing_esma_ccp(config_path), f"{today:%Y%m%d}.csv")
     logger.info(
         "Downloading register into the landing zone",
         extra=context(module="entitymasterdata", layer="landing",
-                      source="ESMA_CCP", file="ccp_list.csv"),
+                      source="ESMA_CCP", file=os.path.basename(target)),
     )
     lists = []
     for url in (ESMA_EU_CCP_URL, ESMA_TC_CCP_URL):
@@ -500,8 +510,7 @@ def download_esma_ccp(config_path):
                 raise ValueError(f"{url} did not answer with a pdf file.")
             lists.append(answer.content)
     ccps = esma_ccp_list(*lists)
-    _store(ccps.to_csv(index=False).encode("utf-8"),
-           os.path.join(common.path_landing_esma_ccp(config_path), "ccp_list.csv"))
+    _store(ccps.to_csv(index=False).encode("utf-8"), target)
     return len(ccps)
 
 
