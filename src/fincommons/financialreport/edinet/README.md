@@ -374,10 +374,6 @@ Nothing in this module derives it. The join needs GLEIF, which is
 the regimes are put side by side rather than in the module that reads one of
 them.
 
-## What is not here yet
+## Reading the three regimes together
 
-This module is not yet in `financialreport`'s `SOURCES`, so its facts are not
-in the combined tables. The entity question above is settled; what remains is
-the mapping of the Japanese elements onto the measures of
-`financialreport_measures.csv`, which carries IFRS and US GAAP rows and no
-Japanese ones.
+Module `financialreport` puts the facts and filings of this module beside those of `esef` and `sec` in one table of facts and one of filings, keyed by source; see its [README](../combined/README.md). It reads this module and this module does not read it, so these tables stand on their own. A Japanese row there carries the EDINET code and the corporate number, and a `framework` of `JP-GAAP` or `IFRS` taken from the taxonomy where the taxonomy settles it and from the standard the filing states otherwise. The catalogue of measures, `financialreport_measures.csv`, has rows for the Japanese IFRS taxonomy for all eight of its measures and rows for Japan GAAP for all but the equity attributable to the parent, for which Japan GAAP has no element. A fact whose period could not be resolved is not carried there; `PERIOD_UNRESOLVED` counts them here.

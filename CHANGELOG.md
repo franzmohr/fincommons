@@ -19,6 +19,10 @@ release may change the public API, which `tests/test_public_api.py` lists.
   of the update is a merge without its append, because that batch is resumed
   from the version before the merge, which a short retention would delete.
 
+- The handbook has chapters on the SEC filings, the EDINET filings and the
+  combined financial report tables, after the one on ESEF. The ESEF chapter
+  covers the quality checks and the report templates.
+
 - `esef`: two factsheets on one country, `esef-country-quality-factsheet.qmd`
   and `esef-country-economic-factsheet.qmd`. Each takes the country from
   `FINCOMMONS_COUNTRY` and reads everything else from the lake. The quality
