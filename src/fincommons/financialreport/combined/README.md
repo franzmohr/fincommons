@@ -230,7 +230,7 @@ One row per filing.
 | `framework` | `IFRS`, `US-GAAP` or `JP-GAAP`: for ESEF and SEC from the concepts the filing tagged, for EDINET the standard the filing states; empty where none applies |
 | `country` | the member state the report was filed in; ESEF only |
 | `form` | the form the filing was made on: `10-K` and the like for SEC, the agency's document type for EDINET (`120` is the annual securities report) |
-| `period_end`, `period_year` | the period reported on, and its year |
+| `period_end`, `period_year` | the period reported on, and its year; for an EDINET filing the end of the period the filing states it covers, and the index's only where it states none, since the agency lists a semi-annual report under the year it belongs to |
 | `facts` | how many facts the filing contributed |
 
 `country` and `form` are each empty where their regime states nothing: an ESEF filing goes to the mechanism of one member state and the regime names no form, while a filing with the Commission or the agency names a form and no country. Neither is given a value this module invented. For an ESEF filing the framework and the count come from the facts, which is where the evidence for both is -- the repository's index says nothing about what a report tagged against.

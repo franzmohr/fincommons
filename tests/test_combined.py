@@ -370,6 +370,77 @@ def test_a_japanese_row_carries_its_own_identifiers_and_no_others(spark,
     assert row["lei"] is None and row["cik"] is None
 
 
+def write_semi_annual(spark, config_path, stated_end="2026-09-30"):
+    """A semi-annual report, as the agency lists it: under the financial year
+    the half-year belongs to, April 2026 to March 2027."""
+    filings = spark.createDataFrame([(
+        "S100Z9W4", EDINETCODE, "88920", JCN, "株式会社エスコン", None,
+        "010", "043A00", "160", date(2026, 4, 1), date(2027, 3, 31),
+        datetime(2026, 10, 27, 15, 33), 2026, date(2026, 10, 27),
+        "半期報告書", None, "0", "0", "0", "1", "1", "1", "0",
+    )], schema=edinet.filings_schema)
+
+    def fact(name, concept, context, start, end, value, text, member=None):
+        return (EDINETCODE, "S100Z9W4", 2026, name, concept, "label", context,
+                "当中間期", "連結", "期間" if start else "時点", start, end,
+                member, "JPY" if value is not None else None, value, text,
+                "jpcrp040300-ssr")
+
+    rows = [
+        fact("h1", "jppfs_cor:NetSales", "InterimDuration",
+             date(2026, 4, 1), date(2026, 9, 30), 55523.0, None),
+        fact("h2", "jppfs_cor:Assets", "InterimInstant",
+             None, date(2026, 9, 30), 526232.0, None),
+        fact("h3", "jpdei_cor:AccountingStandardsDEI", "FilingDateInstant",
+             None, date(2026, 10, 27), None, "Japan GAAP"),
+    ]
+    if stated_end is not None:
+        rows.append(fact("h4", "jpdei_cor:CurrentPeriodEndDateDEI",
+                         "FilingDateInstant", None, date(2026, 10, 27), None,
+                         stated_end))
+    facts = spark.createDataFrame(rows, schema=edinet.facts_schema)
+    write_silver(filings, edinet.ref_silver_filings(config_path),
+                 partition_by=("FILEDYEAR",))
+    write_silver(facts, edinet.ref_silver_facts(config_path),
+                 partition_by=("FILEDYEAR",))
+
+
+def test_a_semi_annual_report_ends_where_its_half_year_ends(spark, config):
+    """The agency lists it under the year the half-year belongs to; the
+    report states the end of its own period, and that is the period it
+    reports on."""
+    write_semi_annual(spark, config)
+    filing = silver.combine(spark, config, "filing").collect()[0]
+
+    assert filing["period_end"] == date(2026, 9, 30)
+    assert filing["period_year"] == 2026
+
+
+def test_the_half_years_figures_are_the_reports_own(spark, config):
+    """Joined to the period the filing reports on, the half-year's figures
+    are the ones a query for the report's own period finds."""
+    write_semi_annual(spark, config)
+    facts = silver.combine(spark, config, "fact").collect()
+    own = {row["concept"] for row in facts if row["prd_end"] == row["period_end"]}
+
+    assert {"jppfs_cor:NetSales", "jppfs_cor:Assets"} <= own
+
+
+def test_a_filing_that_states_no_period_keeps_the_indexs(spark, config):
+    write_semi_annual(spark, config, stated_end=None)
+    filing = silver.combine(spark, config, "filing").collect()[0]
+
+    assert filing["period_end"] == date(2027, 3, 31)
+
+
+def test_a_stated_period_that_is_not_a_date_keeps_the_indexs(spark, config):
+    """The conversion writes a dash where a date does not apply."""
+    write_semi_annual(spark, config, stated_end="－")
+    filing = silver.combine(spark, config, "filing").collect()[0]
+
+    assert filing["period_end"] == date(2027, 3, 31)
+
+
 def test_the_japanese_framework_is_read_from_the_filing(spark, config):
     """A Japanese report states its accounting standard in its own document
     and entity information, and the prefix of a fact does not settle it: a
