@@ -102,7 +102,7 @@ Of the 1,147 notifications the register held on 20 November 2026:
 | | Public | Private |
 | --- | --- | --- |
 | Notifications | 502 | 645 |
-| Fields per document | 119 to 155 | 16 to 19 |
+| Fields per document | 119 to 155, and 19 on the four without the template | 16 to 18 |
 | Child documents | 498 have them | none at all |
 | Securitisation identifier | `2138001WO21Z3B8Y8K20N202602` | `Private_2020_12_18_01` |
 | The STS template assertions | all of them | none |

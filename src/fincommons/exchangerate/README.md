@@ -34,7 +34,7 @@ from pyspark.sql import SparkSession
 
 builder = SparkSession.builder \
                     .master("local[4]") \
-                    .appName("finsupverse") \
+                    .appName("fincommons") \
                     .config("spark.driver.memory", "15g") \
                     .config('spark.sql.parquet.int96RebaseModeInWrite', 'CORRECTED') \
                     .config('spark.sql.parquet.datetimeRebaseModeInRead', 'CORRECTED') \
@@ -68,7 +68,7 @@ ex.update_bronze_ecb_exchangerate(config_path)
 
 ### Proprietary data
 
-Due to the heterogeneity of the data source, the module does not provide any functionality to download data from proprietary sources. It picks such data up from the file `exchangerate.csv`, which sits in the folder specified in the `paths.yaml` file under `exchangerate/internal`. If that file exists, it expects a comma-separated file with a header row and the following columns:
+Due to the heterogeneity of the data source, the module does not provide any functionality to download data from proprietary sources. It picks such data up from the file `exchangerate.csv` in the folder `internal` of the Bronze layer, `{bronze of exchangerate in paths.yaml}/internal/exchangerate.csv`. If that file exists, it expects a comma-separated file with a header row and the following columns:
 
 | Column | Type | Content |
 | --- | --- | --- |
@@ -87,7 +87,7 @@ Function `update_silver_exchangerate` updates the exchange rate data set. It tak
 * `spark`: The open Spark session.
 * `config_path`: The path to the configuration file, where the paths of the data lake are specified.
 * `use_bis`: A boolean indicating if exchange rate data from the website of the Bank for International Settlements should be used. The default specification of this argument is `False` since the data is not updated daily. A run that uses it also ends the table on the latest date for which BIS data is available, see [How far the table reaches](#how-far-the-table-reaches).
-* `rebase`: An ISO-3 currency code indicating into which FX rate the exchange rate data set should be converted, for organisations where the euro is not the domestic currency. The SFTR, EMIR and MiFIR stages and `convert2ccy` read the rates quoted against the currency they convert into, so any target other than the euro needs the table rebased to it. SFTR, EMIR and `convert2ccy` refuse to run against a table that is not; MiFIR warns and leaves the volumes it cannot convert empty.
+* `rebase`: An ISO-3 currency code indicating into which FX rate the exchange rate data set should be converted, for organisations where the euro is not the domestic currency. `convert2ccy` reads the rates quoted against the currency it converts into, so any target other than the euro needs the table rebased to it, and it refuses to run against a table that is not.
 * `file_format`: The format the table is stored in, `'parquet'` or `'delta'`. The default is `'parquet'`, because it is the format every engine reads without a further dependency.
 
 

@@ -23,6 +23,23 @@ docstring.
 
 ## Setting up
 
+The paths of the data lake are read from the configuration file, which needs a
+`firds` section with four keys: the landing zone the files are downloaded
+into, the Bronze layer, the Silver layer holding `main` and `compact`, and the
+layer holding the Delta table of watermarks that records how far `main` has
+been built.
+
+```yaml
+firds:
+    landing: /data/firds/landing
+    bronze: /data/firds/bronze
+    silver: /data/firds/silver
+    metadata: /data/firds/metadata
+```
+
+The Silver layer and the metadata layer may name a schema in a catalogue
+instead of a directory, as for the other modules; see `fincommons.addressing`.
+
 ```python
 # Path to the configuration file naming the paths of the data lake
 config_path = "paths.yaml"

@@ -18,6 +18,9 @@ filings.xbrl.org. None of the three parses XBRL.
 ``silver``
     the tables of filings, of facts and of filers, built from what was
     collected,
+``quality``
+    the checks the figures are held to, written into the table of issues by
+    :func:`update_silver_edinet_quality`,
 ``pipeline``
     the whole pipeline in one call, :func:`update_edinet`.
 
@@ -40,4 +43,8 @@ from .common import *
 from .parse import *
 from .bronze import *
 from .silver import *
+# The checks are imported by name rather than with *: quality declares a
+# TAXONOMY_PREFIXES of its own, the prefixes a check counts as standard, and a
+# * import would put it in the place of the one parse reads a filing with.
+from .quality import find_issues, issues_schema, update_silver_edinet_quality
 from .pipeline import *

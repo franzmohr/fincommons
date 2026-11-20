@@ -138,7 +138,7 @@ They therefore read only the downloads that have not been merged yet. A Yahoo Br
 
 How far each source has been merged is recorded in one small file per source under `_watermarks` beside the Silver table. It is kept there rather than in the table because a row in the table carries the reference date of a price and not the day it was fetched, so the table cannot be asked where the last run stopped. **The mark is written after the merge has succeeded**, never before: a mark written first would claim a delivery that never arrived, and the next run would skip it for good. A run that fails therefore folds the same deliveries in again, which costs a little and is the safe way round.
 
-Passing `full = True` — or `--full` on the command line — ignores the marks and merges every source from the beginning. A scheduled run never needs it. It is how the table is rebuilt from a Bronze layer that is still intact, which is worth doing after the identifiers a source writes have changed, since the rows written under the old ones are not removed by a merge and have to be dealt with separately.
+Passing `full = True` ignores the marks and merges every source from the beginning. A scheduled run never needs it. It is how the table is rebuilt from a Bronze layer that is still intact, which is worth doing after the identifiers a source writes have changed, since the rows written under the old ones are not removed by a merge and have to be dealt with separately.
 
 A source without a mark, or with one that cannot be read, is merged from the beginning, which is what puts the table into the state the marks then claim.
 
@@ -163,7 +163,7 @@ The marks are held back in the same way and written only once the merge has succ
 
 ### What a successful run does not promise
 
-A publisher that is unreachable is set aside with its traceback and the run carries on, which is the point of the design: one source being down should not cost a morning's update of the other ten. **It is counted rather than only logged.** Each stage records the sources it set aside in its outcome — `failed`, the number, and `failed_sources`, their names as `layer/SOURCE` — and ends with a warning that counts them, and `update_marketpricedata` adds the three stages up and returns the total. The functions return rather than raise for it, because a caller in a notebook should still get what the other sources delivered; the command line turns the count into its exit code, which is 0 only where every source was updated and 1 where any was set aside or the run did not complete. A scheduler watching the exit code therefore sees a partial run as a failed job, and the log on standard error says which sources it was. The coverage table of the report — or the `last` column of the Silver table — remains the answer to what actually arrived.
+A publisher that is unreachable is set aside with its traceback and the run carries on, which is the point of the design: one source being down should not cost a morning's update of the other ten. **It is counted rather than only logged.** Each stage records the sources it set aside in its outcome — `failed`, the number, and `failed_sources`, their names as `layer/SOURCE` — and ends with a warning that counts them, and `update_marketpricedata` adds the three stages up and returns the total. The functions return rather than raise for it, because a caller in a notebook should still get what the other sources delivered; the script a scheduler runs turns the count into its exit code, as the one above does, which is 0 only where every source was updated and 1 where any was set aside; a run that did not complete raises, which ends the script with 1 as well. A scheduler watching the exit code therefore sees a partial run as a failed job, and the log on standard error says which sources it was. The latest `ref_date` of each `instr_id` in the Silver table remains the answer to what actually arrived.
 
 ## The shape of the Silver layer
 
@@ -199,6 +199,11 @@ Because every source writes the same three columns, the instrument identifier is
 | LBMA | a name for the metal | `CO-GOLD`, `CO-SILVER` |
 | Yahoo Finance, commodities | a name for the commodity | `CO-BRENT`, `CO-WTI`, `CO-NATGAS`, `CO-COPPER` |
 | Yahoo Finance, instruments | the ISIN of the instrument | `IE00B4L5Y983` |
+| Yahoo Finance, volatility indices | a name for the index | `VOL-VIX`, `VOL-MOVE` |
+| Yahoo Finance, stock indices | a name for the index | `IX-N225`, `IX-HSI` |
+| Dhaka Stock Exchange | the trading code, and a name for the index | `DSE-GP`, `IX-DSEX` |
+| VNDirect | the ISIN of a Hanoi share, and a name for the index | `VN000000SHS3`, `IX-HNX` |
+| energy-charts.info | the bidding zone of a day-ahead electricity price | `EL-DELU`, `EL-AT` |
 | internal | whatever the delivered file states | |
 
 There is no column saying which source a row came from, so an identifier must not be claimed by two sources at once. The six rates are named rather than given an ISIN for that reason: they are rates, not instruments, and an ISIN would collide with the Yahoo source. The prefix says which kind of rate, because the two kinds are not read the same way: `ON-` is an overnight rate the market traded at, `KR-` a policy rate a central bank decided on.
@@ -437,6 +442,13 @@ mp.update_silver_exchangerate(spark, config_path)  # currency pairs
 mp.update_silver_lbma(spark, config_path)          # gold and silver
 mp.update_silver_yahoo_commodities(spark, config_path)  # other commodities
 mp.update_silver_yahoo(spark, config_path)         # listed instruments
+mp.update_silver_yahoo_fx(spark, config_path)      # exchange rates the ECB does not fix
+mp.update_silver_yahoo_volatility(spark, config_path)  # VOL- indices
+mp.update_silver_yahoo_indices(spark, config_path) # IX- stock indices
+mp.update_silver_dse(spark, config_path)           # Dhaka Stock Exchange
+mp.update_silver_dse_corporate_actions(spark, config_path)  # its corporate actions
+mp.update_silver_vndirect(spark, config_path)      # Hanoi shares and Vietnamese indices
+mp.update_silver_electricity(spark, config_path)   # day-ahead electricity prices
 mp.update_silver_internal(spark, config_path)      # proprietary data
 ```
 
@@ -485,7 +497,7 @@ The curve reaches back to 1970. The prefix is the only thing that says which kin
 
 **Two of the twenty-five euro area series the flow publishes are deliberately left out.** `UONSTR` is €STR, which the table already carries daily as `ON-ESTR`, and `DJES50I` is the EURO STOXX 50, which arrives daily from Yahoo Finance under its ISIN. A monthly copy of a series held daily is not more data; it is the same data at a coarser grain under a second name, and a reader comparing the two would be comparing a series with itself. `test_a_monthly_copy_of_a_daily_series_is_left_out` is what records that, since nothing in the code would otherwise say why those two are missing.
 
-`EONIA` is kept although it stopped in December 2021. Nothing else in the table carries it, and a supervisory data set still meets contracts that reference it; its end shows up in the coverage table like any other series that has stopped.
+`EONIA` is kept although it stopped in December 2021. Nothing else in the table carries it, and a supervisory data set still meets contracts that reference it; its end shows up in its last reference date like that of any other series that has stopped.
 
 What is left out is everything the flow carries yearly and quarterly, which duplicates the monthly series at a coarser grain.
 
@@ -504,7 +516,7 @@ mp.update_silver_layer(spark, config_path)
 
 Both return the outcome of their stage, whose `failed` entry counts the sources that were set aside and whose `failed_sources` entry names them, so a caller can act on a partial run without reading the log back. Configure logging with `fincommons.log.configure()` to see the tracebacks.
 
-The Bronze stage of the Yahoo source is called by neither of the two, see below.
+The Bronze stages of the Yahoo sources are called by neither of the two, see below. `update_bronze_yahoo_layer` runs all five of them -- instruments, commodities, volatility indices, stock indices and exchange rates -- in the same way, and `update_marketpricedata` calls it between the two.
 
 ## Reading the table
 
@@ -587,7 +599,7 @@ The helpers in `common.py` are the only place these paths are spelled out, and t
 
 ## What is not finished yet
 
-One source is downloaded outside the Bronze pipeline. It is not reported by a failing import and it does not stop the rest of the pipeline.
+One source is downloaded outside `update_bronze_layer`. It is not reported by a failing import of that stage and it does not stop the rest of it; `update_marketpricedata` runs it through `update_bronze_yahoo_layer`.
 
 * **The Yahoo Bronze stage is not part of `update_bronze_layer`.** It is the only download that has to be told how far back to go and the only one that needs a package outside the dependencies of the project, so `update_bronze_yahoo` is called on its own. Its Silver stage needs neither and is part of `update_silver_layer`.
 
@@ -618,7 +630,7 @@ The module is covered by the tests in `tests/test_marketpricedata.py`, which run
 | the Silver layer | picking €STR out of the flow and leaving the other series, dating a monthly series to the end of its month, its identifier saying that it is monthly, the three FM stages leaving each other's series alone and claiming no identifier twice, the euro area block being filtered by area and leaving out the monthly copies of daily series, picking the three key ECB rates out of the FM flow and leaving its other frequencies, its changes and its regime-specific variants, casting a reference date that flow types as a string, the name SOFR arrives under, a rate becoming a currency pair, and a source that has delivered nothing, which leaves the table alone and says so in a warning |
 | the proprietary source | a delivery being picked up, the types it arrives in, the header row not becoming a quote, and a data lake without such a file |
 | the upsert | a day delivered again replacing its row, a new day being added, two instruments on one day staying two rows, and columns beyond the three being dropped |
-| the pipeline | a source that fails being set aside while the others carry on; and, in `tests/test_marketpricedata_pipeline.py` and without Spark, a stage counting and reporting the source it set aside, the run adding up its stages, the command line exiting with 1 where a source was set aside and with 0 where none was, and no module of the library calling `print` |
+| the pipeline | a source that fails being set aside while the others carry on; and, in `tests/test_marketpricedata_pipeline.py` and without Spark, a stage counting and reporting the source it set aside, the run adding up its stages, the outcome reporting a failure a scheduler can turn into an exit code where a source was set aside and none where every source was updated, and no module of the library calling `print` |
 | commodities | that the LBMA price is taken in dollars, that a price predating the euro is still read, that the LBMA request carries a user agent, the two metals reaching the table under their names, the commodity mapping table and its identifiers, a commodity keeping the identifier it is named by, the most recent delivery of a commodity day winning, and the commodities carrying on from their own partitions |
 | Yahoo Finance | where a run starts from and that it meets the previous run without a gap, the absence of `yfinance` being reported in terms of the download, the mapping table travelling with the package, a price arriving under its ISIN, the day of the download being dropped, the most recent delivery of a day winning, and the source being part of the Silver layer |
 

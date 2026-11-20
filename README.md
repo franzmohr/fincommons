@@ -25,7 +25,7 @@ approaches for handling basic data pipelines.
 | `sts` | ESMA's public register of the securitisations notified as simple, transparent and standardised, and the spreadsheets published beside it |
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
 | `famafrenchdata` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
-| `financialreport` | the regimes that require the periodic reports of listed issuers tagged in XBRL, one sub-module each -- `esef` for the European Single Electronic Format, `sec` for the inline XBRL mandate of the Securities and Exchange Commission, `edinet` for Japan, `dart` for Korea -- and `combined`, which puts them side by side. Each stands on its own; the namespace imports none of them |
+| `financialreport` | the regimes that require the periodic reports of listed issuers tagged in XBRL, one sub-module each -- `esef` for the European Single Electronic Format, `sec` for the inline XBRL mandate of the Securities and Exchange Commission, `edinet` for Japan -- and `combined`, which puts them side by side. Each stands on its own; the namespace imports none of them |
 | `addressing`, `storage`, `log`, `layout`, `schemas`, `columns` | the infrastructure the modules share: locations from `paths.yaml`, how a Silver table rebuilt in full is read and written as parquet or Delta, logging, the file layout of tables, declared schemas, and the catalogue of what a column holds |
 
 fincommons is open source and complete on its own. Pipelines on supervisory
@@ -49,8 +49,9 @@ pip install -e ".[local,dev]"
 ### A server
 
 A server that serves notebooks or R sessions to several people -- an analysis
-server of an organisation, or a machine a team shares -- is neither of the two
-cases above, and two decisions come before the install.
+server of an organisation, or a machine a team shares -- is neither a
+workstation nor a Databricks cluster (below), and two decisions come before
+the install.
 
 The first is whether that server needs Spark at all. The pipeline functions
 take a `SparkSession` and need the `local` extra, a JVM (Java 17 or 21) and,
@@ -106,7 +107,7 @@ cluster would shadow the runtime's own Spark installation. Install the wheel
 alone:
 
 ```
-%pip install /Volumes/<catalog>/<schema>/<volume>/fincommons-0.1.0-py3-none-any.whl
+%pip install /Volumes/<catalog>/<schema>/<volume>/fincommons-<version>-py3-none-any.whl
 ```
 
 Build the wheel first with `python -m build` (or `hatch build`); the result in
@@ -176,8 +177,9 @@ where it takes one. Each module's README shows the script for its pipeline.
 
 ## Looking up what a column or a series is
 
-The tables name their columns in the compressed style of ISO 20022 --
-`trading_venue`, `notional_currency`, `BUYRDCSNMAKRFRSTNM` -- and the market price table names
+The tables name their columns in snake_case -- `trading_venue`,
+`notional_currency` -- and keep the field a column was read from in a
+catalogue rather than in its name, and the market price table names
 its series by identifiers such as `EUR/VND` or `YLD-EA10Y-M`. Two functions say
 what they are, and neither needs Spark or a data lake:
 
@@ -193,7 +195,9 @@ print(mp.describe_instrument("EUR/VND"))               # one series of the price
 ```
 
 `describe_column` reads `data/column_catalogue.csv`: one row per data set and
-column (75 of them across five modules), with the tables that write it, the
+column (some two hundred, across the modules `firds`, `entitymasterdata`,
+`exchangerate`, `famafrenchdata`, `esef`, `sec`, `edinet` and
+`financialreport`), with the tables that write it, the
 report field it is read from or "derived", a kind and a description. A test
 reads the column names out of the modules' code and fails if the two drift
 apart, so a column added to a module needs a catalogue row. The descriptions
@@ -244,17 +248,20 @@ em.update_entitymasterdata(spark, "paths.yaml")     # landing to Silver
 em.connect_to_entitymasterdata(spark, "paths.yaml") # what an analysis reads
 ```
 
-Only the GLEIF golden copies and the list of CCPs are downloaded. The ECB and
-EIOPA registers are published behind a form rather than at a stable address, so
-they are placed in the landing zone by hand, under names the Bronze import reads
-the reference date off. `update_entitymasterdata` therefore starts from the
-point at which the landing zone has been filled.
+Every register is downloaded by the update: the GLEIF golden copies through
+GLEIF's API, the ECB's lists and EIOPA's registers by reading the current link
+or form off their pages, and the lists of CCPs from ESMA's pdf files. A
+register whose download fails is logged as an error and the update carries on
+with what the Bronze layer already holds. A register can still be placed in
+the landing zone by hand, under a name the Bronze import reads the reference
+date off.
 
 Where an entity stands in more than one register -- a central counterparty is
 licensed as a credit institution as well -- the narrower description wins, and
 where a proprietary list describes an LEI it displaces the public description of
-it in full. Both Silver tables are Delta tables that a rebuild replaces in one
-transaction, so an analysis never reads a fraction of a run.
+it in full. Both Silver tables are rebuilt in full by every run, as parquet by
+default; written as Delta, or addressed by catalogue name, a rebuild replaces a
+table in one transaction, so an analysis never reads a fraction of a run.
 
 The details, including where each register has to be placed and the layout a
 proprietary list has to have, are documented in
@@ -267,9 +274,10 @@ Under EMIR and SFTR an amount is reported in the currency it was agreed in, so
 comparing amounts across reports means converting them first. The module
 downloads the reference rates published by the ECB and, optionally, the bulk
 exchange rate statistics of the BIS, combines them with a proprietary source
-where one is provided, and writes one Delta table with a row per calendar day
-and currency pair. Each update replaces that table in a single transaction, so
-a refresh cannot be observed half-written.
+where one is provided, and writes one table with a row per calendar day and
+currency pair. Each update replaces that table; it is parquet by default, and
+written as Delta, or addressed by catalogue name, it is replaced in a single
+transaction, so a refresh cannot be observed half-written.
 
 | Column    | Meaning                                           |
 |-----------|---------------------------------------------------|
@@ -279,6 +287,7 @@ a refresh cannot be observed half-written.
 | `value`    | units of `quote` per one unit of `base`          |
 | `type`     | kind of rate, e.g. `ref` for a reference rate    |
 | `source`   | source the quote came from                       |
+| `imputed`  | whether the rate was carried from an earlier quote |
 
 ```python
 from fincommons import exchangerate as ex
@@ -404,7 +413,7 @@ away.
 
 **Two populations.** Of the 1,147 notifications held on 20 November 2026, 502
 were public and carried the whole STS template, their tranches and their
-parties; 645 were private and carried sixteen to nineteen fields and no child
+parties; 645 were private and carried sixteen to eighteen fields and no child
 documents at all. A public notification's securitisation identifier is the one
 the disclosure templates use, so it joins to reported securitisation data as it
 stands; a private one carries a synthetic identifier that joins to nothing. The
@@ -450,7 +459,9 @@ Nothing in the suite reaches the network. Where a module downloads something
 the BIS, the GLEIF golden copies, the French Data Library -- the test supplies
 the response, so that
 what is asserted is what the module does with an answer rather than what the
-publisher happens to be serving that day.
+publisher happens to be serving that day. The one exception is opt-in: with
+`FINCOMMONS_NETWORK=1` set, a test of `famafrenchdata` rebuilds two factors
+from the French Data Library itself, and is skipped otherwise.
 
 `tests/test_public_api.py` lists the names that packages building on
 fincommons use, and fails if one of them disappears; removing or renaming one

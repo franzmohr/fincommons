@@ -61,8 +61,10 @@ usually enough to run the module you changed, for instance
 `pytest tests/test_exchangerate.py`, and leave the whole suite to the
 continuous integration, which runs it on every pull request.
 
-Nothing in the suite reaches the network, and a new test must not either: where
-a module downloads something, the test supplies the answer. Tests run on
+Nothing in the suite reaches the network by default, and a new test must not
+either: where a module downloads something, the test supplies the answer. A
+test that checks a module against the publisher itself is skipped unless
+`FINCOMMONS_NETWORK=1` is set, as the one of `famafrenchdata` is. Tests run on
 synthetic data or on fixtures written into the test, never on data that is not
 public.
 

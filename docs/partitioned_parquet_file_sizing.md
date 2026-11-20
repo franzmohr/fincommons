@@ -14,8 +14,10 @@ cost is paid per file rather than per row, so queries over such a table slow
 down with the number of its files rather than the volume of its data.
 
 The cause is the shape of the write, not the format. Every module of
-fincommons that writes partitioned Parquet has that shape: FIRDS Bronze and
-marketpricedata.
+fincommons that writes partitioned Parquet has that shape: the FIRDS Bronze
+layer, the Bronze layers of the Yahoo, DSE and VNDirect sources of
+marketpricedata, the Silver tables of `sec` and `edinet`, the tables of issues
+of `esef`, `sec` and `edinet`, and the tables of `financialreport`.
 
 ## How the files are sized
 

@@ -22,7 +22,9 @@ Two data flows are downloaded from the ECB, \verb|EST| and \verb|FM|, each uncha
 
 Every other rate is taken from the body that administers it rather than from a mirror. SOFR comes from the Federal Reserve Bank of New York, SONIA from the Bank of England and the gold and silver benchmarks from the London Bullion Market Association. None of them is read from FRED, which republishes them, because a mirror is a convenience rather than a source: it can run a day behind, it can stop being maintained without saying so, and a supervisory data set should be able to name the body that published each of its figures. Two of these publishers refuse a request that carries no user agent, and the answer they serve instead is an HTML page which a CSV reader turns into a table of no rows, so the downloads check the status of the answer before they write anything rather than reporting success over an empty Bronze layer.
 
-The closing prices of listed instruments are downloaded from Yahoo Finance, and so are the commodity futures, the volatility indices and the stock indices, each into a Bronze layer of its own. These are the sources that are queried for a date range instead of for the whole history, and their part of the Bronze layer is therefore partitioned by the date of the download and appended to rather than overwritten: the partitions already present are what tells the next run where to carry on from. As a consequence one reference date of one instrument can have been delivered by more than one download, which the Silver layer has to resolve before it merges anything. What is collected for a commodity is the front month future and not a spot price, so the series steps whenever one contract expires and the next becomes the front month; that step is a change of contract rather than a movement in the market, and it is the closest thing to a daily commodity price that can be read without a licence.
+The closing prices of listed instruments are downloaded from Yahoo Finance, and so are the commodity futures, the volatility indices and the stock indices, each into a Bronze layer of its own. These are the sources that are queried for a date range instead of for the whole history, and their part of the Bronze layer is therefore partitioned by the date of the download and appended to rather than overwritten: the partitions already present are what tells the next run where to carry on from. As a consequence one reference date of one instrument can have been delivered by more than one download, which the Silver layer has to resolve before it merges anything. What is collected for a commodity is the front month future and not a spot price, so the series steps whenever one contract expires and the next becomes the front month; that step is a change of contract rather than a movement in the market, and it is the closest thing to a daily commodity price that can be read without a licence. The exchange rates the ECB does not fix, such as the Bangladeshi taka and the Vietnamese dong, come from Yahoo Finance in the same way.
+
+Two exchanges that Yahoo Finance covers incompletely or not at all are read from services of their own. The Dhaka Stock Exchange is read from the JSON service behind the data archive of its website: the day-end prices of every listed security, the DSEX and DS30 indices, and the notices its companies file. The archive reaches back two years and no further, so a lake keeps a longer history only by keeping what it collected, and the notices are what the corporate actions of the exchange are read from, since its closes are not adjusted for the bonus issues that are the ordinary way a Bangladeshi company pays out. The shares of the Hanoi Stock Exchange and the Vietnamese indices are read from the public market data service of VNDirect, a broker, because the exchange publishes no history of its own in a form a program reads. Both are partitioned by the date of the download, as the Yahoo sources are.
 
 The wholesale electricity prices are the one source with a shape of its own. A day-ahead price exists per bidding zone and per delivery period rather than per day and per country, and it is taken from the Fraunhofer Institute's energy-charts service, which serves it without a key where the authoritative ENTSO-E platform requires a registered token. The figures are published under CC BY 4.0, and the attribution the licence requires -- Bundesnetzagentur \textbar{} SMARD.de, via energy-charts.info -- is carried in the code rather than only in a README, so that it travels with anything built on it.
 
@@ -70,7 +72,17 @@ Nothing in the module writes into that folder. The file is placed there by whoev
 				[silver]
 			]
 			[electricity
-				[day\_ahead]
+				[dayahead]
+			]
+			[dse
+				[dayend]
+				[summary]
+				[news]
+			]
+			[vndirect
+				[prices]
+				[indices]
+				[listings]
 			]
 			[yahoo
 				[{LASTDT=2024-02-01}]
@@ -82,6 +94,7 @@ Nothing in the module writes into that folder. The file is placed there by whoev
 			]
 			[yahoo\_volatility]
 			[yahoo\_indices]
+			[yahoo\_fx]
 			[internal
 				[marketpricedata\_internal.csv]
 			]
@@ -103,6 +116,8 @@ Because every source writes the same three columns, the identifier is the only t
 	\item \verb|KR-| a policy rate a central bank decided on, as in \verb|KR-DFR|, \verb|KR-MRO| and \verb|KR-MLF|. The two kinds are kept apart because they are not read the same way;
 	\item \verb|YLD-|, \verb|SPR-|, \verb|IBOR-| and \verb|EQ-| the yields, spreads, reference rates and equity indices of the monthly series, whose identifiers end in \verb|-M| to say that the figure is a monthly one;
 	\item \verb|CO-| a commodity, whether it comes from the London benchmarks or from the futures, as in \verb|CO-GOLD| and \verb|CO-BRENT|;
+	\item \verb|VOL-| and \verb|IX-| a volatility index and a stock index, as in \verb|VOL-VIX| and \verb|IX-N225|;
+	\item \verb|DSE-| a share of the Dhaka Stock Exchange under its trading code, as in \verb|DSE-GP|, since the exchange publishes no ISIN beside it;
 	\item \verb|EL-| the day-ahead electricity price of one bidding zone, as in \verb|EL-DELU| and \verb|EL-AT|. The identifier names the zone and not the country, because a zone is what a price exists for: several countries are split into more than one of them.
 \end{itemize}
 %
@@ -134,7 +149,7 @@ There is no Gold layer that would be exclusively generated based on the market p
 % Software
 Module \emph{marketpricedata} of the \emph{fincommons} Python package contains the functions to perform the data processing steps described above. Documentation of its functionality and application is found in its README file in the code repository.
 
-Figure \ref{fig:marketpricedata-module} illustrates the structure of the module. The module \emph{common} contains functions that can be used by all other sub-modules: it declares the layout of the data lake, the schema of the proprietary source and the upsert through which every source writes the Silver table. The other functions are grouped within sub-modules based on the layer and source of the data, which should ensure maintainability and separation of concerns, and \emph{pipeline} runs the sources of a layer in one call. A publisher that is unreachable on a given morning should not stop the others from being brought up to date, so a source that fails there is set aside with its traceback and the run carries on; a run that reports success is accordingly not a promise that every source was updated.
+Figure \ref{fig:marketpricedata-module} illustrates the structure of the module. The module \emph{common} contains functions that can be used by all other sub-modules: it declares the layout of the data lake, the schema of the proprietary source and the upsert through which every source writes the Silver table. The other functions are grouped within sub-modules based on the layer and source of the data, which should ensure maintainability and separation of concerns, and \emph{pipeline} runs the sources of a layer in one call. Four parts stand beside the layers: \emph{download} is the request the publishers that are downloaded whole share, \emph{dse\_events} reads the corporate actions of the Dhaka Stock Exchange out of its notices, \emph{curves} builds the zero curves described above, and \emph{describe} says what an identifier of the table stands for. A publisher that is unreachable on a given morning should not stop the others from being brought up to date, so a source that fails there is set aside with its traceback and the run carries on; a run that reports success is accordingly not a promise that every source was updated.
 
 Two aspects of the layout do not follow from the layers alone. The download from Yahoo Finance is not part of the Bronze layer function: it is the only download that has to be told how far back to go and the only one that needs a package outside the dependencies of \emph{fincommons}, namely \emph{yfinance}, which is why it is called on its own, while the Silver stage that reads what it left behind needs neither and runs with the rest. The proprietary source, by contrast, has no Bronze stage at all, since nothing is downloaded for it, and \emph{silver\_internal} is the whole of it.
 
@@ -172,23 +187,30 @@ Where the history of a new data lake begins is an argument of that call, and it 
 		[fincommons
 			[marketpricedata
 				[\_\_init\_\_.py]
-				[\_\_main\_\_.py]
 				[common.py]
+				[download.py]
 				[bronze\_boe.py]
+				[bronze\_dse.py]
 				[bronze\_ecb.py]
 				[bronze\_electricity.py]
 				[bronze\_lbma.py]
 				[bronze\_nyfed.py]
+				[bronze\_vndirect.py]
 				[bronze\_yahoo.py]
+				[dse\_events.py]
 				[silver\_boe.py]
+				[silver\_dse.py]
 				[silver\_ecb.py]
 				[silver\_electricity.py]
 				[silver\_exchangerate.py]
 				[silver\_internal.py]
 				[silver\_lbma.py]
 				[silver\_nyfed.py]
+				[silver\_vndirect.py]
 				[silver\_yahoo.py]
 				[pipeline.py]
+				[curves.py]
+				[describe.py]
 			]
 			[...]
 		]

@@ -96,8 +96,10 @@ def main():
     parser.add_argument("--countries", help="comma-separated, esef only; "
                         "resumes an interrupted rebuild")
     parser.add_argument("--clean", action="store_true",
-                        help="remove the table before writing it, which the "
-                             "first esef rebuild of a pre-rename lake needs")
+                        help="esef only: remove the pre-rename COUNTRY= "
+                             "partitions of the facts table before writing "
+                             "it, which the first rebuild of a pre-rename "
+                             "lake needs")
     parser.add_argument("--master", default="local[1]")
     parser.add_argument("--driver-memory", default="1500m")
     parser.add_argument("--local-dir",

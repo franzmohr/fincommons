@@ -87,7 +87,6 @@ MODULE_FOLDERS = {
     "esef": "financialreport/esef",
     "sec": "financialreport/sec",
     "edinet": "financialreport/edinet",
-    "dart": "financialreport/dart",
     "financialreport": "financialreport/combined",
 }
 

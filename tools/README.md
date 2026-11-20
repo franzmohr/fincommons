@@ -137,8 +137,8 @@ means of telling them apart away altogether.
 
 `rebuild_silver.py` writes the Silver tables again from Bronze. A lake written
 before the rename of 0.5.0 carries the old column names, so the code after it
-cannot read the lake at all: the three Quarto reports of `financialreport`
-fail on their first table. The coverage report was worse than a failure --
+cannot read the lake at all: the Quarto reports of the financial report
+modules fail on their first table. The coverage report was worse than a failure --
 its header set `error: true`, so it rendered a PDF whose pages were
 `object 'period_end' not found` and exited 0 -- which is why every template
 now names `error: false` and says in the header why.

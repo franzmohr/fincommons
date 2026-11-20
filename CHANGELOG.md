@@ -170,6 +170,19 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `financialreport.edinet`: `update_silver_edinet_quality`, `find_issues` and
+  `issues_schema` are importable from the package, as the README and the
+  handbook call them, rather than only from `edinet.quality`.
+
+- Documentation: the handbook and the READMEs brought back in line with the
+  code. Among other things, the top-level README no longer names a `dart`
+  module that does not exist, says that every register of `entitymasterdata`
+  is downloaded and that Silver tables are parquet by default; the
+  `marketpricedata` README and handbook chapter cover the DSE, VNDirect,
+  electricity and Yahoo index sources and no longer describe a command line
+  that was removed; directory trees in the handbook carry the snake_case file
+  names; and the `firds` README shows its section of `paths.yaml`.
+
 - `firds`: the writes to the historical database fill their Parquet row groups
   to `silver.ROW_GROUP_SIZE`, 32 megabytes, rather than to Parquet's default
   of 128. The default is a limit on the buffered size of a group, which the

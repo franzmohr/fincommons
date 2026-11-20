@@ -28,7 +28,7 @@ why nothing here ever rewrites one.
 **The register holds two populations**, and which one a notification falls in
 decides what it says. Of the 1,147 notifications held on 20 November 2026, 502
 are public and carry the whole STS template, their tranches and their parties;
-645 are private and carry sixteen to nineteen fields and no child documents at
+645 are private and carry sixteen to eighteen fields and no child documents at
 all. The securitisation identifier is a real identifier only for the public
 half -- a private notification carries a synthetic ``Private_2020_12_18_01`` --
 so a join to reported securitisation data reaches about five hundred of them.
@@ -152,7 +152,9 @@ SHEETS = {
 }
 
 #: The ESMA reference of each spreadsheet, for the record a collection writes.
-#: The register of repositories carries none.
+#: The register of repositories carries none. The reference is the one the
+#: workbook states on its own first sheet: the cancelled list says
+#: ESMA33-128-761 although ESMA files it under a name beginning esma33-128-765.
 SHEET_REFERENCES = {
     "traditional": "ESMA33-128-760",
     "cancelled": "ESMA33-128-761",

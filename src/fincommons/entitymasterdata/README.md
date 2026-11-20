@@ -1,8 +1,6 @@
 # Entity master data
 
-Version: 24 July 2026
-
-This script describes the creation of a entity master data set that can be used in the context of, for example, the analysis of EMIR, SECR or SFTR data. The approach is based on [Lenoci and Letizia (2021)](https://link.springer.com/chapter/10.1007/978-3-030-66891-4_6).
+This document describes the creation of a entity master data set that can be used in the context of, for example, the analysis of EMIR, SECR or SFTR data. The approach is based on [Lenoci and Letizia (2021)](https://link.springer.com/chapter/10.1007/978-3-030-66891-4_6).
 
 
 
@@ -232,15 +230,6 @@ Function `update_silver_entitymasterdata` puts a proprietary list in front of th
 em.update_silver_entitymasterdata(spark, config_path)
 ```
 
-    26/09/21 17:49:16 WARN WindowExec: No Partition Defined for Window operation! Moving all data to a single partition, this can cause serious performance degradation.
-    26/09/21 17:49:16 WARN WindowExec: No Partition Defined for Window operation! Moving all data to a single partition, this can cause serious performance degradation.
-    26/09/21 17:49:16 WARN WindowExec: No Partition Defined for Window operation! Moving all data to a single partition, this can cause serious performance degradation.
-    26/09/21 17:49:19 WARN WindowExec: No Partition Defined for Window operation! Moving all data to a single partition, this can cause serious performance degradation.
-    26/09/21 17:49:19 WARN WindowExec: No Partition Defined for Window operation! Moving all data to a single partition, this can cause serious performance degradation.
-    26/09/21 17:49:22 WARN WindowExec: No Partition Defined for Window operation! Moving all data to a single partition, this can cause serious performance degradation.
-    26/09/21 17:49:22 WARN WindowExec: No Partition Defined for Window operation! Moving all data to a single partition, this can cause serious performance degradation.
-                                                                                    
-
 * `file_format`: The format the table is stored in, `'parquet'` or `'delta'`, decided as for the public table where it is left out. It says nothing about the format of the public table this one is built from, which is read in whichever format it was written in, so the two tables need not agree.
 
 Where an lei is described by both, the proprietary description wins in full: the public row is dropped rather than filled in from, because a list an organisation maintains itself states what that organisation holds the entity to be. Entities the proprietary list carries without an lei are all kept, since there is nothing to match them on.
@@ -345,7 +334,7 @@ The entity master data set carries one row per entity:
 
 ## Tests
 
-The module is covered by the tests in `tests/test_entitymasterdata.py`, which run against the local Spark session built by `tests/conftest.py`. Nothing in them reaches GLEIF or GitHub: the landing zone fixtures are written inline in the shapes the publishers use, and the two downloads are given a response of their own.
+The module is covered by the tests in `tests/test_entitymasterdata.py`, which run against the local Spark session built by `tests/conftest.py`. Nothing in them reaches GLEIF, the ECB, EIOPA or ESMA: the landing zone fixtures are written inline in the shapes the publishers use, and every download is given a response of its own.
 
 | Group | Covers |
 | --- | --- |
@@ -372,10 +361,4 @@ Run them, from the root of the repository, with
 
 ```
 pytest tests/test_entitymasterdata.py
-```
-
-
-
-```python
-
 ```

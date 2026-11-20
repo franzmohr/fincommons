@@ -26,7 +26,7 @@ not compact the snapshots away.
 **Two populations, and the difference decides what a notification tells you.**
 Of the 1,147 notifications held on 20 November 2026, 502 were public and
 carried the whole STS template, their tranches and their parties; 645 were
-private and carried sixteen to nineteen fields and no child documents at all.
+private and carried sixteen to eighteen fields and no child documents at all.
 A public notification's securitisation identifier is the one the disclosure
 templates use -- the reporting entity's legal entity identifier, a letter for
 the class and the period, ``2138001WO21Z3B8Y8K20N202602`` -- so it joins to
