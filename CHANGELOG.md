@@ -27,8 +27,10 @@ release may change the public API, which `tests/test_public_api.py` lists.
   securitisations of one country -- what is securitised there against the rest
   of the register, when they were notified, who originates them, where their
   vehicles are established, who verified them, and what has happened since.
-  The only setting is the two-letter country code, in the first chunk or in
-  `FINCOMMONS_COUNTRY`. It covers the public half of the register and says so,
+  The only setting is the two-letter country code -- or `EU` for the Union as
+  a whole, which adds the member states side by side and the securitisations
+  whose vehicle is in another country than their originator -- in the first
+  chunk or in `FINCOMMONS_COUNTRY`. It covers the public half of the register and says so,
   a private notification carrying no party to attach to a country; it reports
   counts rather than percentages for a country with fewer than ten
   securitisations; and it tells a country that hosts more vehicles than it

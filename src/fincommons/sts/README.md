@@ -245,13 +245,22 @@ ISINs are in the FIRDS reference data.
 ## A factsheet on one country
 
 `templates/sts-country-factsheet.qmd` reports the securitisations of one
-country. **The only setting is the two-letter country code**, in the first
-chunk or in `FINCOMMONS_COUNTRY`, which wins where it is set:
+country, or of the Union as a whole. **The only setting is the two-letter
+country code, or `EU`**, in the first chunk or in `FINCOMMONS_COUNTRY`, which
+wins where it is set:
 
 ```
 FINCOMMONS_COUNTRY=AT \
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render sts-country-factsheet.qmd
 ```
+
+```
+FINCOMMONS_COUNTRY=EU \
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render sts-country-factsheet.qmd
+```
+
+A code the register does not name is refused with the list of the ones it
+does, `EU` among them, rather than rendered empty.
 
 It gives what is securitised in the country against the rest of the register,
 when the securitisations were notified, who originates them and how
@@ -271,8 +280,17 @@ Three things it is careful about, because the data invites three mistakes:
   Luxembourg against the two originated there, which is the fact a reader who
   typed `LU` is probably after.
 
-A country the register does not name is refused with the list of the countries
-it does name, rather than rendered empty.
+`EU` adds two sections the single-country factsheet has no use for: the
+member states side by side, and the securitisations that cross a border
+between the country they were originated in and the country of their vehicle.
+On the register of 20 November 2026 the Union holds 492 of the 502 public
+notifications, across 12 of the 27 member states, and 122 of 471 pairings
+cross a border -- 68 of them German originations in Luxembourg vehicles.
+
+The member states are stated in the template rather than taken from the
+register, because which countries belong in a figure about the Union is a
+question about the Union: the register also names Norway, whose one
+securitisation the factsheet leaves out and says it leaves out.
 
 ## A report on one snapshot
 

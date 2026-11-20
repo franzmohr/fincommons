@@ -424,9 +424,9 @@ lender and the sponsor carry legal entity identifiers, which join to
 `templates/sts-register-report.qmd` is a report on one snapshot: what the
 register holds, what it does not say, the census of its fields, the checks it
 fails, and what has arrived and left since the snapshot before.
-`templates/sts-country-factsheet.qmd` reports one country -- what it
-securitises, who originates it, where the vehicles are -- and the only setting
-it needs is the two-letter country code.
+`templates/sts-country-factsheet.qmd` reports one country, or the Union with
+`EU` -- what it securitises, who originates it, where the vehicles are -- and
+the only setting it needs is that code.
 
 The data is downloaded when the pipeline runs and is not shipped with the
 package. The details are documented in

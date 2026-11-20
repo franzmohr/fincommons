@@ -47,10 +47,10 @@ execute:
 # What to set for a factsheet
 # --------------------------------------------------------------------------
 
-# The country, as the two-letter code the register uses. This is the only
-# setting a reader has to make. FINCOMMONS_COUNTRY wins where it is set, so
-# that a run rendering one country after another needs no edit of the
-# template.
+# The country, as the two-letter code the register uses, or "EU" for the
+# Union as a whole. This is the only setting a reader has to make.
+# FINCOMMONS_COUNTRY wins where it is set, so that a run rendering one country
+# after another needs no edit of the template.
 report_country <- "AT"
 
 # The path to the config file, whose sts section names the Silver layer.
@@ -69,6 +69,15 @@ top_n <- 12
 # rather than as a percentage that looks like a statistic. Luxembourg has two
 # originations in the register and one of them is half of everything.
 small_n <- 10
+
+# The member states of the Union, for the factsheet on the Union as a whole.
+# Stated rather than derived: the register names countries that are not member
+# states -- it names Norway -- and which of them belong in a figure about the
+# Union is a question about the Union and not about the register. A reader
+# wanting the European Economic Area adds the three states of it here.
+union_members <- c("AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
+                   "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
+                   "PL", "PT", "RO", "SK", "SI", "ES", "SE")
 
 # The point size of the text in a chart.
 chart_base_size <- 9
@@ -163,18 +172,37 @@ available <- countries_held %>%
   count(country, name = "notifications") %>%
   arrange(desc(notifications))
 
-if (!report_country %in% available$country) {
+# "EU" is the Union as a whole rather than a country of the register.
+is_union <- report_country %in% c("EU", "UNION")
+
+if (!is_union && !report_country %in% available$country) {
   stop("The register names no ", country_role, " in ", report_country,
-       ". It names them in: ",
+       ". Use EU for the Union as a whole, or one of: ",
        paste(sprintf("%s (%d)", available$country, available$notifications),
              collapse = ", "), ".")
 }
 
-# The notifications of the country, and the register as a whole beside them.
+scope <- if (is_union) union_members else report_country
+scope_held <- intersect(scope, available$country)
+if (length(scope_held) == 0) {
+  stop("The register names no ", country_role,
+       " in any member state of the Union.")
+}
+
+# The notifications in scope, and the register as a whole beside them.
 country_ids <- countries_held %>%
-  filter(country == report_country) %>%
+  filter(country %in% scope_held) %>%
   pull(id) %>%
   unique()
+
+# Which countries are in the figures, and which the register names but the
+# Union does not hold. Norway is the one today.
+outside <- setdiff(available$country, union_members)
+outside_ids <- countries_held %>%
+  filter(country %in% outside) %>%
+  pull(id) %>%
+  unique()
+outside_only <- setdiff(outside_ids, country_ids)
 
 here <- notifications %>% filter(id %in% country_ids)
 public <- notifications %>% filter(securitisation_type == "Public")
@@ -185,15 +213,21 @@ share_of_public <- n_here / n_public
 
 country_parties <- parties %>% filter(id %in% country_ids)
 country_tranches <- tranches %>% filter(id %in% country_ids)
+
+# What to call the scope in a sentence, and what the figures are set against.
+# A country is set against the rest of the register; the Union is nearly the
+# whole of it, so the comparison would be against itself and the member states
+# are the interesting cut instead.
+scope_label <- if (is_union) "the European Union" else report_country
 ```
 
 ```{r title, results='asis'}
-cat(paste0("# STS securitisation in ", report_country, "\n\n"))
+cat(paste0("# STS securitisation in ", scope_label, "\n\n"))
 
 cat(paste0(
   "This factsheet is about the securitisations notified to ESMA as simple, ",
   "transparent and standardised whose **", country_role, " is in ",
-  report_country, "**, as the public register held them on **",
+  scope_label, "**, as the public register held them on **",
   format(snapshot_day), "**. There are **", n_here, "** of them.\n\n",
   "**It covers the public securitisations and no others, and the reason is ",
   "the register.** A private notification carries no party at all -- no ",
@@ -203,6 +237,27 @@ cat(paste0(
   nrow(notifications) - n_public, " are private, and the private half is ",
   "absent from every figure below. A count here is therefore a count of a ",
   "visible part of the market and not of the market.\n"))
+
+if (is_union) {
+  cat(paste0(
+    "\nThe register names an ", country_role, " in **", length(scope_held),
+    " of the ", length(union_members), " member states**; the other ",
+    length(union_members) - length(scope_held), " have none in it. ",
+    if (length(outside_only) > 0)
+      paste0("A further ", length(outside_only), " securitisation",
+             if (length(outside_only) == 1) "" else "s",
+             " named in the register ", 
+             if (length(outside_only) == 1) "is" else "are",
+             " originated outside the Union -- in ",
+             paste(outside, collapse = ", "),
+             " -- and ", if (length(outside_only) == 1) "is" else "are",
+             " left out of every figure below. The member states are stated ",
+             "in the first chunk of this template rather than taken from the ",
+             "register, because which countries belong in a figure about the ",
+             "Union is a question about the Union.")
+    else "",
+    "\n"))
+}
 
 if (n_here < small_n) {
   cat(paste0(
@@ -242,7 +297,7 @@ last_year <- max(format(here$first_notified, "%Y"), na.rm = TRUE)
 
 glance <- tibble(
   What = c(
-    paste0("Notifications with an ", country_role, " in ", report_country),
+    paste0("Notifications with an ", country_role, " in ", scope_label),
     "Share of all public notifications",
     "First and latest notification",
     paste0("Distinct ", country_role, "s"),
@@ -285,14 +340,21 @@ compared <- mix %>%
   replace_na(list(n = 0, share = 0, n_rest = 0, share_rest = 0)) %>%
   arrange(desc(share))
 
-plotted <- compared %>%
-  select(exposure, !!report_country := share,
-         `Rest of the register` := share_rest) %>%
-  pivot_longer(-exposure, names_to = "where", values_to = "share") %>%
+plotted <- if (is_union) {
+  compared %>%
+    select(exposure, share) %>%
+    mutate(where = scope_label)
+} else {
+  compared %>%
+    select(exposure, !!report_country := share,
+           `Rest of the register` := share_rest) %>%
+    pivot_longer(-exposure, names_to = "where", values_to = "share")
+}
+plotted <- plotted %>%
   mutate(exposure = wrap_labels(exposure, 40),
          exposure = factor(exposure, levels = rev(unique(exposure))),
-         where = factor(where, levels = c(report_country,
-                                          "Rest of the register")))
+         where = factor(where, levels = if (is_union) scope_label
+                        else c(report_country, "Rest of the register")))
 
 ggplot(plotted, aes(x = share, y = exposure, fill = where)) +
   geom_col(position = position_dodge(width = 0.75), width = 0.7) +
@@ -300,8 +362,9 @@ ggplot(plotted, aes(x = share, y = exposure, fill = where)) +
                      expand = expansion(mult = c(0, 0.08))) +
   scale_fill_corporate_design() +
   labs(x = NULL, y = NULL, fill = NULL,
-       title = paste("What is securitised in", report_country),
-       subtitle = "Share of notifications, against the rest of the register",
+       title = paste("What is securitised in", scope_label),
+       subtitle = if (is_union) "Share of notifications"
+                  else "Share of notifications, against the rest of the register",
        caption = caption_corporate_design(
          source = "ESMA STS register", last = format(snapshot_day),
          lang = "en")) +
@@ -311,11 +374,13 @@ ggplot(plotted, aes(x = share, y = exposure, fill = where)) +
 ```{r exposures-note, results='asis'}
 top <- compared %>% slice_max(share, n = 1)
 cat(paste0(
-  "The largest kind of underlying exposure in ", report_country, " is **",
+  "The largest kind of underlying exposure in ", scope_label, " is **",
   top$exposure[1], "**, which is ", top$n[1], " of the ", n_here,
-  " notifications (", sprintf("%.0f%%", 100 * top$share[1]),
-  ") against ", sprintf("%.0f%%", 100 * top$share_rest[1]),
-  " of the rest of the register. The register states the kind of exposure as ",
+  " notifications (", sprintf("%.0f%%", 100 * top$share[1]), ")",
+  if (is_union) ""
+  else paste0(" against ", sprintf("%.0f%%", 100 * top$share_rest[1]),
+              " of the rest of the register"),
+  ". The register states the kind of exposure as ",
   "one value per securitisation, so a securitisation backed by more than one ",
   "kind is counted under the one it was notified under.\n"))
 ```
@@ -357,8 +422,8 @@ knitr::kable(
                     substring(country_role, 2)) := name,
            Notifications = notifications),
   format.args = list(big.mark = ","),
-  caption = paste("The", country_role, "s named in most notifications, of",
-                  nrow(originators), "in", report_country))
+  caption = paste0("The ", country_role, "s named in most notifications, of ",
+                   nrow(originators), " in ", scope_label))
 ```
 
 ```{r concentration, results='asis'}
@@ -369,12 +434,65 @@ per_deal <- country_parties %>%
 
 cat(paste0(
   "The register names ", nrow(originators), " distinct ", country_role,
-  "s across the ", n_here, " notifications, and a notification names ",
+  "s across the ", n_here, " notifications of ", scope_label,
+  ", and a notification names ",
   "between ", min(per_deal$parties), " and ", max(per_deal$parties), " of ",
   "them (median ", median(per_deal$parties), "). A securitisation originated ",
   "by many entities at once is a co-operative or mutual network securitising ",
   "the loans of its member institutions, and it is why a count of ",
   country_role, " rows is not a count of securitisations.\n"))
+```
+
+## By member state
+
+```{r by-country}
+if (is_union) {
+  per_country <- countries_held %>%
+    filter(country %in% scope_held) %>%
+    inner_join(notifications %>% select(id, underlying_exposure,
+                                        first_notified),
+               by = "id") %>%
+    group_by(country) %>%
+    summarise(
+      Notifications = n_distinct(id),
+      largest = names(sort(table(underlying_exposure),
+                           decreasing = TRUE))[1],
+      from = min(format(first_notified, "%Y"), na.rm = TRUE),
+      to = max(format(first_notified, "%Y"), na.rm = TRUE),
+      .groups = "drop") %>%
+    arrange(desc(Notifications)) %>%
+    mutate(Share = sprintf("%.0f%%",
+                           100 * Notifications / sum(Notifications)),
+           Years = ifelse(from == to, from, paste0(from, "-", to))) %>%
+    # The longest exposure name runs to ninety characters, which leaves the
+    # table no room between its other columns, so it is cut at a word and
+    # marked as cut. The chart above gives every name in full.
+    mutate(largest = ifelse(
+      nchar(largest) > 38,
+      paste0(sub("\\s+\\S*$", "", substr(largest, 1, 38)), "..."),
+      largest)) %>%
+    select(`Member state` = country, Notifications, Share, Years,
+           `Largest exposure` = largest)
+
+  knitr::kable(per_country, format.args = list(big.mark = ","),
+               caption = paste("The member states the register names an",
+                               country_role, "in"))
+}
+```
+
+```{r by-country-note, results='asis'}
+if (is_union) {
+  cat(paste0(
+    "A securitisation with ", country_role, "s in more than one member state ",
+    "is counted under each of them, so these notifications sum to more than ",
+    "the ", n_here, " of the Union, and the longest names of an exposure are ",
+    "cut to the width of the table, the chart above giving them in full. ",
+    "The register names no ", country_role,
+    " at all in ", length(setdiff(union_members, scope_held)),
+    " member states, which is not a statement that none securitises: a ",
+    "private securitisation carries no party, and the private half of the ",
+    "register is half of it.\n"))
+}
 ```
 
 ## Where the vehicles are
@@ -397,8 +515,49 @@ if (nrow(vehicles) > 0) {
 }
 ```
 
+```{r vehicles-cross}
+if (is_union && nrow(vehicles) > 0) {
+  # Where a securitisation was originated against where its vehicle was set
+  # up. The diagonal is the securitisations that stayed at home.
+  pairs <- countries_held %>%
+    filter(country %in% scope_held) %>%
+    rename(origin = country) %>%
+    inner_join(parties %>%
+                 filter(role == "sspe", !is.na(country)) %>%
+                 distinct(id, country) %>%
+                 rename(vehicle = country),
+               by = "id", relationship = "many-to-many") %>%
+    distinct(id, origin, vehicle)
+
+  at_home <- pairs %>% filter(origin == vehicle) %>% nrow()
+  cross <- pairs %>% filter(origin != vehicle) %>%
+    count(origin, vehicle, sort = TRUE)
+
+  knitr::kable(
+    cross %>% head(top_n) %>%
+      rename(`Originated in` = origin, `Vehicle in` = vehicle,
+             Notifications = n),
+    caption = paste("Where a securitisation crosses a border between the",
+                    "country of its", country_role,
+                    "and the country of its vehicle"))
+}
+```
+
 ```{r vehicles-note, results='asis'}
-if (nrow(vehicles) > 0) {
+if (is_union && nrow(vehicles) > 0) {
+  hosts <- vehicles %>% head(3)
+  cat(paste0(
+    "Of the ", nrow(pairs), " pairings the register states, **", at_home,
+    " keep the vehicle in the country the securitisation was originated in ",
+    "and ", nrow(pairs) - at_home, " do not**. The vehicles concentrate: ",
+    paste(sprintf("%s hosts %d", hosts$country, hosts$notifications),
+          collapse = ", "),
+    ". The special purpose entity is where the structure was set up rather ",
+    "than where the exposures were made, which is why a count of ",
+    "securitisations by the country of their vehicle is not a count of a ",
+    "country's market. The register gives the vehicle a country and neither ",
+    "a name nor an identifier, so nothing more can be said about it here.\n"))
+} else if (nrow(vehicles) > 0) {
   at_home <- vehicles$notifications[vehicles$country == report_country]
   at_home <- if (length(at_home) == 0) 0 else at_home
   abroad <- sum(vehicles$notifications) - at_home
@@ -484,14 +643,14 @@ if (is.null(events)) {
 }
 ```
 
-## `r report_country` against the register
+## `r scope_label` against the register
 
 ```{r against}
 comparison <- tibble(
   Measure = c("Notifications", "ABCP", "non-ABCP",
               "With a named verifier", "With tranches listed",
               "Distinct kinds of underlying exposure"),
-  !!report_country := c(
+  !!scope_label := c(
     n_here,
     sum(here$class_code == "ABCP", na.rm = TRUE),
     sum(here$class_code == "NON_ABCP", na.rm = TRUE),
@@ -507,7 +666,7 @@ comparison <- tibble(
     length(unique(public$underlying_exposure))))
 
 knitr::kable(comparison, format.args = list(big.mark = ","),
-             caption = paste(report_country,
+             caption = paste(scope_label,
                              "and the public half of the register"))
 ```
 
@@ -529,7 +688,12 @@ cat(paste(c(
         "register states it, which is the country where the exposures were",
         "made. A securitisation with originators in several countries is",
         "counted under each of them, so the countries of the register sum to",
-        "more than the register.")),
+        "more than the register.",
+        if (is_union)
+          paste("The member states of the Union are stated in the template",
+                "and not taken from the register, which names countries that",
+                "are not member states.")
+        else "")),
   collapse = "\n\n"))
 ```
 
