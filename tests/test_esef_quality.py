@@ -328,7 +328,7 @@ def test_one_figure_tagged_twice_with_two_values_is_reported(spark, lake):
     facts = sound_facts()
     facts.append((COUNTRY, FILING, LEI, PERIODEND, f"{FILING}:second",
                   "ifrs-full:Assets", None, PERIODEND, "iso4217:EUR", None,
-                  999.0, None, -3, "en"))
+                  2600.0, None, -3, "en"))
     config = lake(facts, [filing_row()])
 
     found = quality.find_issues(spark, config)
@@ -336,6 +336,42 @@ def test_one_figure_tagged_twice_with_two_values_is_reported(spark, lake):
     # An instant has no period start, and an equi-join on an empty key matches
     # nothing: both facts have to come back.
     assert len(rows) == 2
+
+
+def test_one_figure_at_two_precisions_is_not_a_fault(spark, lake):
+    """673.3 million in the statements and 673 million in the notes: the
+    value stated in units lies within the thousand the other one rounds."""
+    facts = sound_facts()
+    facts.append((COUNTRY, FILING, LEI, PERIODEND, f"{FILING}:precise",
+                  "ifrs-full:Assets", None, PERIODEND, "iso4217:EUR", None,
+                  1000.4, None, 0, "en"))
+    config = lake(facts, [filing_row()])
+
+    assert "DUPL_FACT_VALUE" not in codes(spark, config)
+
+
+def test_two_values_a_rounding_step_apart_are_not_a_fault(spark, lake):
+    """Rounded to thousands each, one reads 1,000 and the other 2,000 --
+    their intervals meet at 1,500, which both could have been."""
+    facts = sound_facts()
+    facts.append((COUNTRY, FILING, LEI, PERIODEND, f"{FILING}:rounded",
+                  "ifrs-full:Assets", None, PERIODEND, "iso4217:EUR", None,
+                  2000.0, None, -3, "en"))
+    config = lake(facts, [filing_row()])
+
+    assert "DUPL_FACT_VALUE" not in codes(spark, config)
+
+
+def test_values_given_without_decimals_are_compared_exactly(spark, lake):
+    facts = [fact(*row) for row in SOUND]
+    facts = [row[:12] + (None,) + row[13:] if row[5] == "ifrs-full:Assets" else row
+             for row in facts]
+    facts.append((COUNTRY, FILING, LEI, PERIODEND, f"{FILING}:exact",
+                  "ifrs-full:Assets", None, PERIODEND, "iso4217:EUR", None,
+                  1000.4, None, None, "en"))
+    config = lake(facts, [filing_row()])
+
+    assert "DUPL_FACT_VALUE" in codes(spark, config)
 
 
 def test_the_same_figure_twice_with_one_value_is_not_a_fault(spark, lake):

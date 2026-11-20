@@ -244,6 +244,12 @@ release may change the public API, which `tests/test_public_api.py` lists.
   them, under either of the two concepts the taxonomy has for that line. That
   was 9 of the 12 reports it found faulty; the 3 left are Österreichische
   Post's, which presents the assets of bank99 as a third block.
+- `financialreport.esef.quality`: `DUPL_FACT_VALUE` compares two values of
+  one figure as XBRL compares duplicate facts -- each stands for the interval
+  its decimals allow, and they disagree only where the intervals do not
+  meet. It compared the values exactly, so a figure stated as 673.3 million
+  in the statements and 673 million in the notes was a fault: 156 of the 196
+  facts it named in the Austrian and Dutch reports, and 24 of 31 filings.
 - `financialreport.esef.quality`: `IMBAL_PROFIT` takes a gap as explained
   where it is the share of the profit of associates, which some issuers
   present after the tax: ASML its share of Carl Zeiss SMT. That was all 4

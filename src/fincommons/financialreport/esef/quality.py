@@ -389,9 +389,14 @@ def check_duplicate_fact_value(state):
     """One figure tagged twice in one filing with two values.
 
     Twice with one value is ordinary: a figure appears in the statements and
-    again in the notes, and the table holds both facts. Twice with two values
-    is a fault, and which of them a reader should use cannot be decided here,
-    so both facts are named.
+    again in the notes, and the table holds both facts. So is twice at two
+    precisions -- 673.3 million in the statements and 673 million in the
+    notes -- and the values are compared as XBRL compares duplicate facts:
+    each stands for the interval its decimals allow, half a unit of the last
+    stated digit either side, and two values agree where their intervals
+    meet. On the Austrian reports most of the facts the check named were
+    such pairs. Values whose intervals do not meet are a fault, and which of
+    them a reader should use cannot be decided here, so both facts are named.
 
     The columns a fact is identified by include ones that are empty for an
     instant or for a figure with no breakdown, and an equi-join on an empty
@@ -407,9 +412,22 @@ def check_duplicate_fact_value(state):
             func.coalesce(func.col(key).cast("string"), func.lit("")))
     grouped = [f"_{key}" for key in keys]
 
+    # Half the step of the last digit stated; nothing where the decimals are
+    # not given, which XBRL reads as exact.
+    half_step = func.coalesce(
+        func.pow(func.lit(10.0), -func.col("decimals").cast("double")) / 2,
+        func.lit(0.0))
+    filled = (filled
+              .withColumn("_low", func.col("value") - half_step)
+              .withColumn("_high", func.col("value") + half_step))
+    # Intervals on a line all meet where the highest lower end is not above
+    # the lowest upper end.
     conflicting = (filled.groupBy(*grouped)
-                   .agg(func.countDistinct("value").alias("_values"))
-                   .where(func.col("_values") > 1)
+                   .agg(func.countDistinct("value").alias("_values"),
+                        func.max("_low").alias("_low"),
+                        func.min("_high").alias("_high"))
+                   .where((func.col("_values") > 1)
+                          & (func.col("_low") > func.col("_high")))
                    .select(*grouped))
     return filled.join(conflicting, grouped).select(*KEYS)
 
