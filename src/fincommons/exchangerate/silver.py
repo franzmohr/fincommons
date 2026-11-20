@@ -231,12 +231,12 @@ def check_internal_rates(internal, source, base = "EUR"):
         Naming each problem found, with a few of the rows that have it.
     """
     problems = {
-        "a REFDT that is not a date written as YYYY-MM-DD":
-            ~func.col("REFDT").rlike("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-            | func.to_date(func.col("REFDT"), "yyyy-MM-dd").isNull(),
-        f"a BASE other than {base}": func.col("BASE") != base,
-        "a VALUE that is missing or not positive":
-            func.col("VALUE").isNull() | (func.col("VALUE") <= 0),
+        "a ref_date that is not a date written as YYYY-MM-DD":
+            ~func.col("ref_date").rlike("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+            | func.to_date(func.col("ref_date"), "yyyy-MM-dd").isNull(),
+        f"a base other than {base}": func.col("base") != base,
+        "a value that is missing or not positive":
+            func.col("value").isNull() | (func.col("value") <= 0),
     }
     found = []
     for problem, condition in problems.items():
@@ -246,7 +246,7 @@ def check_internal_rates(internal, source, base = "EUR"):
             examples = [tuple(row) for row in rows.limit(3).collect()]
             found.append(f"{count} rows with {problem}, e.g. {examples}")
 
-    duplicated = internal.groupBy("REFDT", "BASE", "QUOTE").count() \
+    duplicated = internal.groupBy("ref_date", "base", "quote").count() \
         .filter(func.col("count") > 1)
     count = duplicated.count()
     if count:
@@ -363,17 +363,8 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
         internal = spark.read \
             .options(header='True', delimiter=',') \
             .schema(internal_schema) \
-            .csv(internal_file) \
-            .select("REFDT", "BASE", "QUOTE", "VALUE", "TYPE", "SOURCE")
+            .csv(internal_file)
         check_internal_rates(internal, internal_file)
-        # The file is a Bronze input and keeps its own names; the Silver names
-        # are taken on here, which is the one place the two layers meet.
-        internal = internal.select(func.col("REFDT").alias("ref_date"),
-                                   func.col("BASE").alias("base"),
-                                   func.col("QUOTE").alias("quote"),
-                                   func.col("VALUE").alias("value"),
-                                   func.col("TYPE").alias("type"),
-                                   func.col("SOURCE").alias("source"))
         internal_max_date = internal.select(func.max("ref_date")).first()[0]
         if internal_max_date is None:
             logger.warning(
@@ -418,7 +409,7 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
             .withColumn("base", func.lit("EUR"))
     
     # Internal over ECB over BIS. The precedence is carried by an explicit rank
-    # rather than by SOURCE, because the SOURCE values of the internal data set
+    # rather than by source, because the source values of the internal data set
     # are whatever the internal CSV happens to contain.
     # Within one rank the order runs on through the value and the labels, so
     # that two rows of one source for the same day and pair -- the BIS carries
