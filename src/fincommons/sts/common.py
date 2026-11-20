@@ -59,8 +59,12 @@ register names only as a string.
 import datetime
 import json
 import os
+import re
+
+from pyspark.sql.types import (DateType, IntegerType, StringType, StructType)
 
 from ..addressing import resolve
+from ..storage import read_silver
 
 #: Where the registers portal answers. The core is named in the address, so
 #: the one constant serves both the notifications and their children.
@@ -182,6 +186,271 @@ BREXIT_SHEET_URL = (
     "_due_to_brexit.xlsx")
 
 
+# The tables of the Silver layer
+# --------------------------------------------------------------------------
+
+#: The template fields of a notification begin with one of these. Everything
+#: else a notification carries is a field of the notification itself. The two
+#: sets of assertions are those of a non-ABCP and of an ABCP securitisation;
+#: the register spells the second in upper case and the first in a mixture,
+#: which is why the test is on the prefix and not on the whole name.
+TEMPLATE_PREFIXES = ("non_abcp", "abcp")
+
+#: What a template field's name ends in, by the part of an assertion it holds.
+#: A field with none of these endings carries the assertion itself, as
+#: ``non_abcp_Riskretention_and_RetainingRiskoption_Firstlosstranche`` does.
+TEMPLATE_SUFFIXES = {
+    "_flag": "flag",
+    "_FLAG": "flag",
+    "_comment": "comment",
+    "_COMMENT": "comment",
+    "_EXPL": "comment",
+    "_explanation": "comment",
+}
+
+#: The composition of a securitisation identifier that the disclosure
+#: templates use: the legal entity identifier of the reporting entity, a
+#: letter for the class, and the period.
+_LEI_IDENTIFIER = re.compile(r"^[A-Z0-9]{20}[A-Z][0-9]{6}$")
+
+
+def identifier_scheme(value):
+    """Which scheme a securitisation identifier follows.
+
+    Only ``'lei'`` joins to anything outside the register: it is the
+    identifier of the disclosure templates, and a securitisation reported
+    through a securitisation repository is named by the same string. A
+    private notification carries a placeholder that identifies nothing, and
+    three notifications of the snapshot of 20 November 2026 carry a single
+    space.
+
+    Parameters
+    ----------
+    value: str or None
+        The identifier as the register published it, leading space and all.
+
+    Returns
+    -------
+    str
+        ``'lei'``, ``'private'``, ``'synthetic'``, ``'missing'`` or
+        ``'other'``.
+    """
+    trimmed = (value or "").strip()
+    if not trimmed:
+        return "missing"
+    if _LEI_IDENTIFIER.match(trimmed):
+        return "lei"
+    upper = trimmed.upper()
+    if upper.startswith("SYSEC"):
+        return "synthetic"
+    if upper.startswith("PRIVATE"):
+        return "private"
+    return "other"
+
+
+notification_schema = StructType() \
+    .add("id", StringType(), False) \
+    .add("securitisation_identifier", StringType(), True) \
+    .add("notification_identifier", StringType(), True) \
+    .add("identifier_scheme", StringType(), False) \
+    .add("securitisation_name", StringType(), True) \
+    .add("securitisation_type", StringType(), True) \
+    .add("securitisation_class", StringType(), True) \
+    .add("type_code", StringType(), True) \
+    .add("class_code", StringType(), True) \
+    .add("compliance_status", StringType(), True) \
+    .add("sanction_status", StringType(), True) \
+    .add("underlying_exposure", StringType(), True) \
+    .add("first_notified", DateType(), True) \
+    .add("notified", DateType(), True) \
+    .add("repository", StringType(), True) \
+    .add("reporting_entity_name", StringType(), True) \
+    .add("reporting_entity_lei", StringType(), True) \
+    .add("reporting_entity_legal_name", StringType(), True) \
+    .add("verifier_name", StringType(), True) \
+    .add("verifier_country", StringType(), True) \
+    .add("verifier_authority", StringType(), True) \
+    .add("verifier_statement", StringType(), True) \
+    .add("prospectus_country", StringType(), True) \
+    .add("prospectus_identifier", StringType(), True) \
+    .add("prospectus_issue_date", DateType(), True) \
+    .add("notified_again", StringType(), True) \
+    .add("notified_again_reason", StringType(), True) \
+    .add("fields", IntegerType(), False) \
+    .add("snapshot", DateType(), False)
+"""One row per notification the register holds on the day of the snapshot.
+
+``id`` is the register's own document identifier and the key of this table
+and of every other table of the module. It is the key because **neither
+identifier the register publishes is unique**: the 1,147 notifications of the
+snapshot of 20 November 2026 carried 1,115 distinct securitisation
+identifiers and 1,131 distinct notification identifiers, a securitisation
+being notified again when it is restructured or re-notified.
+
+``identifier_scheme`` says whether ``securitisation_identifier`` joins to
+anything outside the register; see :func:`identifier_scheme`. Of that
+snapshot, 502 notifications carry an identifier of the disclosure templates
+and 645 a placeholder.
+
+``reporting_entity_name`` and ``reporting_entity_lei`` are the entity that
+made the notification, which the register names ``de_name`` and
+``de_lei_priv`` and defines nowhere. It is the sole originator on 394 of the
+502 notifications that carry it, one of several on 25, and on 74 it is not an
+originator at all but the special purpose entity or a group entity reporting
+on another's behalf. It is therefore carried as what it is -- the entity that
+reported -- and the originators are in the table of parties.
+``reporting_entity_legal_name`` is the same entity as its legal entity
+identifier records it, which differs from the name the notification was filed
+under: ``Lloyds Bank GmbH`` against ``LLOYDS BANK GMBH``.
+
+``verifier_statement`` is what the authorised third party of Article 28 said
+when it verified compliance, which 485 of the 502 public notifications of that
+snapshot carry. The verifier's name is not normalised in the register -- one
+of them appears under thirteen spellings -- so a count by verifier is a count
+of spellings until they are mapped.
+
+``fields`` is how many fields the document carried, which separates the two
+populations at a glance: a public notification carries a median of 147 and a
+private one 18.
+"""
+
+assertion_schema = StructType() \
+    .add("id", StringType(), False) \
+    .add("securitisation_identifier", StringType(), True) \
+    .add("template", StringType(), False) \
+    .add("requirement", StringType(), False) \
+    .add("flag", StringType(), True) \
+    .add("comment", StringType(), True) \
+    .add("snapshot", DateType(), False)
+"""One row per assertion a notification makes against the STS criteria.
+
+The template is some 130 fields of a public notification, each a flag with an
+explanatory comment beside it, and the private notifications carry none of
+them. They are held long rather than wide for two reasons. As columns they
+would be a table 130 wide and half empty, and the template is revised: the
+review of the securitisation framework proposes a reduction of at least a
+third in the fields of the public templates, which as rows is a vocabulary
+that grows and as columns is a migration.
+
+``template`` is ``'non_abcp'`` or ``'abcp'``, the two sets of criteria.
+``requirement`` is the register's own field name with that prefix and the
+``_flag`` or ``_comment`` ending removed, so that the flag and the comment of
+one requirement meet in one row and nothing is renamed. The register's own
+spelling is kept, typographical errors included -- the family of transparency
+assertions is spelled ``requirementsOnTrasparency`` -- because a name invented
+here would not be findable in what ESMA publishes.
+
+``flag`` is the code as published. The register documents no domain for it;
+the values seen are ``C``, ``N``, ``E``, ``A`` and ``Y``. It is therefore
+carried and not interpreted.
+"""
+
+tranche_schema = StructType() \
+    .add("id", StringType(), False) \
+    .add("securitisation_identifier", StringType(), True) \
+    .add("isin", StringType(), True) \
+    .add("instrument_name", StringType(), True) \
+    .add("snapshot", DateType(), False)
+"""One row per tranche of a notification, by its ISIN.
+
+The ISIN joins to :mod:`fincommons.firds`, which gives the instrument, its
+issuer and the venues it trades on. The securitisation identifier is carried
+beside it so that the join does not have to go through the notification.
+
+Only public notifications have tranches: of the snapshot of 20 November 2026,
+498 of the 502 public notifications carried 2,275 tranche documents between
+them, and the private ones carried none. Ten of those documents carry no ISIN
+and 267 no instrument name.
+"""
+
+party_schema = StructType() \
+    .add("id", StringType(), False) \
+    .add("securitisation_identifier", StringType(), True) \
+    .add("role", StringType(), False) \
+    .add("lei", StringType(), True) \
+    .add("name", StringType(), True) \
+    .add("country", StringType(), True) \
+    .add("country_name", StringType(), True) \
+    .add("snapshot", DateType(), False)
+"""One row per party to a notification, whatever its role.
+
+``role`` is ``'originator'``, ``'lender'`` for the original lender,
+``'sponsor'`` or ``'sspe'`` for the securitisation special purpose entity.
+The register carries each as a child document of its own with the same four
+attributes under four prefixes, so they are one table with a column for the
+role rather than four tables of one shape.
+
+**The special purpose entity has no identifier and no name in the register**,
+only a country, so its rows carry nulls in ``lei`` and ``name``. That is a gap
+in the register and not in the reading of it. The other three roles carry a
+legal entity identifier, which joins to :mod:`fincommons.entitymasterdata`.
+"""
+
+event_schema = StructType() \
+    .add("securitisation_identifier", StringType(), False) \
+    .add("identifier_scheme", StringType(), False) \
+    .add("event", StringType(), False) \
+    .add("event_date", DateType(), True) \
+    .add("reason", StringType(), True) \
+    .add("source", StringType(), False) \
+    .add("source_as_of", DateType(), True)
+"""One row per thing that is known to have happened to a securitisation.
+
+The status of a securitisation is a fold over this table rather than a column
+of the table of notifications, because no source states it. The register gives
+the current state and no history; the two frozen spreadsheets give
+notifications and cancellations with their dates and ESMA's reasons; and the
+difference between two snapshots gives a departure with no reason at all.
+
+``event`` is one of:
+
+``notified``
+    the securitisation was notified, from the register's first notification
+    date or from the frozen list,
+``updated``
+    its notification moved, the register's notification date differing from
+    its first,
+``non_compliant``
+    the register marks it as not compliant on the day of the snapshot,
+``cancelled``
+    the cancellation list records it, with ESMA's reason in ``reason``,
+``left_register``
+    it was in one snapshot and not in the next, which is the only record of a
+    removal there is for anything that happened after May 2022.
+
+``source`` names where the row came from and ``source_as_of`` the day that
+source speaks for, because three of the sources are frozen and will never
+move again. Contradictions are kept rather than resolved: two securitisations
+cancelled in March 2021 are still in the register and still marked compliant,
+and the ten the register marks non-compliant appear in no cancellation list.
+"""
+
+synthetic_schema = StructType() \
+    .add("securitisation_identifier", StringType(), False) \
+    .add("notification_number", IntegerType(), True) \
+    .add("notified", DateType(), True) \
+    .add("securitisation_type", StringType(), True) \
+    .add("protection", StringType(), True) \
+    .add("instrument", StringType(), True) \
+    .add("underlying_exposure", StringType(), True) \
+    .add("securitisation_name", StringType(), True) \
+    .add("originator_country", StringType(), True) \
+    .add("sanction_status", StringType(), True) \
+    .add("source_as_of", DateType(), False)
+"""One row per synthetic securitisation notified as STS.
+
+A table of its own, and not rows of the table of notifications, because the
+source is a different one and says different things. A synthetic STS
+securitisation is notified to ESMA by electronic mail and appears in no
+register; ESMA publishes the list as a spreadsheet, and that spreadsheet has
+columns the register has not -- whether the credit protection is funded, and
+whether it is a credit derivative or a financial guarantee -- and lacks
+almost everything the register carries. Every row is private, none has an
+ISIN, an originator country or a name, and the identifiers are a scheme of
+their own, ``SYSEC_Private_2026_10_13_01``, which overlaps with nothing.
+"""
+
+
 def today():
     """The day a collection is filed under, in UTC.
 
@@ -296,6 +565,42 @@ def path_silver_base(config_path):
     return resolve(config_path, "sts", "silver").path
 
 
+#: The tables of the Silver layer, by the name they are read under.
+SILVER_TABLES = ("notification", "assertion", "tranche", "party", "event",
+                 "synthetic")
+
+
+def ref_silver(config_path, table):
+    """Where one table of the Silver layer lives."""
+    if table not in SILVER_TABLES:
+        raise ValueError(
+            f"Table {table!r} not recognised. Use one of "
+            + ", ".join(repr(t) for t in SILVER_TABLES) + ".")
+    return resolve(config_path, "sts", "silver", table)
+
+
+def path_silver(config_path, table):
+    """Path of one table of the Silver layer, or ``None`` where it is named."""
+    return ref_silver(config_path, table).path
+
+
+def connect_to_sts(spark, config_path, table="notification"):
+    """Open a table of the Silver layer.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be a yaml-file.
+    table: str
+        Which table: ``'notification'``, ``'assertion'``, ``'tranche'``,
+        ``'party'``, ``'event'`` or ``'synthetic'``. A lake that has never
+        built the Silver layer has none of them.
+    """
+    return read_silver(spark, ref_silver(config_path, table))
+
+
 # Reading and writing what the Bronze layer holds
 # --------------------------------------------------------------------------
 
@@ -376,9 +681,18 @@ __all__ = [
     "SHEET_CONTENT_TYPE",
     "SHEET_MAGIC",
     "SHEET_REFERENCES",
+    "SILVER_TABLES",
     "SOURCE",
+    "TEMPLATE_PREFIXES",
+    "TEMPLATE_SUFFIXES",
+    "assertion_schema",
     "collected_snapshots",
+    "connect_to_sts",
     "create_directory_tree",
+    "event_schema",
+    "identifier_scheme",
+    "notification_schema",
+    "party_schema",
     "path_bronze_base",
     "path_bronze_collections",
     "path_bronze_page",
@@ -388,10 +702,14 @@ __all__ = [
     "path_bronze_snapshot",
     "path_register_record",
     "path_sheet_record",
+    "path_silver",
     "path_silver_base",
     "read_json",
+    "ref_silver",
     "snapshot_pages",
+    "synthetic_schema",
     "today",
+    "tranche_schema",
     "write_bytes",
     "write_json",
 ]

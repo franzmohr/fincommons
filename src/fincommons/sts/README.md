@@ -16,9 +16,8 @@ Current functionalities:
 * Reporting, on every collection, which of the fields expected of every
   notification are missing and which have appeared
 
-The Silver layer is not built yet. Its tables are being designed from the
-snapshots rather than from a description of the register; what the design has
-to account for is below.
+* A Silver layer of six tables, built from one snapshot
+* A report on a snapshot and a factsheet on one country
 
 ## Where the data comes from
 
@@ -95,7 +94,7 @@ and the fields that are missing or unexpected. It is what the next run reads to
 know a day is already held, and what a reader consults to find out whether a
 snapshot is complete.
 
-## Two populations, and what they mean for the Silver layer
+## Two populations, and what they mean
 
 Of the 1,147 notifications the register held on 20 November 2026:
 
@@ -175,6 +174,123 @@ and the reason the Silver layer will carry data quality checks:
   which needs a mapping table rather than a rule
 * The traditional spreadsheet's `ISIN code` column uses three separators and
   three placeholders for absence, and holds two malformed ISINs
+
+## The Silver layer
+
+Six tables, built from one snapshot and rebuilt in full. The register is small,
+so there is nothing to distribute and nothing to resume from: a snapshot is a
+complete statement of the register on one day rather than an increment on the
+one before.
+
+```python
+from pyspark.sql import SparkSession
+from fincommons import sts
+
+sts.update_sts(spark, "paths.yaml")                 # collect, then build
+sts.update_silver_sts(spark, "paths.yaml")          # build from what is held
+sts.connect_to_sts(spark, "paths.yaml", "party")
+```
+
+| Table | Rows on 20 November 2026 | Holds |
+| --- | --- | --- |
+| `notification` | 1,147 | one row per notification the register serves |
+| `assertion` | 33,568 | the claims a public notification makes against the STS criteria |
+| `tranche` | 2,275 | one row per tranche, by ISIN |
+| `party` | 2,338 | the originators, original lenders, sponsors and special purpose entities |
+| `event` | 2,395 | what is known to have happened to a securitisation |
+| `synthetic` | 228 | the synthetic STS securitisations, which are in no register |
+
+Each row of the first four says which snapshot it was built from, so a lake
+that rebuilds from an older snapshot produces tables that say so rather than
+tables that look current.
+
+**`id` is the key, not either identifier.** The register's own document
+identifier identifies a row; the securitisation identifier does not, 1,147
+notifications carrying 1,115 distinct ones. Every join on the securitisation
+identifier is one to many.
+
+**The assertions are held long rather than wide.** The STS template is some 130
+fields on a public notification, each a flag with a comment beside it. As
+columns that is a table 130 wide and half empty, and the template is being
+revised; as rows of (notification, requirement, flag, comment) it is a
+vocabulary that grows. `requirement` is the register's own field name with the
+template prefix and the `_flag` or `_comment` ending removed, so nothing is
+renamed -- ESMA's own `requirementsOnTrasparency` is carried with its
+typographical error, because a name invented here would not be findable in
+what ESMA publishes.
+
+**The parties are one table with a column for the role**, the four kinds
+differing only in the prefix the register gives their fields. The special
+purpose entity carries nulls in `lei` and `name` because the register gives it
+neither.
+
+**The events are folded from four sources**, and contradictions are kept rather
+than resolved. The register gives `notified`, `updated` and `non_compliant`;
+the frozen list of 2019 to 2022 gives `notified`; the cancellation list gives
+`cancelled` with ESMA's reason; and a comparison of two snapshots gives
+`left_register`, which is the only record of a removal there is for anything
+after May 2022. Each row names its source and the day that source speaks for.
+
+### What joins to what
+
+| From | On | To |
+| --- | --- | --- |
+| `tranche.isin` | ISIN | `fincommons.firds` |
+| `party.lei` | LEI | `fincommons.entitymasterdata` |
+| `notification.securitisation_identifier` | the identifier of the disclosure templates, where `identifier_scheme` is `lei` | securitisation data reported through a repository |
+
+On the lake this was written against, 1,364 of the 2,250 distinct tranche
+ISINs are in the FIRDS reference data.
+
+## A factsheet on one country
+
+`templates/sts-country-factsheet.qmd` reports the securitisations of one
+country, or of the Union as a whole. **The only setting is the two-letter
+country code, or `EU`**, in the first chunk or in `FINCOMMONS_COUNTRY`, which
+wins where it is set:
+
+```
+FINCOMMONS_COUNTRY=AT \
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render sts-country-factsheet.qmd
+```
+
+```
+FINCOMMONS_COUNTRY=EU \
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render sts-country-factsheet.qmd
+```
+
+A code the register does not name is refused with the list of the ones it
+does, `EU` among them, rather than rendered empty.
+
+It gives what is securitised in the country against the rest of the register,
+when the securitisations were notified, who originates them and how
+concentrated that is, where their vehicles are established, who verified them,
+and what has happened to them since.
+
+Three things it is careful about, because the data invites three mistakes:
+
+* **It covers the public half only, and says so first.** A private notification
+  carries no party at all, so there is nothing in it to attach to a country.
+  A count here is a count of a visible part of a market.
+* **A country with few securitisations gets counts, not percentages.** Below
+  ten notifications the factsheet says how many a share rests on; Luxembourg
+  has two originations, and one of them is half of everything.
+* **A country that hosts more vehicles than it originates is told so.** 85
+  securitisations originated elsewhere use a special purpose entity in
+  Luxembourg against the two originated there, which is the fact a reader who
+  typed `LU` is probably after.
+
+`EU` adds two sections the single-country factsheet has no use for: the
+member states side by side, and the securitisations that cross a border
+between the country they were originated in and the country of their vehicle.
+On the register of 20 November 2026 the Union holds 492 of the 502 public
+notifications, across 12 of the 27 member states, and 122 of 471 pairings
+cross a border -- 68 of them German originations in Luxembourg vehicles.
+
+The member states are stated in the template rather than taken from the
+register, because which countries belong in a figure about the Union is a
+question about the Union: the register also names Norway, whose one
+securitisation the factsheet leaves out and says it leaves out.
 
 ## A report on one snapshot
 

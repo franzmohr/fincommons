@@ -8,11 +8,17 @@ behind it. This module collects that register, and the four spreadsheets ESMA
 publishes beside it.
 
 ``common``
-    the layout of the data lake, the addresses of the sources, and what the
-    register is expected to hold,
+    the layout of the data lake, the addresses of the sources, the schemas of
+    the tables, and what the register is expected to hold,
 ``bronze``
     collecting the register and the spreadsheets, as published, one dated
-    snapshot per run.
+    snapshot per run,
+``parse``
+    reading a snapshot and the spreadsheets into rows, in plain Python,
+``silver``
+    the six tables, built from one snapshot,
+``pipeline``
+    the whole pipeline in one call, :func:`update_sts`.
 
 **The register is current state, so the snapshots are the history.** A
 cancelled notification leaves the register: of the 109 cancellations ESMA
@@ -44,10 +50,24 @@ distinct securitisation identifiers and 1,131 distinct notification
 identifiers, a securitisation being notified again when it is restructured or
 re-notified. The register's own document id is what identifies a row.
 
+The Silver layer is six tables. ``notification`` holds one row per
+notification the register serves, ``assertion`` the claims a public
+notification makes against the STS criteria, held long rather than 130
+columns wide, ``tranche`` its tranches by ISIN and ``party`` its originators,
+original lenders, sponsors and special purpose entities under one column for
+the role. ``event`` is what is known to have happened to a securitisation,
+folded from the register, the two frozen spreadsheets and the difference
+between two snapshots; ``synthetic`` is the list of synthetic STS
+securitisations, which are notified by electronic mail and appear in no
+register. Every row of the first four says which snapshot it was built from.
+
 The files are downloaded when the pipeline runs and are never shipped with the
 package. They are publications of the European Securities and Markets
 Authority.
 """
 
 from .common import *
+from .parse import *
 from .bronze import *
+from .silver import *
+from .pipeline import *
