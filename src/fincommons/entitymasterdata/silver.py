@@ -759,6 +759,179 @@ def combine_registers(gleif_1, relationships, ccp, inun, orpi, mfi, invfund):
     return result.join(relationships, on = "lei", how = "leftouter")
 
 
+# The registers as they stood on a day
+# --------------------------------------------------------------------------
+
+
+#: The registers :func:`entities_as_of` combines, with the Bronze folder of
+#: each and the ``normalise_`` function that reads one snapshot of it.
+SNAPSHOT_REGISTERS = {
+    "gleif_1": (common.path_bronze_gleif_level_1, normalise_gleif_level_1),
+    "relationships": (common.path_bronze_gleif_level_2, normalise_gleif_level_2),
+    "ccp": (common.path_bronze_esma_ccp, normalise_esma_ccp),
+    "inun": (common.path_bronze_eiopa_insurance_undertaking,
+             normalise_eiopa_insurance_undertaking),
+    "orpi": (common.path_bronze_eiopa_iorp, normalise_eiopa_iorp),
+    "mfi": (common.path_bronze_ecb_mfi, normalise_ecb_mfi),
+    "invfund": (common.path_bronze_ecb_investment_fund, normalise_ecb_investment_fund),
+}
+
+
+def snapshot_dates(folder):
+    """The Bronze snapshots of one register by their reference date, oldest first.
+
+    A register is stored one file per reference date, named ``YYYYMMDD`` or
+    ``YYYY-MM-DD``. A file whose name carries no date -- the list of CCPs an
+    earlier version stored as ``ccp_list``, replacing it on every import -- is
+    dated by the day it was last written, which is the day of the download it
+    holds.
+
+    Returns
+    -------
+    list of tuple
+        Pairs of the reference date, :class:`datetime.date`, and the path.
+    """
+    import datetime as _datetime
+
+    snapshots = []
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        if not name.endswith(".parquet"):
+            continue
+        digits = "".join(c for c in name if c.isdigit())[:8]
+        path = os.path.join(folder, name)
+        try:
+            day = _datetime.datetime.strptime(digits, "%Y%m%d").date()
+        except ValueError:
+            day = _datetime.date.fromtimestamp(os.path.getmtime(path))
+        snapshots.append((day, path))
+    return sorted(snapshots)
+
+
+def snapshot_as_of(snapshots, day):
+    """The latest of ``snapshots`` on or before ``day``, or ``None``."""
+    held = [snapshot for snapshot in snapshots if snapshot[0] <= day]
+    return held[-1] if held else None
+
+
+def entities_as_of(spark, config_path, day):
+    """The public entity master data as the registers stood on ``day``.
+
+    Every register is read from its latest snapshot on or before ``day`` and
+    the registers are combined by :func:`combine_registers`, the rules the
+    public table is built by. A sectoral register with no snapshot by then
+    contributes nothing, which :func:`sector_counts_over_time` reports apart
+    from a register that had no entity of a sector.
+
+    GLEIF is the exception. It is the frame the registers are joined onto
+    rather than a statement about a sector, so where no golden copy of ``day``
+    or before is held the earliest one is used. A golden copy keeps every LEI
+    ever issued, lapsed and retired ones included, so an entity a register
+    names on ``day`` is in any later copy; what the later copy changes is the
+    name and the relationships, which a count of sectors does not read.
+
+    Returns
+    -------
+    tuple
+        The combined frame, and a dict of the snapshot each register was read
+        from, its reference date or ``None``.
+    """
+    frames, used = {}, {}
+    for name, (path_of, normalise) in SNAPSHOT_REGISTERS.items():
+        snapshots = snapshot_dates(path_of(config_path))
+        if not snapshots:
+            raise FileNotFoundError(
+                f"The Bronze layer holds no dated snapshot of {name!r} in "
+                f"{path_of(config_path)!r}."
+            )
+        snapshot = snapshot_as_of(snapshots, day)
+        if snapshot is None and name in ("gleif_1", "relationships"):
+            snapshot = snapshots[0]
+        if snapshot is None:
+            frames[name] = normalise(spark.read.parquet(snapshots[0][1]).limit(0))
+            used[name] = None
+        else:
+            frames[name] = normalise(spark.read.parquet(snapshot[1]))
+            used[name] = snapshot[0]
+    return combine_registers(**frames), used
+
+
+def sector_counts_over_time(spark, config_path, dates=None):
+    """How many entities each sector held, on every date a register was published.
+
+    For every date, :func:`entities_as_of` combines the registers as they
+    stood on it and the entities are counted by ``sector``, ``subsector`` and
+    ``if_policy``, so that a report can show a sector as a whole or broken
+    down by what its register says beyond the sector. This is the history of
+    the registers in miniature: one snapshot per register and date, read and
+    combined by the same rules as the public table.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An active Spark session.
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be a yaml-file.
+    dates: list of datetime.date, optional
+        The dates to count on. Every reference date of a snapshot of a
+        sectoral register where left out.
+
+    Returns
+    -------
+    tuple of pandas.DataFrame
+        The counts, with the columns ``date``, ``sector``, ``subsector``,
+        ``if_policy`` and ``entities``; and the snapshots behind them, with
+        ``date``, ``register`` and ``snapshot``, ``None`` where the register
+        had no snapshot by then.
+    """
+    import pandas
+
+    if dates is None:
+        sectoral = [n for n in SNAPSHOT_REGISTERS if n not in ("gleif_1", "relationships")]
+        dates = sorted({day for name in sectoral
+                        for day, _ in snapshot_dates(SNAPSHOT_REGISTERS[name][0](config_path))})
+    counts, coverage = [], []
+    for day in dates:
+        entities, used = entities_as_of(spark, config_path, day)
+        frame = entities.filter(func.col("sector").isNotNull()) \
+            .groupBy("sector", "subsector", "if_policy").count() \
+            .withColumnRenamed("count", "entities").toPandas()
+        frame.insert(0, "date", day)
+        counts.append(frame)
+        coverage += [{"date": day, "register": name, "snapshot": snapshot}
+                     for name, snapshot in used.items()]
+    columns = ["date", "sector", "subsector", "if_policy", "entities"]
+    counts = pandas.concat(counts, ignore_index=True) if counts else pandas.DataFrame(columns=columns)
+    return counts[columns], pandas.DataFrame(coverage, columns=["date", "register", "snapshot"])
+
+
+def write_sector_counts(spark, config_path):
+    """Write :func:`sector_counts_over_time` beside the Silver layer, for the sector report.
+
+    The counts go to ``sector_counts.parquet`` and the snapshots behind them to
+    ``sector_snapshots.parquet``, in the Silver folder of the module, which is
+    where the template ``entitymasterdata-sector-report.qmd`` reads them.
+
+    Returns
+    -------
+    str
+        The folder written to.
+    """
+    folder = common.path_silver_base(config_path)
+    if folder is None:
+        raise ValueError("The sector counts are written as files, which a Silver "
+                         "layer addressed by catalogue name has no folder for.")
+    counts, coverage = sector_counts_over_time(spark, config_path)
+    os.makedirs(folder, exist_ok=True)
+    counts.to_parquet(os.path.join(folder, "sector_counts.parquet"), index=False)
+    coverage.to_parquet(os.path.join(folder, "sector_snapshots.parquet"), index=False)
+    logger.info(
+        "Wrote the sector counts of the registers over time",
+        extra=context(module="entitymasterdata", layer="silver",
+                      dates=int(counts["date"].nunique()), rows=len(counts)),
+    )
+    return folder
+
+
 def _update_silver_entitymasterdata_public(spark, config_path, file_format, outcome):
     """Do the work of :func:`update_silver_entitymasterdata_public`."""
     def latest(path):
@@ -1051,4 +1224,10 @@ __all__ = [
     "with_internal_id_columns",
     "INTERNAL_ID_SILVER",
     "with_normalised_lei",
+    "write_sector_counts",
+    "snapshot_dates",
+    "snapshot_as_of",
+    "sector_counts_over_time",
+    "entities_as_of",
+    "SNAPSHOT_REGISTERS",
 ]

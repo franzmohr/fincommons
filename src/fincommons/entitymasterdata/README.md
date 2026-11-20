@@ -183,6 +183,7 @@ The session is asked for rather than taken from whichever one happens to be acti
 
 A GLEIF entry in the Bronze layer is therefore a parquet *directory* where a session was given and a parquet *file* where it was not. Both are read the same way, by `spark.read.parquet`, and the Silver layer picks up whichever is there.
 
+
 ## 3 Updating the Silver layer
 
 ### 3.1 Public entity master data set
@@ -287,6 +288,18 @@ The columns are taken from the header, so they may come in any order and the ide
 * without an `LEI` column, which would displace nothing;
 * with a column the table above does not name -- `Sector` for `SECTOR`, say -- which would otherwise be dropped when the table is written, with everything the list says under it;
 * that describes an LEI more than once, however it is spelled, since the choice between the two rows would then be left to the order Spark reads them in.
+
+### The sector report
+
+`write_sector_counts` counts the entities of every sector on every date a register was published, and the template `templates/entitymasterdata-sector-report.qmd` turns the counts into a report on banks, insurers and investment funds over time, the funds broken down by UCITS compliance and by investment policy. Each date combines the latest snapshot of every register on or before it by the rules the public table is built by (`entities_as_of`), so the report is the history of the registers in miniature. A register with no snapshot by a date is shown as not yet collected rather than as zero.
+
+```python
+em.write_sector_counts(spark, config_path)
+```
+
+```bash
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render entitymasterdata-sector-report.qmd
+```
 
 ## 4 All-in-one function
 

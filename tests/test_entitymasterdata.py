@@ -14,6 +14,7 @@ than what those two happen to be serving that day.
 
 from __future__ import annotations
 
+import datetime
 import io
 import logging
 import os
@@ -1694,6 +1695,56 @@ def test_an_earlier_snapshot_combines_into_what_held_then(spark, data_lake):
 
     assert em.combine_registers(**earlier).first().sector == "ORPI"
     assert em.combine_registers(**later).first().sector == "INUN"
+
+
+def test_sectors_are_counted_on_every_date_a_register_was_published(spark, data_lake):
+    """Each date combines the latest snapshot of every register on or before
+    it; a register not yet published on a date contributes nothing and says
+    so, rather than counting as a sector without entities."""
+    write_gleif_level_1(data_lake, ["LEI1", "LEI2", "LEI3"], ["One", "Two", "Three"],
+                        ["AT", "DE", "FR"])
+    write_gleif_level_2(data_lake, [])
+    write_ccp(data_lake, [])
+    write_eiopa(data_lake, ["LEI1"], file_name="20260301.xlsx")
+    write_iorp(data_lake, [])
+    write_ecb_mfi(data_lake, [("LEI2", "Credit Institution")], file_name="20260601.xlsx")
+    write_ecb_investment_fund(data_lake, ["LEI3"], file_name="IF_2026_03.xlsx")
+    write_ecb_investment_fund(data_lake, [], file_name="IF_2026_06.xlsx")
+    em.update_from_landing_to_bronze(data_lake)
+
+    counts, coverage = em.sector_counts_over_time(
+        spark, data_lake, dates=[datetime.date(2026, 3, 31), datetime.date(2026, 6, 30)])
+
+    def on(day):
+        frame = counts[counts["date"] == day]
+        return {(r.sector, None if pandas.isna(r.subsector) else r.subsector): r.entities
+                for r in frame.itertuples()}
+
+    assert on(datetime.date(2026, 3, 31)) == {("INUN", None): 1, ("IF", "UCIT"): 1}
+    assert on(datetime.date(2026, 6, 30)) == {("INUN", None): 1, ("CDTI", None): 1}
+    used = {(r.date, r.register): r.snapshot for r in coverage.itertuples()}
+    assert used[(datetime.date(2026, 3, 31), "mfi")] is None
+    assert used[(datetime.date(2026, 6, 30), "mfi")] == datetime.date(2026, 6, 1)
+    assert used[(datetime.date(2026, 6, 30), "invfund")] == datetime.date(2026, 6, 30)
+
+
+def test_the_dates_default_to_those_of_the_sectoral_snapshots(data_lake):
+    for folder, names in (
+        (em.path_bronze_ecb_mfi(data_lake), ["20260601.parquet", "notes.txt"]),
+        (em.path_bronze_esma_ccp(data_lake), ["ccp_list.parquet", "20261120.parquet"]),
+    ):
+        for name in names:
+            open(os.path.join(folder, name), "w").close()
+    undated = os.path.join(em.path_bronze_esma_ccp(data_lake), "ccp_list.parquet")
+    stamp = datetime.datetime(2026, 10, 15, 12).timestamp()
+    os.utime(undated, (stamp, stamp))
+
+    # The undated list of an earlier version counts from the day it was written.
+    assert [d for d, _ in em.snapshot_dates(em.path_bronze_esma_ccp(data_lake))] == [
+        datetime.date(2026, 10, 15), datetime.date(2026, 11, 20)]
+    snapshots = em.snapshot_dates(em.path_bronze_ecb_mfi(data_lake))
+    assert em.snapshot_as_of(snapshots, datetime.date(2026, 5, 31)) is None
+    assert em.snapshot_as_of(snapshots, datetime.date(2026, 6, 1))[0] == datetime.date(2026, 6, 1)
 
 
 def test_a_row_that_states_a_subsector_beats_one_that_does_not(spark, data_lake):

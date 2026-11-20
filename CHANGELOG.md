@@ -8,6 +8,17 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `entitymasterdata`: `entities_as_of` combines the registers as they stood on a
+  day -- the latest Bronze snapshot of each on or before it, read and combined
+  by the rules of the public table -- and `sector_counts_over_time` counts
+  the entities of every sector, subsector and investment policy on every date
+  a register was published. `write_sector_counts` writes the counts beside
+  the Silver layer, and the template `entitymasterdata-sector-report.qmd`
+  reports banks, insurers and investment funds over time from them. On the
+  Bronze layer of 20 November 2026 the funds reach back to March 2025; the
+  MFI list and EIOPA's and ESMA's registers, published only as they stand,
+  begin with the first download.
+
 - `entitymasterdata`: the Silver build reads and combines the registers in two
   steps that can be called on their own. A `normalise_<register>` function per
   register -- `normalise_gleif_level_1`, `normalise_gleif_level_2`,
