@@ -164,6 +164,19 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `esef-country-quality-factsheet.qmd`: where an arithmetic check fired, the
+  detail pages give the two sides of the identity, the gap and its share of
+  total assets or revenue, so that a gap of a tenth of a percent can be told
+  from a figure tagged on the wrong line. An issuer presenting a bank's loans
+  to other banks or deposits of its customers counts as a bank, which takes
+  Oesterreichische Kontrollbank, whose interest income is under another
+  concept, out of the ranking for missing revenue lines. `IMBAL_ASSETS` is
+  not counted for a bank or an insurer either, since a group with a bank
+  presents the bank's assets beside the current and the non-current ones;
+  Österreichische Post had ranked first on that alone. The fourth tile of
+  the cover is the share of issuer-years a screen flagged, and long concept
+  names wrap in the tables instead of running off the page.
+
 - `exchangerate`: the proprietary rates, `exchangerate.csv`, are headed
   `ref_date,base,quote,value,type,source`, the names of the Silver table they
   are combined into, and `internal_schema` declares them, as the proprietary

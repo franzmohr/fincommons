@@ -123,19 +123,30 @@ duration_concepts <- c("ifrs-full:Revenue", "ifrs-full:ProfitLoss",
 restated_tolerance <- 0.01
 scale_factor <- 50
 
-# The lines a bank or an insurer presents and an industrial issuer does not,
-# as in the sector factsheet: interest revenue under the effective interest
-# method, and the IFRS 17 lines. An issuer whose statements carry one is a
-# bank or an insurer here, and the checks named after it are not counted
-# for it -- a bank's revenue is interest income, tagged as such, so a
-# missing revenue line is what a bank's report looks like.
+# The lines a bank or an insurer presents and an industrial issuer does not:
+# interest revenue under the effective interest method and the IFRS 17
+# lines, as in the sector factsheet, and two lines of a bank's balance sheet,
+# its loans to other banks and the deposits of its customers. A bank that
+# presents its interest income under another concept -- Oesterreichische
+# Kontrollbank tags RevenueFromInterest -- is found by its balance sheet.
+# (Deposits from banks are not among them: a consultancy in the Dutch reports
+# tags its bank loans so.) An issuer whose statements carry one of these is
+# a bank or an insurer here, and the checks named after it are not counted
+# for it. A bank's revenue is interest income, tagged as such, so a missing
+# revenue line is what a bank's report looks like. And a bank's assets are
+# neither current nor non-current: IAS 1 lets it present them by liquidity,
+# and a group with a bank -- Österreichische Post with bank99 -- presents the
+# bank's assets as a third block beside the two, so total assets exceed
+# their sum by the bank, which the asset split reports as an error.
 financial_concepts <- c(
   "ifrs-full:InterestRevenueCalculatedUsingEffectiveInterestMethod",
   "ifrs-full:InsuranceRevenue",
   "ifrs-full:InsuranceContractLiabilities",
   "ifrs-full:InsuranceServiceResult",
-  "ifrs-full:InsuranceServiceExpenses")
-exempt_for_financials <- c("MISS_REVENUE")
+  "ifrs-full:InsuranceServiceExpenses",
+  "ifrs-full:LoansAndAdvancesToBanks",
+  "ifrs-full:DepositsFromCustomers")
+exempt_for_financials <- c("MISS_REVENUE", "IMBAL_ASSETS")
 
 # The point size of the text in a chart.
 chart_base_size <- 9
@@ -517,6 +528,109 @@ screen_rows <- bind_rows(
               detail = paste0("The report names itself ",
                               substr(stated, 1, 60), "; the LEI is ", name)))
 
+# --------------------------------------------------------------------------
+# How far out an imbalance is
+# --------------------------------------------------------------------------
+
+# The checks of the module say that two sides of a statement disagree, not by
+# how much, and a gap of a tenth of a percent is a different thing to read
+# for than one of half the balance sheet. The figures are read the way the
+# checks read them -- the report's own period, no dimensions, the lowest of
+# two values tagged for one concept -- so that the size shown is the size of
+# the gap the check found.
+imbalance_concepts <- c(
+  assets = "ifrs-full:Assets",
+  current_assets = "ifrs-full:CurrentAssets",
+  noncurrent_assets = "ifrs-full:NoncurrentAssets",
+  held_for_sale = "ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners",
+  held_for_sale_2 = "ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSale",
+  equity = "ifrs-full:Equity",
+  liabilities = "ifrs-full:Liabilities",
+  revenue = "ifrs-full:Revenue",
+  revenue_2 = "ifrs-full:RevenueFromContractsWithCustomers",
+  cost_of_sales = "ifrs-full:CostOfSales",
+  gross_profit = "ifrs-full:GrossProfit",
+  pretax = "ifrs-full:ProfitLossBeforeTax",
+  income_tax = "ifrs-full:IncomeTaxExpenseContinuingOperations",
+  profit = "ifrs-full:ProfitLoss",
+  profit_discontinued = "ifrs-full:ProfitLossFromDiscontinuedOperations",
+  operating = "ifrs-full:CashFlowsFromUsedInOperatingActivities",
+  investing = "ifrs-full:CashFlowsFromUsedInInvestingActivities",
+  financing = "ifrs-full:CashFlowsFromUsedInFinancingActivities",
+  cash_change_before_fx = "ifrs-full:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges",
+  cash_change = "ifrs-full:IncreaseDecreaseInCashAndCashEquivalents",
+  fx_effect = "ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents")
+imbalance_filings <- issues_all %>%
+  filter(country == report_country, startsWith(issue, "IMBAL_")) %>%
+  distinct(filing, issue)
+imbalance_figures <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country == report_country, filing %in% unique(imbalance_filings$filing),
+         concept %in% imbalance_concepts, is.na(dimensions), !is.na(value),
+         prd_end == period_end) %>%
+  select(filing, concept, prd_start, prd_end, unit, value) %>%
+  collect() %>%
+  filter(is.na(prd_start) |
+           between(as.integer(prd_end - prd_start), 340L, 380L)) %>%
+  group_by(filing, concept) %>%
+  summarise(value = min(value), unit = first(unit), .groups = "drop") %>%
+  mutate(key = names(imbalance_concepts)[match(concept, imbalance_concepts)])
+figure <- function(key) {
+  imbalance_figures %>% filter(.data$key == !!key) %>%
+    select(filing, !!key := value)
+}
+imbalance_wide <- Reduce(function(a, b) left_join(a, b, by = "filing"),
+                         lapply(names(imbalance_concepts), figure),
+                         imbalance_figures %>%
+                           filter(startsWith(unit, "iso4217:")) %>%
+                           count(filing, unit) %>% arrange(filing, desc(n)) %>%
+                           distinct(filing, .keep_all = TRUE) %>%
+                           select(filing, unit)) %>%
+  mutate(revenue = coalesce(revenue, revenue_2),
+         held_for_sale = coalesce(held_for_sale, held_for_sale_2),
+         before_fx = coalesce(cash_change_before_fx,
+                              cash_change - coalesce(fx_effect, 0)),
+         flows = operating + investing + financing)
+fmt_share <- function(x) {
+  ifelse(x >= 10, formatC(x, format = "f", digits = 0),
+         ifelse(x >= 1, formatC(x, format = "f", digits = 1),
+                formatC(x, format = "f", digits = 2)))
+}
+gap_text <- function(left, right, gap, scale, scale_name, unit) {
+  ifelse(is.na(gap), NA_character_,
+         paste0(left, ", ", right, ": a gap of ", money(gap, unit),
+                ifelse(is.na(scale) | scale == 0, "",
+                       paste0(", ", fmt_share(abs(gap) / abs(scale) * 100),
+                              " % of ", scale_name))))
+}
+imbalance_detail <- imbalance_filings %>%
+  inner_join(imbalance_wide, by = "filing") %>%
+  mutate(detail = case_when(
+    issue == "IMBAL_ASSETS" ~ gap_text(
+      paste("Total assets", money(assets, unit)),
+      paste("current and non-current", money(current_assets + noncurrent_assets, unit)),
+      assets - current_assets - noncurrent_assets, assets, "total assets", unit),
+    issue == "IMBAL_BALANCE_SHEET" ~ gap_text(
+      paste("Total assets", money(assets, unit)),
+      paste("equity and liabilities", money(equity + liabilities, unit)),
+      assets - equity - liabilities, assets, "total assets", unit),
+    issue == "IMBAL_INCOME" ~ gap_text(
+      paste("Revenue less cost of sales", money(revenue - cost_of_sales, unit)),
+      paste("gross profit", money(gross_profit, unit)),
+      revenue - cost_of_sales - gross_profit, revenue, "revenue", unit),
+    issue == "IMBAL_PROFIT" ~ gap_text(
+      paste("Result before tax less tax", money(pretax - income_tax +
+                                                  coalesce(profit_discontinued, 0), unit)),
+      paste("result", money(profit, unit)),
+      pretax - income_tax + coalesce(profit_discontinued, 0) - profit,
+      revenue, "revenue", unit),
+    issue == "IMBAL_CASHFLOW" ~ gap_text(
+      paste("Three cash flows", money(flows, unit)),
+      paste("movement in cash", money(coalesce(before_fx, cash_change), unit)),
+      coalesce(before_fx, cash_change) - flows, assets, "total assets", unit),
+    TRUE ~ NA_character_)) %>%
+  filter(!is.na(detail)) %>%
+  select(filing, issue, gap_detail = detail)
+
 screen_titles <- c(
   scale = "A prior-year figure off by a factor of 50 or more",
   sign = "A prior-year figure with its sign flipped",
@@ -535,12 +649,16 @@ screens <- screen_rows %>%
 # One row per issuer
 # --------------------------------------------------------------------------
 
+# A concept name is one long word, and a table cannot wrap it: a zero-width
+# space before each capital that follows a small letter lets the line break
+# there without a visible mark.
+breakable <- function(x) gsub("([a-z])([A-Z])", "\\1\u200b\\2", x, perl = TRUE)
+
 # Banks and insurers, found from their own statements: a filer that presents
 # a line only a bank or an insurer has is one. The sector factsheet uses the
-# same lines. They matter here for one check: a bank's revenue is interest
-# income and tagged as such, so MISS_REVENUE fires on every bank by
-# construction, and counted it would fill the ranking with banks that have
-# done nothing wrong.
+# same lines. They matter here for the checks of `exempt_for_financials`,
+# which fire on a bank's report by construction, and counted they would
+# fill the ranking with banks that have done nothing wrong.
 # Over the whole lake, since the comparison with the other countries
 # applies the same exemption.
 financial_all <- open_dataset(file.path(path_silver, "facts")) %>%
@@ -556,15 +674,18 @@ financial_leis <- financial_all$lei[financial_all$country == report_country]
 faults <- bind_rows(
   issues %>%
     filter(!(issue %in% exempt_for_financials & lei %in% financial_leis)) %>%
+    left_join(imbalance_detail, by = c("filing", "issue")) %>%
     group_by(lei, fy, issue, severity = as.character(severity), title) %>%
-    summarise(findings = n(),
+    summarise(gap_detail = first(na.omit(gap_detail)),
+              findings = n(),
               reports = n_distinct(filing),
-              concepts = paste(head(unique(na.omit(sub("^[^:]+:", "", concept))), 3),
+              concepts = paste(breakable(head(unique(na.omit(sub("^[^:]+:", "", concept))), 3)),
                                collapse = ", "),
               more = pmax(n_distinct(concept, na.rm = TRUE) - 3, 0),
               .groups = "drop") %>%
     mutate(fact_level = findings > reports,
            detail = case_when(
+             !is.na(gap_detail) ~ gap_detail,
              !fact_level ~ "",
              more > 0 ~ paste0(findings, " facts: ", concepts, " and ", more,
                                " more"),
@@ -751,8 +872,8 @@ cat("#grid(columns: (1fr, 1fr, 1fr, 1fr), column-gutter: 8pt,\n  ",
     tile(fmt(nrow(rated)), "reports read", cols[["ink"]]), ",\n  ",
     tile(paste0(fmt(mean(issuer_years$error) * 100), " %"),
          "of issuer-years with an error", cols[["red"]]), ",\n  ",
-    tile(fmt(sum(faults$severity == "screen")),
-         "figures that changed between reports", cols[["blue"]]),
+    tile(paste0(fmt(mean(issuer_years$screen) * 100), " %"),
+         "of issuer-years a screen flagged", cols[["blue"]]),
     "\n)\n#v(8pt)\n", sep = "")
 cat("```\n\n")
 cat(paste(lines, collapse = " "), "\n\n")
@@ -839,8 +960,10 @@ if (nrow(ranked) == 0) {
   cat(paste0("Err, Warn and Scr count issuer-years, not reports or facts: a ",
              "check that names forty facts of one report counts once, and so ",
              "does a report filed again for the same year. ×2 after a code ",
-             "means it fired in two of the issuer's years. ¹ A bank or an ",
-             "insurer, for which a missing revenue line is not counted. ",
+             "means it fired in two of the issuer's years. ¹ Presents the ",
+             "lines of a bank or an insurer -- it is one, or a group with ",
+             "one -- so a missing revenue line and an asset split that leaves the ",
+             "bank out are not counted. ",
              fmt(n_issuers_read - sum(issuers$total > 0)), " of the ",
              fmt(n_issuers_read), " issuers with facts scored no points at all.\n"))
 }
@@ -994,13 +1117,23 @@ notes <- c(
          "either: a filing agent's test report, or an issuer's report filed ",
          "under the LEI of whoever submitted it. A figure tagged twice with two values is left out of ",
          "the screens, since which value is meant cannot be told."),
+  paste0("**The size of a gap.** Where an arithmetic check fired, the detail ",
+         "pages give the two sides of the identity, the gap between them and ",
+         "the gap as a share of total assets, or of revenue for the income ",
+         "statement. The figures are read as the check reads them: the ",
+         "report's own year, without dimensions. A small gap is often one ",
+         "line left out; a gap the size of a whole side is a figure tagged ",
+         "with the wrong concept or the wrong scale, or a statement laid out ",
+         "differently from what the identity assumes."),
   paste0("**What the ranking is.** Points per issuer over the years shown. ",
          "Each check counts once per issuer and financial year, however many ",
          "facts or reports it names: ", points[["error"]], " for an error, ",
          points[["warning"]], " for a warning, nothing for a note. ",
-         "MISS_REVENUE is not counted for the ", fmt(length(financial_leis)),
-         " banks and insurers, whose revenue is interest or premium income ",
-         "and is tagged as such. The weights are a judgement, set at the top ",
+         "MISS_REVENUE and IMBAL_ASSETS are not counted for the ",
+         fmt(length(financial_leis)), " issuers that present the lines of a ",
+         "bank or an insurer: their revenue is interest or premium income and ",
+         "is tagged as such, and their assets are presented by liquidity or ",
+         "with the bank's as a block of their own. The weights are a judgement, set at the top ",
          "of the template; an issuer reporting in more years has more chances ",
          "to score, so the years are given beside the points."),
   paste0("**What it does not say.** A report with no finding has passed ",
