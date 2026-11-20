@@ -54,9 +54,13 @@ def write_ecb(config_path, dates, **quotes):
     )
 
 
-def write_internal(config_path, rows):
-    """Write the optional proprietary source as the CSV the module expects."""
-    lines = ["ref_date,base,quote,value,type,source"]
+def write_internal(config_path, rows, header="ref_date,base,quote,value,type,source"):
+    """Write the optional proprietary source as the CSV the module expects.
+
+    ``header`` is there for the file a lake kept from before the rename, which
+    is headed in upper case.
+    """
+    lines = [header]
     lines += [f"{d},{base},{quote},{value},ref,internal" for d, base, quote, value in rows]
     with open(ex.path_bronze_internal_exchangerate(config_path) + "/exchangerate.csv", "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -268,6 +272,29 @@ def test_the_internal_source_takes_precedence_over_the_ecb(spark, data_lake):
     the rows of the union happen to arrive."""
     write_ecb(data_lake, ["2020-01-01", "2020-01-02"], USD=[1.10, 1.11])
     write_internal(data_lake, [("2020-01-02", "EUR", "USD", 9.99)])
+
+    ex.update_silver_exchangerate(spark, data_lake)
+    frame = silver(spark, data_lake)
+
+    overlapping = rate(frame, "2020-01-02", "EUR", "USD")
+    assert overlapping.value == pytest.approx(9.99)
+    assert overlapping.source == "internal"
+
+
+def test_the_internal_file_has_the_columns_of_the_silver_table():
+    """The file is headed with the names of the table it is combined into, as
+    the proprietary price list of marketpricedata is."""
+    assert ex.internal_schema.fieldNames() == [
+        "ref_date", "base", "quote", "value", "type", "source"]
+
+
+def test_an_internal_file_headed_in_upper_case_is_still_read(spark, data_lake):
+    """A lake kept from before the rename holds a file headed
+    ``REFDT,BASE,QUOTE,VALUE,TYPE,SOURCE``. The columns are read by position,
+    so the file reads as it did and nobody has to rewrite it."""
+    write_ecb(data_lake, ["2020-01-01", "2020-01-02"], USD=[1.10, 1.11])
+    write_internal(data_lake, [("2020-01-02", "EUR", "USD", 9.99)],
+                   header="REFDT,BASE,QUOTE,VALUE,TYPE,SOURCE")
 
     ex.update_silver_exchangerate(spark, data_lake)
     frame = silver(spark, data_lake)
@@ -823,9 +850,9 @@ def test_amounts_already_in_the_target_currency_need_no_rate(spark, converted):
 
 
 @pytest.mark.parametrize("row, problem", [
-    (("2020-1-2", "EUR", "USD", 9.99), "REFDT"),
-    (("2020-01-02 00:00:00", "EUR", "USD", 9.99), "REFDT"),
-    (("2020-01-02", "USD", "GBP", 0.80), "BASE other than EUR"),
+    (("2020-1-2", "EUR", "USD", 9.99), "ref_date"),
+    (("2020-01-02 00:00:00", "EUR", "USD", 9.99), "ref_date"),
+    (("2020-01-02", "USD", "GBP", 0.80), "base other than EUR"),
     (("2020-01-02", "EUR", "USD", 0.0), "not positive"),
 ], ids=["short date", "date with a time", "dollar base", "zero rate"])
 def test_an_internal_row_the_combination_would_misread_is_refused(spark, data_lake, row, problem):
@@ -845,9 +872,9 @@ def test_the_base_the_internal_rows_are_checked_against_can_be_named(spark):
 
     ex.check_internal_rates(internal, "an internal file", base="USD")
 
-    with pytest.raises(ValueError, match="BASE other than EUR"):
+    with pytest.raises(ValueError, match="base other than EUR"):
         ex.check_internal_rates(internal, "an internal file")
-    with pytest.raises(ValueError, match="BASE other than JPY"):
+    with pytest.raises(ValueError, match="base other than JPY"):
         ex.check_internal_rates(internal, "an internal file", base="JPY")
 
 

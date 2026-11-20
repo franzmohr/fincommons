@@ -164,6 +164,16 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `exchangerate`: the proprietary rates, `exchangerate.csv`, are headed
+  `ref_date,base,quote,value,type,source`, the names of the Silver table they
+  are combined into, and `internal_schema` declares them, as the proprietary
+  price list of `marketpricedata` now is. The file is read by position and
+  not by the names in its header, so a file still headed
+  `REFDT,BASE,QUOTE,VALUE,TYPE,SOURCE` reads as before and need not be
+  rewritten. `check_internal_rates` names the columns in its message as the
+  file now spells them, `a base other than EUR` where it said `a BASE other
+  than EUR`.
+
 - `entitymasterdata`: the list of CCPs is kept per day. `download_esma_ccp`
   stores it as `YYYYMMDD.csv` under the day of the download, as EIOPA's
   registers are, and takes `today` as they do; the Bronze import keeps one
