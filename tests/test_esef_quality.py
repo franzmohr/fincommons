@@ -390,10 +390,30 @@ def test_a_filing_with_no_facts_is_counted(spark, lake):
 
 def test_the_same_period_filed_twice_in_one_language_is_reported(spark, lake):
     second = f"{LEI}-2025-12-31-ESEF-AT-1"
+    facts = sound_facts() + [fact(*row, filing=second) for row in with_values(
+        {"ifrs-full:Revenue": 510.0, "ifrs-full:GrossProfit": 210.0})]
+    config = lake(facts, [filing_row(), filing_row(filing=second)])
+
+    found = codes(spark, config)
+    assert "DUPL_FILING_PERIOD" in found
+    assert "DUPL_FILING_COPY" not in found
+
+
+def test_the_same_report_held_twice_is_a_copy_and_not_a_correction(spark, lake):
+    """Two uploads of one file: the facts agree, the fact identifiers do not."""
+    second = f"{LEI}-2025-12-31-ESEF-AT-1"
     facts = sound_facts() + [fact(*row, filing=second) for row in SOUND]
     config = lake(facts, [filing_row(), filing_row(filing=second)])
 
-    assert "DUPL_FILING_PERIOD" in codes(spark, config)
+    found = codes(spark, config)
+    assert "DUPL_FILING_COPY" in found
+    assert "DUPL_FILING_PERIOD" not in found
+
+
+def with_values(changes):
+    """The rows of the sound report with some values changed."""
+    return [(concept, flow, changes.get(concept, value))
+            for concept, flow, value in SOUND]
 
 
 def test_the_same_period_filed_in_two_languages_is_not(spark, lake):
@@ -403,7 +423,9 @@ def test_the_same_period_filed_in_two_languages_is_not(spark, lake):
     config = lake(facts,
                   [filing_row(), filing_row(filing=second, lang="de")])
 
-    assert "DUPL_FILING_PERIOD" not in codes(spark, config)
+    found = codes(spark, config)
+    assert "DUPL_FILING_PERIOD" not in found
+    assert "DUPL_FILING_COPY" not in found
 
 
 def test_a_report_mostly_tagged_with_the_issuers_own_concepts_is_counted(spark, lake):

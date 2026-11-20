@@ -670,7 +670,9 @@ financial_leis <- financial_all$lei[financial_all$country == report_country]
 # A fault is one check firing on one issuer in one financial year. A report
 # filed again for the same year -- a correction, a second language -- has
 # the same faults as the first, and counting them per report would rank an
-# issuer by how often it re-filed. DUPL_FILING_PERIOD says that it did.
+# issuer by how often it re-filed. DUPL_FILING_PERIOD says that it did,
+# where the reports differ; DUPL_FILING_COPY, a note that scores nothing,
+# where the repository holds one report twice.
 faults <- bind_rows(
   issues %>%
     filter(!(issue %in% exempt_for_financials & lei %in% financial_leis)) %>%

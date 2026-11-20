@@ -456,27 +456,72 @@ def check_no_facts(state):
         .select("country", "lei", "filing"))
 
 
-def check_duplicate_filing_period(state):
-    """The same issuer, period and language filed more than once, with facts.
+def _repeated_filings(state):
+    """The filings of an issuer, period and language filed more than once,
+    with facts, and whether the copies of each group state the same facts.
 
-    An issuer filing in two languages is two filings of the same figures and
-    is ordinary; two filings in one language for one period is a correction,
-    and a reader taking either without looking would be taking one of two.
+    A report the repository holds twice with the same facts in both is one
+    report received twice: on the Austrian reports most such pairs were
+    added within minutes of each other, and twenty of the thirty Austrian
+    groups were copies to the last fact. The fingerprint of a filing is a
+    hash over its facts, each written out with its concept, period,
+    dimensions, unit, value and a hash of its text, sorted, so that the
+    order the facts are stored in does not matter and the identifiers the
+    report gives its facts, which differ between two uploads of one file,
+    are left out.
     """
     filings = state["filings"]
+    facts = state["facts"]
     with_facts = (filings
-                  .join(state["facts"].select("filing").distinct(), "filing"))
+                  .join(facts.select("filing").distinct(), "filing")
+                  .withColumn("_lang", func.coalesce(func.col("lang"), func.lit(""))))
     repeated = (with_facts
-                .groupBy("lei", "period_end",
-                         func.coalesce(func.col("lang"), func.lit("")).alias("_lang"))
+                .groupBy("lei", "period_end", "_lang")
                 .agg(func.countDistinct("filing").alias("_filings"))
                 .where(func.col("_filings") > 1)
                 .select("lei", "period_end", "_lang"))
+    members = with_facts.join(repeated, ["lei", "period_end", "_lang"])
+    def part(name):
+        return func.coalesce(func.col(name).cast("string"), func.lit(""))
+    fingerprints = (facts
+                    .join(members.select("filing"), "filing")
+                    .withColumn("_fact", func.concat_ws(
+                        "|", part("concept"), part("prd_start"), part("prd_end"),
+                        part("dimensions"), part("unit"), part("value"),
+                        func.coalesce(func.sha2(func.col("text"), 256), func.lit(""))))
+                    .groupBy("filing")
+                    .agg(func.sha2(func.concat_ws(
+                        "\n", func.sort_array(func.collect_list("_fact"))), 256)
+                         .alias("_fingerprint")))
+    groups = (members.join(fingerprints, "filing")
+              .groupBy("lei", "period_end", "_lang")
+              .agg(func.countDistinct("_fingerprint").alias("_versions")))
+    return (members.join(groups, ["lei", "period_end", "_lang"])
+            .select("country", "lei", "filing", "_versions"))
+
+
+def check_duplicate_filing_period(state):
+    """The same issuer, period and language filed more than once, with facts
+    that differ.
+
+    An issuer filing in two languages is two filings of the same figures and
+    is ordinary; two filings in one language for one period that state
+    different facts are a correction, and a reader taking either without
+    looking would be taking one of two. Copies that state the same facts are
+    DUPL_FILING_COPY.
+    """
     return _filing_level(
-        with_facts
-        .withColumn("_lang", func.coalesce(func.col("lang"), func.lit("")))
-        .join(repeated, ["lei", "period_end", "_lang"])
-        .select("country", "lei", "filing"))
+        _repeated_filings(state).where(func.col("_versions") > 1))
+
+
+def check_duplicate_filing_copy(state):
+    """The same report held more than once, with the same facts in every copy.
+
+    Either copy gives the same figures, so it costs a reader nothing but the
+    care not to count the report twice.
+    """
+    return _filing_level(
+        _repeated_filings(state).where(func.col("_versions") == 1))
 
 
 def check_high_extension_share(state):
@@ -509,6 +554,7 @@ CHECKS = (
     ("IMPL_PRDEND_FUTURE", check_period_after_processing),
     ("VALIDATION_ERRORS", check_validation_errors),
     ("DUPL_FILING_PERIOD", check_duplicate_filing_period),
+    ("DUPL_FILING_COPY", check_duplicate_filing_copy),
     ("NO_FACTS", check_no_facts),
     ("HIGH_EXTENSION_SHARE", check_high_extension_share),
 )
@@ -518,8 +564,8 @@ def find_issues(spark, config_path, countries=None):
     """Run every check over the countries asked for, and return the issues.
 
     The frames the checks need are built once and handed to all of them, so
-    that the figures of the reports are derived once rather than eighteen
-    times.
+    that the figures of the reports are derived once rather than once per
+    check.
 
     Parameters
     ----------

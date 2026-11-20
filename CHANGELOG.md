@@ -8,6 +8,13 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `financialreport.esef.quality`: `DUPL_FILING_COPY`, a note that one report
+  is held more than once for the same period and language with the same
+  facts in every copy. `DUPL_FILING_PERIOD` now warns only where the copies
+  state different facts, which is a correction; of the 77 filings it named
+  in the Austrian and Dutch reports, 42 were copies, most of them added to
+  the repository within minutes of each other.
+
 - `sts`: a Silver layer of six tables, built from one snapshot and rebuilt in
   full. `notification` holds one row per notification, keyed on the register's
   own document identifier because neither identifier the register publishes is

@@ -113,6 +113,7 @@ populations <- tibble::tribble(
   "MIXED_UNIT",            "read",
   "IMPL_PRDEND_FUTURE",    "read",
   "DUPL_FILING_PERIOD",    "read",
+  "DUPL_FILING_COPY",      "read",
   "HIGH_EXTENSION_SHARE",  "read",
   "VALIDATION_ERRORS",     "listed",
   "NO_FACTS",              "listed")
