@@ -16,7 +16,7 @@ Japan is the exception, and it is worth saying why rather than leaving it as a h
 
 **It reconciles the vocabularies one measure at a time, and only in a column of its own.** `measure` carries the identifier of what a fact *is* -- the same for every regime that states the same figure -- beside the `concept` its filer tagged, which is never altered. It is filled for the measures `mapping.MATERIALISED_MEASURES` covers and null for everything else, which today is nearly the whole table.
 
-That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `MEASURE = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
+That restraint is the design and not a stage of it. A materialised identifier is read by people who will not go back to the caveat: a query filtering on `measure = 'assets'` is making the claim that the rows it gets back are comparable, so a measure earns the column only once its concepts are agreed to mean the same figure in every framework the catalogue defines it for.
 
 It covers all eight measures the catalogue defines. The first concept of each framework, one per taxonomy:
 
@@ -70,7 +70,7 @@ What adding profit or loss makes plain is that **the resulting skew is not symme
 | Japan | `jppfs_cor:ProfitLoss`, 当期純利益, as every filer does | `profit_loss` |
 | United States | `us-gaap:NetIncomeLoss` only | nothing |
 
-The Japanese population under `MEASURE = 'profit_loss'` is close to every filer. The American population is conditional on having non-controlling interests to report. The two samples are selected by different rules, so **a comparison of their medians is not a comparison of the two regimes**. The same holds for equity: 純資産 is tagged by consolidating and non-consolidating filers alike. Counting the rows carrying a measure says how many filings were named, never how many exist.
+The Japanese population under `measure = 'profit_loss'` is close to every filer. The American population is conditional on having non-controlling interests to report. The two samples are selected by different rules, so **a comparison of their medians is not a comparison of the two regimes**. The same holds for equity: 純資産 is tagged by consolidating and non-consolidating filers alike. Counting the rows carrying a measure says how many filings were named, never how many exist.
 
 Both exclusions are temporary in the same way. `us-gaap:StockholdersEquity` and `us-gaap:NetIncomeLoss` are the *first* concepts of `equity_attributable_to_parent` and `profit_loss_attributable_to_parent`, so writing those measures down gives these facts a name -- the right one rather than this one. The two attributable measures differ in reach, and that is the thing to decide them on: profit or loss attributable to the parent has an element in all four taxonomies, Japan stating 親会社株主に帰属する当期純利益 as a line of its own, while **Japan GAAP has no element for 自己資本 at all**, so the equity counterpart would reach two regimes of three by construction. That gap is set out further down.
 
@@ -182,14 +182,14 @@ filings = combined.connect_to_financialreport(spark, "paths.yaml", "filing")
 # The revenue of every filing that reports under IFRS, whichever regime it
 # was filed under, taken by the best concept the filing states.
 revenue = (
-    combined.measure_values(facts.where("FRAMEWORK = 'IFRS'"), "revenue")
-    .select("SOURCE", "LEI", "CIK", "PERIODEND", "CONCEPT", "UNIT", "VALUE"))
+    combined.measure_values(facts.where("framework = 'IFRS'"), "revenue")
+    .select("source", "lei", "cik", "period_end", "concept", "unit", "value"))
 
 # What that rests on, before it is published.
 print(combined.describe_measure("revenue"))
 ```
 
-`update_silver_financialreport` is the call a job scheduler makes, after the source pipelines have run. It takes `sources` to restrict the run to one of them, and `file_format` to say how the tables are stored. A run that finds no source at all raises rather than writing empty tables; a run that finds one of the two writes that one and logs that it did.
+`update_silver_financialreport` is the call a job scheduler makes, after the source pipelines have run. It takes `sources` to restrict the run to one of them, and `file_format` to say how the tables are stored. A run that finds no source at all raises rather than writing empty tables; a run that finds only some of the three writes those and logs which it left out.
 
 ## The Silver tables
 
@@ -199,20 +199,24 @@ One row per fact of a filing, partitioned by `source` and then `period_year`: mo
 
 | Column | Meaning |
 | --- | --- |
-| `source` | which module the row came from, `esef` or `sec` |
+| `source` | which module the row came from, `esef`, `sec` or `edinet` |
 | `filing` | the filing, as its own regime identifies it |
 | `fact` | the identifier of the fact within its filing |
-| `lei`, `cik` | the entity; one is filled and the other empty, and neither is derived from the other |
-| `framework` | `IFRS` or `US-GAAP`, from the prefix the concept is tagged under |
+| `lei`, `cik`, `edinet_code` | the entity; exactly one is filled, and none is derived from another |
+| `jcn` | the corporate number of a Japanese filer, where the agency states one; empty for the other two regimes |
+| `framework` | `IFRS`, `US-GAAP` or `JP-GAAP`; see below |
 | `period_end`, `period_year` | the period the filing reports on, and its year |
 | `concept` | the concept as the filing tagged it, prefix and name, unresolved across frameworks |
+| `measure` | the measure of the catalogue the concept is the first choice for, where it is one; see below |
 | `prd_start`, `prd_end` | the period of the fact; an instant has no `prd_start` |
 | `unit`, `value` | a number and its unit, as reported and in full units |
-| `text`, `dimensions` | filled for ESEF rows only |
+| `text`, `dimensions` | filled for ESEF and EDINET rows; empty for every SEC row |
 
-`framework` is taken from the taxonomy the filing tagged against and not from the regime it was filed under. That is what makes the population where the two genuinely meet usable: a foreign private issuer reporting under IFRS files with the Commission and tags against the IFRS taxonomy, and belongs beside the European reports rather than beside the American ones it was filed with.
+For ESEF and SEC rows `framework` is taken from the taxonomy the filing tagged against and not from the regime it was filed under. That is what makes the population where the two genuinely meet usable: a foreign private issuer reporting under IFRS files with the Commission and tags against the IFRS taxonomy, and belongs beside the European reports rather than beside the American ones it was filed with.
 
 `text` and `dimensions` are empty for every SEC row, and not because this module drops them: the company files of the Commission carry no narrative facts and no breakdowns at all. An empty `dimensions` means the fact is for the entity as a whole, which is true of every row the Commission contributes.
+
+For EDINET rows the taxonomy settles `framework` where it can -- `jpigp_cor` is IFRS and `jppfs_cor` is Japan GAAP -- and the standard the filing states settles the rest. A Japanese IFRS filer therefore has its group's statements under `IFRS` and its parent company's own statements under `JP-GAAP`, in one report. A filing that no accounting standard applies to, such as a large-holding report or a fund's report, states the conversion's mark for not applicable, and its `framework` is empty rather than that mark.
 
 ### `filing`
 
@@ -221,14 +225,14 @@ One row per filing.
 | Column | Meaning |
 | --- | --- |
 | `source`, `filing` | which module, and the filing |
-| `lei`, `cik`, `name` | the entity |
-| `framework` | `IFRS` or `US-GAAP`, from the concepts the filing tagged |
+| `lei`, `cik`, `edinet_code`, `jcn`, `name` | the entity |
+| `framework` | `IFRS`, `US-GAAP` or `JP-GAAP`: for ESEF and SEC from the concepts the filing tagged, for EDINET the standard the filing states; empty where none applies |
 | `country` | the member state the report was filed in; ESEF only |
-| `form` | the form the filing was made on, e.g. `10-K`; SEC only |
+| `form` | the form the filing was made on: `10-K` and the like for SEC, the agency's document type for EDINET (`120` is the annual securities report) |
 | `period_end`, `period_year` | the period reported on, and its year |
 | `facts` | how many facts the filing contributed |
 
-`country` and `form` are each empty where their regime states nothing: an ESEF filing goes to the mechanism of one member state and the regime names no form, while a filing with the Commission names a form and no country. Neither is given a value this module invented. For an ESEF filing the framework and the count come from the facts, which is where the evidence for both is -- the repository's index says nothing about what a report tagged against.
+`country` and `form` are each empty where their regime states nothing: an ESEF filing goes to the mechanism of one member state and the regime names no form, while a filing with the Commission or the agency names a form and no country. Neither is given a value this module invented. For an ESEF filing the framework and the count come from the facts, which is where the evidence for both is -- the repository's index says nothing about what a report tagged against.
 
 ## The catalogue of measures
 
