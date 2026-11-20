@@ -224,6 +224,41 @@ def _stated_framework(facts):
             .agg(func.max(func.coalesce(named, stated)).alias("_STATED")))
 
 
+#: The element by which a Japanese filing states the end of the period it
+#: reports on.
+PERIOD_END_ELEMENT = "jpdei_cor:CurrentPeriodEndDateDEI"
+
+
+def _with_stated_period_end(filings, facts):
+    """``filings`` with ``period_end`` the end of the period each reports on.
+
+    The agency's index states a period for a filing, and for a semi-annual
+    report it is the financial year the half-year belongs to and not the
+    half-year: a report on April to September 2026 is listed to 31 March
+    2027. The filing states the end of its own period in its document and
+    entity information, and that is what the column means in this table --
+    the period the filing reports on, as it is for the other two regimes --
+    so it is taken from there, and from the index only where the filing
+    states none, as a large-holding report does not. In an annual report the
+    two agree. The edinet module keeps the index's period on its own table of
+    filings, where its quality checks set it against the filing's.
+
+    The text is read by ``try_to_timestamp`` and cast, for the reason the
+    edinet quality module gives: the date function does not reach the
+    oldest PySpark this package declares.
+    """
+    stated = (facts
+              .where(func.col("concept") == PERIOD_END_ELEMENT)
+              .groupBy("filing")
+              .agg(func.max(func.try_to_timestamp(func.trim(func.col("text")))
+                            .cast("date")).alias("_PERIOD_END")))
+    return (filings.join(stated, "filing", "left")
+            .withColumn("period_end",
+                        func.coalesce(func.col("_PERIOD_END"),
+                                      func.col("period_end")))
+            .drop("_PERIOD_END"))
+
+
 def _japanese_framework(concept, stated):
     """What one Japanese fact was prepared under, as a Spark expression.
 
@@ -280,7 +315,8 @@ def facts_from_edinet(spark, config_path):
     from ..edinet.common import ref_silver_facts, ref_silver_filings
 
     facts = read_silver(spark, ref_silver_facts(config_path))
-    filings = read_silver(spark, ref_silver_filings(config_path)) \
+    filings = _with_stated_period_end(
+        read_silver(spark, ref_silver_filings(config_path)), facts) \
         .select("filing", "period_end", "jcn")
 
     return (
@@ -316,8 +352,9 @@ def filings_from_edinet(spark, config_path):
     from ...storage import read_silver
     from ..edinet.common import ref_silver_facts, ref_silver_filings
 
-    filings = read_silver(spark, ref_silver_filings(config_path))
     facts = read_silver(spark, ref_silver_facts(config_path))
+    filings = _with_stated_period_end(
+        read_silver(spark, ref_silver_filings(config_path)), facts)
 
     about = (facts.groupBy("filing")
              .agg(func.count(func.lit(1)).alias("facts")))

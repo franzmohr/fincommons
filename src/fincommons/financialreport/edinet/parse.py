@@ -94,14 +94,31 @@ NOT_APPLICABLE = ("－", "-", "‐", "―", "")
 #: entity information. They are the anchors :func:`period_of` resolves a
 #: context against where the filing states them, which makes the current year
 #: and the comparative exact rather than shifted; see :func:`anchors_of`.
+#:
+#: The financial year and the period a report covers are two things, and a
+#: semi-annual report is why they are kept apart. Its year runs from April to
+#: March and the report covers April to September: ``CurrentFiscalYearEndDateDEI``
+#: is the end of the year, ``CurrentPeriodEndDateDEI`` the end of the half-year
+#: and ``ComparativePeriodEndDateDEI`` the end of the same half-year a year
+#: before. The two families were once read as alternatives for one date, and
+#: the conversion lists the period's end first, so a semi-annual report's
+#: comparative balance sheet -- the one at the end of the previous year, March
+#: -- was dated to the end of the comparative half-year, September. In an
+#: annual report the two coincide.
 ANCHOR_ELEMENTS = {
     "current_start": ("jpdei_cor:CurrentFiscalYearStartDateDEI",),
-    "current_end": ("jpdei_cor:CurrentFiscalYearEndDateDEI",
-                    "jpdei_cor:CurrentPeriodEndDateDEI"),
+    "current_end": ("jpdei_cor:CurrentFiscalYearEndDateDEI",),
     "prior_start": ("jpdei_cor:PreviousFiscalYearStartDateDEI",),
-    "prior_end": ("jpdei_cor:PreviousFiscalYearEndDateDEI",
-                  "jpdei_cor:ComparativePeriodEndDateDEI"),
+    "prior_end": ("jpdei_cor:PreviousFiscalYearEndDateDEI",),
+    "period_end": ("jpdei_cor:CurrentPeriodEndDateDEI",),
+    "comparative_end": ("jpdei_cor:ComparativePeriodEndDateDEI",),
 }
+
+#: A span from the start of a financial year at least this many days long is
+#: a year rather than a half-year or a quarter. It decides whether the end of
+#: a report's period may stand in for the end of its year where the report
+#: states only the first.
+YEAR_DAYS = 300
 
 #: The shape of a context identifier: a period relative to the filing's own,
 #: whether it is a span or a moment, and then the dimensions of the fact.
@@ -205,6 +222,17 @@ def anchors_of(rows):
         day = _as_date(row[len(CSV_COLUMNS) - 1])
         if day is not None:
             found[key] = day
+
+    # A report that states the end of its period and not the end of its year
+    # covers a year where the period is a year long, and only then.
+    def a_year(start, end):
+        return start is None or (end - start).days >= YEAR_DAYS
+    if "current_end" not in found and "period_end" in found \
+            and a_year(found.get("current_start"), found["period_end"]):
+        found["current_end"] = found["period_end"]
+    if "prior_end" not in found and "comparative_end" in found \
+            and a_year(found.get("prior_start"), found["comparative_end"]):
+        found["prior_end"] = found["comparative_end"]
     return found
 
 
@@ -257,12 +285,30 @@ def period_of(context, period_start, period_end, filed=None, anchors=None):
         # the following year's end not being known.
         return None, None
 
-    if parts["when"] == "Interim" or parts["span"] in ("Interim",) \
-            or (parts["span"] or "").startswith("AccumulatedQ") \
+    if parts["when"] == "Interim" or parts["span"] == "Interim":
+        # The half-year a semi-annual report covers, from the start of the
+        # year to the end of the report's period, and the same half-year a
+        # year before. Both ends are what the report states for itself; a
+        # half-year it does not date is left undated rather than guessed,
+        # since its months depend on the filer's calendar.
+        back = parts["back"]
+        if back == 0:
+            end, start = anchors.get("period_end"), anchors.get("current_start")
+        elif back == 1:
+            end, start = anchors.get("comparative_end"), anchors.get("prior_start")
+        else:
+            return None, None
+        if end is None:
+            return None, None
+        if parts["kind"] == "Instant":
+            return None, end
+        return (start, end) if start is not None else (None, None)
+
+    if (parts["span"] or "").startswith("AccumulatedQ") \
             or parts["span"] == "Quarter":
-        # A half-year or a quarter of the filing's own year. Which months it
-        # covers depends on the filer's calendar, which the conversion does
-        # not state, so the dates are left out and the label kept.
+        # A quarter of the filing's own year. Which months it covers depends
+        # on the filer's calendar, which the conversion does not state, so
+        # the dates are left out and the label kept.
         return None, None
 
     back = parts["back"]
@@ -321,7 +367,7 @@ def _series_of(member):
 
 def facts_from_csv(text, filing, member=None, period_start=None,
                    period_end=None, filed=None, edinet_code=None,
-                   filed_year=None):
+                   filed_year=None, anchors=None):
     """Return the facts of one converted document, as rows of ``facts_schema``.
 
     Parameters
@@ -341,6 +387,11 @@ def facts_from_csv(text, filing, member=None, period_start=None,
         The filer.
     filed_year: int, optional
         The partition. The year of ``filed`` by default.
+    anchors: dict, optional
+        The periods the filing states for itself elsewhere in its archive,
+        from :func:`anchors_of`, for a document that states none of its own;
+        see :func:`facts_from_archive`. The document's own win where it
+        states them.
 
     Raises
     ------
@@ -369,7 +420,7 @@ def facts_from_csv(text, filing, member=None, period_start=None,
     # Read once for the dates the filing states about itself, then again for
     # the facts: a context is resolved against what the filing says rather
     # than against arithmetic wherever it says anything.
-    anchors = anchors_of(rows[1:])
+    anchors = {**(anchors or {}), **anchors_of(rows[1:])}
     seen = defaultdict(int)
     found = []
 
@@ -433,15 +484,30 @@ def facts_from_archive(data, filing, period_start=None, period_end=None,
     The remaining parameters are those of :func:`facts_from_csv`.
     """
     source = io.BytesIO(data) if isinstance(data, (bytes, bytearray)) else data
-    found = []
     with zipfile.ZipFile(source) as archive:
-        for member in sorted(archive.namelist()):
-            if not member.lower().endswith(".csv"):
-                continue
-            text = archive.read(member).decode(CSV_ENCODING, errors="replace")
-            found.extend(facts_from_csv(
-                text, filing, member, period_start, period_end, filed,
-                edinet_code, filed_year))
+        texts = [(member, archive.read(member).decode(CSV_ENCODING,
+                                                      errors="replace"))
+                 for member in sorted(archive.namelist())
+                 if member.lower().endswith(".csv")]
+
+    # The periods the filing states for itself are in the document and entity
+    # information of the report, and a document filed with it -- the
+    # auditor's report above all -- states none of its own. Its contexts are
+    # the report's, so it is given the report's dates: without them a
+    # semi-annual report's auditor's report had every half-year fact undated.
+    # Only the lines that can carry an anchor are parsed for it.
+    shared = {}
+    for _, text in texts:
+        lines = [line for line in text.splitlines() if "jpdei_cor:" in line]
+        for key, day in anchors_of(
+                csv.reader(lines, delimiter=CSV_DELIMITER)).items():
+            shared.setdefault(key, day)
+
+    found = []
+    for member, text in texts:
+        found.extend(facts_from_csv(
+            text, filing, member, period_start, period_end, filed,
+            edinet_code, filed_year, anchors=shared))
     return found
 
 

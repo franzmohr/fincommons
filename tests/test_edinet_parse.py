@@ -184,12 +184,125 @@ def test_a_context_that_is_not_recognised_yields_no_dates():
     assert split_context("SomethingElse") is None
 
 
-def test_a_quarter_or_a_half_year_is_left_without_dates():
+def test_a_quarter_or_an_undated_half_year_is_left_without_dates():
     """Which months they cover depends on a calendar the conversion does not
-    state."""
+    state, unless the report states it for itself (see the semi-annual
+    report below)."""
     for context in ("CurrentQuarterDuration", "CurrentAccumulatedQ2Duration",
                     "InterimInstant"):
         assert period_of(context, *PERIOD, FILED) == (None, None)
+
+
+#: The document and entity information of a semi-annual report, as ES-CON
+#: JAPAN's for the half-year to September 2026 (S100Z9W4) states it, and in
+#: the order the conversion lists it: the end of the period before the end
+#: of the year, and the comparative period's end before the previous year's.
+SEMI_ANNUAL_DEI = (
+    ("jpdei_cor:CurrentFiscalYearStartDateDEI", "2026-04-01"),
+    ("jpdei_cor:CurrentPeriodEndDateDEI", "2026-09-30"),
+    ("jpdei_cor:TypeOfCurrentPeriodDEI", "HY"),
+    ("jpdei_cor:CurrentFiscalYearEndDateDEI", "2027-03-31"),
+    ("jpdei_cor:PreviousFiscalYearStartDateDEI", "2025-04-01"),
+    ("jpdei_cor:ComparativePeriodEndDateDEI", "2025-09-30"),
+    ("jpdei_cor:PreviousFiscalYearEndDateDEI", "2026-03-31"),
+)
+
+
+def dei_rows(pairs):
+    """Rows of the conversion carrying only an element and a value."""
+    return [(element,) + ("",) * (len(CSV_COLUMNS) - 2) + (value,)
+            for element, value in pairs]
+
+
+def test_a_semi_annual_report_keeps_its_year_apart_from_its_period():
+    found = anchors_of(dei_rows(SEMI_ANNUAL_DEI))
+
+    assert found["current_start"] == date(2026, 4, 1)
+    assert found["current_end"] == date(2027, 3, 31)
+    assert found["period_end"] == date(2026, 9, 30)
+    assert found["prior_start"] == date(2025, 4, 1)
+    assert found["prior_end"] == date(2026, 3, 31)
+    assert found["comparative_end"] == date(2025, 9, 30)
+
+
+def test_the_comparative_balance_sheet_of_a_half_year_is_at_the_previous_year_end():
+    """It was dated to the end of the comparative half-year, September,
+    because the conversion lists that date first."""
+    anchors = anchors_of(dei_rows(SEMI_ANNUAL_DEI))
+
+    assert period_of("Prior1YearInstant", None, None, FILED, anchors) \
+        == (None, date(2026, 3, 31))
+
+
+def test_the_half_year_and_its_comparative_are_dated_from_the_report():
+    anchors = anchors_of(dei_rows(SEMI_ANNUAL_DEI))
+
+    assert period_of("InterimDuration", None, None, FILED, anchors) \
+        == (date(2026, 4, 1), date(2026, 9, 30))
+    assert period_of("InterimInstant", None, None, FILED, anchors) \
+        == (None, date(2026, 9, 30))
+    assert period_of("Prior1InterimDuration", None, None, FILED, anchors) \
+        == (date(2025, 4, 1), date(2025, 9, 30))
+    assert period_of("Prior1InterimInstant", None, None, FILED, anchors) \
+        == (None, date(2025, 9, 30))
+    assert period_of("InterimDuration_NonConsolidatedMember", None, None,
+                     FILED, anchors) == (date(2026, 4, 1), date(2026, 9, 30))
+
+
+def test_the_auditors_report_takes_the_dates_the_report_states():
+    """The auditor's report is a document of its own in the archive and
+    states no document and entity information; its contexts are the
+    report's, and it was left with every half-year fact undated."""
+    header = CSV_DELIMITER.join(f'"{c}"' for c in CSV_COLUMNS)
+
+    def line(element, context, value, unit="－"):
+        return CSV_DELIMITER.join(f'"{c}"' for c in (
+            element, "label", context, "当中間期", "その他", "時点", unit,
+            "－", value))
+
+    report = "\n".join([header] + [
+        line(element, "FilingDateInstant", value)
+        for element, value in SEMI_ANNUAL_DEI] + [
+        line("jppfs_cor:Assets", "InterimInstant", "526232", "JPY")])
+    audit = "\n".join([header, line(
+        "jpaud_cor:ConclusionOfInterimReviewTextBlock", "InterimDuration",
+        "text")])
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        archive.writestr("XBRL_TO_CSV/jpaud-aar-cn-001_E03992-000_2026-09-30_01_2026-10-27.csv",
+                         audit.encode(CSV_ENCODING))
+        archive.writestr("XBRL_TO_CSV/jpcrp040300-ssr-001_E03992-000_2026-09-30_01_2026-10-27.csv",
+                         report.encode(CSV_ENCODING))
+
+    facts = [dict(zip(NAMES, row))
+             for row in facts_from_archive(data.getvalue(), "S100Z9W4")]
+    review = next(f for f in facts if f["concept"].startswith("jpaud_cor:"))
+
+    assert (review["prd_start"], review["prd_end"]) \
+        == (date(2026, 4, 1), date(2026, 9, 30))
+
+
+def test_a_year_stated_only_as_the_period_end_is_still_the_year():
+    """An annual report that states the end of its period and not of its
+    year: the period is a year long, so it is the year."""
+    found = anchors_of(dei_rows((
+        ("jpdei_cor:CurrentFiscalYearStartDateDEI", "2025-04-01"),
+        ("jpdei_cor:CurrentPeriodEndDateDEI", "2026-03-31"),
+        ("jpdei_cor:PreviousFiscalYearStartDateDEI", "2024-04-01"),
+        ("jpdei_cor:ComparativePeriodEndDateDEI", "2025-03-31"),
+    )))
+
+    assert found["current_end"] == date(2026, 3, 31)
+    assert found["prior_end"] == date(2025, 3, 31)
+
+
+def test_a_half_year_end_never_stands_in_for_the_year_end():
+    found = anchors_of(dei_rows((
+        ("jpdei_cor:CurrentFiscalYearStartDateDEI", "2026-04-01"),
+        ("jpdei_cor:CurrentPeriodEndDateDEI", "2026-09-30"),
+    )))
+
+    assert "current_end" not in found
 
 
 def test_a_forecast_is_left_without_dates():

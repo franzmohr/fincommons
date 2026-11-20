@@ -242,6 +242,30 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `financialreport.edinet`: a semi-annual report's financial year and the
+  half-year it covers are told apart. The end of the report's period and the
+  end of its year were read as alternatives for one date, and the conversion
+  lists the period's end first, so the comparative balance sheet was dated
+  to the end of the comparative half-year rather than the previous year end,
+  and the half-year's own figures (`InterimDuration`, `InterimInstant`) were
+  left undated: 851,927 of the 1,171,065 facts of 2,414 semi-annual reports.
+  They are dated from the report's own document and entity information now,
+  and 753 remain undated, the half-year two years back. The facts of a lake
+  are corrected by rebuilding the Silver layer with `update_silver_edinet`.
+- `financialreport.edinet`: the dates a filing states about itself are read
+  once for its whole archive and given to every document in it that states
+  none of its own -- the auditor's report, and the later series of a fund.
+  The auditor's report of a semi-annual report had its half-year facts
+  undated, and the later series of a fund with a six-month accounting period
+  were shifted by whole years from the index, so that their comparative
+  period lay a year back rather than one period back: 61 annual reports of
+  funds.
+- `financialreport.combined`: an EDINET filing's `period_end` is the end of
+  the period the filing states it covers, `CurrentPeriodEndDateDEI`, and the
+  index's only where it states none. The agency lists a semi-annual report
+  under the year the half-year belongs to, so 2,303 of 2,414 carried a period
+  end in March 2027 for a half-year to September 2026.
+
 - `financialreport.esef.quality`: `IMBAL_CASHFLOW` holds the three cash flows
   to the movement in cash before the effect of exchange rates, which IAS 7
   presents on a line of its own. It read the movement after that effect, so
