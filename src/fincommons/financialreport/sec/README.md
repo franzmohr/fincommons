@@ -64,11 +64,11 @@ filings = sec.connect_to_sec(spark, "paths.yaml", "filings")
 facts = sec.connect_to_sec(spark, "paths.yaml", "facts")
 
 revenue = (
-    facts.where("CONCEPT = 'us-gaap:Revenues'")
-         .join(filings.where("FORM = '10-K'").select("FILING", "PERIODEND"),
-               "FILING")
-         .where("PRDEND = PERIODEND")
-         .select("PERIODEND", "VALUE"))
+    facts.where("concept = 'us-gaap:Revenues'")
+         .join(filings.where("form = '10-K'").select("filing", "period_end"),
+               "filing")
+         .where("prd_end = period_end")
+         .select("period_end", "value"))
 ```
 
 A registrant is found by ticker with `registrants(contact)`, which reads the Commission's own list of tickers and central index keys.
@@ -98,7 +98,7 @@ issue_counts(issues, dataset="sec").show()      # one row per check
 print(describe_check("RESTATED_MATERIALLY"))          # what a code means
 
 facts = sec.connect_to_sec(spark, "paths.yaml", "facts")
-with_issues(facts, issues, ["CIK", "FILING", "FACT"]) # label the records
+with_issues(facts, issues, ["cik", "filing", "fact"]) # label the records
 ```
 
 **Nothing is dropped and nothing is corrected.** A check writes a row and leaves the figure where it is: the tables are what the Commission published, and a reader who wants to know what is wrong with a figure before using it joins the issues on. A filing with nothing wrong with it has no row at all -- the absence of a code is what says a record passed.

@@ -1,0 +1,234 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+
+  # No font is named beyond the one above, so nothing is fetched from a font
+  # service; a system without it falls back to the default of the renderer.
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  # A chunk that fails stops the render, so a scheduler sees it in the exit
+  # code; see the ESEF coverage report for why this is stated.
+  error: false
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a report
+# --------------------------------------------------------------------------
+
+# The path to the config file, whose entitymasterdata section names the
+# Silver layer the counts are written to. A chunk runs with the directory of
+# this template as its working directory, which is inside the installed
+# package, so the path is taken from the environment variable
+# FINCOMMONS_CONFIG where it is set and is otherwise a paths.yaml beside it.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# How many investment policies the chart of funds by policy names; the rest
+# are counted together as "Other".
+top_policies <- 6
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# --------------------------------------------------------------------------
+# The groups the report counts
+# --------------------------------------------------------------------------
+
+# A sector of the entity master data set and the group of this report it
+# belongs to. An entity is counted once, under the sector the narrowest
+# register gave it, so a money market fund -- which stands on the list of
+# MFIs and the list of investment funds alike -- is counted with the MFIs.
+groups <- tibble::tribble(
+  ~sector, ~group,                 ~label,
+  "CDTI",  "Banks",                "Credit institutions",
+  "CB",    "Banks",                "Central banks",
+  "OFI",   "Banks",                "Other MFIs",
+  "MMF",   "Banks",                "Money market funds",
+  "MFI",   "Banks",                "MFIs of another category",
+  "INUN",  "Insurers",             "Insurance undertakings",
+  "ORPI",  "Insurers",             "Occupational pension institutions",
+  "IF",    "Investment funds",     "Investment funds",
+  "CCP",   "Other",                "Central counterparties")
+
+subsector_labels <- c(UCIT = "UCITS", AIFD = "Alternative investment funds",
+                      INVF = "Neither reported")
+
+# You can adapt your corporate design in the sourced R-Skript, which is one
+# file for the whole package in the templates directory at its root. A copy
+# beside this template wins over it.
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+path_silver <- read_yaml(config_path)[["entitymasterdata"]][["silver"]]
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+counts_file <- file.path(path_silver, "sector_counts.parquet")
+if (!file.exists(counts_file)) {
+  stop("No sector counts in ", path_silver, ". Write them first: ",
+       "fincommons.entitymasterdata.write_sector_counts(spark, '<paths.yaml>').")
+}
+
+counts <- read_parquet(counts_file) %>%
+  mutate(date = as.Date(date)) %>%
+  left_join(groups, by = "sector")
+snapshots <- read_parquet(file.path(path_silver, "sector_snapshots.parquet")) %>%
+  mutate(date = as.Date(date), snapshot = as.Date(snapshot))
+
+# A register with no snapshot by a date has no count on it rather than a
+# count of zero: the registers whose history starts with the first download
+# would otherwise show a market that appeared from nothing.
+register_of <- c(CDTI = "mfi", CB = "mfi", OFI = "mfi", MMF = "mfi", MFI = "mfi",
+                 INUN = "inun", ORPI = "orpi", IF = "invfund", CCP = "ccp")
+held <- snapshots %>% filter(!is.na(snapshot)) %>% distinct(date, register)
+
+by_sector <- counts %>%
+  group_by(date, sector, group, label) %>%
+  summarise(entities = sum(entities), .groups = "drop") %>%
+  complete(date, nesting(sector, group, label), fill = list(entities = 0)) %>%
+  mutate(register = register_of[sector]) %>%
+  semi_join(held, by = c("date", "register"))
+
+latest_date <- max(counts$date)
+first_date <- min(counts$date)
+fmt <- function(x) format(x, big.mark = ",", scientific = FALSE)
+# Day without a leading zero; R on macOS does not know "%-d".
+day <- function(x) paste(as.integer(format(x, "%d")), format(x, "%B %Y"))
+source_caption <- caption_corporate_design(
+  "ECB, EIOPA, ESMA, GLEIF; fincommons entity master data.", lang = "en", own = FALSE)
+
+line_chart <- function(d, colour_by, title_y = "Entities") {
+  ggplot(d, aes(x = date, y = entities, colour = .data[[colour_by]])) +
+    geom_line(linewidth = linewidth_corporate_design) +
+    geom_point(size = 1.2) +
+    scale_y_continuous(labels = scales::label_comma(), limits = c(0, NA)) +
+    # Over a few weeks a month alone names every tick the same.
+    scale_x_date(labels = if (diff(range(d$date)) < 90) function(x) ifelse(is.na(x), "", paste(as.integer(format(x, "%d")), format(x, "%b %Y"))) else scales::label_date("%b %Y")) +
+    scale_colour_corporate_design() +
+    labs(x = NULL, y = title_y, colour = NULL, caption = source_caption) +
+    theme_corporate_design(base_size = chart_base_size)
+}
+```
+
+# Banks, insurers and investment funds over time
+
+This report counts the financial institutions the registers behind the entity master data set name, on every date one of them was published, from `r day(first_date)` to `r day(latest_date)`. Each date combines the latest list of every register on or before it by the rules the entity master data set is built by, so an entity is counted once, under the sector of the narrowest register that names it: a money market fund is counted with the MFIs, not with the investment funds.
+
+```{r overview}
+overview <- by_sector %>%
+  filter(date == latest_date) %>%
+  arrange(match(sector, groups$sector)) %>%
+  transmute(Group = group, Sector = label, Entities = fmt(entities))
+knitr::kable(overview, align = c("l", "l", "r"),
+             caption = paste("Entities by sector on", day(latest_date)))
+```
+
+## Banks
+
+The ECB's list of monetary financial institutions is published only as it stands on the day, so its history begins with the first download the pipeline made. Its category gives the sector: credit institutions, central banks, money market funds and other MFIs.
+
+```{r banks, fig.height = 2.4, results = "asis"}
+banks <- by_sector %>% filter(group == "Banks")
+lists_held <- function(r) n_distinct(na.omit(snapshots$snapshot[snapshots$register %in% r]))
+if (lists_held("mfi") < 2) {
+  cat("\n\nThe list of MFIs has been downloaded on one day so far, so there is no",
+      "change over time to show yet.\n\n")
+}
+line_chart(banks, "label")
+```
+
+## Insurers
+
+EIOPA publishes its registers of insurance undertakings and of institutions for occupational retirement provision only as they stand on the day, so their history, too, begins with the first download.
+
+```{r insurers, fig.height = 2.4, results = "asis"}
+insurers <- by_sector %>% filter(group == "Insurers")
+if (lists_held(c("inun", "orpi")) < 2) {
+  cat("\n\nThe registers of EIOPA have been downloaded on one day so far, so there is no",
+      "change over time to show yet.\n\n")
+}
+line_chart(insurers, "label")
+```
+
+## Investment funds
+
+The ECB publishes its list of investment funds per month or quarter, in one archive per year, so this is the series that reaches furthest back. A fund's subsector says what the list states about UCITS compliance.
+
+```{r funds-subsector, fig.height = 2.4}
+funds <- counts %>% filter(sector == "IF")
+line_chart(funds %>%
+             mutate(subsector = coalesce(subsector_labels[subsector], "Not stated")) %>%
+             group_by(date, subsector) %>% summarise(entities = sum(entities), .groups = "drop"),
+           "subsector", "Funds")
+```
+
+By investment policy, the `r top_policies` most common on `r day(latest_date)` named and the rest counted together:
+
+```{r funds-policy, fig.height = 2.8}
+top <- funds %>% filter(date == latest_date, !is.na(if_policy)) %>%
+  group_by(if_policy) %>% summarise(entities = sum(entities), .groups = "drop") %>%
+  slice_max(entities, n = top_policies) %>% pull(if_policy)
+line_chart(funds %>%
+             mutate(policy = if_else(if_policy %in% top, if_policy, "Other")) %>%
+             group_by(date, policy) %>% summarise(entities = sum(entities), .groups = "drop"),
+           "policy", "Funds")
+```
+
+## The lists behind the counts
+
+Which list of each register a date was counted from. A dash marks a register with no list on or before the date, which is left out of the charts rather than counted as zero. GLEIF is the frame the registers are joined onto: where no golden copy of the date is held the earliest is used, which changes names but not which entities exist.
+
+```{r coverage}
+snapshots %>%
+  mutate(snapshot = ifelse(is.na(snapshot), "-", format(snapshot, "%Y-%m-%d")),
+         register = recode(register, gleif_1 = "GLEIF Level 1", relationships = "GLEIF Level 2",
+                           ccp = "ESMA CCPs", inun = "EIOPA insurers", orpi = "EIOPA IORPs",
+                           mfi = "ECB MFIs", invfund = "ECB funds")) %>%
+  pivot_wider(names_from = register, values_from = snapshot) %>%
+  mutate(date = format(date, "%Y-%m-%d")) %>%
+  rename(Date = date) %>%
+  knitr::kable(caption = "The list each register was counted from, by date")
+```

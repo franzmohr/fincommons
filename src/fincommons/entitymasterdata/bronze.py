@@ -14,6 +14,7 @@ instead of carrying on and leaving a gap in the Bronze layer that nothing
 points at.
 """
 
+import datetime
 import logging
 import os
 import re
@@ -825,10 +826,14 @@ def update_bronze_eiopa_iorp(config_path):
 def update_bronze_esma_ccp(config_path):
     """Update the list of CCPs in the Bronze layer.
 
-    Imports the list of central counterparties from the landing zone into the
-    Bronze layer. Unlike the other registers the list is not kept per reference
-    date: it names the CCPs currently authorised, and it is small enough that
-    the file is simply replaced.
+    Imports the lists of central counterparties the landing zone holds into the
+    Bronze layer, one file per day of download, as for EIOPA's registers; see
+    :func:`fincommons.entitymasterdata.landing.download_esma_ccp`. ESMA
+    publishes only the current list, so the lists kept are the only record of
+    how it changed.
+
+    A list stored under the undated name ``ccp_list`` by an earlier version of
+    the module is dated first, see :func:`date_undated_ccp_lists`.
 
     Parameters
     ----------
@@ -838,47 +843,84 @@ def update_bronze_esma_ccp(config_path):
     Returns
     -------
     int
-        Number of lists of CCPs imported, one where the landing zone holds the
-        list and zero where it does not. The closing record of
+        Number of lists of CCPs imported. The closing record of
         :func:`update_from_landing_to_bronze` states the total.
     """
-    path_i = os.path.join(common.path_landing_esma_ccp(config_path), "ccp_list.csv")
-
+    date_undated_ccp_lists(config_path)
+    path_landing = common.path_landing_esma_ccp(config_path)
     # The list is downloaded rather than placed by hand, so a landing zone
     # without it means the download has not been run rather than that a file is
     # broken. The other registers import nothing from an empty folder without
     # comment; this one says so, because the list reaching the Bronze layer is
     # what a run of the Silver layer goes on to depend on.
-    if not os.path.exists(path_i):
+    if not landing_files(path_landing, CSV_EXTENSIONS):
         logger.warning(
             "Nothing to import, the register is not in the landing zone",
             extra=context(module="entitymasterdata", layer="bronze", source="ESMA_CCP",
-                          file=path_i),
+                          file=path_landing),
         )
         return 0
-
-    raw = pandas.read_csv(path_i, usecols=["LEI", "SECTOR", "SUBSECTOR"], **CSV_AS_TEXT)
-
-    write_parquet(
-        raw, os.path.join(common.path_bronze_esma_ccp(config_path), "ccp_list.parquet")
-    )
-    # The file leaves the landing zone like every other register, which it used
-    # not to do. Leaving it there was the more dangerous of the two: the list
-    # is the one register whose name carries no reference date, so a copy left
-    # behind is indistinguishable from one just downloaded, and a run whose
-    # download failed would have imported the copy of the run before it and
-    # reported it as the register.
-    os.remove(path_i)
-
-    logger.info(
-        "Imported register into the Bronze layer",
-        extra=context(module="entitymasterdata", layer="bronze", source="ESMA_CCP",
-                      file="ccp_list.csv", rows=len(raw)),
+    return import_registers(
+        path_landing,
+        common.path_bronze_esma_ccp(config_path),
+        CSV_EXTENSIONS,
+        lambda path: pandas.read_csv(
+            path, usecols=["LEI", "SECTOR", "SUBSECTOR"], **CSV_AS_TEXT
+        ),
+        reference_date_from_file_name, dated_by_name, "ESMA_CCP",
     )
 
-    return 1
+
+#: The name an earlier version of the module stored the list of CCPs under,
+#: in the landing zone and in the Bronze layer, without a date.
+UNDATED_CCP_LIST = "ccp_list"
 
 
+def date_undated_ccp_lists(config_path):
+    """Give a list of CCPs stored without a date the day it was last written.
+
+    Before the list was kept per day it was stored as ``ccp_list.csv`` and
+    imported as ``ccp_list.parquet``, each replacing the one before. The day
+    the file was last written is the day of the download it holds, so it is
+    renamed to that day, ``YYYYMMDD``, and joins the lists kept per day rather
+    than being lost or, since ``c`` sorts after every digit, being taken for
+    the latest list. A dated list of the same day already there is the newer
+    of the two, and the undated one is refused rather than either being
+    dropped.
+
+    Parameters
+    ----------
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be a yaml-file.
+
+    Returns
+    -------
+    list of tuple
+        The files renamed, as pairs of old and new path.
+    """
+    renamed = []
+    for folder, extension in (
+        (common.path_landing_esma_ccp(config_path), ".csv"),
+        (common.path_bronze_esma_ccp(config_path), ".parquet"),
+    ):
+        old = os.path.join(folder, UNDATED_CCP_LIST + extension)
+        if not os.path.isfile(old):
+            continue
+        day = datetime.date.fromtimestamp(os.path.getmtime(old))
+        new = os.path.join(folder, f"{day:%Y%m%d}{extension}")
+        if os.path.exists(new):
+            raise FileExistsError(
+                f"{old!r} has no date and {new!r} holds the list of the day it "
+                "was written. Remove the one that is not wanted."
+            )
+        os.rename(old, new)
+        renamed.append((old, new))
+        logger.warning(
+            "Dated a list of CCPs stored without a date by the day it was written",
+            extra=context(module="entitymasterdata", source="ESMA_CCP",
+                          file=os.path.basename(old), renamed=os.path.basename(new)),
+        )
+    return renamed
 
 
 def update_from_landing_to_bronze(config_path, spark = None):
@@ -953,8 +995,10 @@ __all__ = [
     "EXCEL_EXTENSIONS",
     "CSV_EXTENSIONS",
     "EIOPA_DATES",
+    "UNDATED_CCP_LIST",
     "dated_by_name",
     "dated_by_period",
+    "date_undated_ccp_lists",
     "eiopa_dates",
     "end_of_investment_fund_period",
     "end_of_period",

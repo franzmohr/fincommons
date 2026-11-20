@@ -100,11 +100,11 @@ filings = edinet.connect_to_edinet(spark, "paths.yaml", "filings")
 facts = edinet.connect_to_edinet(spark, "paths.yaml", "facts")
 
 revenue = (
-    facts.where("EDINETCODE = 'E03270'")
-         .where("CONCEPT = 'jpcrp_cor:NetSalesSummaryOfBusinessResults'")
-         .where("DIMENSIONS = 'NonConsolidatedMember'")
-         .select("PRDSTART", "PRDEND", "VALUE")
-         .orderBy("PRDEND"))
+    facts.where("edinet_code = 'E03270'")
+         .where("concept = 'jpcrp_cor:NetSalesSummaryOfBusinessResults'")
+         .where("dimensions = 'NonConsolidatedMember'")
+         .select("prd_start", "prd_end", "value")
+         .orderBy("prd_end"))
 ```
 
 A filer is found by name, by ticker or by industry in the table of filers, which needs no key to collect:
@@ -112,7 +112,7 @@ A filer is found by name, by ticker or by industry in the table of filers, which
 ```python
 edinet.update_bronze_edinet("paths.yaml", filers=True, start="2026-11-01")
 filers = edinet.connect_to_edinet(spark, "paths.yaml", "filers")
-filers.where("SECCODE = '75130'").select("EDINETCODE", "NAME", "NAMEEN").show()
+filers.where("sec_code = '75130'").select("edinet_code", "name", "name_en").show()
 ```
 
 The three steps run on their own where a lake wants them apart -- `update_bronze_edinet` for the indexes and the filer list, `collect_document` for one filing, `update_silver_edinet` for the tables -- and `update_edinet(..., documents=False)` brings the indexes up to date and reads whatever was collected before.
@@ -135,6 +135,8 @@ One row per document the collected indexes name, partitioned by `filed_year`. `f
 
 Four states travel with a filing and all four are carried rather than acted on: `withdrawn` marks a filing taken back, `edited` one an official of a finance bureau has corrected, `disclosed` one withheld from disclosure, and `legal` whether it is on public view, in the extension period, or past both. A filing in the last state is still named by an index collected earlier and can no longer be fetched, which is the thing this module's Bronze layer exists to survive.
 
+**A filing is one row however often it is listed.** The agency lists a filing again, on the day and in the order of the change, whenever its details are edited -- a form code corrected the next day, a parent added. The table keeps the last listing, which is the filing's present account. Keeping every listing read the archive of such a filing once per listing and multiplied its facts in every table built on this one.
+
 Eight of the twenty-nine fields an index carries are deliberately absent, and the schema's docstring says which and why.
 
 ### `facts`
@@ -144,6 +146,8 @@ One row per fact of the conversion, partitioned by `filed_year`, the year the fi
 Three columns have no counterpart in `esef` or `sec`. `label` is the Japanese name of the element, which the conversion states beside it and which is the only thing in these tables that says what a concept means to a reader who does not know the taxonomy. `dimensions` carries the members of a context, which the company files of the Commission do not have at all. And `basis` is 連結・個別, the column that says whether a figure is the group's or the parent company's.
 
 `value` holds a number and `text` everything else, and **a fact can have a unit and no number**: the conversion writes `－` where a figure does not apply, forty-eight times in one report of 1,086 facts, and that becomes a null `value` rather than a zero. `concept` is the element identifier as the conversion writes it, prefix and name; four prefixes appear, and one of them -- `jpcrp030000-asr_E03270-000` -- is built from the form and the filer's own EDINET code, which is how an extension is told from the taxonomy here.
+
+`fact` identifies a fact within its filing as `filing:document:concept:context:occurrence`, where the document is the form the archive names it by. A fund manager files one document per series of a fund under one form, with the series as the last part of the file name (`…_G03898-001`, `…_G03898-002`), and the same element in two series has two different values. For such a document the series is part of the identifier, as `form_series`. The main document of a filing, `-000`, which is every company's own report, is named by its form alone, so that the identifiers a company report already had do not change.
 
 #### Consolidated and non-consolidated
 
@@ -182,7 +186,7 @@ issue_counts(issues, dataset="edinet").show()     # one row per check
 print(describe_check("UNIT_NOT_A_RATIO"))         # what a code means
 
 facts = edinet.connect_to_edinet(spark, "paths.yaml", "facts")
-with_issues(facts, issues, ["EDINETCODE", "FILING", "FACT"])
+with_issues(facts, issues, ["edinet_code", "filing", "fact"])
 ```
 
 **Nothing is dropped and nothing is corrected.** A check writes a row and
@@ -370,10 +374,6 @@ Nothing in this module derives it. The join needs GLEIF, which is
 the regimes are put side by side rather than in the module that reads one of
 them.
 
-## What is not here yet
+## Reading the three regimes together
 
-This module is not yet in `financialreport`'s `SOURCES`, so its facts are not
-in the combined tables. The entity question above is settled; what remains is
-the mapping of the Japanese elements onto the measures of
-`financialreport_measures.csv`, which carries IFRS and US GAAP rows and no
-Japanese ones.
+Module `financialreport` puts the facts and filings of this module beside those of `esef` and `sec` in one table of facts and one of filings, keyed by source; see its [README](../combined/README.md). It reads this module and this module does not read it, so these tables stand on their own. A Japanese row there carries the EDINET code and the corporate number, and a `framework` of `JP-GAAP` or `IFRS` taken from the taxonomy where the taxonomy settles it and from the standard the filing states otherwise. The catalogue of measures, `financialreport_measures.csv`, has rows for the Japanese IFRS taxonomy for all eight of its measures and rows for Japan GAAP for all but the equity attributable to the parent, for which Japan GAAP has no element. A fact whose period could not be resolved is not carried there; `PERIOD_UNRESOLVED` counts them here.

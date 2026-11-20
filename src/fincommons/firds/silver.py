@@ -1152,6 +1152,101 @@ def compact_silver_main(spark, config_path):
         table.optimize().executeCompaction()
 
 
+#: How long the files a version no longer needs are kept, in hours, by
+#: default. It is Delta's own default, ``delta.deletedFileRetentionDuration``,
+#: so a week of the history can still be read as it stood.
+VACUUM_RETENTION_HOURS = 168
+
+#: The setting with which Delta refuses a retention below the table's own.
+#: :func:`vacuum_silver_main` lifts it, for the vacuum alone, where it is
+#: asked for a shorter one.
+RETENTION_CHECK_CONF = "spark.databricks.delta.retentionDurationCheck.enabled"
+
+
+def vacuum_silver_main(spark, config_path, retention_hours=VACUUM_RETENTION_HOURS):
+    """Delete the files of the historical database no recent version reads.
+
+    Nothing the history holds is removed. A merge marks the versions it closes
+    in deletion vectors, a compaction rewrites the files those have
+    accumulated in, and both leave behind the files they replaced, which only
+    the versions of the table before them still read. Those files stay until
+    they are vacuumed, so the table on disk grows with every merge and every
+    compaction while the history in it grows only with the records: the main
+    FIRDS lake built from 27 December 2025 to 17 November 2026 took 39
+    gigabytes for 261 million versions.
+
+    What a vacuum costs is time travel: a version of the table older than
+    ``retention_hours`` can no longer be read. The default keeps a week, as
+    Delta does. A backfill wants less, since every file it replaced is only
+    hours old and the default frees none of them; ``retention_hours=0``
+    keeps the current version alone.
+
+    A batch whose merge is committed and whose append is not is resumed from
+    the version before that merge (see :func:`upsert_from_bronze`), which is
+    the version a short retention removes. The vacuum is therefore refused
+    while the most recent commit of the update is such a merge; the update
+    run again completes the batch, and the vacuum can follow it.
+
+    A retention below a week must not run while an update is writing to the
+    table, since the update reads the version it started from to the end.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An open Spark session.
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be
+        a yaml-file.
+    retention_hours: int or float
+        How old a file no longer needed has to be for it to be deleted,
+        :data:`VACUUM_RETENTION_HOURS` by default.
+    """
+    retention_hours = _checked_retention(retention_hours)
+    ref = common.ref_silver_main(config_path)
+
+    for _, tag in tagged_commits(spark, ref, limit=RESUME_COMMITS):
+        parsed = _parse_tag(tag)
+        if parsed is None:
+            continue
+        first, last, step = parsed
+        if step == "merge":
+            raise RuntimeError(
+                f"The batch {first}..{last} has its merge committed and not its "
+                "append, and it is resumed from the version before that merge. "
+                "Run update_from_bronze_to_silver_main to complete it before "
+                "vacuuming the historical database."
+            )
+        break
+
+    logger.info(
+        "Vacuuming the historical database",
+        extra=context(
+            module="firds", layer="silver", table="MAIN",
+            retention_hours=retention_hours,
+        ),
+    )
+    settings = {}
+    if retention_hours < VACUUM_RETENTION_HOURS:
+        settings[RETENTION_CHECK_CONF] = "false"
+    with _held_settings(spark, settings):
+        common.delta_table(spark, ref).vacuum(retention_hours)
+
+
+def _checked_retention(retention_hours):
+    # A bool is an int to Python, and True would be a retention of one hour.
+    if isinstance(retention_hours, bool) or not isinstance(
+        retention_hours, (int, float)
+    ):
+        raise TypeError(
+            f"retention_hours must be a number of hours, not {retention_hours!r}"
+        )
+    if retention_hours < 0:
+        raise ValueError(
+            f"retention_hours must not be negative, not {retention_hours!r}"
+        )
+    return retention_hours
+
+
 def _compaction_is_due(compact, day, applied):
     """Whether the date just applied is one the run compacts after.
 
@@ -2426,12 +2521,14 @@ __all__ = [
     "PARTITION_PREFIX",
     "REFERENCE_DATE_FORMAT",
     "RESUME_COMMITS",
+    "RETENTION_CHECK_CONF",
     "REWRITING_OPERATIONS",
     "ROW_GROUP_SIZE",
     "ROW_GROUP_SIZE_CONF",
     "SOURCE_FIELDS",
     "SPAN_SEPARATOR",
     "USER_METADATA_CONF",
+    "VACUUM_RETENTION_HOURS",
     "check_incoming_records",
     "check_instrument_key",
     "check_publication_period",
@@ -2468,5 +2565,6 @@ __all__ = [
     "update_from_silver_main_to_silver_compact",
     "upsert_from_bronze",
     "upsert_from_bronze_daily",
+    "vacuum_silver_main",
     "watermark_from_commits",
 ]

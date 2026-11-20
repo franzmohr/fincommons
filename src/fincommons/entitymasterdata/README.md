@@ -156,7 +156,7 @@ ESMA publishes the CCPs authorised in the Union and the third-country CCPs recog
 * [CCPs authorised under EMIR](https://www.esma.europa.eu/sites/default/files/library/ccps_authorised_under_emir.pdf), and
 * [third-country CCPs recognised under EMIR](https://www.esma.europa.eu/sites/default/files/library/third-country_ccps_recognised_under_emir.pdf).
 
-`download_esma_ccp` reads Table 1 of both and stores the CCPs that are current as `ccp_list.csv`, with the columns `LEI`, `SECTOR` (always `CCP`) and `SUBSECTOR` (`EUCCP`, `T1CCP` or `T2CCP`). It runs inside `update_entitymasterdata`.
+`download_esma_ccp` reads Table 1 of both and stores the CCPs that are current as `YYYYMMDD.csv` under the day of the download, as EIOPA's registers are stored, with the columns `LEI`, `SECTOR` (always `CCP`) and `SUBSECTOR` (`EUCCP`, `T1CCP` or `T2CCP`). It runs inside `update_entitymasterdata`.
 
 The tables are read for where their text stands, not for their words alone:
 
@@ -164,9 +164,9 @@ The tables are read for where their text stands, not for their words alone:
 * **An LEI is joined where the table wraps it.** The LEI column is narrow, and an LEI is often split over two lines. The pieces are joined where they stand one below the other, and only where the result has the check digits of an LEI (ISO 17442), so that a wrong join yields no LEI rather than a false one.
 * **The Tier is read off the row** of a recognised third-country CCP. LCH Ltd and ICE Clear Europe, no longer authorised in the Union, are current in the second list as CCPs of Tier 2.
 
-In October 2026 the lists named 15 current EU CCPs, 39 of Tier 1 and 2 of Tier 2. A list read as naming fewer than `ESMA_CCP_MINIMUM` -- five and ten -- or a current third-country CCP without a Tier is refused, since that is a layout the reader no longer understands rather than a market without CCPs. Nothing is stored then, the failure is logged as an error, and the update carries on with the list the Bronze layer already holds. Like every other register the file leaves the landing zone once the Bronze import has read it: the list is the one register whose name carries no reference date, so a copy left behind would be indistinguishable from one just downloaded, and a run whose download had failed would import it and report it as the register.
+In October 2026 the lists named 15 current EU CCPs, 39 of Tier 1 and 2 of Tier 2. A list read as naming fewer than `ESMA_CCP_MINIMUM` -- five and ten -- or a current third-country CCP without a Tier is refused, since that is a layout the reader no longer understands rather than a market without CCPs. Nothing is stored then, the failure is logged as an error, and the update carries on with the list the Bronze layer already holds. Like every other register the file leaves the landing zone once the Bronze import has read it, and the Bronze layer keeps one list per day of download, the latest of which is current. ESMA publishes only the current lists and dates neither, so the lists kept are the only record of how they changed: a list replaced at ESMA cannot be fetched again. A list stored under the undated name `ccp_list` by an earlier version is renamed to the day it was last written on the next import, in the landing zone and in the Bronze layer; where a dated list of that day is already there, the import stops and names both rather than dropping either.
 
-The list used to be taken from a reviewed copy kept by hand on GitHub. Reading ESMA's lists added six CCPs that copy lacked: CCP.RO Bucharest, authorised in July 2026, and CDS Clearing, Nasdaq Dubai, Dubai Clear, Dubai Commodities Clearing and the Clearing Corporation of India, recognised -- or recognised again -- since it was last updated. A list kept by hand can still be stored as `ccp_list.csv` in `{landing zone of entitymasterdata}/esma/ccp`.
+The list used to be taken from a reviewed copy kept by hand on GitHub. Reading ESMA's lists added six CCPs that copy lacked: CCP.RO Bucharest, authorised in July 2026, and CDS Clearing, Nasdaq Dubai, Dubai Clear, Dubai Commodities Clearing and the Clearing Corporation of India, recognised -- or recognised again -- since it was last updated. A list kept by hand can still be stored as `YYYYMMDD.csv` in `{landing zone of entitymasterdata}/esma/ccp`.
 
 ## 2 Updating the Bronze layer
 
@@ -182,6 +182,7 @@ The session is what the GLEIF golden copies are read with, and it decides whethe
 The session is asked for rather than taken from whichever one happens to be active. No module of this package opens a session, and a stage whose reader depended on one another stage had left behind would read the same file in two ways for reasons its caller cannot see.
 
 A GLEIF entry in the Bronze layer is therefore a parquet *directory* where a session was given and a parquet *file* where it was not. Both are read the same way, by `spark.read.parquet`, and the Silver layer picks up whichever is there.
+
 
 ## 3 Updating the Silver layer
 
@@ -206,7 +207,7 @@ GLEIF Level 1 supplies the row itself, with the name and the country. The sector
 | EIOPA insurance undertakings | `INUN` |
 | EIOPA IORPs | `ORPI` |
 | ECB MFIs | `CB`, `CDTI`, `OFI` or `MMF`, after the category of the register, and `MFI` where the category is not one of the four |
-| ECB investment funds | `UCIT`, `AIFD` or `INVF`, after what the register says about UCITS compliance, with the investment policy as `subsector` |
+| ECB investment funds | `IF`, with `UCIT`, `AIFD` or `INVF` as `subsector` after what the register says about UCITS compliance |
 
 Every register is joined on the lei as text, so an lei is first written the way GLEIF writes it: blanks removed -- the non-breaking space a spreadsheet leaves among them -- and letters in upper case. An lei holds neither, so this changes no lei that was well-formed, and it is what the registers need: the ESMA list of CCPs of September 2026 carried six LEIs with a trailing space and the EIOPA IORP register three in lower case, which, joined as they stand, leave two central counterparties and three pension funds without a sector. An lei that still does not look like one -- eighteen letters or digits and two check digits -- is kept, but named in a warning with the register it came from, because it will not match GLEIF.
 
@@ -216,7 +217,7 @@ An entity can stand in more than one of them -- a central counterparty is licens
 
 `if_policy`, `if_type` and `if_ucits_compl` are not part of this contest. They are facts about a fund that no other register carries, so they are taken from the fund register whichever register ends up describing the entity. A money market fund is the case this matters for, because it stands on the list of MFIs by definition and that register wins the sector; taken from the winning row, the fund characteristics would be lost along with the row the contest discards.
 
-`subsector` is part of the contest, and stays the statement of the register that won it. It is the refinement that register offers, so filling it in from the fund register once another register has taken the sector would pair a sector from one taxonomy with a refinement from another. A fund loses nothing by that, because the investment policy the fund register would have contributed as `subsector` is what `if_policy` carries.
+`subsector` is part of the contest, and stays the statement of the register that won it. It is the refinement that register offers, so filling it in from the fund register once another register has taken the sector would pair a sector from one taxonomy with a refinement from another. A fund that loses the sector to another register loses little by that, because whether it is a UCITS -- what the fund register would have contributed as `subsector` -- is what `if_ucits_compl` carries, and its investment policy is in `if_policy`.
 
 The `MFI` sector is the fallback for a category the module does not recognise. A category the ECB relabels, or a list converted by hand in a way that alters the spelling, would otherwise leave the sector empty -- and an empty sector is what an entity no register covers carries, which is the one thing an institution that is on the register is not. The categories that fell through are named in a warning, so the run says where the description is coarser than the register would allow.
 
@@ -288,6 +289,18 @@ The columns are taken from the header, so they may come in any order and the ide
 * with a column the table above does not name -- `Sector` for `SECTOR`, say -- which would otherwise be dropped when the table is written, with everything the list says under it;
 * that describes an LEI more than once, however it is spelled, since the choice between the two rows would then be left to the order Spark reads them in.
 
+### The sector report
+
+`write_sector_counts` counts the entities of every sector on every date a register was published, and the template `templates/entitymasterdata-sector-report.qmd` turns the counts into a report on banks, insurers and investment funds over time, the funds broken down by UCITS compliance and by investment policy. Each date combines the latest snapshot of every register on or before it by the rules the public table is built by (`entities_as_of`), so the report is the history of the registers in miniature. A register with no snapshot by a date is shown as not yet collected rather than as zero.
+
+```python
+em.write_sector_counts(spark, config_path)
+```
+
+```bash
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render entitymasterdata-sector-report.qmd
+```
+
 ## 4 All-in-one function
 
 The following function runs the whole pipeline: the downloads that can be automated, the import of everything the landing zone holds, and the two steps of the Silver layer. The GLEIF links are optional; where they are not given, the latest golden copy is downloaded unless the Bronze layer holds one of its day. A link that is given is downloaded, and its failure stops the update, since it was asked for.
@@ -338,7 +351,7 @@ The module is covered by the tests in `tests/test_entitymasterdata.py`, which ru
 | --- | --- |
 | the data lake | creating the directory tree, including below a directory that does not exist yet, repeating the call, refusing an unknown table name, reporting a table that has never been built, and the package not re-exporting the modules its submodules import |
 | the downloads | that a GLEIF file keeps the name it was published under, that a link carrying a query string or a fragment still yields that name, that a link which is not a file is refused, that every request carries a timeout, that the connection is closed when the download fails, and that an error answer, an answer that is not an archive and an interrupted download all leave the landing zone as it was; that the ECB's lists are found on its pages, only the lists the Bronze layer lacks are unpacked and an answer that is not the list of MFIs is refused; and that EIOPA's form is read off the page and sent for the CSV export, asked for again when it is turned away, and refused where the answer is not the register; and that ESMA's lists of CCPs are read for Table 1 alone, a wrapped LEI is joined, a struck-through row counts as withdrawn and a CCP recognised again as current, a list read as naming too few CCPs is refused and an answer that is not a pdf does not replace the list held |
-| the Bronze layer | the reference date read off the name, the file leaving the landing zone only once it has been written -- the list of CCPs included -- a file that cannot be read staying where it is, files of another kind being left alone and named in a warning, the monthly and the quarterly list of investment funds, a missing LEI staying missing, MFI postcodes kept as text, and the import carrying on where the list of CCPs was never downloaded; the MFI list and EIOPA's registers read from their CSV as text, both spellings of EIOPA's dates, a workbook with mixed cells, and the lists of FVCs and PSRIs dated at the end of their period |
+| the Bronze layer | the reference date read off the name, the file leaving the landing zone only once it has been written -- the list of CCPs included, one per day of download, with an undated list of an earlier version dated by the day it was written -- a file that cannot be read staying where it is, files of another kind being left alone and named in a warning, the monthly and the quarterly list of investment funds, a missing LEI staying missing, MFI postcodes kept as text, and the import carrying on where the list of CCPs was never downloaded; the MFI list and EIOPA's registers read from their CSV as text, both spellings of EIOPA's dates, a workbook with mixed cells, and the lists of FVCs and PSRIs dated at the end of their period |
 | the public table | the name and country from GLEIF, the sector each register contributes, which register wins where two describe the same entity, the fund characteristics surviving a register that outranks the fund register, a register that carries an LEI twice answering the same way whichever order the file holds the rows in, telling the two Level 2 relationships apart, reading only the relationships that are still active, the fallback sector for an unrecognised MFI category, using the most recent register, and reporting a register the Bronze layer never received |
 | how an LEI is written | a trailing space, lower case and a non-breaking space in a register, a parent written differently in the Level 2 data, and an LEI still malformed being named with its register |
 | the entity master data set | the public data passing through, the catch-all entities and the form of their LEIs, the numbering, the promised columns, what a proprietary list displaces -- written differently included --, entities without an LEI, leading zeros, a list describing an LEI twice, carrying a column the table does not have or no LEI column being refused, and the storage format of both tables |

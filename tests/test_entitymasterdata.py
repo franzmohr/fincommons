@@ -14,6 +14,7 @@ than what those two happen to be serving that day.
 
 from __future__ import annotations
 
+import datetime
 import io
 import logging
 import os
@@ -103,8 +104,8 @@ def write_ecb_investment_fund(config_path, leis, file_name="IF_2026_03.xlsx",
     """Write the ECB list of investment funds.
 
     ``ucits`` is what the register says about compliance, which is what the
-    sector of a fund is read off: a UCITS becomes ``UCIT``, an AIF ``AIFD``,
-    and anything else ``INVF``. It can be given per fund or once for all of
+    subsector of a fund is read off: a UCITS becomes ``UCIT``, an AIF ``AIFD``,
+    and anything else ``INVF``; the sector of every fund is ``IF``. It can be given per fund or once for all of
     them.
     """
     compliance = list(ucits) if isinstance(ucits, (list, tuple)) else [ucits] * len(leis)
@@ -189,8 +190,8 @@ def write_iorp(config_path, leis, file_name="20260724.xlsx"):
     return path
 
 
-def write_ccp(config_path, rows):
-    """Write the list of CCPs from ``(lei, sector, subsector)`` triples."""
+def write_ccp(config_path, rows, day="20261001"):
+    """Write the list of CCPs of ``day`` from ``(lei, sector, subsector)`` triples."""
     frame = pandas.DataFrame(
         {
             "LEI": [r[0] for r in rows],
@@ -198,7 +199,7 @@ def write_ccp(config_path, rows):
             "SUBSECTOR": [r[2] for r in rows],
         }
     )
-    path = os.path.join(em.path_landing_esma_ccp(config_path), "ccp_list.csv")
+    path = os.path.join(em.path_landing_esma_ccp(config_path), f"{day}.csv")
     frame.to_csv(path, index=False)
     return path
 
@@ -660,26 +661,27 @@ def serve_esma(monkeypatch, eu=EU_LIST, tc=TC_LIST):
 def test_the_list_of_ccps_is_downloaded_into_the_landing_zone(monkeypatch, data_lake):
     serve_esma(monkeypatch)
 
-    assert em.download_esma_ccp(data_lake) == 5
+    assert em.download_esma_ccp(data_lake, today=datetime.date(2026, 11, 20)) == 5
 
-    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["ccp_list.csv"]
-    path = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
+    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["20261120.csv"]
+    path = os.path.join(em.path_landing_esma_ccp(data_lake), "20261120.csv")
     assert io.open(path, encoding="utf-8").readline().strip() == "LEI,SECTOR,SUBSECTOR"
 
 
 def test_an_answer_that_is_not_a_list_does_not_replace_the_list_of_ccps(
         monkeypatch, data_lake):
-    """The list is not named after a reference date, so a failed download would
-    overwrite the copy already held rather than sit beside it."""
+    """A second download on the same day would replace the list of that day, so
+    one that fails must leave it as it was."""
+    today = datetime.date(2026, 11, 20)
     serve_esma(monkeypatch)
-    em.download_esma_ccp(data_lake)
+    em.download_esma_ccp(data_lake, today=today)
 
     serve_esma(monkeypatch, tc=b"<html>502 Bad Gateway</html>")
     with pytest.raises(ValueError, match="did not answer with a pdf"):
-        em.download_esma_ccp(data_lake)
+        em.download_esma_ccp(data_lake, today=today)
 
-    path = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
-    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["ccp_list.csv"]
+    path = os.path.join(em.path_landing_esma_ccp(data_lake), "20261120.csv")
+    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == ["20261120.csv"]
     assert "F226TOH6YD6XJB17KS62,CCP,T2CCP" in io.open(path, encoding="utf-8").read()
 
 
@@ -1335,14 +1337,72 @@ def test_a_workbook_the_module_reads_is_not_named_in_a_warning(data_lake, caplog
 
 
 def test_the_list_of_ccps_leaves_the_landing_zone_when_it_is_imported(data_lake):
-    """The list is the one register whose name carries no reference date, so a
-    copy left behind is indistinguishable from one just downloaded, and a run
-    whose download failed would import it and report it as the register."""
     write_ccp(data_lake, [("LEI1", "CCP", "EUCCP")])
 
     assert em.update_bronze_esma_ccp(data_lake) == 1
     assert os.listdir(em.path_landing_esma_ccp(data_lake)) == []
-    assert os.listdir(em.path_bronze_esma_ccp(data_lake)) == ["ccp_list.parquet"]
+    assert os.listdir(em.path_bronze_esma_ccp(data_lake)) == ["20261001.parquet"]
+
+
+def test_a_list_of_ccps_is_kept_for_every_day_it_was_downloaded(
+        monkeypatch, data_lake):
+    """ESMA publishes only the current list, so the lists kept are the only
+    record of how it changed: a later list sits beside the earlier one."""
+    serve_esma(monkeypatch)
+    em.download_esma_ccp(data_lake, today=datetime.date(2026, 11, 19))
+    em.update_bronze_esma_ccp(data_lake)
+    em.download_esma_ccp(data_lake, today=datetime.date(2026, 11, 20))
+    em.update_bronze_esma_ccp(data_lake)
+
+    assert sorted(os.listdir(em.path_bronze_esma_ccp(data_lake))) == [
+        "20261119.parquet", "20261120.parquet",
+    ]
+    bronze = pandas.read_parquet(
+        os.path.join(em.path_bronze_esma_ccp(data_lake), "20261120.parquet")
+    )
+    assert set(bronze["REFDT"]) == {"2026-11-20"}
+    assert list(bronze.columns) == ["LEI", "SECTOR", "SUBSECTOR", "REFDT"]
+
+
+def written_on(path, day):
+    stamp = datetime.datetime.combine(day, datetime.time(12)).timestamp()
+    os.utime(path, (stamp, stamp))
+
+
+def test_an_undated_list_of_ccps_is_dated_by_the_day_it_was_written(data_lake):
+    """An earlier version stored the list as ccp_list, which sorts after every
+    date and would be taken for the latest list."""
+    landing = os.path.join(em.path_landing_esma_ccp(data_lake), "ccp_list.csv")
+    pandas.DataFrame({"LEI": ["LEI1"], "SECTOR": ["CCP"], "SUBSECTOR": ["EUCCP"]}) \
+        .to_csv(landing, index=False)
+    written_on(landing, datetime.date(2026, 11, 2))
+    bronze = os.path.join(em.path_bronze_esma_ccp(data_lake), "ccp_list.parquet")
+    pandas.DataFrame({"LEI": ["LEI0"], "SECTOR": ["CCP"], "SUBSECTOR": ["EUCCP"]}) \
+        .to_parquet(bronze)
+    written_on(bronze, datetime.date(2026, 10, 15))
+
+    assert em.update_bronze_esma_ccp(data_lake) == 1
+
+    assert os.listdir(em.path_landing_esma_ccp(data_lake)) == []
+    assert sorted(os.listdir(em.path_bronze_esma_ccp(data_lake))) == [
+        "20261015.parquet", "20261102.parquet",
+    ]
+
+
+def test_an_undated_list_of_ccps_does_not_replace_a_dated_one(data_lake):
+    write_ccp(data_lake, [("LEI1", "CCP", "EUCCP")], day="20261102")
+    em.update_bronze_esma_ccp(data_lake)
+    bronze = os.path.join(em.path_bronze_esma_ccp(data_lake), "ccp_list.parquet")
+    pandas.DataFrame({"LEI": ["LEI0"], "SECTOR": ["CCP"], "SUBSECTOR": ["EUCCP"]}) \
+        .to_parquet(bronze)
+    written_on(bronze, datetime.date(2026, 11, 2))
+
+    with pytest.raises(FileExistsError, match="ccp_list.parquet"):
+        em.update_bronze_esma_ccp(data_lake)
+
+    assert sorted(os.listdir(em.path_bronze_esma_ccp(data_lake))) == [
+        "20261102.parquet", "ccp_list.parquet",
+    ]
 
 
 def test_a_quarterly_list_of_investment_funds_is_dated_at_the_end_of_the_quarter(data_lake):
@@ -1501,7 +1561,7 @@ def test_each_register_contributes_its_sector(spark, data_lake):
     assert entity(frame, "LEI1").sector == "CCP"
     assert entity(frame, "LEI2").sector == "INUN"
     assert entity(frame, "LEI3").sector == "CDTI"
-    assert entity(frame, "LEI4").sector == "UCIT"
+    assert entity(frame, "LEI4").sector == "IF"
     assert entity(frame, "LEI5").sector == "ORPI"
     assert entity(frame, "LEI4").if_type == "ETF"
     assert entity(frame, "LEI4").if_ucits_compl == "UCITS"
@@ -1621,6 +1681,131 @@ def test_a_register_carrying_an_lei_twice_answers_the_same_way_either_way(spark,
     assert row.subsector == "EUCCP"
 
 
+def registers_of(spark, data_lake, file_of=None):
+    """Each register of the Bronze layer normalised, from the file ``file_of``
+    picks in its folder, the latest by default."""
+    file_of = file_of or em.latest_bronze_file
+    def read(folder):
+        return spark.read.parquet(file_of(folder))
+    return dict(
+        gleif_1=em.normalise_gleif_level_1(read(em.path_bronze_gleif_level_1(data_lake))),
+        relationships=em.normalise_gleif_level_2(read(em.path_bronze_gleif_level_2(data_lake))),
+        ccp=em.normalise_esma_ccp(read(em.path_bronze_esma_ccp(data_lake))),
+        inun=em.normalise_eiopa_insurance_undertaking(
+            read(em.path_bronze_eiopa_insurance_undertaking(data_lake))),
+        orpi=em.normalise_eiopa_iorp(read(em.path_bronze_eiopa_iorp(data_lake))),
+        mfi=em.normalise_ecb_mfi(read(em.path_bronze_ecb_mfi(data_lake))),
+        invfund=em.normalise_ecb_investment_fund(
+            read(em.path_bronze_ecb_investment_fund(data_lake))),
+    )
+
+
+def rows_of(frame):
+    return sorted(tuple(row) for row in frame.collect())
+
+
+def test_the_public_table_is_the_latest_registers_combined(spark, data_lake):
+    """The rules that combine the registers are written once, so that a history
+    built from every snapshot and the table built from the latest ones cannot
+    part company."""
+    write_gleif_level_1(data_lake, ["LEI1", "LEI2", "LEI3", "LEI4", "LEI5", "LEI6"],
+                        ["One", "Two", "Three", "Four", "Five", "Six"],
+                        ["AT", "DE", "FR", "IT", "ES", "NL"])
+    write_gleif_level_2(data_lake, [("LEI5", "LEI1", "IS_ULTIMATELY_CONSOLIDATED_BY"),
+                                    ("LEI5", "LEI6", "IS_FUND-MANAGED_BY")])
+    write_ccp(data_lake, [("LEI1", "CCP", "EUCCP")])
+    write_eiopa(data_lake, ["LEI2"])
+    write_iorp(data_lake, ["LEI3"])
+    write_ecb_mfi(data_lake, [("LEI4", "Credit Institution")])
+    write_ecb_investment_fund(data_lake, ["LEI4", "LEI5"])
+    em.update_from_landing_to_bronze(data_lake)
+    em.update_silver_entitymasterdata_public(spark, data_lake)
+
+    combined = em.combine_registers(**registers_of(spark, data_lake))
+
+    table = em.connect_to_entitymasterdata(spark, data_lake, "public")
+    assert combined.columns == table.columns
+    assert rows_of(combined) == rows_of(table)
+    assert {row.lei: row.sector for row in table.collect()} == {
+        "LEI1": "CCP", "LEI2": "INUN", "LEI3": "ORPI", "LEI4": "CDTI",
+        "LEI5": "IF", "LEI6": None,
+    }
+
+
+def test_an_earlier_snapshot_combines_into_what_held_then(spark, data_lake):
+    """A history applies the snapshots of every date, not just the latest."""
+    write_gleif_level_1(data_lake, ["LEI1"], ["One"], ["AT"])
+    write_gleif_level_2(data_lake, [])
+    write_ccp(data_lake, [])
+    write_eiopa(data_lake, [], file_name="20261001.xlsx")
+    write_eiopa(data_lake, ["LEI1"], file_name="20261101.xlsx")
+    write_iorp(data_lake, ["LEI1"])
+    write_ecb_mfi(data_lake, [])
+    write_ecb_investment_fund(data_lake, [])
+    em.update_from_landing_to_bronze(data_lake)
+
+    def first(folder):
+        return os.path.join(folder, sorted(os.listdir(folder))[0])
+
+    earlier = registers_of(spark, data_lake)
+    earlier["inun"] = em.normalise_eiopa_insurance_undertaking(spark.read.parquet(
+        first(em.path_bronze_eiopa_insurance_undertaking(data_lake))))
+    later = registers_of(spark, data_lake)
+
+    assert em.combine_registers(**earlier).first().sector == "ORPI"
+    assert em.combine_registers(**later).first().sector == "INUN"
+
+
+def test_sectors_are_counted_on_every_date_a_register_was_published(spark, data_lake):
+    """Each date combines the latest snapshot of every register on or before
+    it; a register not yet published on a date contributes nothing and says
+    so, rather than counting as a sector without entities."""
+    write_gleif_level_1(data_lake, ["LEI1", "LEI2", "LEI3"], ["One", "Two", "Three"],
+                        ["AT", "DE", "FR"])
+    write_gleif_level_2(data_lake, [])
+    write_ccp(data_lake, [])
+    write_eiopa(data_lake, ["LEI1"], file_name="20260301.xlsx")
+    write_iorp(data_lake, [])
+    write_ecb_mfi(data_lake, [("LEI2", "Credit Institution")], file_name="20260601.xlsx")
+    write_ecb_investment_fund(data_lake, ["LEI3"], file_name="IF_2026_03.xlsx")
+    write_ecb_investment_fund(data_lake, [], file_name="IF_2026_06.xlsx")
+    em.update_from_landing_to_bronze(data_lake)
+
+    counts, coverage = em.sector_counts_over_time(
+        spark, data_lake, dates=[datetime.date(2026, 3, 31), datetime.date(2026, 6, 30)])
+
+    def on(day):
+        frame = counts[counts["date"] == day]
+        return {(r.sector, None if pandas.isna(r.subsector) else r.subsector): r.entities
+                for r in frame.itertuples()}
+
+    assert on(datetime.date(2026, 3, 31)) == {("INUN", None): 1, ("IF", "UCIT"): 1}
+    assert on(datetime.date(2026, 6, 30)) == {("INUN", None): 1, ("CDTI", None): 1}
+    used = {(r.date, r.register): r.snapshot for r in coverage.itertuples()}
+    assert used[(datetime.date(2026, 3, 31), "mfi")] is None
+    assert used[(datetime.date(2026, 6, 30), "mfi")] == datetime.date(2026, 6, 1)
+    assert used[(datetime.date(2026, 6, 30), "invfund")] == datetime.date(2026, 6, 30)
+
+
+def test_the_dates_default_to_those_of_the_sectoral_snapshots(data_lake):
+    for folder, names in (
+        (em.path_bronze_ecb_mfi(data_lake), ["20260601.parquet", "notes.txt"]),
+        (em.path_bronze_esma_ccp(data_lake), ["ccp_list.parquet", "20261120.parquet"]),
+    ):
+        for name in names:
+            open(os.path.join(folder, name), "w").close()
+    undated = os.path.join(em.path_bronze_esma_ccp(data_lake), "ccp_list.parquet")
+    stamp = datetime.datetime(2026, 10, 15, 12).timestamp()
+    os.utime(undated, (stamp, stamp))
+
+    # The undated list of an earlier version counts from the day it was written.
+    assert [d for d, _ in em.snapshot_dates(em.path_bronze_esma_ccp(data_lake))] == [
+        datetime.date(2026, 10, 15), datetime.date(2026, 11, 20)]
+    snapshots = em.snapshot_dates(em.path_bronze_ecb_mfi(data_lake))
+    assert em.snapshot_as_of(snapshots, datetime.date(2026, 5, 31)) is None
+    assert em.snapshot_as_of(snapshots, datetime.date(2026, 6, 1))[0] == datetime.date(2026, 6, 1)
+
+
 def test_a_row_that_states_a_subsector_beats_one_that_does_not(spark, data_lake):
     """Nulls sort last, which is the opposite of what ``orderBy`` does on its
     own. A null is the absence of a statement, so the row that says something
@@ -1707,8 +1892,8 @@ def test_a_fund_on_no_other_register_is_described_by_the_fund_register_alone(spa
     em.update_silver_entitymasterdata_public(spark, data_lake)
     row = entity(public(spark, data_lake), "LEI1")
 
-    assert row.sector == "UCIT"
-    assert row.subsector == "Bond funds"
+    assert row.sector == "IF"
+    assert row.subsector == "UCIT"
     assert row.if_policy == "Bond funds"
 
 
@@ -1797,9 +1982,10 @@ def test_a_fund_is_described_by_its_ucits_status(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").sector == "UCIT"
-    assert entity(frame, "LEI2").sector == "AIFD"
-    assert entity(frame, "LEI3").sector == "INVF"
+    assert {entity(frame, lei).sector for lei in ("LEI1", "LEI2", "LEI3")} == {"IF"}
+    assert entity(frame, "LEI1").subsector == "UCIT"
+    assert entity(frame, "LEI2").subsector == "AIFD"
+    assert entity(frame, "LEI3").subsector == "INVF"
     # The compliance column itself keeps its own vocabulary, which is not the
     # sector: the sector says what the entity is, the column what the register
     # reported about it.
