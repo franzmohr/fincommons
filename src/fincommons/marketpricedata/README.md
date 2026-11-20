@@ -408,13 +408,15 @@ Due to the heterogeneity of the data source, the module does not provide any fun
 {path to Bronze Layer of marketpricedata as specified in config_path}/internal/marketpricedata_internal.csv
 ```
 
-if that file exists, and expects a comma-separated file with a header row and the following three columns, in this order. The file is an input kept by hand, so it carries the upper-case names it always has; it is read into the Silver names (`ref_date`, `instr_id`, `value`) where the Silver stage reads it.
+if that file exists, and expects a comma-separated file with a header row and the following three columns, in this order. They are the three columns of the Silver table, under the same names.
 
 | Column | Type | Content |
 | --- | --- | --- |
-| `REFDT` | date | The reference date of the quote, as `YYYY-MM-DD`. |
-| `INSTRID` | string | What the value is a price of. See the convention above, and pick identifiers that no public source already uses. |
-| `VALUE` | double | The price or rate. |
+| `ref_date` | date | The reference date of the quote, as `YYYY-MM-DD`. |
+| `instr_id` | string | What the value is a price of. See the convention above, and pick identifiers that no public source already uses. |
+| `value` | double | The price or rate. |
+
+The columns are read by position, not by the names in the header, so a file still headed `REFDT,INSTRID,VALUE`, as the file was before the column names of the package were put into snake case, is read the same way.
 
 This is the form the proprietary sources of `exchangerate` and `entitymasterdata` take as well: one file, under a name the module knows, placed in the Bronze layer by whoever maintains the quotes. Nothing in the module writes into that directory.
 
@@ -545,14 +547,14 @@ The ISIN mapping table carries a `name` column for this: the full name FIRDS rec
 from fincommons.marketpricedata import curves
 
 segments = curves.build_curves(spark, prices, "2025-06-30", ["EUR", "USD"])
-discounted = curves.add_discount_factor(payments, segments, "CCY", "YEARS", "DF")
+discounted = curves.add_discount_factor(payments, segments, "currency", "years", "discount_factor")
 ```
 
 The short end is the overnight rate of each currency (`ON-ESTR`, `ON-SOFR`, `ON-SONA`), and the longer maturities are overnight indexed swap quotes under `OIS-<index>-<tenor>`, for instance `OIS-ESTR-1Y`. Every pillar takes the latest quote at or before the reference date, and the log says when that is older than the date. A quote shorter than a year is read as a simple money market rate on actual/360, a longer one as annually compounded. Between the pillars the curve is log-linear in the discount factors, so the forward rate is constant on each segment, and beyond the last pillar the last forward rate carries on.
 
 **No tenor pillar is delivered into the table yet, so a curve built today is flat at the overnight rate.** The `KR-` policy rates are not read: a rate a central bank decided on is not a quote for a maturity. The swap quotes are picked up under the identifiers above as soon as a source delivers them, without a change to the module.
 
-A payment in a currency without a curve keeps its row and gets no discount factor, so a caller can report it as not covered rather than lose it. `parallel_shift` makes one copy of the curves per assumed shift of the continuously compounded zero rate, which `add_discount_factor` then evaluates in the same join with `keys=["SHOCK"]`, and `forward_rate` gives the simple forward rate of an accrual period from its two discount factors. The curves carry no credit or funding spread.
+A payment in a currency without a curve keeps its row and gets no discount factor, so a caller can report it as not covered rather than lose it. `parallel_shift` makes one copy of the curves per assumed shift of the continuously compounded zero rate, which `add_discount_factor` then evaluates in the same join with `keys=["shock"]`, and `forward_rate` gives the simple forward rate of an accrual period from its two discount factors. The curves carry no credit or funding spread.
 
 ## The layout of the data lake
 

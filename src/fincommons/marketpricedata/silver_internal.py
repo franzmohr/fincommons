@@ -75,10 +75,7 @@ def update_silver_internal(spark, config_path):
     bronze = spark.read \
         .options(header='True', delimiter=',') \
         .schema(internal_schema) \
-        .csv(internal_file) \
-        .select(func.col("REFDT").alias("ref_date"),
-                func.col("INSTRID").alias("instr_id"),
-                func.col("VALUE").alias("value"))
+        .csv(internal_file)
 
     # Checked here, while the stage can still fail on its own, rather than left
     # to the merge: inside a batch the rows are only read when every source is

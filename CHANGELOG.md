@@ -154,6 +154,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
   'INVF')` selects them by `sector = 'IF'` now, and one that told UCITS from
   AIFs by the sector does so by the subsector.
 
+- `marketpricedata`: the proprietary price list, `marketpricedata_internal.csv`,
+  is headed `ref_date,instr_id,value`, the names of the Silver table it is
+  merged into, and `internal_schema` declares them. The file is read by
+  position and not by the names in its header, so a file still headed
+  `REFDT,INSTRID,VALUE` reads as before and need not be rewritten.
+
+- `marketpricedata.curves`: the curve segments are named in snake case.
+  `build_curves`, `segment_frame` and `parallel_shift` return `currency`,
+  `years_from`, `years_to`, `log_discount_from` and `forward_rate` where they
+  returned `CCY`, `T_FROM`, `T_TO`, `LOGDF_FROM` and `FWD`, and
+  `parallel_shift` takes its shifts as `currency`, `shock` and `shift`. Code
+  that reads a segment by name, or passes `keys=["SHOCK"]` to
+  `add_discount_factor`, has to use the new names.
+
 ### Fixed
 
 - `firds`: the writes to the historical database fill their Parquet row groups

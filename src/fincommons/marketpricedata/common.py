@@ -50,9 +50,9 @@ logger = logging.getLogger(__name__)
 
 
 internal_schema = StructType() \
-    .add("REFDT", DateType(), False) \
-    .add("INSTRID", StringType(), False) \
-    .add("VALUE", DoubleType(), False)
+    .add("ref_date", DateType(), False) \
+    .add("instr_id", StringType(), False) \
+    .add("value", DoubleType(), False)
 """The shape a proprietary delivery is read in.
 
 It is declared here rather than learnt from the file, as in
@@ -60,7 +60,13 @@ It is declared here rather than learnt from the file, as in
 whose shape the module does not take from what a publisher sent: a delivery is
 written by whoever maintains it, and a reference date read as text or a price
 read as a string would reach the merge as a type the Silver table does not
-hold. The three columns are the three columns of that table, in their order.
+hold. The three columns are the three columns of that table, in their order
+and under their names.
+
+The schema is applied by position, not by the names in the header, so a file
+whose header still reads ``REFDT,INSTRID,VALUE`` -- the names the file carried
+before the columns of the package were put into snake case -- is read the same
+way, and Spark notes the mismatch in its log rather than refusing the file.
 """
 
 
