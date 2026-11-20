@@ -102,6 +102,16 @@ release may change the public API, which `tests/test_public_api.py` lists.
   Commission's. The cross-regime table already added amounts up within a
   regime, and its note now says that a Japanese row is in yen.
 
+### Changed
+
+- `entitymasterdata`: a fund described by the ECB's list of investment funds
+  has the sector `IF`. What the sector used to say -- `UCIT`, `AIFD` or `INVF`,
+  after what the list states about UCITS compliance -- is now its
+  `subsector`, which used to repeat the investment policy that `if_policy`
+  carries. A query that selected funds by `sector in ('UCIT', 'AIFD',
+  'INVF')` selects them by `sector = 'IF'` now, and one that told UCITS from
+  AIFs by the sector does so by the subsector.
+
 ### Fixed
 
 - `firds`: the writes to the historical database fill their Parquet row groups

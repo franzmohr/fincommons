@@ -103,8 +103,8 @@ def write_ecb_investment_fund(config_path, leis, file_name="IF_2026_03.xlsx",
     """Write the ECB list of investment funds.
 
     ``ucits`` is what the register says about compliance, which is what the
-    sector of a fund is read off: a UCITS becomes ``UCIT``, an AIF ``AIFD``,
-    and anything else ``INVF``. It can be given per fund or once for all of
+    subsector of a fund is read off: a UCITS becomes ``UCIT``, an AIF ``AIFD``,
+    and anything else ``INVF``; the sector of every fund is ``IF``. It can be given per fund or once for all of
     them.
     """
     compliance = list(ucits) if isinstance(ucits, (list, tuple)) else [ucits] * len(leis)
@@ -1501,7 +1501,7 @@ def test_each_register_contributes_its_sector(spark, data_lake):
     assert entity(frame, "LEI1").sector == "CCP"
     assert entity(frame, "LEI2").sector == "INUN"
     assert entity(frame, "LEI3").sector == "CDTI"
-    assert entity(frame, "LEI4").sector == "UCIT"
+    assert entity(frame, "LEI4").sector == "IF"
     assert entity(frame, "LEI5").sector == "ORPI"
     assert entity(frame, "LEI4").if_type == "ETF"
     assert entity(frame, "LEI4").if_ucits_compl == "UCITS"
@@ -1668,7 +1668,7 @@ def test_the_public_table_is_the_latest_registers_combined(spark, data_lake):
     assert rows_of(combined) == rows_of(table)
     assert {row.lei: row.sector for row in table.collect()} == {
         "LEI1": "CCP", "LEI2": "INUN", "LEI3": "ORPI", "LEI4": "CDTI",
-        "LEI5": "UCIT", "LEI6": None,
+        "LEI5": "IF", "LEI6": None,
     }
 
 
@@ -1782,8 +1782,8 @@ def test_a_fund_on_no_other_register_is_described_by_the_fund_register_alone(spa
     em.update_silver_entitymasterdata_public(spark, data_lake)
     row = entity(public(spark, data_lake), "LEI1")
 
-    assert row.sector == "UCIT"
-    assert row.subsector == "Bond funds"
+    assert row.sector == "IF"
+    assert row.subsector == "UCIT"
     assert row.if_policy == "Bond funds"
 
 
@@ -1872,9 +1872,10 @@ def test_a_fund_is_described_by_its_ucits_status(spark, data_lake):
     em.update_silver_entitymasterdata_public(spark, data_lake)
     frame = public(spark, data_lake)
 
-    assert entity(frame, "LEI1").sector == "UCIT"
-    assert entity(frame, "LEI2").sector == "AIFD"
-    assert entity(frame, "LEI3").sector == "INVF"
+    assert {entity(frame, lei).sector for lei in ("LEI1", "LEI2", "LEI3")} == {"IF"}
+    assert entity(frame, "LEI1").subsector == "UCIT"
+    assert entity(frame, "LEI2").subsector == "AIFD"
+    assert entity(frame, "LEI3").subsector == "INVF"
     # The compliance column itself keeps its own vocabulary, which is not the
     # sector: the sector says what the entity is, the column what the register
     # reported about it.

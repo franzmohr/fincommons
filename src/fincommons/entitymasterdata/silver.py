@@ -579,17 +579,21 @@ def normalise_gleif_level_2(data):
 def normalise_ecb_investment_fund(data):
     """The funds of one ECB list of investment funds.
 
-    The sector and subsector the list states, and the characteristics of the
-    fund -- ``if_policy``, ``if_type`` and ``if_ucits_compl`` -- which
-    :func:`combine_registers` treats apart from the sector.
+    Every fund has the sector ``IF``. The subsector says what the register
+    states about UCITS compliance: ``UCIT`` for a UCITS, ``AIFD`` for an
+    alternative investment fund and ``INVF`` for a fund the register reports
+    neither about. The characteristics of the fund -- ``if_policy``,
+    ``if_type`` and ``if_ucits_compl`` -- are what
+    :func:`combine_registers` treats apart from the sector; the investment
+    policy is in ``if_policy``.
     """
     return data.transform(with_silver_names) \
         .transform(lambda data: with_normalised_lei(data, "ECB_IF")) \
         .filter(func.col("lei").isNotNull()) \
-        .withColumn("sector", func.when(func.col("UCITS compliance") == "Non-UCITS compliant, AIF", "AIFD") \
-                                  .when(func.col("UCITS compliance") == "UCITS compliant", "UCIT") \
-                                  .otherwise(func.lit("INVF"))) \
-        .withColumn("subsector", func.col("Investment policy")) \
+        .withColumn("sector", func.lit("IF")) \
+        .withColumn("subsector", func.when(func.col("UCITS compliance") == "Non-UCITS compliant, AIF", "AIFD") \
+                                     .when(func.col("UCITS compliance") == "UCITS compliant", "UCIT") \
+                                     .otherwise(func.lit("INVF"))) \
         .withColumn("if_policy", func.col("Investment policy")) \
         .withColumnRenamed("Type of investment fund", "if_type") \
         .withColumn("if_type", func.when(func.col("if_type") == "Exchange traded fund (ETF)", "ETF") \
