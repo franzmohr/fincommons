@@ -150,6 +150,84 @@ def test_an_issuer_presenting_by_liquidity_is_not_held_to_the_asset_split(spark,
     assert "IMBAL_ASSETS" not in codes(spark, config)
 
 
+def with_figures(changes):
+    """The sound report with some figures changed, added (by a concept it
+    does not carry) or, given None, left out."""
+    facts = []
+    for concept, flow, value in SOUND:
+        if concept in changes:
+            value = changes.pop(concept)
+            if value is None:
+                continue
+        facts.append(fact(concept, flow, value))
+    for concept, (flow, value) in changes.items():
+        facts.append(fact(concept, flow, value))
+    return facts
+
+
+def test_the_cash_flows_are_held_to_the_movement_before_exchange_rates(spark, lake):
+    """IAS 7 presents the effect of exchange rates on the cash held apart from
+    the three cash flows, which sum to the movement before it. Read against
+    the movement after it, every issuer with cash in a second currency was
+    out by its exchange differences."""
+    config = lake(with_figures({
+        "ifrs-full:IncreaseDecreaseInCashAndCashEquivalents": 45.0,
+        "ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents": (True, -5.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_the_movement_before_exchange_rates_is_read_where_it_is_tagged(spark, lake):
+    config = lake(with_figures({
+        "ifrs-full:IncreaseDecreaseInCashAndCashEquivalents": 45.0,
+        "ifrs-full:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges": (True, 50.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_the_movement_before_exchange_rates_tagged_as_the_one_after_is_not_a_gap(spark, lake):
+    """A report that puts the movement before the effect under the concept for
+    the movement after it has tagged a line wrongly, but its three cash flows
+    sum to the figure it gives, and that is what the check is about."""
+    config = lake(with_figures({
+        "ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents": (True, -5.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_an_exchange_rate_effect_does_not_hide_a_cash_flow_that_is_off(spark, lake):
+    config = lake(with_figures({
+        "ifrs-full:IncreaseDecreaseInCashAndCashEquivalents": 45.0,
+        "ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents": (True, -5.0),
+        "ifrs-full:CashFlowsFromUsedInOperatingActivities": 180.0,
+    }), [filing_row()])
+
+    assert "IMBAL_CASHFLOW" in codes(spark, config)
+
+
+def test_assets_held_for_sale_presented_below_the_current_assets_are_not_a_gap(spark, lake):
+    """IFRS 5 puts them on a line of their own, which some issuers present
+    beside the current assets rather than among them."""
+    config = lake(with_figures({
+        "ifrs-full:CurrentAssets": 330.0,
+        "ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners": (False, 70.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_assets_held_for_sale_explain_only_a_gap_of_their_own_size(spark, lake):
+    config = lake(with_figures({
+        "ifrs-full:CurrentAssets": 300.0,
+        "ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners": (False, 70.0),
+    }), [filing_row()])
+
+    assert "IMBAL_ASSETS" in codes(spark, config)
+
+
 def test_a_breakdown_is_not_mistaken_for_a_total(spark, lake):
     """A figure broken down by segment is a part and not the whole."""
     facts = sound_facts()

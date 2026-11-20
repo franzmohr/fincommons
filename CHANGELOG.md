@@ -210,6 +210,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `financialreport.esef.quality`: `IMBAL_CASHFLOW` holds the three cash flows
+  to the movement in cash before the effect of exchange rates, which IAS 7
+  presents on a line of its own. It read the movement after that effect, so
+  an issuer with cash in a second currency was out by its exchange
+  differences: 59 of the 72 reports it found faulty in the Austrian and Dutch
+  reports of the lake. The movement is also accepted as tagged, because some
+  reports put the movement before the effect under the concept for the one
+  after it, and their figures agree.
+- `financialreport.esef.quality`: `IMBAL_ASSETS` takes a gap between total
+  assets and the two subtotals as explained where it is the assets held for
+  sale, which some issuers present below the current assets rather than among
+  them, under either of the two concepts the taxonomy has for that line. That
+  was 9 of the 12 reports it found faulty; the 3 left are Österreichische
+  Post's, which presents the assets of bank99 as a third block.
 - `financialreport.edinet`: the quality checks read the dates a filing states
   with `try_to_timestamp` and a cast rather than with `try_to_date`. The
   Python API gained the date function in PySpark 4.1 and Spark 4.0 does not

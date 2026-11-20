@@ -129,6 +129,13 @@ CONCEPTS = {
     "assets": ["ifrs-full:Assets"],
     "current_assets": ["ifrs-full:CurrentAssets"],
     "noncurrent_assets": ["ifrs-full:NoncurrentAssets"],
+    # IFRS 5 presents the assets held for sale on a line of their own. Most
+    # issuers count that line among the current assets, as the taxonomy does;
+    # some present it below them, and their two subtotals then fall short of
+    # total assets by exactly that line. The line has two concepts, with and
+    # without the assets held for distribution to owners, and both are used.
+    "held_for_sale": ["ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners",
+                      "ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSale"],
     "liabilities": ["ifrs-full:Liabilities"],
     "equity": ["ifrs-full:Equity"],
     "equity_and_liabilities": ["ifrs-full:EquityAndLiabilities"],
@@ -148,8 +155,20 @@ CONCEPTS = {
     "operating_cash_flow": ["ifrs-full:CashFlowsFromUsedInOperatingActivities"],
     "investing_cash_flow": ["ifrs-full:CashFlowsFromUsedInInvestingActivities"],
     "financing_cash_flow": ["ifrs-full:CashFlowsFromUsedInFinancingActivities"],
-    "cash_change": ["ifrs-full:IncreaseDecreaseInCashAndCashEquivalents",
-                    "ifrs-full:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges"],
+    # The three cash flows sum to the movement in cash before the effect of
+    # exchange rates on the cash held, which IAS 7 presents on a line of its
+    # own. The check reads the movement before it where it is tagged and
+    # otherwise takes the effect off the movement after it; read against the
+    # movement after it, every issuer holding cash in a second currency was out
+    # by its exchange differences -- 59 of the 72 reports the check had found
+    # faulty among the Austrian and Dutch reports of the lake it was corrected
+    # on. Twenty other reports tag the movement before the effect under the
+    # concept for the movement after it, and their three cash flows sum to it
+    # exactly; that is a tag put on the wrong line, not figures that
+    # contradict one another, so the check accepts either reading.
+    "cash_change_before_fx": ["ifrs-full:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges"],
+    "cash_change": ["ifrs-full:IncreaseDecreaseInCashAndCashEquivalents"],
+    "fx_effect_on_cash": ["ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents"],
 }
 
 #: The columns that identify the record an issue is about. Every check returns
@@ -229,12 +248,18 @@ def check_imbalanced_assets(state):
 
     IAS 1 lets an issuer present its assets in order of liquidity instead of
     splitting them, in which case it tags neither subtotal and the check
-    passes over the filing rather than reporting it.
+    passes over the filing rather than reporting it. An issuer that presents
+    its assets held for sale below the current assets rather than among them
+    is short by that line, and the difference is taken as explained where it
+    is that line.
     """
+    gap = (func.col("assets") - func.col("current_assets")
+           - func.col("noncurrent_assets"))
+    explained = func.abs(gap - func.col("held_for_sale")) \
+        <= func.abs(func.col("assets")) * TOLERANCE
     return _imbalance(
         state["figures"],
-        func.col("assets") - func.col("current_assets")
-        - func.col("noncurrent_assets"),
+        func.when(explained, func.lit(0.0)).otherwise(gap),
         func.col("assets"))
 
 
@@ -257,12 +282,41 @@ def check_imbalanced_profit(state):
         func.col("revenue"))
 
 
+def cash_change_before_fx():
+    """The movement in cash the three cash flows sum to.
+
+    The movement before the effect of exchange rates where the report tags
+    it, and otherwise the movement after it less that effect, which is
+    nothing where the report states none.
+    """
+    return func.coalesce(
+        func.col("cash_change_before_fx"),
+        func.col("cash_change")
+        - func.coalesce(func.col("fx_effect_on_cash"), func.lit(0.0)))
+
+
+def _smaller(a, b):
+    """Whichever of two differences is nearer nothing, and the one that is
+    known where only one is."""
+    return (func.when(a.isNull(), b).when(b.isNull(), a)
+            .when(func.abs(a) <= func.abs(b), a).otherwise(b))
+
+
 def check_imbalanced_cashflow(state):
-    """The three cash flows against the movement in cash."""
+    """The three cash flows against the movement in cash.
+
+    The movement is read before the effect of exchange rates, and, where the
+    report tags the movement after it, also as the report tags it, since a
+    report that puts the movement before the effect under the concept for the
+    one after it has tagged a line wrongly but has figures that agree. The
+    report is out where neither reading agrees with the three cash flows.
+    """
+    flows = (func.col("operating_cash_flow") + func.col("investing_cash_flow")
+             + func.col("financing_cash_flow"))
     return _imbalance(
         state["figures"],
-        func.col("cash_change") - func.col("operating_cash_flow")
-        - func.col("investing_cash_flow") - func.col("financing_cash_flow"),
+        _smaller(cash_change_before_fx() - flows,
+                 func.col("cash_change") - flows),
         func.col("assets"))
 
 
