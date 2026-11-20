@@ -543,29 +543,57 @@ def update_silver_entitymasterdata_public(spark, config_path, file_format = None
         )
 
 
-def _update_silver_entitymasterdata_public(spark, config_path, file_format, outcome):
-    """Do the work of :func:`update_silver_entitymasterdata_public`."""
-    # GLEIF Level 1 data, which says who the entity is
-    gleif_1 = spark.read.parquet(
-        latest_bronze_file(common.path_bronze_gleif_level_1(config_path))
-    ).transform(with_silver_names)
-    gleif_1 = with_normalised_lei(gleif_1, "GLEIF_L1")
+# Reading one register
+# --------------------------------------------------------------------------
+#
+# Each register is read from one file of the Bronze layer -- one snapshot of
+# it -- into the rows the combination below works with, the LEI normalised and
+# every column named as the Silver layer names it. A function here says what a
+# register states and nothing about which register wins: that is decided once,
+# in :func:`combine_registers`, so that the table built from the latest
+# snapshots and a history built from every snapshot apply the same rules.
 
-    # GLEIF Level 2 data, which says how entities are related to one another
-    gleif_2 = spark.read.parquet(
-        latest_bronze_file(common.path_bronze_gleif_level_2(config_path))
-    ).transform(with_silver_names)
 
-    # ECB investment funds
-    invfund = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_ecb_investment_fund(config_path))
-        ).transform(with_silver_names) \
+def normalise_gleif_level_1(data):
+    """The entities of one GLEIF Level 1 golden copy: who an LEI is."""
+    return with_normalised_lei(data.transform(with_silver_names), "GLEIF_L1")
+
+
+def normalise_gleif_level_2(data):
+    """The current relationships of one GLEIF Level 2 golden copy, one row per LEI.
+
+    The ultimate parent and, for a fund, the asset management company, which
+    are the same reading of the same file under different relationship types.
+    Both go through :func:`active_relationship`, so that neither can be read
+    without the status of the relationship being taken into account.
+    """
+    data = data.transform(with_silver_names)
+    return active_relationship(
+        data, "IS_ULTIMATELY_CONSOLIDATED_BY", "ultimate_parent_lei"
+    ).join(
+        active_relationship(data, "IS_FUND-MANAGED_BY", "amc"),
+        on="lei", how="fullouter",
+    )
+
+
+def normalise_ecb_investment_fund(data):
+    """The funds of one ECB list of investment funds.
+
+    Every fund has the sector ``IF``. The subsector says what the register
+    states about UCITS compliance: ``UCIT`` for a UCITS, ``AIFD`` for an
+    alternative investment fund and ``INVF`` for a fund the register reports
+    neither about. The characteristics of the fund -- ``if_policy``,
+    ``if_type`` and ``if_ucits_compl`` -- are what
+    :func:`combine_registers` treats apart from the sector; the investment
+    policy is in ``if_policy``.
+    """
+    return data.transform(with_silver_names) \
         .transform(lambda data: with_normalised_lei(data, "ECB_IF")) \
         .filter(func.col("lei").isNotNull()) \
-        .withColumn("sector", func.when(func.col("UCITS compliance") == "Non-UCITS compliant, AIF", "AIFD") \
-                                  .when(func.col("UCITS compliance") == "UCITS compliant", "UCIT") \
-                                  .otherwise(func.lit("INVF"))) \
-        .withColumn("subsector", func.col("Investment policy")) \
+        .withColumn("sector", func.lit("IF")) \
+        .withColumn("subsector", func.when(func.col("UCITS compliance") == "Non-UCITS compliant, AIF", "AIFD") \
+                                     .when(func.col("UCITS compliance") == "UCITS compliant", "UCIT") \
+                                     .otherwise(func.lit("INVF"))) \
         .withColumn("if_policy", func.col("Investment policy")) \
         .withColumnRenamed("Type of investment fund", "if_type") \
         .withColumn("if_type", func.when(func.col("if_type") == "Exchange traded fund (ETF)", "ETF") \
@@ -580,6 +608,71 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
             data, ["lei", "sector", "subsector", "if_policy", "if_type", "if_ucits_compl"]
         ))
 
+
+def normalise_ecb_mfi(data):
+    """The institutions of one ECB list of MFIs, with the sector their category gives.
+
+    The register is read before the sector is derived from it, so that a
+    category the module does not know can be named in the log.
+    """
+    register = data.transform(with_silver_names) \
+        .transform(lambda data: with_normalised_lei(data, "ECB_MFI")) \
+        .filter(func.col("lei").isNotNull())
+    warn_of_unknown_mfi_categories(register)
+    return register \
+        .withColumn("sector", mfi_sector()) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
+
+
+def normalise_eiopa_insurance_undertaking(data):
+    """The undertakings of one EIOPA register of insurance undertakings."""
+    return data.transform(with_silver_names) \
+        .transform(lambda data: with_normalised_lei(data, "EIOPA_INUN")) \
+        .filter(func.col("lei").isNotNull()) \
+        .withColumn("sector", func.lit("INUN")) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
+
+
+def normalise_eiopa_iorp(data):
+    """The institutions of one EIOPA register of IORPs."""
+    return data.transform(with_silver_names) \
+        .transform(lambda data: with_normalised_lei(data, "EIOPA_IORP")) \
+        .filter(func.col("lei").isNotNull()) \
+        .withColumn("sector", func.lit("ORPI")) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
+
+
+def normalise_esma_ccp(data):
+    """The CCPs of one ESMA list of CCPs."""
+    return data.transform(with_silver_names) \
+        .transform(lambda data: with_normalised_lei(data, "ESMA_CCP")) \
+        .filter(func.col("lei").isNotNull()) \
+        .transform(lambda data: text_columns(data, ["lei", "sector", "subsector"]))
+
+
+# Combining the registers
+# --------------------------------------------------------------------------
+
+
+def combine_registers(gleif_1, relationships, ccp, inun, orpi, mfi, invfund):
+    """Combine the registers into the public entity master data, one row per LEI.
+
+    The arguments are the registers as the ``normalise_`` functions of this
+    module return them, each from one snapshot. Which snapshots they are is the
+    caller's business: :func:`update_silver_entitymasterdata_public` passes the
+    latest of each.
+
+    Parameters
+    ----------
+    gleif_1: pyspark.sql.DataFrame
+        :func:`normalise_gleif_level_1`.
+    relationships: pyspark.sql.DataFrame
+        :func:`normalise_gleif_level_2`.
+    ccp, inun, orpi, mfi, invfund: pyspark.sql.DataFrame
+        :func:`normalise_esma_ccp`, :func:`normalise_eiopa_insurance_undertaking`,
+        :func:`normalise_eiopa_iorp`, :func:`normalise_ecb_mfi` and
+        :func:`normalise_ecb_investment_fund`.
+    """
     # The fund register makes two different kinds of statement, and only one of
     # them is contested. The sector is a claim about what the entity is, which
     # the registers below argue over and the narrowest of them wins. The fund
@@ -599,44 +692,6 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
          func.col("if_policy").asc_nulls_last()],
     )
     invfund = invfund.select("lei", "sector", "subsector")
-
-    # ECB MFIs. The register is read before the sector is derived from it, so
-    # that a category the module does not know can be named in the log.
-    mfi_register = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_ecb_mfi(config_path))
-        ).transform(with_silver_names) \
-        .transform(lambda data: with_normalised_lei(data, "ECB_MFI")) \
-        .filter(func.col("lei").isNotNull())
-    warn_of_unknown_mfi_categories(mfi_register)
-    mfi = mfi_register \
-        .withColumn("sector", mfi_sector()) \
-        .transform(lambda data: text_columns(data, ["lei", "sector"]))
-
-    # EIOPA insurance undertakings
-    inun = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_eiopa_insurance_undertaking(config_path))
-        ).transform(with_silver_names) \
-        .transform(lambda data: with_normalised_lei(data, "EIOPA_INUN")) \
-        .filter(func.col("lei").isNotNull()) \
-        .withColumn("sector", func.lit("INUN")) \
-        .transform(lambda data: text_columns(data, ["lei", "sector"]))
-
-    # EIOPA institutions for occupational retirement provision
-    orpi = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_eiopa_iorp(config_path))
-        ).transform(with_silver_names) \
-        .transform(lambda data: with_normalised_lei(data, "EIOPA_IORP")) \
-        .filter(func.col("lei").isNotNull()) \
-        .withColumn("sector", func.lit("ORPI")) \
-        .transform(lambda data: text_columns(data, ["lei", "sector"]))
-
-    # ESMA CCPs, one list per day of download, the latest of which is current.
-    ccp = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_esma_ccp(config_path))
-        ).transform(with_silver_names) \
-        .transform(lambda data: with_normalised_lei(data, "ESMA_CCP")) \
-        .filter(func.col("lei").isNotNull()) \
-        .transform(lambda data: text_columns(data, ["lei", "sector", "subsector"]))
 
     # An entity can appear in more than one register: a central counterparty is
     # licensed as a credit institution in several member states, and a fund can
@@ -699,18 +754,201 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     # sector step would have put in SUBSECTOR is what IF_POLICY carries.
     result = result.join(fund_characteristics, on = "lei", how = "leftouter")
 
-    # Generate information on the ultimate parent based on GLEIF Level 2 data,
-    # and on a fund's asset management company, which is the same reading of
-    # the same file under a different relationship type. Both go through
-    # :func:`active_relationship`, so that neither can be read without the
-    # status of the relationship being taken into account.
-    result = result.join(
-        active_relationship(gleif_2, "IS_ULTIMATELY_CONSOLIDATED_BY", "ultimate_parent_lei"),
-        on = "lei", how = "leftouter",
+    # And with the ultimate parent and the asset management company GLEIF
+    # Level 2 reports for it.
+    return result.join(relationships, on = "lei", how = "leftouter")
+
+
+# The registers as they stood on a day
+# --------------------------------------------------------------------------
+
+
+#: The registers :func:`entities_as_of` combines, with the Bronze folder of
+#: each and the ``normalise_`` function that reads one snapshot of it.
+SNAPSHOT_REGISTERS = {
+    "gleif_1": (common.path_bronze_gleif_level_1, normalise_gleif_level_1),
+    "relationships": (common.path_bronze_gleif_level_2, normalise_gleif_level_2),
+    "ccp": (common.path_bronze_esma_ccp, normalise_esma_ccp),
+    "inun": (common.path_bronze_eiopa_insurance_undertaking,
+             normalise_eiopa_insurance_undertaking),
+    "orpi": (common.path_bronze_eiopa_iorp, normalise_eiopa_iorp),
+    "mfi": (common.path_bronze_ecb_mfi, normalise_ecb_mfi),
+    "invfund": (common.path_bronze_ecb_investment_fund, normalise_ecb_investment_fund),
+}
+
+
+def snapshot_dates(folder):
+    """The Bronze snapshots of one register by their reference date, oldest first.
+
+    A register is stored one file per reference date, named ``YYYYMMDD`` or
+    ``YYYY-MM-DD``. A file whose name carries no date -- the list of CCPs an
+    earlier version stored as ``ccp_list``, replacing it on every import -- is
+    dated by the day it was last written, which is the day of the download it
+    holds.
+
+    Returns
+    -------
+    list of tuple
+        Pairs of the reference date, :class:`datetime.date`, and the path.
+    """
+    import datetime as _datetime
+
+    snapshots = []
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        if not name.endswith(".parquet"):
+            continue
+        digits = "".join(c for c in name if c.isdigit())[:8]
+        path = os.path.join(folder, name)
+        try:
+            day = _datetime.datetime.strptime(digits, "%Y%m%d").date()
+        except ValueError:
+            day = _datetime.date.fromtimestamp(os.path.getmtime(path))
+        snapshots.append((day, path))
+    return sorted(snapshots)
+
+
+def snapshot_as_of(snapshots, day):
+    """The latest of ``snapshots`` on or before ``day``, or ``None``."""
+    held = [snapshot for snapshot in snapshots if snapshot[0] <= day]
+    return held[-1] if held else None
+
+
+def entities_as_of(spark, config_path, day):
+    """The public entity master data as the registers stood on ``day``.
+
+    Every register is read from its latest snapshot on or before ``day`` and
+    the registers are combined by :func:`combine_registers`, the rules the
+    public table is built by. A sectoral register with no snapshot by then
+    contributes nothing, which :func:`sector_counts_over_time` reports apart
+    from a register that had no entity of a sector.
+
+    GLEIF is the exception. It is the frame the registers are joined onto
+    rather than a statement about a sector, so where no golden copy of ``day``
+    or before is held the earliest one is used. A golden copy keeps every LEI
+    ever issued, lapsed and retired ones included, so an entity a register
+    names on ``day`` is in any later copy; what the later copy changes is the
+    name and the relationships, which a count of sectors does not read.
+
+    Returns
+    -------
+    tuple
+        The combined frame, and a dict of the snapshot each register was read
+        from, its reference date or ``None``.
+    """
+    frames, used = {}, {}
+    for name, (path_of, normalise) in SNAPSHOT_REGISTERS.items():
+        snapshots = snapshot_dates(path_of(config_path))
+        if not snapshots:
+            raise FileNotFoundError(
+                f"The Bronze layer holds no dated snapshot of {name!r} in "
+                f"{path_of(config_path)!r}."
+            )
+        snapshot = snapshot_as_of(snapshots, day)
+        if snapshot is None and name in ("gleif_1", "relationships"):
+            snapshot = snapshots[0]
+        if snapshot is None:
+            frames[name] = normalise(spark.read.parquet(snapshots[0][1]).limit(0))
+            used[name] = None
+        else:
+            frames[name] = normalise(spark.read.parquet(snapshot[1]))
+            used[name] = snapshot[0]
+    return combine_registers(**frames), used
+
+
+def sector_counts_over_time(spark, config_path, dates=None):
+    """How many entities each sector held, on every date a register was published.
+
+    For every date, :func:`entities_as_of` combines the registers as they
+    stood on it and the entities are counted by ``sector``, ``subsector`` and
+    ``if_policy``, so that a report can show a sector as a whole or broken
+    down by what its register says beyond the sector. This is the history of
+    the registers in miniature: one snapshot per register and date, read and
+    combined by the same rules as the public table.
+
+    Parameters
+    ----------
+    spark: pyspark.sql.session.SparkSession
+        An active Spark session.
+    config_path: str
+        Path to the configuration file, where paths are specified. This must be a yaml-file.
+    dates: list of datetime.date, optional
+        The dates to count on. Every reference date of a snapshot of a
+        sectoral register where left out.
+
+    Returns
+    -------
+    tuple of pandas.DataFrame
+        The counts, with the columns ``date``, ``sector``, ``subsector``,
+        ``if_policy`` and ``entities``; and the snapshots behind them, with
+        ``date``, ``register`` and ``snapshot``, ``None`` where the register
+        had no snapshot by then.
+    """
+    import pandas
+
+    if dates is None:
+        sectoral = [n for n in SNAPSHOT_REGISTERS if n not in ("gleif_1", "relationships")]
+        dates = sorted({day for name in sectoral
+                        for day, _ in snapshot_dates(SNAPSHOT_REGISTERS[name][0](config_path))})
+    counts, coverage = [], []
+    for day in dates:
+        entities, used = entities_as_of(spark, config_path, day)
+        frame = entities.filter(func.col("sector").isNotNull()) \
+            .groupBy("sector", "subsector", "if_policy").count() \
+            .withColumnRenamed("count", "entities").toPandas()
+        frame.insert(0, "date", day)
+        counts.append(frame)
+        coverage += [{"date": day, "register": name, "snapshot": snapshot}
+                     for name, snapshot in used.items()]
+    columns = ["date", "sector", "subsector", "if_policy", "entities"]
+    counts = pandas.concat(counts, ignore_index=True) if counts else pandas.DataFrame(columns=columns)
+    return counts[columns], pandas.DataFrame(coverage, columns=["date", "register", "snapshot"])
+
+
+def write_sector_counts(spark, config_path):
+    """Write :func:`sector_counts_over_time` beside the Silver layer, for the sector report.
+
+    The counts go to ``sector_counts.parquet`` and the snapshots behind them to
+    ``sector_snapshots.parquet``, in the Silver folder of the module, which is
+    where the template ``entitymasterdata-sector-report.qmd`` reads them.
+
+    Returns
+    -------
+    str
+        The folder written to.
+    """
+    folder = common.path_silver_base(config_path)
+    if folder is None:
+        raise ValueError("The sector counts are written as files, which a Silver "
+                         "layer addressed by catalogue name has no folder for.")
+    counts, coverage = sector_counts_over_time(spark, config_path)
+    os.makedirs(folder, exist_ok=True)
+    counts.to_parquet(os.path.join(folder, "sector_counts.parquet"), index=False)
+    coverage.to_parquet(os.path.join(folder, "sector_snapshots.parquet"), index=False)
+    logger.info(
+        "Wrote the sector counts of the registers over time",
+        extra=context(module="entitymasterdata", layer="silver",
+                      dates=int(counts["date"].nunique()), rows=len(counts)),
     )
-    result = result.join(
-        active_relationship(gleif_2, "IS_FUND-MANAGED_BY", "amc"),
-        on = "lei", how = "leftouter",
+    return folder
+
+
+def _update_silver_entitymasterdata_public(spark, config_path, file_format, outcome):
+    """Do the work of :func:`update_silver_entitymasterdata_public`."""
+    def latest(path):
+        return spark.read.parquet(latest_bronze_file(path))
+
+    result = combine_registers(
+        gleif_1=normalise_gleif_level_1(
+            latest(common.path_bronze_gleif_level_1(config_path))),
+        relationships=normalise_gleif_level_2(
+            latest(common.path_bronze_gleif_level_2(config_path))),
+        ccp=normalise_esma_ccp(latest(common.path_bronze_esma_ccp(config_path))),
+        inun=normalise_eiopa_insurance_undertaking(
+            latest(common.path_bronze_eiopa_insurance_undertaking(config_path))),
+        orpi=normalise_eiopa_iorp(latest(common.path_bronze_eiopa_iorp(config_path))),
+        mfi=normalise_ecb_mfi(latest(common.path_bronze_ecb_mfi(config_path))),
+        invfund=normalise_ecb_investment_fund(
+            latest(common.path_bronze_ecb_investment_fund(config_path))),
     )
 
     common.write_silver(
@@ -962,11 +1200,19 @@ __all__ = [
     "MFI_SECTOR_OTHER",
     "active_relationship",
     "check_internal_list",
+    "combine_registers",
     "first_per_lei",
     "latest_bronze_file",
     "with_silver_names",
     "SILVER_NAMES",
     "mfi_sector",
+    "normalise_ecb_investment_fund",
+    "normalise_ecb_mfi",
+    "normalise_eiopa_insurance_undertaking",
+    "normalise_eiopa_iorp",
+    "normalise_esma_ccp",
+    "normalise_gleif_level_1",
+    "normalise_gleif_level_2",
     "normalised_lei",
     "read_internal_list",
     "text_columns",
@@ -978,4 +1224,10 @@ __all__ = [
     "with_internal_id_columns",
     "INTERNAL_ID_SILVER",
     "with_normalised_lei",
+    "write_sector_counts",
+    "snapshot_dates",
+    "snapshot_as_of",
+    "sector_counts_over_time",
+    "entities_as_of",
+    "SNAPSHOT_REGISTERS",
 ]

@@ -183,6 +183,7 @@ The session is asked for rather than taken from whichever one happens to be acti
 
 A GLEIF entry in the Bronze layer is therefore a parquet *directory* where a session was given and a parquet *file* where it was not. Both are read the same way, by `spark.read.parquet`, and the Silver layer picks up whichever is there.
 
+
 ## 3 Updating the Silver layer
 
 ### 3.1 Public entity master data set
@@ -206,7 +207,7 @@ GLEIF Level 1 supplies the row itself, with the name and the country. The sector
 | EIOPA insurance undertakings | `INUN` |
 | EIOPA IORPs | `ORPI` |
 | ECB MFIs | `CB`, `CDTI`, `OFI` or `MMF`, after the category of the register, and `MFI` where the category is not one of the four |
-| ECB investment funds | `UCIT`, `AIFD` or `INVF`, after what the register says about UCITS compliance, with the investment policy as `subsector` |
+| ECB investment funds | `IF`, with `UCIT`, `AIFD` or `INVF` as `subsector` after what the register says about UCITS compliance |
 
 Every register is joined on the lei as text, so an lei is first written the way GLEIF writes it: blanks removed -- the non-breaking space a spreadsheet leaves among them -- and letters in upper case. An lei holds neither, so this changes no lei that was well-formed, and it is what the registers need: the ESMA list of CCPs of September 2026 carried six LEIs with a trailing space and the EIOPA IORP register three in lower case, which, joined as they stand, leave two central counterparties and three pension funds without a sector. An lei that still does not look like one -- eighteen letters or digits and two check digits -- is kept, but named in a warning with the register it came from, because it will not match GLEIF.
 
@@ -216,7 +217,7 @@ An entity can stand in more than one of them -- a central counterparty is licens
 
 `if_policy`, `if_type` and `if_ucits_compl` are not part of this contest. They are facts about a fund that no other register carries, so they are taken from the fund register whichever register ends up describing the entity. A money market fund is the case this matters for, because it stands on the list of MFIs by definition and that register wins the sector; taken from the winning row, the fund characteristics would be lost along with the row the contest discards.
 
-`subsector` is part of the contest, and stays the statement of the register that won it. It is the refinement that register offers, so filling it in from the fund register once another register has taken the sector would pair a sector from one taxonomy with a refinement from another. A fund loses nothing by that, because the investment policy the fund register would have contributed as `subsector` is what `if_policy` carries.
+`subsector` is part of the contest, and stays the statement of the register that won it. It is the refinement that register offers, so filling it in from the fund register once another register has taken the sector would pair a sector from one taxonomy with a refinement from another. A fund that loses the sector to another register loses little by that, because whether it is a UCITS -- what the fund register would have contributed as `subsector` -- is what `if_ucits_compl` carries, and its investment policy is in `if_policy`.
 
 The `MFI` sector is the fallback for a category the module does not recognise. A category the ECB relabels, or a list converted by hand in a way that alters the spelling, would otherwise leave the sector empty -- and an empty sector is what an entity no register covers carries, which is the one thing an institution that is on the register is not. The categories that fell through are named in a warning, so the run says where the description is coarser than the register would allow.
 
@@ -287,6 +288,18 @@ The columns are taken from the header, so they may come in any order and the ide
 * without an `LEI` column, which would displace nothing;
 * with a column the table above does not name -- `Sector` for `SECTOR`, say -- which would otherwise be dropped when the table is written, with everything the list says under it;
 * that describes an LEI more than once, however it is spelled, since the choice between the two rows would then be left to the order Spark reads them in.
+
+### The sector report
+
+`write_sector_counts` counts the entities of every sector on every date a register was published, and the template `templates/entitymasterdata-sector-report.qmd` turns the counts into a report on banks, insurers and investment funds over time, the funds broken down by UCITS compliance and by investment policy. Each date combines the latest snapshot of every register on or before it by the rules the public table is built by (`entities_as_of`), so the report is the history of the registers in miniature. A register with no snapshot by a date is shown as not yet collected rather than as zero.
+
+```python
+em.write_sector_counts(spark, config_path)
+```
+
+```bash
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render entitymasterdata-sector-report.qmd
+```
 
 ## 4 All-in-one function
 

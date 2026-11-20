@@ -8,6 +8,31 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `entitymasterdata`: `entities_as_of` combines the registers as they stood on a
+  day -- the latest Bronze snapshot of each on or before it, read and combined
+  by the rules of the public table -- and `sector_counts_over_time` counts
+  the entities of every sector, subsector and investment policy on every date
+  a register was published. `write_sector_counts` writes the counts beside
+  the Silver layer, and the template `entitymasterdata-sector-report.qmd`
+  reports banks, insurers and investment funds over time from them. On the
+  Bronze layer of 20 November 2026 the funds reach back to March 2025; the
+  MFI list and EIOPA's and ESMA's registers, published only as they stand,
+  begin with the first download.
+
+- `entitymasterdata`: the Silver build reads and combines the registers in two
+  steps that can be called on their own. A `normalise_<register>` function per
+  register -- `normalise_gleif_level_1`, `normalise_gleif_level_2`,
+  `normalise_esma_ccp`, `normalise_eiopa_insurance_undertaking`,
+  `normalise_eiopa_iorp`, `normalise_ecb_mfi`, `normalise_ecb_investment_fund`
+  -- turns one Bronze snapshot into the rows that register states, and
+  `combine_registers` applies the precedence between them, the fund
+  characteristics and the GLEIF relationships.
+  `update_silver_entitymasterdata_public` is the two applied to the latest
+  snapshot of each register, so that a history built from every snapshot will
+  apply the same rules. Built from the Bronze layer of 20 November 2026, the
+  public table is identical before and after: 3,500,479 rows, the same columns
+  in the same order, no row in one that is not in the other.
+
 - `firds`: `vacuum_silver_main` deletes the files of the historical database
   that no version within `retention_hours` reads, a week by default as in
   Delta. Every merge and compaction leaves the files it replaced behind, so
@@ -101,6 +126,14 @@ release may change the public API, which `tests/test_public_api.py` lists.
   `c` sorts after every digit and the undated list would otherwise be taken
   for the latest; a dated list of the same day stops the import rather than
   either being dropped.
+
+- `entitymasterdata`: a fund described by the ECB's list of investment funds
+  has the sector `IF`. What the sector used to say -- `UCIT`, `AIFD` or `INVF`,
+  after what the list states about UCITS compliance -- is now its
+  `subsector`, which used to repeat the investment policy that `if_policy`
+  carries. A query that selected funds by `sector in ('UCIT', 'AIFD',
+  'INVF')` selects them by `sector = 'IF'` now, and one that told UCITS from
+  AIFs by the sector does so by the subsector.
 
 ### Fixed
 
