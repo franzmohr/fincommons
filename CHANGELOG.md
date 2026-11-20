@@ -8,6 +8,18 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `sts`: a new module for ESMA's public register of the securitisations
+  notified as simple, transparent and standardised, read through the
+  machine-to-machine services of the registers portal, which need no key. The
+  Bronze layer collects one complete, dated snapshot of the register per run
+  and the four spreadsheets ESMA publishes beside it. A snapshot is never
+  rewritten: the register is current state, a cancelled notification leaves it,
+  and the spreadsheets that recorded removals were frozen in 2022, so the
+  snapshots are the only record of what the register once held. Every
+  collection reports which of the fields expected of every notification are
+  missing and which have appeared. The Silver tables are being designed from
+  the snapshots and are not here yet.
+
 - `esef`: two factsheets on one country, `esef-country-quality-factsheet.qmd`
   and `esef-country-economic-factsheet.qmd`. Each takes the country from
   `FINCOMMONS_COUNTRY` and reads everything else from the lake. The quality
