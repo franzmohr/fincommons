@@ -53,12 +53,12 @@ facts = esef.connect_to_esef(spark, "paths.yaml")
 from pyspark.sql import functions as F
 
 revenue = (facts
-    .filter((F.col("COUNTRY") == "AT")
-            & (F.col("CONCEPT") == "ifrs-full:Revenue")
-            & F.col("DIMENSIONS").isNull()
-            & (F.col("PRDEND") == F.col("PERIODEND")))
-    .join(filings.select("FILING", "NAME"), "FILING")
-    .select("LEI", "NAME", "PERIODEND", "UNIT", "VALUE"))
+    .filter((F.col("country") == "AT")
+            & (F.col("concept") == "ifrs-full:Revenue")
+            & F.col("dimensions").isNull()
+            & (F.col("prd_end") == F.col("period_end")))
+    .join(filings.select("filing", "name"), "filing")
+    .select("lei", "name", "period_end", "unit", "value"))
 ```
 
 An issuer may file the same report more than once -- in two languages, or corrected -- and each filing is a row of `filings` with facts of its own. The facts are keyed by `lei`, which joins them with the entity master data of `fincommons.entitymasterdata`, and an amount is converted into another currency with `fincommons.exchangerate`.
@@ -190,7 +190,7 @@ from fincommons.dataquality import describe_check, issue_counts
 esef.update_silver_esef_quality(spark, "paths.yaml", countries=["AT"])
 
 issues = esef.connect_to_esef_issues(spark, "paths.yaml")
-issue_counts(issues, by=["COUNTRY"], dataset="esef").show()
+issue_counts(issues, by=["country"], dataset="esef").show()
 print(describe_check("HIGH_EXTENSION_SHARE"))
 ```
 
