@@ -54,7 +54,7 @@ The pieces, in the order :func:`build_curves` runs them::
 
     pillars = read_pillars(spark, prices, refdt)    # quotes -> {ccy: {years: rate}}
     segments = segment_frame(spark, build_segments(pillars))
-    discounted = add_discount_factor(payments, segments, "CCY", "YEARS", "DF")
+    discounted = add_discount_factor(payments, segments, "currency", "years", "discount_factor")
 
 The module needs Spark, as the rest of marketpricedata does, and is imported by name
 rather than through the star import of the package, because names such as
@@ -117,11 +117,11 @@ MONEY_MARKET_UP_TO = 365 / 360
 #: at all still produces a frame Spark can join against rather than an empty
 #: one with no columns.
 SEGMENTS = StructType([
-    StructField("CCY", StringType()),
-    StructField("T_FROM", DoubleType()),
-    StructField("T_TO", DoubleType()),
-    StructField("LOGDF_FROM", DoubleType()),
-    StructField("FWD", DoubleType()),
+    StructField("currency", StringType()),
+    StructField("years_from", DoubleType()),
+    StructField("years_to", DoubleType()),
+    StructField("log_discount_from", DoubleType()),
+    StructField("forward_rate", DoubleType()),
 ])
 
 _TENOR = re.compile(r"^(\d+)([DWMY])$")
@@ -206,7 +206,7 @@ def build_segments(pillars):
 
     .. code::
 
-        D(t) = LOGDF_FROM - FWD * (t - T_FROM)
+        D(t) = log_discount_from - forward_rate * (t - years_from)
 
     in logarithms. That is log-linear interpolation in the discount factors,
     written in the form in which it is cheapest to evaluate: finding the
@@ -246,20 +246,20 @@ def build_segments(pillars):
             logdf = math.log(discount_of(rate, years))
             forward = (previous_logdf - logdf) / (years - previous_t)
             segments.append({
-                "CCY": currency,
-                "T_FROM": previous_t,
-                "T_TO": years,
-                "LOGDF_FROM": previous_logdf,
-                "FWD": forward,
+                "currency": currency,
+                "years_from": previous_t,
+                "years_to": years,
+                "log_discount_from": previous_logdf,
+                "forward_rate": forward,
             })
             previous_t, previous_logdf = years, logdf
 
         segments.append({
-            "CCY": currency,
-            "T_FROM": previous_t,
-            "T_TO": float("inf"),
-            "LOGDF_FROM": previous_logdf,
-            "FWD": forward,
+            "currency": currency,
+            "years_from": previous_t,
+            "years_to": float("inf"),
+            "log_discount_from": previous_logdf,
+            "forward_rate": forward,
         })
 
     return segments
@@ -415,9 +415,9 @@ def add_discount_factor(df, segments, currency_col, years_col, out_col, keys = N
     # both sides.
     segments = func.broadcast(segments)
 
-    condition = (df[currency_col] == segments["CCY"]) \
-        & (df[years_col] >= segments["T_FROM"]) \
-        & (df[years_col] < segments["T_TO"])
+    condition = (df[currency_col] == segments["currency"]) \
+        & (df[years_col] >= segments["years_from"]) \
+        & (df[years_col] < segments["years_to"])
     for key in keys or []:
         condition = condition & (df[key] == segments[key])
 
@@ -425,10 +425,10 @@ def add_discount_factor(df, segments, currency_col, years_col, out_col, keys = N
 
     return matched \
         .withColumn(out_col,
-                    func.exp(segments["LOGDF_FROM"]
-                             - segments["FWD"] * (df[years_col] - segments["T_FROM"]))) \
-        .drop(segments["CCY"], segments["T_FROM"], segments["T_TO"],
-              segments["LOGDF_FROM"], segments["FWD"],
+                    func.exp(segments["log_discount_from"]
+                             - segments["forward_rate"] * (df[years_col] - segments["years_from"]))) \
+        .drop(segments["currency"], segments["years_from"], segments["years_to"],
+              segments["log_discount_from"], segments["forward_rate"],
               *[segments[key] for key in keys or []])
 
 
@@ -464,7 +464,7 @@ def parallel_shift(segments, shifts):
     segments: pyspark.sql.DataFrame
         The curve segments, as :func:`segment_frame` returned them.
     shifts: pyspark.sql.DataFrame
-        ``CCY``, ``SHOCK`` and ``SHIFT``: the size of the movement in standard
+        ``currency``, ``shock`` and ``shift``: the size of the movement in standard
         deviations, and what it comes to as an absolute change in the rate.
         Both are carried, because a result is labelled in standard deviations
         and the curve is moved in rates.
@@ -472,16 +472,16 @@ def parallel_shift(segments, shifts):
     Returns
     -------
     pyspark.sql.DataFrame
-        The columns of :data:`SEGMENTS` and ``SHOCK``, one set of segments per
+        The columns of :data:`SEGMENTS` and ``shock``, one set of segments per
         currency and assumed state.
     """
-    shifted = segments.join(func.broadcast(shifts), "CCY", "inner")
+    shifted = segments.join(func.broadcast(shifts), "currency", "inner")
 
     return shifted \
-        .withColumn("LOGDF_FROM",
-                    func.col("LOGDF_FROM") - func.col("SHIFT") * func.col("T_FROM")) \
-        .withColumn("FWD", func.col("FWD") + func.col("SHIFT")) \
-        .select("CCY", "SHOCK", "T_FROM", "T_TO", "LOGDF_FROM", "FWD")
+        .withColumn("log_discount_from",
+                    func.col("log_discount_from") - func.col("shift") * func.col("years_from")) \
+        .withColumn("forward_rate", func.col("forward_rate") + func.col("shift")) \
+        .select("currency", "shock", "years_from", "years_to", "log_discount_from", "forward_rate")
 
 
 def forward_rate(df, start_df_col, end_df_col, accrual_col, out_col):

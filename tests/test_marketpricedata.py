@@ -278,15 +278,16 @@ def answer_boe_with(monkeypatch, response):
     return answer_with(monkeypatch, "bronze_boe", response)
 
 
-def write_internal(path, rows):
+def write_internal(path, rows, header="ref_date,instr_id,value"):
     """Write a proprietary delivery in the form the module picks it up in.
 
     Nothing in the package writes this file: it is placed in the Bronze layer
     by whoever maintains the quotes, so the fixture writes the CSV out itself
-    rather than through a function of the module.
+    rather than through a function of the module. ``header`` is there for the
+    file a lake kept from before the rename, which is headed in upper case.
     """
     os.makedirs(path, exist_ok=True)
-    lines = ["REFDT,INSTRID,VALUE"]
+    lines = [header]
     lines += [f"{refdt},{instrid},{value}" for refdt, instrid, value in rows]
     with open(os.path.join(path, "marketpricedata_internal.csv"), "w",
               encoding="utf-8") as f:
@@ -1275,6 +1276,28 @@ def test_the_header_row_of_a_proprietary_file_is_not_read_as_a_quote(spark, data
     assert value_of(frame, "OWN-1", "2024-01-02") == pytest.approx(12.5)
 
 
+def test_the_internal_file_has_the_columns_of_the_silver_table():
+    """The file is headed with the names of the table it is merged into, so
+    that the one convention for column names holds for the input kept by hand
+    too."""
+    assert mp.internal_schema.fieldNames() == ["ref_date", "instr_id", "value"]
+
+
+def test_a_proprietary_file_headed_in_upper_case_is_still_read(spark, data_lake):
+    """A lake kept from before the rename holds a file headed
+    ``REFDT,INSTRID,VALUE``. The columns are read by position, so the file
+    reads as it did and nobody has to rewrite it for the update to run."""
+    write_internal(mp.path_bronze_internal_marketpricedata(data_lake),
+                   [("2024-01-02", "OWN-1", 12.5)],
+                   header="REFDT,INSTRID,VALUE")
+
+    mp.update_silver_internal(spark, data_lake)
+
+    frame = silver(spark, data_lake)
+    assert len(frame) == 1
+    assert value_of(frame, "OWN-1", "2024-01-02") == pytest.approx(12.5)
+
+
 def test_a_bronze_layer_without_a_proprietary_file_is_a_quiet_no_op(spark, data_lake):
     """The directory is created with the rest of the data lake and stays empty
     in an organisation that keeps no proprietary quotes. The stage is called on
@@ -1868,9 +1891,9 @@ def test_the_mapping_table_pairs_each_instrument_exactly_once():
 def rows_of(spark, data_lake, refdt, instrid, value):
     """One row, in the three columns the Silver table holds.
 
-    Not ``mp.internal_schema``: that is the proprietary input file, which
-    keeps the upper-case names it always had, while the Silver table these
-    rows are merged into is snake_case.
+    Declared here rather than taken from ``mp.internal_schema``, which
+    describes the proprietary input file: that the two agree is what
+    ``test_the_internal_file_has_the_columns_of_the_silver_table`` checks.
     """
     return spark.createDataFrame(
         [(date.fromisoformat(refdt), instrid, float(value))],

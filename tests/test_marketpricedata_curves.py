@@ -53,8 +53,8 @@ def test_one_pillar_gives_a_flat_curve(spark):
     payment due in a year against an overnight quote depends on.
     """
     segments = curves.build_segments({"EUR": {1 / 360: 0.03}})
-    assert [segment["T_TO"] for segment in segments] == [1 / 360, float("inf")]
-    forwards = {round(segment["FWD"], 12) for segment in segments}
+    assert [segment["years_to"] for segment in segments] == [1 / 360, float("inf")]
+    forwards = {round(segment["forward_rate"], 12) for segment in segments}
     assert len(forwards) == 1
 
 
@@ -75,8 +75,9 @@ def test_the_curve_reproduces_the_discount_factor_of_its_own_pillars(spark):
 def test_the_forward_rate_is_constant_between_two_pillars(spark):
     """Which is what log-linear interpolation in the discount factors means."""
     segments = curves.build_segments({"EUR": {1.0: 0.04, 3.0: 0.04}})
-    middle = next(s for s in segments if s["T_FROM"] == 1.0 and s["T_TO"] == 3.0)
-    df_at = lambda t: math.exp(middle["LOGDF_FROM"] - middle["FWD"] * (t - middle["T_FROM"]))
+    middle = next(s for s in segments if s["years_from"] == 1.0 and s["years_to"] == 3.0)
+    df_at = lambda t: math.exp(middle["log_discount_from"] - middle["forward_rate"]
+                              * (t - middle["years_from"]))
     first_half = math.log(df_at(1.5) / df_at(1.0))
     second_half = math.log(df_at(2.5) / df_at(2.0))
     assert first_half == pytest.approx(second_half)
@@ -126,15 +127,15 @@ def test_a_parallel_shift_multiplies_every_discount_factor_by_exp_minus_d_t(spar
     segments = curves.segment_frame(
         spark, curves.build_segments({"EUR": {0.5: 0.04, 5.0: 0.03}}))
     shifts = spark.createDataFrame(
-        [("EUR", 0.0, 0.0), ("EUR", 1.0, 0.01)], "CCY string, SHOCK double, SHIFT double")
+        [("EUR", 0.0, 0.0), ("EUR", 1.0, 0.01)], "currency string, shock double, shift double")
     shifted = curves.parallel_shift(segments, shifts)
 
     maturities = [0.25, 2.0, 10.0]
     payments = spark.createDataFrame(
         [("EUR", shock, t) for shock in (0.0, 1.0) for t in maturities],
-        "PMTCCY string, SHOCK double, YEARS double")
-    got = {(row.SHOCK, row.YEARS): row.DF for row in curves.add_discount_factor(
-        payments, shifted, "PMTCCY", "YEARS", "DF", keys = ["SHOCK"]).collect()}
+        "PMTCCY string, shock double, YEARS double")
+    got = {(row.shock, row.YEARS): row.DF for row in curves.add_discount_factor(
+        payments, shifted, "PMTCCY", "YEARS", "DF", keys = ["shock"]).collect()}
 
     for t in maturities:
         assert got[(1.0, t)] == pytest.approx(got[(0.0, t)] * math.exp(-0.01 * t))
@@ -148,3 +149,12 @@ def test_the_forward_rate_of_a_period_follows_from_its_two_discount_factors(spar
     assert got[0] == pytest.approx((0.99 / 0.97 - 1) / 0.5)
     # A period of no length has no forward rate rather than a division by zero.
     assert got[1] is None
+
+
+def test_the_segments_are_named_in_snake_case(spark):
+    """The segments are a table the caller joins against, so their columns
+    follow the convention of the tables of the package."""
+    segments = curves.segment_frame(
+        spark, curves.build_segments({"EUR": {0.5: 0.04}}))
+    assert segments.columns == ["currency", "years_from", "years_to",
+                                "log_discount_from", "forward_rate"]
