@@ -228,6 +228,26 @@ def test_assets_held_for_sale_explain_only_a_gap_of_their_own_size(spark, lake):
     assert "IMBAL_ASSETS" in codes(spark, config)
 
 
+def test_a_share_of_associates_presented_after_tax_is_not_a_gap(spark, lake):
+    """Most reports count it in the result before tax; ASML presents its share
+    of Carl Zeiss SMT below the tax line."""
+    config = lake(with_figures({
+        "ifrs-full:ProfitLoss": 110.0,
+        "ifrs-full:ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod": (True, 10.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_a_share_of_associates_explains_only_a_gap_of_its_own_size(spark, lake):
+    config = lake(with_figures({
+        "ifrs-full:ProfitLoss": 130.0,
+        "ifrs-full:ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod": (True, 10.0),
+    }), [filing_row()])
+
+    assert "IMBAL_PROFIT" in codes(spark, config)
+
+
 def test_a_breakdown_is_not_mistaken_for_a_total(spark, lake):
     """A figure broken down by segment is a part and not the whole."""
     facts = sound_facts()

@@ -152,6 +152,14 @@ CONCEPTS = {
     # as faulty until it was read: the gaps were its discontinued operations
     # to the cent.
     "profit_discontinued": ["ifrs-full:ProfitLossFromDiscontinuedOperations"],
+    # The share of the profit of associates and joint ventures is a line of
+    # the result before tax in most reports, but some present it after the
+    # tax, as ASML presents its share of Carl Zeiss SMT. Its reports for 2023
+    # to 2025 were out by exactly that share -- 191.3, 209.8 and 216.7
+    # million -- and so was the one other report the check had found faulty
+    # among the Austrian and Dutch reports of the lake.
+    "associates": ["ifrs-full:ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod",
+                   "ifrs-full:ShareOfProfitLossOfAssociatesAccountedForUsingEquityMethod"],
     "operating_cash_flow": ["ifrs-full:CashFlowsFromUsedInOperatingActivities"],
     "investing_cash_flow": ["ifrs-full:CashFlowsFromUsedInInvestingActivities"],
     "financing_cash_flow": ["ifrs-full:CashFlowsFromUsedInFinancingActivities"],
@@ -273,12 +281,20 @@ def check_imbalanced_income(state):
 
 
 def check_imbalanced_profit(state):
-    """The result before tax against the tax and the result."""
+    """The result before tax against the tax and the result.
+
+    A report that presents the share of the profit of associates after the
+    tax rather than before it is short by that share, and the difference is
+    taken as explained where it is that share.
+    """
+    gap = (func.col("pretax") - func.col("income_tax")
+           + func.coalesce(func.col("profit_discontinued"), func.lit(0.0))
+           - func.col("profit"))
+    explained = func.abs(gap + func.col("associates")) \
+        <= func.abs(func.col("revenue")) * TOLERANCE
     return _imbalance(
         state["figures"],
-        func.col("pretax") - func.col("income_tax")
-        + func.coalesce(func.col("profit_discontinued"), func.lit(0.0))
-        - func.col("profit"),
+        func.when(explained, func.lit(0.0)).otherwise(gap),
         func.col("revenue"))
 
 

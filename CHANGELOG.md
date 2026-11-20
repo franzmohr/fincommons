@@ -237,6 +237,10 @@ release may change the public API, which `tests/test_public_api.py` lists.
   them, under either of the two concepts the taxonomy has for that line. That
   was 9 of the 12 reports it found faulty; the 3 left are Österreichische
   Post's, which presents the assets of bank99 as a third block.
+- `financialreport.esef.quality`: `IMBAL_PROFIT` takes a gap as explained
+  where it is the share of the profit of associates, which some issuers
+  present after the tax: ASML its share of Carl Zeiss SMT. That was all 4
+  reports it found faulty in the Austrian and Dutch reports of the lake.
 - `financialreport.edinet`: the quality checks read the dates a filing states
   with `try_to_timestamp` and a cast rather than with `try_to_date`. The
   Python API gained the date function in PySpark 4.1 and Spark 4.0 does not
