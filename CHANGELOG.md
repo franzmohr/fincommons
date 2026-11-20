@@ -19,6 +19,14 @@ release may change the public API, which `tests/test_public_api.py` lists.
   collection reports which of the fields expected of every notification are
   missing and which have appeared. The Silver tables are being designed from
   the snapshots and are not here yet.
+- `sts`: `templates/sts-register-report.qmd`, a report on one snapshot of the
+  register. It reads the Bronze snapshots directly and sets out the two
+  populations the register divides into, the underlying exposures, the
+  notification dates, the identifier schemes and why neither identifier
+  identifies a row, the tranches and the parties, the census of the fields,
+  the checks the snapshot fails, and what arrived and left since the snapshot
+  before — which is the only record of a departure there is. The snapshot is
+  the latest the lake holds or the one named in `FINCOMMONS_SNAPSHOT`.
 
 - `esef`: two factsheets on one country, `esef-country-quality-factsheet.qmd`
   and `esef-country-economic-factsheet.qmd`. Each takes the country from

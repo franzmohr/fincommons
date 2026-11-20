@@ -176,6 +176,58 @@ and the reason the Silver layer will carry data quality checks:
 * The traditional spreadsheet's `ISIN code` column uses three separators and
   three placeholders for absence, and holds two malformed ISINs
 
+## A report on one snapshot
+
+`templates/sts-register-report.qmd` is a template for a report on one snapshot
+of the register, written in R and rendered with Quarto to a PDF. It reads the
+snapshots of the Bronze layer directly — there being no Silver layer yet — and
+sets out what the register holds, what it does not say, and what to expect of
+the data.
+
+```
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render sts-register-report.qmd
+```
+
+The snapshot is the most recent one the lake holds, or the one named in
+`FINCOMMONS_SNAPSHOT`, which wins where it is set so that a run reporting one
+snapshot after another needs no edit of the template:
+
+```
+FINCOMMONS_SNAPSHOT=2026-11-20 \
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render sts-register-report.qmd
+```
+
+| Section | Holds |
+| --- | --- |
+| at a glance | the notifications, the two populations, and the class and type of each |
+| underlying exposures | what the notified securitisations are backed by |
+| when they were notified | first notification by year, and how many notifications have since moved |
+| the identifiers | the schemes they follow, and why neither of them identifies a row |
+| tranches and parties | the child documents per kind, what each carries, and the originators named in most notifications |
+| what the notifications say of themselves | the census of the fields, and the third parties that verified compliance |
+| what changed | the arrivals and the departures against the snapshot before, which is the only record there is of a departure |
+| what to expect of the data | the checks, counted over the snapshot |
+| the spreadsheets | what was collected beside the register, and how much of the frozen list the register has since dropped |
+
+The report compares the snapshot with the one before it. A lake holding one
+snapshot gets a section that says so and why it matters, rather than an empty
+one: the register publishes no history, so the first comparison is only
+possible once a second snapshot exists.
+
+The corporate design is in `r-corporate-design-functions-ggplot2.R`, one file
+for the whole package in `src/fincommons/templates`, two levels up from this
+template, which every template of every module sources so that a change to the
+design is made once; a copy of it beside a template wins over the shared one,
+which is what lets a template taken out of the package carry a design of its
+own.
+
+The last section is a disclaimer. A securitisation counted in the report is
+one that was *notified* as simple, transparent and standardised, which is a
+notification made by its own parties and not a judgement by ESMA or by anyone
+else, and the report says so where it would otherwise be read as a quality
+mark. Whoever renders it for a purpose of their own is responsible for what
+they publish.
+
 ## Notes
 
 The data is downloaded when the pipeline runs and is never shipped with the

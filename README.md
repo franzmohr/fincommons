@@ -390,6 +390,10 @@ sts.update_bronze_sts("paths.yaml")        # a snapshot of the register, and the
 sts.collected_snapshots("paths.yaml")      # the days a snapshot is held for
 ```
 
+```
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render sts-register-report.qmd
+```
+
 **The register is current state, so the snapshots are the history.** A
 cancelled notification leaves the register, and the two spreadsheets that
 recorded removals were frozen in 2022, so a lake's own dated snapshots are the
@@ -407,6 +411,10 @@ stands; a private one carries a synthetic identifier that joins to nothing. The
 tranches carry ISINs, which join to `firds`, and the originator, the original
 lender and the sponsor carry legal entity identifiers, which join to
 `entitymasterdata`; the special purpose entity carries only a country.
+
+`templates/sts-register-report.qmd` is a report on one snapshot: what the
+register holds, what it does not say, the census of its fields, the checks it
+fails, and what has arrived and left since the snapshot before.
 
 The data is downloaded when the pipeline runs and is not shipped with the
 package. The details are documented in
