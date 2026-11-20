@@ -8,6 +8,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `entitymasterdata`: the Silver build reads and combines the registers in two
+  steps that can be called on their own. A `normalise_<register>` function per
+  register -- `normalise_gleif_level_1`, `normalise_gleif_level_2`,
+  `normalise_esma_ccp`, `normalise_eiopa_insurance_undertaking`,
+  `normalise_eiopa_iorp`, `normalise_ecb_mfi`, `normalise_ecb_investment_fund`
+  -- turns one Bronze snapshot into the rows that register states, and
+  `combine_registers` applies the precedence between them, the fund
+  characteristics and the GLEIF relationships.
+  `update_silver_entitymasterdata_public` is the two applied to the latest
+  snapshot of each register, so that a history built from every snapshot will
+  apply the same rules. Built from the Bronze layer of 20 November 2026, the
+  public table is identical before and after: 3,500,479 rows, the same columns
+  in the same order, no row in one that is not in the other.
+
 - `firds`: `vacuum_silver_main` deletes the files of the historical database
   that no version within `retention_hours` reads, a week by default as in
   Delta. Every merge and compaction leaves the files it replaced behind, so

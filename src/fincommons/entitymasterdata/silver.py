@@ -543,23 +543,47 @@ def update_silver_entitymasterdata_public(spark, config_path, file_format = None
         )
 
 
-def _update_silver_entitymasterdata_public(spark, config_path, file_format, outcome):
-    """Do the work of :func:`update_silver_entitymasterdata_public`."""
-    # GLEIF Level 1 data, which says who the entity is
-    gleif_1 = spark.read.parquet(
-        latest_bronze_file(common.path_bronze_gleif_level_1(config_path))
-    ).transform(with_silver_names)
-    gleif_1 = with_normalised_lei(gleif_1, "GLEIF_L1")
+# Reading one register
+# --------------------------------------------------------------------------
+#
+# Each register is read from one file of the Bronze layer -- one snapshot of
+# it -- into the rows the combination below works with, the LEI normalised and
+# every column named as the Silver layer names it. A function here says what a
+# register states and nothing about which register wins: that is decided once,
+# in :func:`combine_registers`, so that the table built from the latest
+# snapshots and a history built from every snapshot apply the same rules.
 
-    # GLEIF Level 2 data, which says how entities are related to one another
-    gleif_2 = spark.read.parquet(
-        latest_bronze_file(common.path_bronze_gleif_level_2(config_path))
-    ).transform(with_silver_names)
 
-    # ECB investment funds
-    invfund = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_ecb_investment_fund(config_path))
-        ).transform(with_silver_names) \
+def normalise_gleif_level_1(data):
+    """The entities of one GLEIF Level 1 golden copy: who an LEI is."""
+    return with_normalised_lei(data.transform(with_silver_names), "GLEIF_L1")
+
+
+def normalise_gleif_level_2(data):
+    """The current relationships of one GLEIF Level 2 golden copy, one row per LEI.
+
+    The ultimate parent and, for a fund, the asset management company, which
+    are the same reading of the same file under different relationship types.
+    Both go through :func:`active_relationship`, so that neither can be read
+    without the status of the relationship being taken into account.
+    """
+    data = data.transform(with_silver_names)
+    return active_relationship(
+        data, "IS_ULTIMATELY_CONSOLIDATED_BY", "ultimate_parent_lei"
+    ).join(
+        active_relationship(data, "IS_FUND-MANAGED_BY", "amc"),
+        on="lei", how="fullouter",
+    )
+
+
+def normalise_ecb_investment_fund(data):
+    """The funds of one ECB list of investment funds.
+
+    The sector and subsector the list states, and the characteristics of the
+    fund -- ``if_policy``, ``if_type`` and ``if_ucits_compl`` -- which
+    :func:`combine_registers` treats apart from the sector.
+    """
+    return data.transform(with_silver_names) \
         .transform(lambda data: with_normalised_lei(data, "ECB_IF")) \
         .filter(func.col("lei").isNotNull()) \
         .withColumn("sector", func.when(func.col("UCITS compliance") == "Non-UCITS compliant, AIF", "AIFD") \
@@ -580,6 +604,71 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
             data, ["lei", "sector", "subsector", "if_policy", "if_type", "if_ucits_compl"]
         ))
 
+
+def normalise_ecb_mfi(data):
+    """The institutions of one ECB list of MFIs, with the sector their category gives.
+
+    The register is read before the sector is derived from it, so that a
+    category the module does not know can be named in the log.
+    """
+    register = data.transform(with_silver_names) \
+        .transform(lambda data: with_normalised_lei(data, "ECB_MFI")) \
+        .filter(func.col("lei").isNotNull())
+    warn_of_unknown_mfi_categories(register)
+    return register \
+        .withColumn("sector", mfi_sector()) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
+
+
+def normalise_eiopa_insurance_undertaking(data):
+    """The undertakings of one EIOPA register of insurance undertakings."""
+    return data.transform(with_silver_names) \
+        .transform(lambda data: with_normalised_lei(data, "EIOPA_INUN")) \
+        .filter(func.col("lei").isNotNull()) \
+        .withColumn("sector", func.lit("INUN")) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
+
+
+def normalise_eiopa_iorp(data):
+    """The institutions of one EIOPA register of IORPs."""
+    return data.transform(with_silver_names) \
+        .transform(lambda data: with_normalised_lei(data, "EIOPA_IORP")) \
+        .filter(func.col("lei").isNotNull()) \
+        .withColumn("sector", func.lit("ORPI")) \
+        .transform(lambda data: text_columns(data, ["lei", "sector"]))
+
+
+def normalise_esma_ccp(data):
+    """The CCPs of one ESMA list of CCPs."""
+    return data.transform(with_silver_names) \
+        .transform(lambda data: with_normalised_lei(data, "ESMA_CCP")) \
+        .filter(func.col("lei").isNotNull()) \
+        .transform(lambda data: text_columns(data, ["lei", "sector", "subsector"]))
+
+
+# Combining the registers
+# --------------------------------------------------------------------------
+
+
+def combine_registers(gleif_1, relationships, ccp, inun, orpi, mfi, invfund):
+    """Combine the registers into the public entity master data, one row per LEI.
+
+    The arguments are the registers as the ``normalise_`` functions of this
+    module return them, each from one snapshot. Which snapshots they are is the
+    caller's business: :func:`update_silver_entitymasterdata_public` passes the
+    latest of each.
+
+    Parameters
+    ----------
+    gleif_1: pyspark.sql.DataFrame
+        :func:`normalise_gleif_level_1`.
+    relationships: pyspark.sql.DataFrame
+        :func:`normalise_gleif_level_2`.
+    ccp, inun, orpi, mfi, invfund: pyspark.sql.DataFrame
+        :func:`normalise_esma_ccp`, :func:`normalise_eiopa_insurance_undertaking`,
+        :func:`normalise_eiopa_iorp`, :func:`normalise_ecb_mfi` and
+        :func:`normalise_ecb_investment_fund`.
+    """
     # The fund register makes two different kinds of statement, and only one of
     # them is contested. The sector is a claim about what the entity is, which
     # the registers below argue over and the narrowest of them wins. The fund
@@ -599,46 +688,6 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
          func.col("if_policy").asc_nulls_last()],
     )
     invfund = invfund.select("lei", "sector", "subsector")
-
-    # ECB MFIs. The register is read before the sector is derived from it, so
-    # that a category the module does not know can be named in the log.
-    mfi_register = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_ecb_mfi(config_path))
-        ).transform(with_silver_names) \
-        .transform(lambda data: with_normalised_lei(data, "ECB_MFI")) \
-        .filter(func.col("lei").isNotNull())
-    warn_of_unknown_mfi_categories(mfi_register)
-    mfi = mfi_register \
-        .withColumn("sector", mfi_sector()) \
-        .transform(lambda data: text_columns(data, ["lei", "sector"]))
-
-    # EIOPA insurance undertakings
-    inun = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_eiopa_insurance_undertaking(config_path))
-        ).transform(with_silver_names) \
-        .transform(lambda data: with_normalised_lei(data, "EIOPA_INUN")) \
-        .filter(func.col("lei").isNotNull()) \
-        .withColumn("sector", func.lit("INUN")) \
-        .transform(lambda data: text_columns(data, ["lei", "sector"]))
-
-    # EIOPA institutions for occupational retirement provision
-    orpi = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_eiopa_iorp(config_path))
-        ).transform(with_silver_names) \
-        .transform(lambda data: with_normalised_lei(data, "EIOPA_IORP")) \
-        .filter(func.col("lei").isNotNull()) \
-        .withColumn("sector", func.lit("ORPI")) \
-        .transform(lambda data: text_columns(data, ["lei", "sector"]))
-
-    # ESMA CCPs. The list is not kept per reference date, so the folder holds
-    # the one file, but it is looked up the same way as the others so that a
-    # Bronze layer the list has never reached says so in the same words.
-    ccp = spark.read.parquet(
-            latest_bronze_file(common.path_bronze_esma_ccp(config_path))
-        ).transform(with_silver_names) \
-        .transform(lambda data: with_normalised_lei(data, "ESMA_CCP")) \
-        .filter(func.col("lei").isNotNull()) \
-        .transform(lambda data: text_columns(data, ["lei", "sector", "subsector"]))
 
     # An entity can appear in more than one register: a central counterparty is
     # licensed as a credit institution in several member states, and a fund can
@@ -701,18 +750,28 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     # sector step would have put in SUBSECTOR is what IF_POLICY carries.
     result = result.join(fund_characteristics, on = "lei", how = "leftouter")
 
-    # Generate information on the ultimate parent based on GLEIF Level 2 data,
-    # and on a fund's asset management company, which is the same reading of
-    # the same file under a different relationship type. Both go through
-    # :func:`active_relationship`, so that neither can be read without the
-    # status of the relationship being taken into account.
-    result = result.join(
-        active_relationship(gleif_2, "IS_ULTIMATELY_CONSOLIDATED_BY", "ultimate_parent_lei"),
-        on = "lei", how = "leftouter",
-    )
-    result = result.join(
-        active_relationship(gleif_2, "IS_FUND-MANAGED_BY", "amc"),
-        on = "lei", how = "leftouter",
+    # And with the ultimate parent and the asset management company GLEIF
+    # Level 2 reports for it.
+    return result.join(relationships, on = "lei", how = "leftouter")
+
+
+def _update_silver_entitymasterdata_public(spark, config_path, file_format, outcome):
+    """Do the work of :func:`update_silver_entitymasterdata_public`."""
+    def latest(path):
+        return spark.read.parquet(latest_bronze_file(path))
+
+    result = combine_registers(
+        gleif_1=normalise_gleif_level_1(
+            latest(common.path_bronze_gleif_level_1(config_path))),
+        relationships=normalise_gleif_level_2(
+            latest(common.path_bronze_gleif_level_2(config_path))),
+        ccp=normalise_esma_ccp(latest(common.path_bronze_esma_ccp(config_path))),
+        inun=normalise_eiopa_insurance_undertaking(
+            latest(common.path_bronze_eiopa_insurance_undertaking(config_path))),
+        orpi=normalise_eiopa_iorp(latest(common.path_bronze_eiopa_iorp(config_path))),
+        mfi=normalise_ecb_mfi(latest(common.path_bronze_ecb_mfi(config_path))),
+        invfund=normalise_ecb_investment_fund(
+            latest(common.path_bronze_ecb_investment_fund(config_path))),
     )
 
     common.write_silver(
@@ -964,11 +1023,19 @@ __all__ = [
     "MFI_SECTOR_OTHER",
     "active_relationship",
     "check_internal_list",
+    "combine_registers",
     "first_per_lei",
     "latest_bronze_file",
     "with_silver_names",
     "SILVER_NAMES",
     "mfi_sector",
+    "normalise_ecb_investment_fund",
+    "normalise_ecb_mfi",
+    "normalise_eiopa_insurance_undertaking",
+    "normalise_eiopa_iorp",
+    "normalise_esma_ccp",
+    "normalise_gleif_level_1",
+    "normalise_gleif_level_2",
     "normalised_lei",
     "read_internal_list",
     "text_columns",

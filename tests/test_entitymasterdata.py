@@ -1621,6 +1621,81 @@ def test_a_register_carrying_an_lei_twice_answers_the_same_way_either_way(spark,
     assert row.subsector == "EUCCP"
 
 
+def registers_of(spark, data_lake, file_of=None):
+    """Each register of the Bronze layer normalised, from the file ``file_of``
+    picks in its folder, the latest by default."""
+    file_of = file_of or em.latest_bronze_file
+    def read(folder):
+        return spark.read.parquet(file_of(folder))
+    return dict(
+        gleif_1=em.normalise_gleif_level_1(read(em.path_bronze_gleif_level_1(data_lake))),
+        relationships=em.normalise_gleif_level_2(read(em.path_bronze_gleif_level_2(data_lake))),
+        ccp=em.normalise_esma_ccp(read(em.path_bronze_esma_ccp(data_lake))),
+        inun=em.normalise_eiopa_insurance_undertaking(
+            read(em.path_bronze_eiopa_insurance_undertaking(data_lake))),
+        orpi=em.normalise_eiopa_iorp(read(em.path_bronze_eiopa_iorp(data_lake))),
+        mfi=em.normalise_ecb_mfi(read(em.path_bronze_ecb_mfi(data_lake))),
+        invfund=em.normalise_ecb_investment_fund(
+            read(em.path_bronze_ecb_investment_fund(data_lake))),
+    )
+
+
+def rows_of(frame):
+    return sorted(tuple(row) for row in frame.collect())
+
+
+def test_the_public_table_is_the_latest_registers_combined(spark, data_lake):
+    """The rules that combine the registers are written once, so that a history
+    built from every snapshot and the table built from the latest ones cannot
+    part company."""
+    write_gleif_level_1(data_lake, ["LEI1", "LEI2", "LEI3", "LEI4", "LEI5", "LEI6"],
+                        ["One", "Two", "Three", "Four", "Five", "Six"],
+                        ["AT", "DE", "FR", "IT", "ES", "NL"])
+    write_gleif_level_2(data_lake, [("LEI5", "LEI1", "IS_ULTIMATELY_CONSOLIDATED_BY"),
+                                    ("LEI5", "LEI6", "IS_FUND-MANAGED_BY")])
+    write_ccp(data_lake, [("LEI1", "CCP", "EUCCP")])
+    write_eiopa(data_lake, ["LEI2"])
+    write_iorp(data_lake, ["LEI3"])
+    write_ecb_mfi(data_lake, [("LEI4", "Credit Institution")])
+    write_ecb_investment_fund(data_lake, ["LEI4", "LEI5"])
+    em.update_from_landing_to_bronze(data_lake)
+    em.update_silver_entitymasterdata_public(spark, data_lake)
+
+    combined = em.combine_registers(**registers_of(spark, data_lake))
+
+    table = em.connect_to_entitymasterdata(spark, data_lake, "public")
+    assert combined.columns == table.columns
+    assert rows_of(combined) == rows_of(table)
+    assert {row.lei: row.sector for row in table.collect()} == {
+        "LEI1": "CCP", "LEI2": "INUN", "LEI3": "ORPI", "LEI4": "CDTI",
+        "LEI5": "UCIT", "LEI6": None,
+    }
+
+
+def test_an_earlier_snapshot_combines_into_what_held_then(spark, data_lake):
+    """A history applies the snapshots of every date, not just the latest."""
+    write_gleif_level_1(data_lake, ["LEI1"], ["One"], ["AT"])
+    write_gleif_level_2(data_lake, [])
+    write_ccp(data_lake, [])
+    write_eiopa(data_lake, [], file_name="20261001.xlsx")
+    write_eiopa(data_lake, ["LEI1"], file_name="20261101.xlsx")
+    write_iorp(data_lake, ["LEI1"])
+    write_ecb_mfi(data_lake, [])
+    write_ecb_investment_fund(data_lake, [])
+    em.update_from_landing_to_bronze(data_lake)
+
+    def first(folder):
+        return os.path.join(folder, sorted(os.listdir(folder))[0])
+
+    earlier = registers_of(spark, data_lake)
+    earlier["inun"] = em.normalise_eiopa_insurance_undertaking(spark.read.parquet(
+        first(em.path_bronze_eiopa_insurance_undertaking(data_lake))))
+    later = registers_of(spark, data_lake)
+
+    assert em.combine_registers(**earlier).first().sector == "ORPI"
+    assert em.combine_registers(**later).first().sector == "INUN"
+
+
 def test_a_row_that_states_a_subsector_beats_one_that_does_not(spark, data_lake):
     """Nulls sort last, which is the opposite of what ``orderBy`` does on its
     own. A null is the absence of a statement, so the row that says something
