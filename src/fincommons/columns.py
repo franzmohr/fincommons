@@ -233,7 +233,7 @@ def _is_column(name, snake_case=False):
         return False
     if snake_case:
         # The module keeps the upper-case names of a Bronze input it reads --
-        # the proprietary file of ``exchangerate`` is one -- beside the
+        # the Bronze files of ``famafrenchdata`` are one -- beside the
         # snake_case names of its own tables, so both count.
         return name in (name.upper(), name.lower())
     return name == name.upper()

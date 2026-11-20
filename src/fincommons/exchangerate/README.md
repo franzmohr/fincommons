@@ -68,18 +68,20 @@ ex.update_bronze_ecb_exchangerate(config_path)
 
 ### Proprietary data
 
-Due to the heterogeneity of the data source, the module does not provide any functionality to download data from proprietary sources. It picks such data up from the file `exchangerate.csv` in the folder `internal` of the Bronze layer, `{bronze of exchangerate in paths.yaml}/internal/exchangerate.csv`. If that file exists, it expects a comma-separated file with a header row and the following columns:
+Due to the heterogeneity of the data source, the module does not provide any functionality to download data from proprietary sources. It picks such data up from the file `exchangerate.csv` in the folder `internal` of the Bronze layer, `{bronze of exchangerate in paths.yaml}/internal/exchangerate.csv`. If that file exists, it expects a comma-separated file with a header row and the following columns, in this order. They are the columns of the Silver table, under the same names.
 
 | Column | Type | Content |
 | --- | --- | --- |
-| `REFDT` | string | The reference date of the quote, as `YYYY-MM-DD`. |
-| `BASE` | string | The ISO-3 code of the base currency. |
-| `QUOTE` | string | The ISO-3 code of the quoted currency. |
-| `VALUE` | double | Units of `QUOTE` per one unit of `BASE`. |
-| `TYPE` | string | The kind of rate, for instance `ref` for a reference rate. |
-| `SOURCE` | string | A label stating where the quote came from. It is carried through to the Silver layer. |
+| `ref_date` | string | The reference date of the quote, as `YYYY-MM-DD`. |
+| `base` | string | The ISO-3 code of the base currency. |
+| `quote` | string | The ISO-3 code of the quoted currency. |
+| `value` | double | Units of `quote` per one unit of `base`. |
+| `type` | string | The kind of rate, for instance `ref` for a reference rate. |
+| `source` | string | A label stating where the quote came from. It is carried through to the Silver layer. |
 
-The file is checked before it is combined, and refused as a whole where a row would be misread: a `REFDT` not written as `YYYY-MM-DD`, a `VALUE` that is missing or not positive, or one day and pair quoted twice. The first matters most, because the combination compares dates as text: a date written `2020-10-5` is not the same day as the ECB's `2020-10-05` to it, and one such row could cut the whole table short.
+The file is checked before it is combined, and refused as a whole where a row would be misread: a `ref_date` not written as `YYYY-MM-DD`, a `value` that is missing or not positive, or one day and pair quoted twice. The first matters most, because the combination compares dates as text: a date written `2020-10-5` is not the same day as the ECB's `2020-10-05` to it, and one such row could cut the whole table short.
+
+The columns are read by position, not by the names in the header, so a file still headed `REFDT,BASE,QUOTE,VALUE,TYPE,SOURCE`, as the file was before the column names of the package were put into snake case, is read the same way.
 
 ## From bronze to silver layer
 

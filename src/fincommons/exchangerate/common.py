@@ -20,12 +20,21 @@ from pyspark.sql.types import DoubleType, StringType, StructType
 from ..addressing import load_paths, resolve  # noqa: F401
 
 internal_schema = StructType() \
-    .add("REFDT", StringType(), False) \
-    .add("BASE", StringType(), False) \
-    .add("QUOTE", StringType(), False) \
-    .add("VALUE", DoubleType(), False) \
-    .add("TYPE", StringType(), False) \
-    .add("SOURCE", StringType(), False) 
+    .add("ref_date", StringType(), False) \
+    .add("base", StringType(), False) \
+    .add("quote", StringType(), False) \
+    .add("value", DoubleType(), False) \
+    .add("type", StringType(), False) \
+    .add("source", StringType(), False)
+"""The shape the proprietary file ``exchangerate.csv`` is read in.
+
+The six columns are those of the Silver table, under the same names. The
+schema is applied by position, not by the names in the header, so a file
+whose header still reads ``REFDT,BASE,QUOTE,VALUE,TYPE,SOURCE`` -- the names
+the file carried before the columns of the package were put into snake case
+-- is read the same way, and Spark notes the mismatch in its log rather than
+refusing the file.
+"""
 
 
 def path_bronze_base(config_path):
