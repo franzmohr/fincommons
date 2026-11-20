@@ -242,6 +242,15 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `esef-sector-factsheet.qmd`: the Japanese benchmark reads a filer without
+  subsidiaries from the accounts it states under `NonConsolidatedMember`,
+  where it had left every such company out; leaves out the annual reports
+  of investment funds, which are filed under a company's document type;
+  counts a measure only under the framework of the filing; and finds
+  Japanese banks, insurers and securities firms by the industry elements
+  they tag. The Japanese other filers of 2025 went from 33 to 38, with two
+  set apart as banks.
+
 - `financialreport.edinet`: a semi-annual report's financial year and the
   half-year it covers are told apart. The end of the report's period and the
   end of its year were read as alternatives for one date, and the conversion
