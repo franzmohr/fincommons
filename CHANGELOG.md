@@ -47,6 +47,25 @@ release may change the public API, which `tests/test_public_api.py` lists.
 - The handbook has chapters on the SEC filings, the EDINET filings and the
   combined financial report tables, after the one on ESEF. The ESEF chapter
   covers the quality checks and the report templates.
+- `sts`: a new module for ESMA's public register of the securitisations
+  notified as simple, transparent and standardised, read through the
+  machine-to-machine services of the registers portal, which need no key. The
+  Bronze layer collects one complete, dated snapshot of the register per run
+  and the four spreadsheets ESMA publishes beside it. A snapshot is never
+  rewritten: the register is current state, a cancelled notification leaves it,
+  and the spreadsheets that recorded removals were frozen in 2022, so the
+  snapshots are the only record of what the register once held. Every
+  collection reports which of the fields expected of every notification are
+  missing and which have appeared. The Silver tables are being designed from
+  the snapshots and are not here yet.
+- `sts`: `templates/sts-register-report.qmd`, a report on one snapshot of the
+  register. It reads the Bronze snapshots directly and sets out the two
+  populations the register divides into, the underlying exposures, the
+  notification dates, the identifier schemes and why neither identifier
+  identifies a row, the tranches and the parties, the census of the fields,
+  the checks the snapshot fails, and what arrived and left since the snapshot
+  before — which is the only record of a departure there is. The snapshot is
+  the latest the lake holds or the one named in `FINCOMMONS_SNAPSHOT`.
 
 - `esef`: two factsheets on one country, `esef-country-quality-factsheet.qmd`
   and `esef-country-economic-factsheet.qmd`. Each takes the country from

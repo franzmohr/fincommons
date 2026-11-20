@@ -22,6 +22,7 @@ approaches for handling basic data pipelines.
 | `exchangerate` | the reference rates of the ECB and the BIS, combined into one table per calendar day and currency pair, and conversion of amounts |
 | `marketpricedata` | prices and rates from public publishers (ECB, Federal Reserve Bank of New York, Bank of England, Yahoo Finance and others) in one table, and the risk-free zero curves its overnight and swap rates imply |
 | `firds` | ESMA's FIRDS reference data: download, import and the historical database ESMA's instructions describe |
+| `sts` | ESMA's public register of the securitisations notified as simple, transparent and standardised, and the spreadsheets published beside it |
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
 | `famafrenchdata` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
 | `financialreport` | the regimes that require the periodic reports of listed issuers tagged in XBRL, one sub-module each -- `esef` for the European Single Electronic Format, `sec` for the inline XBRL mandate of the Securities and Exchange Commission, `edinet` for Japan, `dart` for Korea -- and `combined`, which puts them side by side. Each stands on its own; the namespace imports none of them |
@@ -367,6 +368,57 @@ is. The details are documented in
 The other regimes and the combining layer have READMEs of their own beside
 it, under
 [`src/fincommons/financialreport/`](src/fincommons/financialreport/).
+
+### `fincommons.sts`
+
+ESMA's public register of the securitisations notified to it as simple,
+transparent and standardised, read through the machine-to-machine services of
+its registers portal, which need no key and no registration. The Bronze layer
+is in place; the Silver tables are being built from what it collects.
+
+```yaml
+sts:
+    bronze: /data/sts/bronze
+    silver: /data/sts/silver
+```
+
+```python
+from fincommons import sts
+
+sts.create_directory_tree("paths.yaml")
+sts.update_bronze_sts("paths.yaml")        # a snapshot of the register, and the spreadsheets
+sts.collected_snapshots("paths.yaml")      # the days a snapshot is held for
+```
+
+```
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render sts-register-report.qmd
+```
+
+**The register is current state, so the snapshots are the history.** A
+cancelled notification leaves the register, and the two spreadsheets that
+recorded removals were frozen in 2022, so a lake's own dated snapshots are the
+only record of what the register once held. A collection therefore writes a
+complete copy beside the ones before it and never rewrites one, and what left
+the register between two runs is a diff of two snapshots. Do not compact them
+away.
+
+**Two populations.** Of the 1,147 notifications held on 20 November 2026, 502
+were public and carried the whole STS template, their tranches and their
+parties; 645 were private and carried sixteen to nineteen fields and no child
+documents at all. A public notification's securitisation identifier is the one
+the disclosure templates use, so it joins to reported securitisation data as it
+stands; a private one carries a synthetic identifier that joins to nothing. The
+tranches carry ISINs, which join to `firds`, and the originator, the original
+lender and the sponsor carry legal entity identifiers, which join to
+`entitymasterdata`; the special purpose entity carries only a country.
+
+`templates/sts-register-report.qmd` is a report on one snapshot: what the
+register holds, what it does not say, the census of its fields, the checks it
+fails, and what has arrived and left since the snapshot before.
+
+The data is downloaded when the pipeline runs and is not shipped with the
+package. The details are documented in
+[`src/fincommons/sts/README.md`](src/fincommons/sts/README.md).
 
 ### `fincommons.firds` and `fincommons.marketpricedata`
 

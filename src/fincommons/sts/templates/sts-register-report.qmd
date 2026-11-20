@@ -1,0 +1,832 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+
+  # No font is named beyond the one above, so nothing is fetched from a font
+  # service; a system without it falls back to the default of the renderer.
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  # A chunk that fails stops the render, which is Quarto's default. Named
+  # here for the reason the esef templates name it: under `error: true` a
+  # report over a lake it could not read still renders and still exits 0, and
+  # a scheduler only sees the exit code.
+  error: false
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a report
+# --------------------------------------------------------------------------
+
+# The path to the config file, whose sts section names the Bronze layer of
+# the module. A chunk runs with the directory of this template as its working
+# directory, which is inside the installed package, so the path is taken from
+# the environment variable FINCOMMONS_CONFIG where it is set and is otherwise
+# a paths.yaml beside the template.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# The snapshot the report is about, as the day it was collected on, or NULL
+# for the most recent one the lake holds. FINCOMMONS_SNAPSHOT wins where it
+# is set, so that a run reporting one snapshot after another needs no edit of
+# the template.
+report_snapshot <- NULL
+if (nzchar(Sys.getenv("FINCOMMONS_SNAPSHOT"))) {
+  report_snapshot <- Sys.getenv("FINCOMMONS_SNAPSHOT")
+}
+
+# The snapshot this one is compared with, or NULL for the one before it.
+# This is the only way to see what left the register: the register itself
+# answers for the day it is read and ESMA has published no record of a
+# removal since May 2022.
+compare_snapshot <- NULL
+
+# How many rows a ranking shows.
+top_n <- 15
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# --------------------------------------------------------------------------
+# The corporate design
+# --------------------------------------------------------------------------
+
+# You can adapt your corporate design in the sourced R script. It is one file
+# for the whole package, in the templates directory at the root of it, so
+# that a report of any module looks like the others and a change to the
+# design is made once. A copy beside this template wins over it, which is
+# what lets a template taken out of the package carry a design of its own.
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(jsonlite)
+
+# --------------------------------------------------------------------------
+# Reading a snapshot
+# --------------------------------------------------------------------------
+
+# A field of a register document may hold one value or several, and the
+# several arrive as a JSON array. Everything this report reads is read
+# through these two, so that a field that becomes multi-valued does not
+# silently turn a column into a list.
+one_chr <- function(value) {
+  if (is.null(value) || length(value) == 0) return(NA_character_)
+  as.character(value[[1]])
+}
+all_chr <- function(value) {
+  if (is.null(value) || length(value) == 0) return(character(0))
+  as.character(unlist(value, use.names = FALSE))
+}
+
+# The day part of a Solr date, which arrives as 2026-09-10T00:00:00Z.
+as_day <- function(value) as.Date(substr(value, 1, 10))
+
+# The scheme a securitisation identifier belongs to. Only the first joins to
+# anything outside the register: it is the identifier the disclosure
+# templates use, the reporting entity's legal entity identifier, a letter for
+# the class and the period. A private notification carries a synthetic
+# identifier instead, and three notifications carry nothing at all.
+identifier_scheme <- function(value) {
+  trimmed <- trimws(ifelse(is.na(value), "", value))
+  dplyr::case_when(
+    trimmed == "" ~ "missing",
+    grepl("^[A-Z0-9]{20}[A-Z][0-9]{6}$", trimmed) ~ "LEI and period",
+    grepl("^SYSEC", trimmed, ignore.case = TRUE) ~ "synthetic list",
+    grepl("^PRIVATE", trimmed, ignore.case = TRUE) ~ "private placeholder",
+    TRUE ~ "other")
+}
+
+yaml_paths <- read_yaml(config_path)
+path_bronze <- yaml_paths[["sts"]][["bronze"]]
+
+# A layer may be given as a mapping carrying a path and a table name. R reads
+# files, so it takes the path.
+if (is.list(path_bronze)) path_bronze <- path_bronze[["path"]]
+if (is.null(path_bronze)) {
+  stop("The configuration file ", config_path, " gives no bronze layer for ",
+       "the sts module.")
+}
+
+path_register <- file.path(path_bronze, "register")
+snapshots_held <- sort(list.dirs(path_register, full.names = FALSE,
+                                 recursive = FALSE))
+snapshots_held <- snapshots_held[grepl("^\\d{4}-\\d{2}-\\d{2}$",
+                                       snapshots_held)]
+
+if (length(snapshots_held) == 0) {
+  stop("The Bronze layer of the sts module holds no snapshot of the ",
+       "register. Collect one first: sts.update_bronze_sts('",
+       config_path, "')")
+}
+
+if (is.null(report_snapshot)) {
+  report_snapshot <- snapshots_held[length(snapshots_held)]
+} else if (!report_snapshot %in% snapshots_held) {
+  stop("The Bronze layer holds no snapshot of ", report_snapshot,
+       ". It holds ", paste(snapshots_held, collapse = ", "), ".")
+}
+
+earlier <- snapshots_held[snapshots_held < report_snapshot]
+if (is.null(compare_snapshot) && length(earlier) > 0) {
+  compare_snapshot <- earlier[length(earlier)]
+}
+
+# One snapshot, read into a table of notifications and a table of children.
+# The pages are read as lists rather than simplified into data frames: a page
+# holds up to 258 fields of which a notification carries as few as sixteen,
+# and simplification would bind pages of different shapes.
+read_documents <- function(day, kind) {
+  pages <- sort(list.files(file.path(path_register, day),
+                           pattern = paste0("^", kind, "-.*\\.json$"),
+                           full.names = TRUE))
+  if (length(pages) == 0) return(list())
+  documents <- list()
+  for (page in pages) {
+    answer <- fromJSON(page, simplifyVector = FALSE)
+    documents <- c(documents, answer$response$docs)
+  }
+  documents
+}
+
+read_notifications <- function(day) {
+  documents <- read_documents(day, "parent")
+  if (length(documents) == 0) {
+    stop("The snapshot of ", day, " holds no notification.")
+  }
+  tibble(
+    id = vapply(documents, function(d) one_chr(d$id), character(1)),
+    securitisation = vapply(documents,
+                            function(d) one_chr(d$stsre_sec_id), character(1)),
+    notification = vapply(documents,
+                          function(d) one_chr(d$stsre_notif_id), character(1)),
+    type = vapply(documents,
+                  function(d) one_chr(d$stsre_sectype_desc), character(1)),
+    class = vapply(documents,
+                   function(d) one_chr(d$stsre_secclass_desc), character(1)),
+    status = vapply(documents,
+                    function(d) one_chr(d$stsre_compl_stat_desc),
+                    character(1)),
+    sanction = vapply(documents,
+                      function(d) one_chr(d$stsre_sanc_status), character(1)),
+    exposure = vapply(documents,
+                      function(d) one_chr(d$stsre_undrlexp_desc),
+                      character(1)),
+    first_notified = as_day(vapply(documents,
+                                   function(d) one_chr(d$stsre_init_notif_dt),
+                                   character(1))),
+    notified = as_day(vapply(documents,
+                             function(d) one_chr(d$stsre_notif_dt),
+                             character(1))),
+    name = vapply(documents,
+                  function(d) one_chr(d$stsre_sec_name), character(1)),
+    repository = vapply(documents,
+                        function(d) one_chr(d$stsre_sec_repository),
+                        character(1)),
+    reporting_entity = vapply(documents,
+                              function(d) one_chr(d$de_name), character(1)),
+    reporting_lei = vapply(documents,
+                           function(d) one_chr(d$de_lei_priv), character(1)),
+    verifier = vapply(documents,
+                      function(d) one_chr(d$authorised_third_party_name),
+                      character(1)),
+    again = vapply(documents,
+                   function(d) one_chr(d$multiple_notif_reason_desc),
+                   character(1)),
+    fields = vapply(documents, length, integer(1))
+  ) %>%
+    mutate(scheme = identifier_scheme(securitisation))
+}
+
+read_children <- function(day) {
+  documents <- read_documents(day, "child")
+  if (length(documents) == 0) return(tibble())
+  bind_rows(lapply(documents, function(d) {
+    kind <- one_chr(d$entity_type)
+    identifier <- switch(
+      kind,
+      issins = one_chr(d$stsre_isin_instrument),
+      originator = one_chr(d$originator_lei),
+      lender = one_chr(d$lender_lei),
+      sponsor = one_chr(d$sponsor_lei),
+      sspe = NA_character_,
+      NA_character_)
+    label <- switch(
+      kind,
+      issins = one_chr(d$stsre_isin_name),
+      originator = one_chr(d$originator_name),
+      lender = one_chr(d$lender_name),
+      sponsor = one_chr(d$sponsor_name),
+      sspe = one_chr(d$sspe_country_name),
+      NA_character_)
+    country <- switch(
+      kind,
+      originator = one_chr(d$originator_country),
+      lender = one_chr(d$lender_country),
+      sponsor = one_chr(d$sponsor_country),
+      sspe = one_chr(d$sspe_country_code),
+      NA_character_)
+    tibble(parent = one_chr(d$`_root_`), kind = kind,
+           identifier = identifier, label = label, country = country)
+  }))
+}
+
+# The census of the fields the notifications carry: every field name and how
+# many notifications carry it. The record the collection wrote holds the same
+# census; it is counted again here so that the report stands on the snapshot
+# rather than on the record beside it.
+field_census <- function(day) {
+  documents <- read_documents(day, "parent")
+  names_seen <- unlist(lapply(documents, names), use.names = FALSE)
+  as_tibble(table(names_seen)) %>%
+    rename(field = names_seen, notifications = n) %>%
+    arrange(desc(notifications), field)
+}
+
+notifications <- read_notifications(report_snapshot)
+children <- read_children(report_snapshot)
+census <- field_census(report_snapshot)
+
+# The record the collection wrote, where it is there. It carries what the
+# portal said it held, which is how the report can say whether the snapshot
+# is complete rather than merely how much of it there is.
+record_path <- file.path(path_bronze, "collections",
+                         paste0("register-", report_snapshot, ".json"))
+record <- if (file.exists(record_path)) {
+  fromJSON(record_path, simplifyVector = FALSE)
+} else {
+  NULL
+}
+
+n_notifications <- nrow(notifications)
+n_public <- sum(notifications$type == "Public", na.rm = TRUE)
+n_private <- sum(notifications$type == "Private", na.rm = TRUE)
+n_joinable <- sum(notifications$scheme == "LEI and period", na.rm = TRUE)
+```
+
+# The register of STS securitisations
+
+```{r opening, results='asis'}
+stated <- if (!is.null(record)) {
+  parents <- record$stated_totals$parent
+  kids <- record$stated_totals$child
+  paste0(" The portal stated ", format(parents, big.mark = ","),
+         " notifications and ", format(kids, big.mark = ","),
+         " child documents when it was collected, and the snapshot holds ",
+         format(n_notifications, big.mark = ","), " and ",
+         format(nrow(children), big.mark = ","), ".")
+} else {
+  ""
+}
+
+cat(paste0(
+  "This report is about one snapshot of the public register ESMA keeps of ",
+  "the securitisations notified to it as simple, transparent and ",
+  "standardised: the snapshot of **", report_snapshot, "**, which holds **",
+  format(n_notifications, big.mark = ","), " notifications** and **",
+  format(nrow(children), big.mark = ","), " child documents** carrying their ",
+  "tranches and their parties.", stated, "\n\n",
+  "**The register is current state, and this is the thing to know before ",
+  "reading any figure here.** It answers for what is STS on the day it is ",
+  "read and for nothing else: a cancelled notification leaves it, and the ",
+  "two spreadsheets in which ESMA recorded removals were frozen in 2022. So ",
+  "a count below is a count of a register as it stood on one day, not of ",
+  "everything ever notified, and the only way to see what has left is to ",
+  "set two snapshots side by side, which the section on what changed does.\n"))
+```
+
+## The register at a glance
+
+```{r glance}
+glance <- tibble(
+  What = c("Notifications", "Public", "Private",
+           "Identifier that joins to reported data",
+           "Child documents", "Distinct securitisation identifiers",
+           "Fields seen across the notifications"),
+  Count = c(n_notifications, n_public, n_private, n_joinable,
+            nrow(children),
+            length(unique(trimws(notifications$securitisation))),
+            nrow(census)))
+
+knitr::kable(glance, format.args = list(big.mark = ","),
+             caption = paste("The snapshot of", report_snapshot))
+```
+
+```{r populations, results='asis'}
+public_fields <- notifications$fields[notifications$type == "Public"]
+private_fields <- notifications$fields[notifications$type == "Private"]
+# A public notification with no child document at all belongs to neither
+# population: it is marked public and filled in like a private one. The same
+# count appears among the checks at the end, by the same definition.
+bare <- notifications %>%
+  filter(type == "Public", !id %in% children$parent) %>%
+  nrow()
+
+cat(paste0(
+  "**Two populations.** A public notification carries the whole STS ",
+  "template, its tranches and its parties; a private one carries the core ",
+  "and no child document at all. In this snapshot a public notification ",
+  "carries a median of ", median(public_fields), " fields and a private one ",
+  median(private_fields), ". The difference is not a matter of degree: it ",
+  "decides whether a notification can be joined to anything at all.\n"))
+
+if (bare > 0) {
+  cat(paste0(
+    "\n", bare, " notification", if (bare == 1) " is" else "s are",
+    " marked public and carr", if (bare == 1) "ies" else "y",
+    " no more than a private one does -- no template and no child ",
+    "document. ", if (bare == 1) "It is" else "They are",
+    " counted again among the checks at the end, being neither population ",
+    "nor an error this report can resolve.\n"))
+}
+```
+
+```{r class-and-type}
+knitr::kable(
+  notifications %>%
+    count(class, type) %>%
+    pivot_wider(names_from = type, values_from = n, values_fill = 0L) %>%
+    mutate(Total = rowSums(across(where(is.numeric)))) %>%
+    arrange(desc(Total)),
+  format.args = list(big.mark = ","),
+  caption = "Notifications by class and by whether the deal is public")
+```
+
+## What the securitisations are backed by
+
+```{r exposures}
+#| fig-height: 4.6
+# The register names an exposure in the wording of the technical standards,
+# which runs to ninety-eight characters for the longest of the eight. The
+# label is wrapped rather than cut -- a label shortened here would be a
+# category of this report's making rather than one of the register's -- and
+# the chart is given the height that costs: a wrapped label needs more room
+# than the space between two bars, and the bars are spaced by the height.
+exposures <- notifications %>%
+  mutate(exposure = ifelse(is.na(exposure), "not stated", exposure)) %>%
+  count(exposure, sort = TRUE) %>%
+  mutate(exposure = wrap_labels(exposure, 40),
+         exposure = factor(exposure, levels = rev(exposure)))
+
+ggplot(exposures, aes(x = n, y = exposure)) +
+  geom_col(fill = palette_corporate_design("cat", 1)) +
+  geom_text(aes(label = n), hjust = -0.2, size = chart_base_size / 3.2) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = NULL, y = NULL,
+       title = "The underlying exposures of the notified securitisations",
+       caption = caption_corporate_design(
+         source = "ESMA STS register", last = report_snapshot, lang = "en")) +
+  theme_corporate_design(base_size = chart_base_size, grid = "x")
+```
+
+## When they were notified
+
+```{r notified-when}
+#| fig-height: 2.6
+
+by_year <- notifications %>%
+  mutate(year = as.integer(format(first_notified, "%Y"))) %>%
+  count(year, type)
+
+ggplot(by_year, aes(x = year, y = n, fill = type)) +
+  geom_col() +
+  scale_fill_corporate_design() +
+  scale_x_continuous(breaks = sort(unique(by_year$year))) +
+  labs(x = NULL, y = NULL, fill = NULL,
+       title = "First notification, by the year it was made in",
+       caption = caption_corporate_design(
+         source = "ESMA STS register", last = report_snapshot, lang = "en")) +
+  theme_corporate_design(base_size = chart_base_size, grid = "y")
+```
+
+```{r notified-note, results='asis'}
+updated <- sum(notifications$notified != notifications$first_notified,
+               na.rm = TRUE)
+cat(paste0(
+  "The register carries the day a securitisation was first notified and the ",
+  "day its notification last moved. The two differ on **",
+  format(updated, big.mark = ","), " of ",
+  format(n_notifications, big.mark = ","),
+  "** notifications, so a notification is not a thing said once; ",
+  sum(!is.na(notifications$again)),
+  " of them state a reason for having been notified again.\n"))
+```
+
+## The identifiers
+
+```{r schemes}
+knitr::kable(
+  notifications %>%
+    count(scheme, sort = TRUE) %>%
+    rename(Scheme = scheme, Notifications = n),
+  format.args = list(big.mark = ","),
+  caption = paste("The schemes the securitisation identifiers follow.",
+                  "Only the first joins to data reported under the",
+                  "disclosure templates."))
+```
+
+```{r identifier-uniqueness, results='asis'}
+trimmed <- trimws(ifelse(is.na(notifications$securitisation), "",
+                         notifications$securitisation))
+repeated <- sum(table(trimmed[trimmed != ""]) > 1)
+cat(paste0(
+  "**Neither identifier here identifies a row.** The ",
+  format(n_notifications, big.mark = ","), " notifications carry ",
+  format(length(unique(trimmed)), big.mark = ","),
+  " distinct securitisation identifiers and ",
+  format(length(unique(trimws(notifications$notification))),
+         big.mark = ","),
+  " distinct notification identifiers: ", repeated,
+  " securitisation identifiers appear on more than one notification, a ",
+  "securitisation being notified again when it is restructured or ",
+  "re-notified. The register's own document id is what identifies a row, ",
+  "and any join on the securitisation identifier is one to many.\n"))
+```
+
+## The tranches and the parties
+
+```{r parties}
+kinds <- tibble(
+  kind = c("issins", "originator", "sspe", "lender", "sponsor"),
+  What = c("Tranches, by ISIN", "Originators", "Special purpose entities",
+           "Original lenders", "Sponsors"))
+
+knitr::kable(
+  kinds %>%
+    left_join(
+      children %>%
+        group_by(kind) %>%
+        summarise(Rows = n(),
+                  Notifications = n_distinct(parent),
+                  Identified = sum(!is.na(identifier)),
+                  Distinct = n_distinct(identifier[!is.na(identifier)]),
+                  .groups = "drop"),
+      by = "kind") %>%
+    select(-kind) %>%
+    mutate(across(where(is.numeric), ~ tidyr::replace_na(.x, 0L))),
+  format.args = list(big.mark = ","),
+  caption = paste("The child documents of the snapshot. 'Identified' counts",
+                  "the rows carrying an ISIN or a legal entity identifier."))
+```
+
+```{r parties-note, results='asis'}
+cat(paste0(
+  "The tranches carry ISINs, which join to `fincommons.firds`, and the ",
+  "originator, the original lender and the sponsor carry legal entity ",
+  "identifiers, which join to `fincommons.entitymasterdata`. **The special ",
+  "purpose entity carries a country and nothing else** -- no identifier and ",
+  "no name -- which is a gap in the register rather than in the reading of ",
+  "it. Children hang off a notification by the register's document id; they ",
+  "carry no identifier of their own, so a tranche is reached through its ",
+  "notification.\n"))
+```
+
+```{r originators}
+if (any(children$kind == "originator")) {
+  knitr::kable(
+    children %>%
+      filter(kind == "originator", !is.na(label)) %>%
+      count(label, sort = TRUE) %>%
+      head(top_n) %>%
+      rename(Originator = label, Notifications = n),
+    caption = paste("The originators named in most notifications, of",
+                    n_distinct(children$identifier[children$kind ==
+                                                     "originator"]),
+                    "with a legal entity identifier"))
+}
+```
+
+## What the notifications say of themselves
+
+```{r census-prepare}
+# Solr's own bookkeeping -- the document key, the version, the time the index
+# was written -- is on every document of every register and says nothing
+# about a notification, so the census shown is of the register's own fields.
+# It is counted out rather than dropped from the snapshot, which keeps what
+# was published.
+internal <- c("_root_", "_version_", "timestamp", "type_s", "entity_type")
+register_census <- census %>% filter(!field %in% internal)
+on_every <- sum(register_census$notifications == n_notifications)
+```
+
+```{r census, results='asis'}
+cat(paste0(
+  "A notification in this snapshot carries one of ", nrow(register_census),
+  " field names, beside the ", length(internal),
+  " the register keeps for its own bookkeeping. ", on_every,
+  " of them are on every notification -- the identifiers, the class, the ",
+  "type, the status and the dates -- and the rest are the STS template, ",
+  "which only a public notification fills in. The table below is the head ",
+  "of the census the collection wrote beside the snapshot: comparing it ",
+  "with an older one is how a change to the register is noticed.\n"))
+```
+
+```{r census-table}
+knitr::kable(
+  register_census %>%
+    head(top_n) %>%
+    mutate(share = sprintf("%.0f%%", 100 * notifications / n_notifications)) %>%
+    rename(Field = field, Notifications = notifications, Share = share),
+  format.args = list(big.mark = ","),
+  caption = "The fields most notifications carry")
+```
+
+```{r verifiers}
+if (any(!is.na(notifications$verifier))) {
+  knitr::kable(
+    notifications %>%
+      filter(!is.na(verifier)) %>%
+      count(verifier, sort = TRUE) %>%
+      head(top_n) %>%
+      rename(`Third-party verifier` = verifier, Notifications = n),
+    caption = paste("The authorised third parties that verified STS",
+                    "compliance, as the notifications name them. The names",
+                    "are not normalised in the register: one verifier",
+                    "appears under several spellings."))
+}
+```
+
+## What changed since the snapshot before
+
+```{r changed, results='asis'}
+if (is.null(compare_snapshot)) {
+  cat(paste0(
+    "The lake holds one snapshot of the register, so there is nothing to ",
+    "compare it with yet. **This is the section that makes the Bronze layer ",
+    "worth keeping.** The register publishes no history and ESMA's two ",
+    "spreadsheets of removals were frozen in 2022, so from here on the only ",
+    "record of a notification leaving the register is that it was in one ",
+    "snapshot and not in the next. Collect again, and this section will say ",
+    "what arrived and what went.\n"))
+} else {
+  before <- read_notifications(compare_snapshot)
+  arrived <- setdiff(notifications$id, before$id)
+  departed <- setdiff(before$id, notifications$id)
+  cat(paste0(
+    "Against the snapshot of **", compare_snapshot, "**, which held ",
+    format(nrow(before), big.mark = ","), " notifications: **",
+    length(arrived), " arrived** and **", length(departed), " left**.\n\n",
+    "A notification that has left the register has not necessarily been ",
+    "cancelled -- the register gives no reason, which is why what left is ",
+    "recorded here as a fact about two snapshots and nothing more.\n"))
+}
+```
+
+```{r changed-table}
+if (!is.null(compare_snapshot)) {
+  before <- read_notifications(compare_snapshot)
+  departed <- before %>% filter(!id %in% notifications$id)
+  if (nrow(departed) > 0) {
+    knitr::kable(
+      departed %>%
+        select(securitisation, type, class, name, first_notified) %>%
+        head(top_n) %>%
+        rename(Identifier = securitisation, Type = type, Class = class,
+               Name = name, `First notified` = first_notified),
+      caption = paste("The notifications in the snapshot of",
+                      compare_snapshot, "that the snapshot of",
+                      report_snapshot, "no longer holds"))
+  }
+}
+```
+
+## What to expect of the data
+
+```{r quality}
+blank <- sum(trimws(ifelse(is.na(notifications$securitisation), "",
+                           notifications$securitisation)) == "")
+untrimmed <- sum(!is.na(notifications$securitisation) &
+                   notifications$securitisation !=
+                   trimws(notifications$securitisation))
+duplicated_ids <- notifications %>%
+  mutate(key = trimws(securitisation)) %>%
+  filter(key != "") %>%
+  add_count(key) %>%
+  filter(n > 1)
+childless_public <- notifications %>%
+  filter(type == "Public", !id %in% children$parent) %>%
+  nrow()
+isins <- children$identifier[children$kind == "issins"]
+malformed_isin <- sum(!is.na(isins) &
+                        !grepl("^[A-Z]{2}[A-Z0-9]{9}[0-9]$", isins))
+missing_isin <- sum(is.na(isins))
+constant <- census %>%
+  filter(field == "stsre_sanc_status") %>%
+  pull(notifications)
+
+checks <- tibble(
+  Check = c(
+    "Notifications whose securitisation identifier is blank",
+    "Identifiers carrying leading or trailing space",
+    "Notifications sharing an identifier with another",
+    "Of those, stating no reason for the second notification",
+    "Public notifications with no child document at all",
+    "Tranche rows carrying no ISIN",
+    "ISINs that are not well formed",
+    "Distinct values of the sanction status"),
+  Count = c(
+    blank, untrimmed, nrow(duplicated_ids),
+    sum(is.na(duplicated_ids$again)), childless_public,
+    missing_isin, malformed_isin,
+    n_distinct(notifications$sanction)))
+
+knitr::kable(checks, format.args = list(big.mark = ","),
+             caption = paste("Counted over the snapshot of", report_snapshot))
+```
+
+```{r quality-note, results='asis'}
+cat(paste0(
+  "None of these is a fault of the pipeline: each is what the register ",
+  "says, and the Bronze layer keeps it as it was published. They are listed ",
+  "because each one decides something about reading the data. A blank ",
+  "identifier cannot be joined; an identifier with a leading space joins to ",
+  "nothing unless it is trimmed; an identifier on two notifications makes ",
+  "every join one to many; and a sanction status with one distinct value -- ",
+  "`", notifications$sanction[1], "` on all ",
+  format(n_notifications, big.mark = ","),
+  " -- carries no information until the day it does.\n\n",
+  "Two date formats occur in one notification: the dates the register ",
+  "indexes are `2026-09-10T00:00:00Z` while the prospectus issue date is ",
+  "`2026-09-10 00:00:00.0`, so a reader parses per field rather than per ",
+  "document.\n"))
+```
+
+## The spreadsheets beside the register
+
+```{r sheets, results='asis'}
+sheet_dir <- file.path(path_bronze, "sheets", report_snapshot)
+sheet_files <- if (dir.exists(sheet_dir)) {
+  list.files(sheet_dir, pattern = "\\.xlsx$", full.names = TRUE)
+} else {
+  character(0)
+}
+
+if (length(sheet_files) == 0) {
+  cat(paste0(
+    "The snapshot of ", report_snapshot, " holds none of the spreadsheets ",
+    "ESMA publishes beside the register. They hold what the register does ",
+    "not: the notifications of 2019 to January 2022 as they stood when the ",
+    "list was frozen, the cancellations with ESMA's reasons for them, the ",
+    "synthetic STS securitisations, which are notified by e-mail and are in ",
+    "no register, and the two registered securitisation repositories with ",
+    "their legal entity identifiers. Collect them with ",
+    "`sts.collect_sheets('", config_path, "')`.\n"))
+} else {
+  cat(paste0("The snapshot holds ", length(sheet_files),
+             " of the spreadsheets ESMA publishes beside the register.\n"))
+}
+```
+
+```{r sheets-table}
+if (length(sheet_files) > 0 && requireNamespace("readxl", quietly = TRUE)) {
+  # Each sheet carries a block of disclaimer rows above its header, so the
+  # header is the widest row of the first twenty-five rather than the first.
+  read_sheet <- function(path) {
+    raw <- readxl::read_excel(path, col_names = FALSE, n_max = 2000,
+                              .name_repair = "minimal")
+    filled <- apply(raw, 1, function(r) sum(!is.na(r) & trimws(r) != ""))
+    head_at <- which(filled == max(filled[seq_len(min(25, length(filled)))]))[1]
+    header <- as.character(unlist(raw[head_at, ], use.names = FALSE))
+    body <- raw[seq.int(head_at + 1, nrow(raw)), , drop = FALSE]
+    names(body) <- ifelse(is.na(header) | header == "",
+                          paste0("col", seq_along(header)), header)
+    body[apply(body, 1, function(r) sum(!is.na(r)) > 1), , drop = FALSE]
+  }
+
+  held <- bind_rows(lapply(sheet_files, function(path) {
+    name <- tools::file_path_sans_ext(basename(path))
+    rows <- tryCatch(nrow(read_sheet(path)), error = function(e) NA_integer_)
+    tibble(Spreadsheet = name, Rows = rows,
+           `Size (KB)` = round(file.size(path) / 1024))
+  }))
+
+  # The frozen list of notifications is the one that can be set against the
+  # register, both naming a securitisation by the same identifier. The
+  # comparison is counted here and said in the chunk below, output of a
+  # chunk that is not `asis` being quoted rather than rendered.
+  traditional <- sheet_files[grepl("traditional", sheet_files)]
+  if (length(traditional) == 1) {
+    sheet <- tryCatch(read_sheet(traditional[1]), error = function(e) NULL)
+    column <- if (!is.null(sheet)) {
+      intersect(c("Unique Identifier", "Unique Securitisation Identifier"),
+                names(sheet))
+    } else {
+      character(0)
+    }
+    if (length(column) > 0) {
+      listed <- unique(trimws(as.character(sheet[[column[1]]])))
+      frozen_listed <- listed[!is.na(listed) & listed != ""]
+      frozen_still <- intersect(frozen_listed,
+                                trimws(notifications$securitisation))
+    }
+  }
+
+  knitr::kable(held, format.args = list(big.mark = ","),
+               caption = paste("The spreadsheets collected on",
+                               report_snapshot))
+}
+```
+
+```{r sheets-overlap, results='asis'}
+if (exists("frozen_listed")) {
+  cat(paste0(
+    "The frozen list of 2019 to January 2022 names ",
+    format(length(frozen_listed), big.mark = ","),
+    " securitisations. **", format(length(frozen_still), big.mark = ","),
+    " of them are still in the register and ",
+    format(length(setdiff(frozen_listed, frozen_still)), big.mark = ","),
+    " are not** -- which is the measure of how much a register of current ",
+    "state does not say, and the reason the snapshots of this Bronze layer ",
+    "are kept.\n"))
+}
+```
+
+## Sources
+
+```{r sources, results='asis'}
+cat(paste(c(
+  paste("**The register.** ESMA's public register of STS notifications,",
+        "read through the machine-to-machine services of the registers",
+        "portal, which are documented at",
+        "registers.esma.europa.eu/publication/helpApp and need no key. The",
+        "register is held as a Solr index and queried by URL."),
+  paste("**The law.** Regulation (EU) 2017/2402, the Securitisation",
+        "Regulation, whose Article 27 has the originator, the sponsor and",
+        "the special purpose entity notify ESMA that a securitisation meets",
+        "the criteria of Articles 19 to 22 or 23 to 26, and whose Article 28",
+        "has an authorised third party verify compliance."),
+  paste("**The spreadsheets.** ESMA33-128-760, the notifications of 2019 to",
+        "14 January 2022; ESMA33-128-761, the cancellations to 23 May 2022,",
+        "with the reasons; ESMA82-402-39, the synthetic STS securitisations;",
+        "and the register of securitisation repositories. All four are files",
+        "on esma.europa.eu."),
+  paste("**The pipeline.** The `sts` module of fincommons, which collects",
+        "the register and the spreadsheets into the Bronze layer, one dated",
+        "snapshot per run. The module's README describes the layout and what",
+        "to expect of the data; this report reads the snapshots directly,",
+        "there being no Silver layer yet.")),
+  collapse = "\n\n"))
+```
+
+### Disclaimer
+
+```{r disclaimer, results='asis'}
+cat(paste(
+  "This document is produced by a template of the open-source project",
+  "fincommons and is an example of what the project's `sts` module can be",
+  "read for. It counts the notifications of a public register and nothing",
+  "else: no figure in it is a statement about the quality, the performance",
+  "or the conduct of any securitisation, originator, sponsor, verifier or",
+  "repository named or counted in it, and a securitisation counted here is",
+  "one that was notified as simple, transparent and standardised, which is",
+  "a notification made by its own parties and not a judgement by ESMA, by",
+  "this project or by anyone else. The register answers for the day it was",
+  "read, so every count is a count of one day and not of everything ever",
+  "notified. The counts are given without warranty as to correctness or",
+  "completeness, carry no association with any party named or with ESMA,",
+  "and are not investment advice. Liability is disclaimed as far as the law",
+  "allows, in the terms of Articles 7 and 8 of the EUPL this project is",
+  "licensed under. Whoever renders this report for a purpose of their own is",
+  "responsible for what they publish."))
+```

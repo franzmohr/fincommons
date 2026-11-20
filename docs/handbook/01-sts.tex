@@ -1,0 +1,80 @@
+\chapter{STS securitisations}\label{ch:sts}
+
+\section{Introduction}
+
+A securitisation that meets the criteria of Articles 19 to 22 of Regulation (EU) 2017/2402 -- or, for asset-backed commercial paper, of Articles 23 to 26 -- may be designated \emph{simple, transparent and standardised}, which lowers the capital a bank or an insurer holding its positions has to set aside. The designation is not granted. It is \emph{notified}: the originator, the sponsor and the securitisation special purpose entity jointly tell ESMA that their securitisation meets the criteria, and ESMA publishes the notification in a register kept for that purpose under Article 27 \parencite{EU.2017}. An authorised third party may be engaged under Article 28 to verify compliance, and the notification names it where one was.
+
+Two consequences follow for anyone reading the register, and both are easy to get wrong. The first is that a notification is a statement by the parties to a securitisation and not a judgement by ESMA, so the register records what was claimed rather than what was verified. The second is that the register holds the notifications standing \emph{today}: a securitisation whose notification is cancelled leaves it, and the register says neither that it was there nor why it went. Section \ref{sec:sts-bronze} turns that second property into the design of the pipeline.
+
+The register is reached through the machine-to-machine services of ESMA's registers portal, which expose each register as a Solr index queried by a URL \parencite{ESMA.2026b, ESMA.2026c}. No key, no registration and no declaration of interest stands in front of it. That is worth stating beside the other securitisation data of the same regulation, because the contrast decides which package a pipeline belongs in. The disclosure templates of Article 7 -- the underlying exposure and investor reports that an originator, a sponsor or a special purpose entity files through a securitisation repository, and the reporting instructions for them \parencite{ESMA.2021a} -- are available free of charge under Article 17 to the authorities the article lists and, ESMA has said, to investors and potential investors as well. But free is not public: a reader registers with one of the two repositories and declares a legitimate interest, and the bulk channel is a paid tier. A pipeline on those reports therefore belongs to a package distributed to the audience entitled to them, while this register, which anyone may fetch, belongs here.
+
+\subsection{What the register holds}
+
+\label{sec:sts-populations}
+The figures in this chapter are those of the snapshot of 20 November 2026, which held 1{,}147 notifications and 4{,}613 child documents carrying their tranches and their parties.
+
+The register divides into two populations, and which one a notification falls in decides what it can be asked. Of the 1{,}147, 502 are \emph{public} and carry the whole STS template -- some 130 fields of assertions against the criteria, each a flag with an explanatory comment beside it -- together with their tranches and their parties. The remaining 645 are \emph{private} and carry sixteen to eighteen fields: the class, the type, the kind of underlying exposure, the compliance status and the dates, and nothing else. There is no partial case. A public notification carries a median of 147 fields and a private one 18.
+
+The division is not of ESMA's making. A private securitisation is one for which no prospectus is required, and the notification template it files is correspondingly short. It matters here because the securitisation identifier follows the same division. A public notification is identified as the disclosure templates identify a securitisation -- the legal entity identifier of the reporting entity, a letter for the class and the period, \verb|2138001WO21Z3B8Y8K20N202602| -- while a private one carries a placeholder, \verb|Private_2020_12_18_01| or \verb|PRIVATE_STS2022_06_20_01|, which identifies nothing outside the register. A join from this register to data reported under the disclosure templates therefore reaches about five hundred notifications and not all of them.
+
+Three further properties are worth knowing before the tables are read.
+
+\emph{Neither identifier identifies a row.} The 1{,}147 notifications carry 1{,}115 distinct securitisation identifiers and 1{,}131 distinct notification identifiers. A securitisation is notified again when it is restructured or re-notified, and 27 notifications state a reason for it. The register's own document identifier is what identifies a row, and a join on the securitisation identifier is one to many.
+
+\emph{The parties are child documents and not fields.} Five kinds hang off a notification: \verb|issins| carries the ISIN and the name of a tranche, and \verb|originator|, \verb|lender| and \verb|sponsor| carry a legal entity identifier, a name and a country. The fifth, \verb|sspe|, carries a country and nothing else -- no identifier and no name for the special purpose entity -- which is a gap in the register rather than in the reading of it. Only public notifications have children at all.
+
+\emph{Asset-backed commercial paper is well represented and almost entirely private.} The snapshot holds 682 non-ABCP securitisations, 464 ABCP securitisations and one ABCP programme; three of the ABCP notifications are public. A sample small enough to see only public notifications therefore sees almost no ABCP, which is the opposite of the market.
+
+\section{Data pipeline}
+
+\subsection{Landing zone}
+
+There is no landing zone. A page of the register is a few megabytes of JSON and is written into the Bronze layer as it arrives.
+
+\subsection{Bronze layer}\label{sec:sts-bronze}
+
+\emph{The Bronze layer keeps snapshots, and this is the whole of its design.} A collection writes a complete, dated copy of the register beside the copies taken before it and never rewrites one.
+
+The reason is the property named in the introduction. The register answers for what is STS on the day it is read. ESMA published two spreadsheets recording the earlier state -- the notifications of 2019 to 14 January 2022, and the cancellations to 23 May 2022, with ESMA's own reasons for them -- and both were frozen in 2022. Of the 109 cancelled identifiers that ever appeared, 107 are no longer in the register; of the 595 securitisations the frozen list names, 222 are gone from it. Since May 2022 nothing published has recorded a removal at all. A lake's own snapshots are therefore the only record of what the register once held, and what left it between two runs is the difference between two of them. A lake that compacts these snapshots away destroys the only record it has; this is the one point in the framework where keeping a redundant copy is not redundancy.
+
+Both kinds of document are paged through and every answer is stored as the bytes that came back. Two properties of the paging are worth recording. Solr serves a page by counting \verb|start| documents into a result set, so two requests of one run see a consistent set only where the order is fixed; every request therefore carries \verb|sort=id asc|, \verb|id| being the one field every document of the core holds. And a collection checks that it ended up with as many documents as the first answer said the register held, since an index that moved under a run would otherwise leave a snapshot that looks complete.
+
+Beside each snapshot a record is written: the documents and pages collected, the totals the portal stated, and a census of the field names the notifications carried with the number of notifications carrying each. The census is the part worth having. The Silver layer is designed from it, and two censuses read side by side say what the register has changed -- the alternative being to discover a changed field when a table built from it is wrong. A field that every notification carried when the module was written and that no longer appears at all is reported as missing and warned about.
+
+The four spreadsheets are collected beside the register and filed under the day they were collected, as the snapshots are. Two of them are frozen and will never differ between two days; the list of synthetic STS securitisations is current -- those are notified to ESMA by electronic mail and appear in no register -- and a lake keeping one copy of it would overwrite the only record of what it said before. The fourth is the register of the two securitisation repositories, two rows, worth having because it gives each repository a legal entity identifier where the STS register names it only as a string.
+
+One failure of a download does not look like one. A file ESMA has moved is answered with a page of HTML, which a collection trusting the status code would store as a spreadsheet; the list of securitisations that lost STS status in the Union through Brexit does exactly this today. What arrives is therefore checked against the content type and the first bytes of a zip before it is kept, and an address that no longer serves a spreadsheet is recorded as unavailable and warned about.
+
+\subsection{Silver layer}
+
+There is no Silver layer yet. The tables are being designed from real snapshots rather than from a description of the register, and the census of section \ref{sec:sts-bronze} is what they are designed from. Three questions the snapshots have settled are recorded here, since they are the substance of that design.
+
+The template assertions are better held long than wide. About 130 of the fields are the STS template, present on the public notifications only, each a flag with an optional comment of free text. As columns they would be a table 130 wide and half empty, and every revision of the template -- one is in prospect with the review of the securitisation framework -- would change its shape. As rows of a table of notification, requirement, flag and comment they survive the revision and turn 130 catalogue entries into one vocabulary of requirement codes.
+
+The parties are one table and not four. The originator, the original lender, the sponsor and the special purpose entity carry the same four attributes under four prefixes, so a single table with a column for the role holds them, and the missing identifier of the special purpose entity is then a null rather than a schema of its own.
+
+The status of a securitisation is a fold over events and not a column. The register gives the current state; the frozen lists give notifications and cancellations with their dates and reasons; and a snapshot diff gives departures with no reason at all. Recording each of these as an event -- notified, updated, cancelled, left the register, found non-compliant -- with the source it came from and that source's own date, keeps the contradictions visible instead of resolving them silently. There are contradictions to keep: two securitisations cancelled in March 2021 are still in the register and still marked compliant, and the ten notifications the register marks \emph{non-compliant} appear in none of the cancellation lists, so non-compliance and cancellation are different states.
+
+\subsection{Data quality}
+
+The checks belong with the Silver layer and are not written yet. What they will find is already known, having been counted over the snapshot, and it is recorded here because each item decides something about how the register is read rather than merely being a defect.
+
+Three notifications carry a single space in both identifier fields and so cannot be joined at all; eight more carry a leading space, and join to nothing unless it is trimmed. Forty-nine notifications share a securitisation identifier with another and 26 of those state no reason, which is what makes every join on that identifier one to many. Four notifications are marked public and carry neither the template nor a child document, belonging to neither population. Ten tranche children carry no ISIN and 267 no instrument name. The sanction status is \verb|Not Sanctioned| on all 1{,}147, so the column carries no information until the day it does -- which is itself worth a check.
+
+Two more are properties of the sources rather than of any one row. A notification carries dates in two formats: the dates the register indexes are \verb|2026-09-10T00:00:00Z| while the prospectus issue date is \verb|2026-09-10 00:00:00.0|, so a reader parses per field and not per document. And the frozen spreadsheets name the underlying exposures in an older and shorter vocabulary than the register does -- \emph{SME loans} against \emph{credit facilities, including loans and leases, provided to any type of enterprise} -- which differ on 50 of the 373 securitisations the two sources share. That is a mapping table and not a rule: the sheet's \emph{leases} corresponds to the register's \emph{others}, which no rule derives.
+
+\subsection{Gold layer}
+
+There is no Gold layer. As for the regimes of chapters \ref{ch:esef} to \ref{ch:edinet}, a report template reads the data and does what a Gold table would do for the question it answers. The \emph{register report} covers one snapshot: the two populations, the underlying exposures, the notification dates, the identifier schemes, the tranches and the parties, the census of the fields, the checks and the spreadsheets. It differs from the report templates of the other chapters in reading the Bronze snapshots directly, there being no Silver layer to read, and it says so on its own first page. Its section on what arrived and what left since the snapshot before is the one part of the framework that can only be written from the Bronze layer: no table could hold it, because no publisher states it.
+
+\section{Software architecture}
+
+Module \emph{sts} is organised in two parts. \emph{common} declares the layout of the data lake, the addresses of the five sources and what the register is expected to hold; \emph{bronze} collects it. One call takes a snapshot and the spreadsheets,
+\begin{quote}
+\verb|sts.update_bronze_sts("paths.yaml")|
+\end{quote}
+and a day holds one snapshot, so a run that wants a second one on the same day asks for it. \verb|collected_snapshots| lists the days a snapshot is held for, which is where a comparison between two of them starts.
+
+The module reaches the rest of the framework through two identifiers rather than through any code. The ISIN of a tranche joins to the reference data of chapter \ref{ch:firds}, which gives the instrument, its issuer and the venues it trades on. The legal entity identifier of an originator, an original lender or a sponsor joins to the entity master data of chapter \ref{ch:entitymasterdata}, which gives the entity, its country and its ultimate parent. Neither join needs a mapping table; both are the identifier as published.
+
+The third join is the one the register was built for. A public notification's securitisation identifier is the identifier the disclosure templates of Article 7 use, in the same composition, so a pipeline on the reports filed through a securitisation repository joins to this register on one column, with nothing to maintain between them. That pipeline is not part of \emph{fincommons}, the reports not being public, but the seam is here and costs nothing: a securitisation notified as STS and a securitisation reported under the disclosure templates are named by the same string.
