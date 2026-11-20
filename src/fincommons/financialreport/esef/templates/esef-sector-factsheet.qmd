@@ -357,6 +357,12 @@ financial_concepts <- c(
 annual_forms <- c("10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A",
                   "120", "130")
 
+# The member under which a Japanese report states its parent company's own
+# accounts; see the benchmark below. And the ending of the industry elements
+# a Japanese bank, insurer or securities firm tags.
+basis_members <- c("NonConsolidatedMember")
+japanese_financial_suffix <- "(BNK|INS|SEC)$"
+
 # The measures the benchmark is taken over. Named here rather than beside
 # the benchmark itself because the read of the facts filters on them, and
 # that read comes first.
@@ -767,13 +773,47 @@ if (has_combined) {
   # Computed here and not inside the filter: arrow translates `min` as an
   # aggregate of a column and refuses it over an R vector.
   first_year_wanted <- min(years_shown)
+
+  # A Japanese investment fund files its annual report under document type
+  # 120, as a company does, and is not a company: its revenue is a
+  # portfolio's income and its equity ratio close to one. A fund's report
+  # tags the fund taxonomies `jpsps*` or the fund elements of the financial
+  # statements taxonomy, whose names end in `FND`, and it is left out of the
+  # benchmark, as the combined module's reports leave it out.
+  edinet_bench <- bench_filings$filing[bench_filings$source == "edinet"]
+  bench_funds <- if (length(edinet_bench) == 0) character(0) else
+    open_dataset(file.path(path_combined, "fact")) %>%
+      filter(source == "edinet", filing %in% edinet_bench,
+             grepl("^jpsps", concept) | grepl("FND$", concept)) %>%
+      distinct(filing) %>%
+      collect() %>%
+      pull(filing)
+  bench_filings <- bench_filings %>% filter(!filing %in% bench_funds)
+
+  # A figure under a dimension is a part of the entity and is left out, with
+  # the one exception `measure_values` of the combined module makes: a
+  # Japanese report states its group's figures with no dimension and its
+  # parent company's own under `NonConsolidatedMember`, and a filer that
+  # prepares no consolidated statements states only the second. Left out,
+  # every Japanese company without subsidiaries would be missing from the
+  # benchmark. Where a report states both, the group's figure is taken.
+  #
+  # And a measure counts under the framework of the filing: a Japanese
+  # group reporting under IFRS states its parent company's own accounts
+  # under Japan GAAP in the same report, and those are not its figures.
   bench_facts <- open_dataset(file.path(path_combined, "fact")) %>%
     filter(period_year >= first_year_wanted,
-           measure %in% measures_wanted, is.na(dimensions), !is.na(value),
+           measure %in% measures_wanted, !is.na(value),
+           is.na(dimensions) | dimensions %in% basis_members,
            prd_end == period_end, filing %in% bench_filings$filing) %>%
-    select(source, filing, lei, cik, edinet_code, period_end, period_year,
-           measure, value) %>%
-    collect()
+    select(source, filing, lei, cik, edinet_code, framework, period_end,
+           period_year, measure, dimensions, value) %>%
+    collect() %>%
+    semi_join(bench_filings %>% select(filing, framework),
+              by = c("filing", "framework")) %>%
+    arrange(filing, period_end, measure, !is.na(dimensions)) %>%
+    distinct(filing, period_end, measure, .keep_all = TRUE) %>%
+    select(-framework, -dimensions)
 
   # The second test for a bank or an insurer: a filer whose own primary
   # statements carry a line only a financial undertaking has. It is a
@@ -787,8 +827,12 @@ if (has_combined) {
   # read would move those into the population the panel is held against,
   # which is the one thing this test exists to stop. It reads two columns
   # of a concept filter and costs under five seconds.
+  # A Japanese bank, insurer or securities firm tags the industry elements
+  # of the financial statements taxonomy, whose names end in BNK, INS and
+  # SEC, and is found by them.
   financial_by_statement <- open_dataset(file.path(path_combined, "fact")) %>%
-    filter(concept %in% financial_concepts,
+    filter(concept %in% financial_concepts |
+             (source == "edinet" & grepl(japanese_financial_suffix, concept)),
            filing %in% bench_filings$filing) %>%
     select(lei, cik, edinet_code) %>%
     collect() %>%
