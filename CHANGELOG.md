@@ -88,6 +88,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
   Commission's. The cross-regime table already added amounts up within a
   regime, and its note now says that a Japanese row is in yen.
 
+### Changed
+
+- `entitymasterdata`: the list of CCPs is kept per day. `download_esma_ccp`
+  stores it as `YYYYMMDD.csv` under the day of the download, as EIOPA's
+  registers are, and takes `today` as they do; the Bronze import keeps one
+  `YYYYMMDD.parquet` per day, with `REFDT`, where it used to replace
+  `ccp_list.parquet`. ESMA publishes only the current lists and dates
+  neither, so a list once replaced could not be had again and the register
+  could have no history. A list stored as `ccp_list` by an earlier version is
+  renamed to the day it was last written (`date_undated_ccp_lists`), since
+  `c` sorts after every digit and the undated list would otherwise be taken
+  for the latest; a dated list of the same day stops the import rather than
+  either being dropped.
+
 ### Fixed
 
 - `firds`: the writes to the historical database fill their Parquet row groups
