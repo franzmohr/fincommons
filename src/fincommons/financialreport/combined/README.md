@@ -293,3 +293,24 @@ The module stops at resolution. It says which concepts a measure is taken to be 
 ### A comparison, honestly
 
 A measure resolved across both regimes is comparable only as far as its caveat says, and the caveats are not decoration. Revenue is the clearest case: `ifrs-full:Revenue` may include revenue from sources other than contracts with customers, which ASC 606 reports separately; the US split between revenue excluding and including assessed tax has no IFRS counterpart at all, so a filer tagging the including variant reports a larger figure than an IFRS filer would for the same business; and `us-gaap:Revenues` predates ASC 606, is tagged inconsistently, and is the last resort rather than an equivalent of the IFRS total. Anyone publishing a cross-regime comparison should print `caveats()` beside it.
+
+## Reports
+
+Two report templates in `templates/` read the two tables as Parquet and render with Quarto to PDF. Both need the corporate design script of the package's `templates` directory and the catalogue of measures in its `data` directory, which they find from where they stand in the package, or beside them where they are copied out. Render with a UTF-8 locale.
+
+```bash
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render financialreport-coverage-report.qmd
+FINCOMMONS_CONFIG=/path/to/paths.yaml FINCOMMONS_YEAR=2024 quarto render financialreport-comparison-report.qmd
+```
+
+**`financialreport-coverage-report.qmd`** says what the lake holds: for each regime the filings listed and read, the issuers, the facts, the years and the frameworks; the forms read from the Commission and the agency; which of the eight measures the annual reports of each regime and framework state; how often the result is the total and how often only the parent's share; and the first concept of each measure under each framework, with the caveats counted.
+
+**`financialreport-comparison-report.qmd`** compares companies across the regimes on three ratios of figures of the same report -- net margin, equity ratio and return on equity -- so that no currency is converted. It takes one annual report per company and year, the result as the total where it is stated and the parent's share where it is not, and prints the catalogue's caveats on the measures it uses. The year is the latest one in which at least two regimes hold ten companies, or `FINCOMMONS_YEAR`.
+
+Both apply three rules the tables do not apply themselves, and each was found on a lake rather than assumed:
+
+* **Investment funds are not companies.** A Japanese fund files its annual report under document type 120, as a company does, and in a lake that read a few weeks of the agency's indexes most annual reports are funds' -- 456 of 605 in the one the reports were written against. A fund's report tags the fund taxonomies `jpsps*` or the elements of the financial statements taxonomy whose names end in `FND`; the coverage report counts these apart, and neither report puts them in a statistic of the measures.
+* **A Japanese filer without subsidiaries states its accounts under `NonConsolidatedMember`**, and is read from them, as `measure_values` reads it. Of 78 Japanese annual reports of companies, 14 state their measures only so.
+* **A measure counts under the framework of the filing.** A Japanese group reporting under IFRS states its parent company's own accounts under Japan GAAP in the same report, and those are not the report's figures.
+
+The comparison report also leaves out banks and insurers, found from the lines their own reports present: the IFRS and US-GAAP lines of the esef factsheets, and for a Japanese filer the industry elements whose names end in `BNK`, `INS` and `SEC`.

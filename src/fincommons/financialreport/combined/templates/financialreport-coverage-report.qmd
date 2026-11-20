@@ -1,0 +1,706 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.6
+execute:
+  # A chunk that fails stops the render, so a report over a lake it could not
+  # read never comes out as a PDF of error messages with exit code 0.
+  error: false
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a report
+# --------------------------------------------------------------------------
+
+# The path to the config file, whose financialreport section names the
+# combined Silver layer:
+#
+#   FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render financialreport-coverage-report.qmd
+#
+# Everything else follows from the lake: which regimes it holds, for which
+# years, and what their filings state.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# How many financial years the charts go back from the latest one any regime
+# holds annual reports for. The Commission's company files reach back to
+# 2009, and a chart over all of it would make the two younger regimes a
+# sliver at its right edge.
+n_years <- 10
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# --------------------------------------------------------------------------
+# What the report counts as what
+# --------------------------------------------------------------------------
+
+# The regimes, in the order every table and chart takes them, and what they
+# are called on the page.
+regimes <- c(esef = "ESEF", sec = "SEC", edinet = "EDINET")
+regime_long <- c(esef = "ESEF, the European Union",
+                 sec = "SEC, the United States",
+                 edinet = "EDINET, Japan")
+frameworks <- c("IFRS", "US-GAAP", "JP-GAAP")
+
+# The forms of an annual report. An ESEF filing is annual by construction --
+# the regime covers the annual financial report alone -- and names no form.
+# A filing with the Commission may be quarterly, and one with the Financial
+# Services Agency may be any of some thirty documents, most of which are not
+# accounts at all. The sector factsheet of the esef module uses the same
+# list, and so does the comparison report beside this one.
+annual_forms <- c("10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A",
+                  "120", "130")
+
+# The EDINET document types this report names. The agency numbers every
+# document it receives, and the code alone says nothing to a reader; the
+# ones a lake is likely to hold are named, the rest are shown as their code.
+edinet_forms <- c(
+  "030" = "Securities registration statement",
+  "040" = "Amended securities registration statement",
+  "120" = "Annual securities report",
+  "130" = "Amended annual securities report",
+  "140" = "Quarterly report",
+  "150" = "Amended quarterly report",
+  "160" = "Semi-annual report",
+  "170" = "Amended semi-annual report",
+  "180" = "Extraordinary report",
+  "190" = "Amended extraordinary report",
+  "220" = "Share buyback status report",
+  "230" = "Amended share buyback status report",
+  "235" = "Internal control report",
+  "236" = "Amended internal control report",
+  "350" = "Large shareholding report",
+  "360" = "Amended large shareholding report")
+
+# --------------------------------------------------------------------------
+# The design and the libraries
+# --------------------------------------------------------------------------
+
+# One design script for the whole package, in the templates directory at
+# its root; a copy beside this template wins over it.
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+if (!grepl("UTF-8", Sys.getlocale("LC_CTYPE"), ignore.case = TRUE)) {
+  stop("The session does not run in a UTF-8 locale, so the names of issuers ",
+       "and the typographic characters of this report would print as ",
+       "<U+00B7> escapes. Render with LANG=en_US.UTF-8.")
+}
+
+# A financial year is named by the calendar year it mostly falls in: a year
+# ending on or before 30 June counts as the year before, so a Japanese year
+# to 31 March 2026 is 2025, as it is in every report of the package.
+period_year <- function(date) {
+  y <- as.integer(format(date, "%Y"))
+  ifelse(as.integer(format(date, "%m")) <= 6L, y - 1L, y)
+}
+
+# --------------------------------------------------------------------------
+# The catalogue of measures
+# --------------------------------------------------------------------------
+
+catalogue_file <- "financialreport_measures.csv"
+catalogue_path <- c(catalogue_file,
+                    file.path("..", "..", "..", "data", catalogue_file))
+catalogue_path <- catalogue_path[file.exists(catalogue_path)]
+if (length(catalogue_path) == 0) {
+  stop("The catalogue of measures ", catalogue_file, " is neither beside ",
+       "this template nor in the data directory of the package.")
+}
+catalogue <- read.csv(catalogue_path[1], stringsAsFactors = FALSE,
+                      encoding = "UTF-8") %>%
+  as_tibble()
+measures <- c("revenue", "profit_loss", "profit_loss_attributable_to_parent",
+              "assets", "liabilities", "equity",
+              "equity_attributable_to_parent", "cash_and_equivalents")
+unknown <- setdiff(unique(catalogue$measure), measures)
+if (length(unknown) > 0) {
+  stop("The catalogue of measures defines ", paste(unknown, collapse = ", "),
+       ", which this report does not know how to show. Add it to `measures`.")
+}
+measure_names <- c(
+  revenue = "Revenue",
+  profit_loss = "Result for the year",
+  profit_loss_attributable_to_parent = "Result, owners of the parent",
+  assets = "Total assets",
+  liabilities = "Total liabilities",
+  equity = "Equity",
+  equity_attributable_to_parent = "Equity, owners of the parent",
+  cash_and_equivalents = "Cash and cash equivalents")
+
+# --------------------------------------------------------------------------
+# The Silver layer
+# --------------------------------------------------------------------------
+
+yaml_paths <- read_yaml(config_path)
+path_silver <- yaml_paths[["financialreport"]][["silver"]]
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+if (is.null(path_silver)) {
+  stop("The config file ", config_path, " names no Silver layer for ",
+       "financialreport.")
+}
+
+# arrow reads every parquet file under a directory, and a Delta table keeps
+# the files it has replaced until it is vacuumed, so a Delta table read this
+# way would count a filing once for every time it was written.
+for (table in c("fact", "filing")) {
+  if (!dir.exists(file.path(path_silver, table))) {
+    stop("The combined Silver layer in ", path_silver, " has no ", table,
+         " table. Build it with fincommons.financialreport.combined.",
+         "update_silver_financialreport.")
+  }
+  if (dir.exists(file.path(path_silver, table, "_delta_log"))) {
+    stop("The ", table, " table of the combined module is a Delta table, ",
+         "which this template does not read. Write the Silver layer as ",
+         "parquet, or read the table through Spark.")
+  }
+}
+
+filings_all <- open_dataset(file.path(path_silver, "filing")) %>%
+  collect() %>%
+  mutate(source = as.character(source),
+         read = !is.na(facts) & facts > 0,
+         annual = source == "esef" | form %in% annual_forms,
+         fy = period_year(period_end),
+         issuer = paste0(coalesce(lei, ""), "|", coalesce(cik, ""), "|",
+                         coalesce(edinet_code, "")))
+
+held <- intersect(names(regimes), unique(filings_all$source))
+if (length(held) == 0) {
+  stop("The table of filings of ", path_silver, " is empty.")
+}
+regimes_held <- regimes[held]
+
+read <- filings_all %>% filter(read)
+
+# An investment fund files its annual report with the agency under the same
+# document type as a company, 120, and in a lake that collected the agency's
+# indexes for a few weeks most of the annual reports are funds': 456 of 605
+# in the one this report was written against. A fund is not a company -- its
+# revenue is the income of a portfolio and its equity ratio close to one --
+# and pooled with companies it would move every median of the Japanese
+# column. A fund's report is told by its concepts: it tags the fund
+# taxonomies `jpsps*` or the fund elements of the financial statements
+# taxonomy, whose names end in `FND`. Its reports are counted as what they
+# are and left out of every statistic of the measures.
+edinet_annual_ids <- read$filing[read$source == "edinet" & read$annual]
+fund_ids <- if (length(edinet_annual_ids) == 0) character(0) else
+  open_dataset(file.path(path_silver, "fact")) %>%
+    filter(source == "edinet", filing %in% edinet_annual_ids,
+           grepl("^jpsps", concept) | grepl("FND$", concept)) %>%
+    distinct(filing) %>%
+    collect() %>%
+    pull(filing)
+read <- read %>%
+  mutate(fund = source == "edinet" & filing %in% fund_ids)
+
+annual_all <- read %>% filter(annual, !is.na(fy))
+annual <- annual_all %>% filter(!fund)
+latest_year <- max(annual$fy)
+years_charted <- seq(latest_year - n_years + 1, latest_year)
+
+# The measures each annual report states: the materialised `measure` column
+# of the fact table, for the entity as a whole and for the period the filing
+# reports on. A measure is named only on the concept the catalogue ranks
+# first for its framework, so a report stating revenue only as IFRS 15
+# revenue does not count as stating revenue here; that is the population
+# every benchmark built on this column is taken over.
+#
+# A figure under a dimension is a part of the entity and is left out, with
+# the one exception `measure_values` of the combined module makes: a
+# Japanese report states its group's figures with no dimension and its
+# parent company's own under `NonConsolidatedMember`, and a filer that
+# prepares no consolidated statements states only the second. That member
+# names which accounts a figure belongs to, not a part of them, and leaving
+# it out would leave out most Japanese filers. Where a report states both,
+# the group's figure is the one taken, as there.
+basis_members <- c("NonConsolidatedMember")
+stated <- open_dataset(file.path(path_silver, "fact")) %>%
+  filter(!is.na(measure), !is.na(value), prd_end == period_end,
+         is.na(dimensions) | dimensions %in% basis_members) %>%
+  select(source, filing, framework, measure, dimensions) %>%
+  distinct() %>%
+  collect() %>%
+  mutate(source = as.character(source)) %>%
+  # A measure counts under the framework of the filing. A Japanese group
+  # reporting under IFRS states its parent company's own accounts under
+  # Japan GAAP in the same report, and those are not the report's figures.
+  semi_join(annual, by = c("source", "filing", "framework")) %>%
+  group_by(source, filing, framework, measure) %>%
+  summarise(group = any(is.na(dimensions)), .groups = "drop")
+
+# The Japanese reports whose measures are the parent company's alone: a
+# filer without subsidiaries, or one whose group figures the report does not
+# tag. Their figures are accounts of one company rather than of a group, as
+# any other filer without subsidiaries states, and are counted beside them.
+parent_only <- stated %>%
+  group_by(source, filing) %>%
+  summarise(group = any(group), .groups = "drop") %>%
+  filter(!group)
+
+fact_count <- sum(read$facts)
+```
+
+```{r formats}
+fmt <- function(x, digits = 0) {
+  x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
+  ifelse(is.na(x), "–",
+         formatC(x, format = "f", digits = digits, big.mark = ",",
+                 decimal.mark = "."))
+}
+big <- function(x) {
+  ifelse(x >= 1e6, paste0(formatC(x / 1e6, format = "f", digits = 1), " m"),
+         fmt(x))
+}
+wrap_caption <- function(text, width = 125) {
+  paste(strwrap(text, width = width), collapse = "\n")
+}
+source_caption <- caption_corporate_design(
+  source = paste("filings.xbrl.org, SEC EDGAR, EDINET;",
+                 "the combined tables of fincommons.financialreport."),
+  lang = "en")
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", x)
+  gsub("\"", "\\\\\"", x)
+}
+ts <- function(x) {
+  x <- ifelse(is.na(x), "–", as.character(x))
+  paste0("\"", typst_string(x), "\"")
+}
+
+# A table written as Typst rather than as a Markdown table, which gives the
+# columns the widths they need instead of the ones Pandoc guesses from the
+# length of their header.
+typst_table <- function(df, widths, align, size = 7.5) {
+  cells <- vapply(seq_len(nrow(df)), function(i) {
+    paste(ts(unlist(df[i, ], use.names = FALSE)), collapse = ", ")
+  }, character(1))
+  paste0(
+    "\n```{=typst}\n#block(width: 100%, text(size: ", size, "pt, {\n",
+    "set par(justify: false)\ntable(\n",
+    "  columns: (", paste(widths, collapse = ", "), "),\n",
+    "  align: (", paste(align, collapse = ", "), "),\n",
+    "  inset: (x: 4pt, y: 2.8pt),\n",
+    "  stroke: (x, y) => if y == 0 { (top: 0.7pt + rgb(\"#22282E\"), ",
+    "bottom: 0.4pt + rgb(\"#22282E\")) } else { none },\n",
+    "  table.header(", paste0("text(weight: \"bold\", ", ts(names(df)), ")",
+                             collapse = ", "), "),\n  ",
+    paste(cells, collapse = ",\n  "),
+    ",\n  table.hline(stroke: 0.7pt + rgb(\"#22282E\"))\n)}))\n```\n\n")
+}
+
+cols <- design_colours()
+regime_colours <- c("ESEF" = cols[["blue"]], "SEC" = cols[["red"]],
+                    "EDINET" = cols[["teal"]])
+```
+
+```{r cover, results='asis'}
+title <- "Financial reports across regimes"
+subtitle <- paste0("What the combined tables hold: ",
+                   paste(regimes_held, collapse = ", "), ", financial years ",
+                   min(annual$fy), "–", latest_year)
+
+tile <- function(value, label, colour) {
+  paste0("box(width: 100%, inset: (x: 8pt, y: 7pt), stroke: (left: 2pt + rgb(\"",
+         colour, "\")), [#text(size: 17pt, weight: \"bold\", ", ts(value),
+         ")\\ #text(size: 7.5pt, fill: rgb(\"#5C666F\"), ", ts(label), ")])")
+}
+
+per_regime <- read %>%
+  group_by(source) %>%
+  summarise(filings = n(), issuers = n_distinct(issuer), facts = sum(facts),
+            .groups = "drop") %>%
+  left_join(annual %>% count(source, name = "annual"), by = "source") %>%
+  left_join(annual_all %>% filter(fund) %>% count(source, name = "funds"),
+            by = "source")
+
+lines <- vapply(held, function(s) {
+  r <- per_regime %>% filter(source == s)
+  paste0("**", regime_long[[s]], "**: ", fmt(r$filings), " filings read of ",
+         fmt(sum(filings_all$source == s)), " listed, from ", fmt(r$issuers),
+         " issuers, ", fmt(coalesce(r$annual, 0L)), " of them annual reports",
+         ifelse(coalesce(r$funds, 0L) > 0,
+                paste0(" of companies and ", fmt(r$funds), " of investment funds"),
+                ""), ".")
+}, character(1))
+
+cat("```{=typst}\n")
+cat("#set page(header: [#set text(size: 7pt, fill: rgb(\"#5C666F\"))\n",
+    "  #grid(columns: (1fr, auto), [#text(weight: \"bold\", ",
+    ts("Financial reports across regimes"), ") #h(6pt) #text(",
+    ts("Coverage of the combined tables"), ")], [#text(",
+    ts(paste("Rendered on", format(Sys.Date(), "%d %B %Y"))), ")])\n",
+    "  #v(-4pt) #line(length: 100%, stroke: 0.5pt + rgb(\"#DCE1E5\"))],\n",
+    "  footer: [#set text(size: 7pt, fill: rgb(\"#5C666F\"))\n",
+    "  #line(length: 100%, stroke: 0.5pt + rgb(\"#DCE1E5\")) #v(-2pt)\n",
+    "  #grid(columns: (1fr, auto), [#text(",
+    ts("Source: filings.xbrl.org, SEC EDGAR, EDINET; fincommons.financialreport."),
+    ")], [#context counter(page).display()])],\n  numbering: \"1\")\n", sep = "")
+cat("#text(size: 8pt, tracking: 1.6pt, fill: rgb(\"#5C666F\"), ",
+    ts("COVERAGE REPORT · ESEF · SEC · EDINET"), ")\n", sep = "")
+cat("#v(2pt)\n#line(length: 100%, stroke: 1.2pt + rgb(\"#C10016\"))\n#v(8pt)\n")
+cat("#text(size: 21pt, weight: \"bold\", ", ts(title), ")\n#v(1pt)\n", sep = "")
+cat("#text(size: 10pt, fill: rgb(\"#5C666F\"), ", ts(subtitle), ")\n#v(10pt)\n", sep = "")
+cat("#grid(columns: (1fr, 1fr, 1fr, 1fr), column-gutter: 8pt,\n  ",
+    tile(fmt(nrow(read)), "filings read", cols[["ink"]]), ",\n  ",
+    tile(fmt(n_distinct(read$issuer)), "issuers", cols[["ink"]]), ",\n  ",
+    tile(fmt(nrow(annual)), "annual reports of companies", cols[["blue"]]), ",\n  ",
+    tile(big(fact_count), "facts", cols[["blue"]]),
+    "\n)\n#v(8pt)\n", sep = "")
+cat("```\n\n")
+cat("The combined tables put the filings of the tagging regimes side by side ",
+    "in one set of columns, and resolve eight measures -- revenue, the ",
+    "result, total assets, liabilities, equity and cash, and the parent's ",
+    "share of the result and of equity -- to the concept each framework ",
+    "states them under. This report says what they hold and how much of it ",
+    "a comparison across regimes can use.\n\n", sep = "")
+cat(paste0("- ", lines, collapse = "\n"), "\n\n")
+```
+
+## What each regime holds
+
+```{r regime-table, results='asis'}
+framework_mix <- read %>%
+  mutate(framework = coalesce(framework, "none")) %>%
+  count(source, framework) %>%
+  group_by(source) %>%
+  summarise(mix = paste0(framework, " ", fmt(n), collapse = ", "),
+            .groups = "drop")
+temp <- per_regime %>%
+  left_join(filings_all %>% count(source, name = "listed"), by = "source") %>%
+  left_join(annual %>% group_by(source) %>%
+              summarise(from = min(fy), to = max(fy), .groups = "drop"),
+            by = "source") %>%
+  left_join(framework_mix, by = "source") %>%
+  mutate(order = match(source, names(regimes))) %>%
+  arrange(order) %>%
+  transmute(Regime = unname(regimes[source]),
+            Listed = fmt(listed), Read = fmt(filings),
+            `Annual reports` = fmt(coalesce(annual, 0L)),
+            Funds = ifelse(coalesce(funds, 0L) > 0, fmt(funds), ""),
+            Issuers = fmt(issuers), Facts = big(facts),
+            Years = ifelse(is.na(from), "–", paste0(from, "–", to)),
+            `Filings read by framework` = mix)
+cat(typst_table(temp, widths = c("auto", rep("auto", 7), "1fr"),
+                align = c("left", rep("right", 6), "left", "left")))
+cat("*Listed* is every filing the source index names, *read* the ones whose ",
+    "facts the lake holds. An ESEF filing is listed for the whole repository ",
+    "and read only for the countries collected; an EDINET filing is listed ",
+    "for every day of the indexes collected, whatever the document. The ",
+    "framework is the one a filing's concepts belong to, which for a foreign ",
+    "issuer filing with the Commission under IFRS is IFRS and not US-GAAP. ",
+    "*none* is a filing no accounting framework applies to, such as a large ",
+    "shareholding report. *Annual reports* are those of companies; *funds* ",
+    "the annual reports of investment funds, which the agency receives under ",
+    "the same document type and which this report leaves out of every ",
+    "statistic below.\n\n", sep = "")
+```
+
+```{r years-chart}
+#| fig-height: 2.6
+temp <- annual %>%
+  filter(fy %in% years_charted) %>%
+  count(source, fy) %>%
+  mutate(regime = factor(unname(regimes[source]), levels = unname(regimes)))
+ggplot(temp, aes(x = factor(fy), y = n, fill = regime)) +
+  geom_col(position = position_dodge(preserve = "single"), width = 0.78) +
+  geom_zeroline() +
+  scale_fill_manual(values = regime_colours, drop = TRUE) +
+  scale_y_continuous(expand = expansion(mult = c(0, .06))) +
+  labs(subtitle = "Annual reports of companies read, by financial year",
+       caption = wrap_caption(source_caption)) +
+  theme_corporate_design(base_size = chart_base_size, grid = "y",
+                         axis.title = element_blank())
+```
+
+```{r forms, results='asis'}
+temp <- read %>%
+  filter(source != "esef") %>%
+  mutate(form = coalesce(form, "none")) %>%
+  count(source, form, annual) %>%
+  group_by(source) %>%
+  arrange(desc(n), .by_group = TRUE) %>%
+  slice_head(n = 8) %>%
+  ungroup() %>%
+  mutate(order = match(source, names(regimes)),
+         What = case_when(
+           source == "edinet" & form %in% names(edinet_forms) ~ unname(edinet_forms[form]),
+           source == "edinet" ~ "Other document type",
+           form %in% c("10-K", "20-F", "40-F") ~ "Annual report",
+           form %in% c("10-K/A", "20-F/A", "40-F/A") ~ "Amended annual report",
+           form == "10-Q" ~ "Quarterly report",
+           TRUE ~ "Other form")) %>%
+  arrange(order, desc(n)) %>%
+  transmute(Regime = unname(regimes[source]), Form = form, What,
+            `Annual?` = ifelse(annual, "yes", ""), Filings = fmt(n))
+if (nrow(temp) > 0) {
+  cat("### The forms filed with the Commission and the agency\n\n")
+  cat(typst_table(temp, widths = c("auto", "auto", "1fr", "auto", "auto"),
+                  align = c("left", "left", "left", "left", "right")))
+  cat("The eight forms most often read from each regime. Only annual ",
+      "reports enter the comparisons of the measures below and of the report ",
+      "beside this one: a quarter's result over a year's equity is not a ",
+      "return, and most of what the agency publishes is not accounts at ",
+      "all.\n\n", sep = "")
+}
+```
+
+## Which measures the annual reports state
+
+```{r measure-heatmap}
+#| fig-height: 2.9
+columns <- annual %>%
+  filter(!is.na(framework)) %>%
+  count(source, framework, name = "reports")
+temp <- stated %>%
+  count(source, framework, measure, name = "stating") %>%
+  right_join(columns %>% tidyr::crossing(measure = measures),
+             by = c("source", "framework", "measure")) %>%
+  mutate(stating = coalesce(stating, 0L),
+         share = stating / reports * 100,
+         defined = paste(measure, framework) %in%
+           paste(catalogue$measure, catalogue$framework),
+         label = ifelse(defined, paste0(fmt(share), "%"), "n/a"),
+         column = factor(paste0(regimes[source], "\n", framework, "\n(",
+                                fmt(reports), ")"),
+                         levels = unique(paste0(regimes[source], "\n", framework,
+                                                "\n(", fmt(reports), ")")[
+                           order(match(source, names(regimes)),
+                                 match(framework, frameworks))])),
+         measure = factor(unname(measure_names[measure]),
+                          levels = rev(unname(measure_names))))
+ggplot(temp, aes(x = column, y = measure, fill = ifelse(defined, share, NA))) +
+  geom_tile(colour = "white", linewidth = 0.8) +
+  geom_text(aes(label = label,
+                colour = ifelse(defined & share >= 55, "light", "dark")),
+            size = 2.6, fontface = "bold") +
+  scale_colour_manual(values = c(light = "white", dark = cols[["ink"]]),
+                      guide = "none") +
+  scale_fill_gradient(low = cols[["seq_low"]], high = cols[["blue"]],
+                      limits = c(0, 100), na.value = cols[["grid"]],
+                      guide = "none") +
+  scale_x_discrete(position = "top") +
+  labs(subtitle = wrap_caption(paste0(
+         "Share of the annual reports of companies that state each measure, by ",
+         "regime and framework; the number of reports in brackets"), 100),
+       caption = wrap_caption(source_caption)) +
+  theme_corporate_design(base_size = chart_base_size, grid = "none",
+                         axis.title = element_blank())
+```
+
+```{r measure-notes, results='asis'}
+low <- temp %>% filter(defined, share < 50) %>%
+  arrange(share)
+cat("A report states a measure where it tags, for the entity as a whole and ",
+    "for its own period, the concept the catalogue of measures ranks first ",
+    "for its framework. ",
+    if (nrow(parent_only) > 0) paste0(
+      fmt(nrow(parent_only)), " of the ",
+      fmt(sum(annual$source == "edinet")), " Japanese annual reports of ",
+      "companies state ",
+      "their measures only for the parent company, under ",
+      "`NonConsolidatedMember`: they prepare no consolidated statements, and ",
+      "their figures are counted as the accounts of the entity, as those of ",
+      "any filer without subsidiaries are. ") else "",
+    "*n/a* is a measure the catalogue defines no concept ",
+    "for under that framework: Japan GAAP has no line for the equity ",
+    "attributable to the parent, which is a sum of two lines of a Japanese ",
+    "balance sheet rather than one, and the catalogue leaves it out rather ",
+    "than take a part for the whole. A company without subsidiaries has no ",
+    "non-controlling interests and states no parent's share of its result ",
+    "or equity, which is why those rows are low wherever such companies ",
+    "are many. ", sep = "")
+if (nrow(low) > 0) {
+  cat("Where a share is low the measure is usually there under another ",
+      "concept rather than missing: a report stating revenue only as IFRS 15 ",
+      "revenue, or an American registrant stating its result only as the ",
+      "parent's share, counts as not stating the first concept. ",
+      "The lowest shares are ",
+      paste0(as.character(low$measure), " under ", sub("\n.*", "", low$column),
+             " ", low$framework, " (", fmt(low$share), " %)")[seq_len(min(3, nrow(low)))] %>%
+        paste(collapse = ", "),
+      ".\n\n", sep = "")
+} else {
+  cat("\n\n")
+}
+```
+
+### The result: the total or the parent's share
+
+```{r profit-basis, results='asis'}
+basis <- annual %>%
+  filter(!is.na(framework)) %>%
+  select(source, filing, framework) %>%
+  left_join(stated %>%
+              filter(measure %in% c("profit_loss",
+                                    "profit_loss_attributable_to_parent")) %>%
+              mutate(flag = TRUE) %>%
+              pivot_wider(names_from = measure, values_from = flag),
+            by = c("source", "filing", "framework"))
+for (key in c("profit_loss", "profit_loss_attributable_to_parent")) {
+  if (!key %in% names(basis)) basis[[key]] <- NA
+}
+temp <- basis %>%
+  mutate(total = coalesce(profit_loss, FALSE),
+         parent = coalesce(profit_loss_attributable_to_parent, FALSE),
+         what = case_when(total & parent ~ "both",
+                          total ~ "total only",
+                          parent ~ "parent's share only",
+                          TRUE ~ "neither")) %>%
+  count(source, framework, what) %>%
+  group_by(source, framework) %>%
+  mutate(share = n / sum(n) * 100, reports = sum(n)) %>%
+  ungroup() %>%
+  select(-n) %>%
+  pivot_wider(names_from = what, values_from = share, values_fill = 0)
+for (key in c("both", "total only", "parent's share only", "neither")) {
+  if (!key %in% names(temp)) temp[[key]] <- 0
+}
+temp <- temp %>%
+  arrange(match(source, names(regimes)), match(framework, frameworks)) %>%
+  transmute(Regime = unname(regimes[source]), Framework = framework,
+            Reports = fmt(reports), `Both, %` = fmt(both),
+            `Total only, %` = fmt(`total only`),
+            `Parent's share only, %` = fmt(`parent's share only`),
+            `Neither, %` = fmt(neither))
+cat(typst_table(temp, widths = c("auto", "auto", "1fr", rep("auto", 4)),
+                align = c("left", "left", rep("right", 5))))
+cat("The two regimes lean opposite ways, and no catalogue of concepts can ",
+    "make them meet. Most European reports state the result for the year ",
+    "including the non-controlling interests and many state the parent's ",
+    "share beside it; most American registrants state only the parent's ",
+    "share, under `us-gaap:NetIncomeLoss`, and the total only where there are ",
+    "minorities to attribute it to. A comparison of results across regimes ",
+    "therefore takes the total where it is stated and the parent's share ",
+    "where it is not, and has to say which it took -- as the comparison ",
+    "report beside this one does.\n\n", sep = "")
+```
+
+## The catalogue of measures
+
+```{r catalogue, results='asis'}
+first <- catalogue %>%
+  arrange(measure, framework, priority) %>%
+  group_by(measure, framework) %>%
+  summarise(concept = paste0(element[1],
+                             ifelse(n() > 1, paste0(" (+", n() - 1, ")"), "")),
+            caveats = sum(nzchar(caveat)),
+            .groups = "drop")
+temp <- tidyr::crossing(measure = measures, framework = frameworks) %>%
+  left_join(first, by = c("measure", "framework")) %>%
+  mutate(cell = ifelse(is.na(concept), "–",
+                       paste0(concept, ifelse(caveats > 0, " *", "")))) %>%
+  select(measure, framework, cell) %>%
+  pivot_wider(names_from = framework, values_from = cell) %>%
+  mutate(order = match(measure, measures)) %>%
+  arrange(order) %>%
+  transmute(Measure = unname(measure_names[measure]),
+            IFRS = .data[["IFRS"]], `US-GAAP` = .data[["US-GAAP"]],
+            `JP-GAAP` = .data[["JP-GAAP"]])
+breakable <- function(x) gsub("([a-z])([A-Z])", "\\1\u200b\\2", x, perl = TRUE)
+temp <- temp %>% mutate(across(c(IFRS, `US-GAAP`, `JP-GAAP`), breakable))
+cat(typst_table(temp, widths = c("auto", "1fr", "1fr", "1fr"),
+                align = rep("left", 4), size = 7))
+cat("The element each framework's first concept names, with the number of ",
+    "further concepts the catalogue accepts after it in brackets; IFRS ",
+    "covers both `ifrs-full` and Japan's own IFRS taxonomy `jpigp_cor`, of ",
+    "which the European one is shown. * marks a row that carries a caveat: ",
+    fmt(sum(nzchar(catalogue$caveat))), " of the catalogue's ",
+    fmt(nrow(catalogue)), " rows do. Nothing in the catalogue is an official ",
+    "correspondence -- there is none between IFRS and US GAAP -- and the ",
+    "README of `fincommons.financialreport.combined` gives the basis and the ",
+    "caveat of every row; `caveats()` prints them.\n\n", sep = "")
+```
+
+## How to read this report
+
+```{r notes, results='asis'}
+semi_annual <- read %>% filter(source == "edinet", form == "160")
+semi_annual_late <- semi_annual %>%
+  filter(!is.na(period_end), period_end > Sys.Date())
+undated <- read %>% filter(is.na(period_end))
+notes <- c(
+  paste0("**What it reads.** The two tables of `fincommons.financialreport.",
+         "combined`, *filing* and *fact*, which the module builds from the ",
+         "Silver tables of the esef, sec and edinet modules. It reads them as ",
+         "they are and changes nothing; the README of the module describes ",
+         "every column."),
+  paste0("**Which filings count.** A filing counts as read where the lake ",
+         "holds facts for it, and as an annual report where its regime says ",
+         "so: every ESEF filing, the forms 10-K, 20-F and 40-F and their ",
+         "amendments with the Commission, and the document types 120 and 130 ",
+         "with the agency. A report filed twice for one year -- an amendment, ",
+         "a second language -- counts twice here, since this report counts ",
+         "what the lake holds; the comparison report keeps one per issuer and ",
+         "year."),
+  paste0("**Which year.** A financial year is the calendar year it mostly ",
+         "falls in: a year ending on or before 30 June counts as the year ",
+         "before, so a Japanese year to 31 March 2026 is 2025."),
+  if (nrow(undated) > 0) paste0(
+    "**Filings without a period.** ", fmt(nrow(undated)), " filings read ",
+    "state no period end", if (any(undated$source == "edinet")) paste0(
+      ", ", fmt(sum(undated$source == "edinet")), " of them EDINET documents ",
+      "that report no accounts -- large shareholding, extraordinary and ",
+      "buyback reports and the like") else "",
+    ". They are counted as read but have no financial year, and no measure ",
+    "of theirs enters a comparison."),
+  if (nrow(semi_annual_late) > 0) paste0(
+    "**A semi-annual report dated at its year end.** ",
+    fmt(nrow(semi_annual_late)), " of the ", fmt(nrow(semi_annual)),
+    " EDINET semi-annual reports read carry a period end after today: ",
+    "the table records the end of the financial year the half-year belongs ",
+    "to, not the end of the half-year itself. They are not annual reports ",
+    "and are in no comparison, but a question about them should read the ",
+    "periods of their facts rather than the period of the filing."),
+  paste0("This report is produced by a template of the open-source project ",
+         "fincommons. It reads public records, is given without warranty as ",
+         "to correctness or completeness, and carries no association with ",
+         "the issuers, the repository, the Commission or the agency."))
+cat(paste(notes[!vapply(notes, is.null, logical(1))], collapse = "\n\n"))
+```

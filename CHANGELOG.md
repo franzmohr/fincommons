@@ -8,6 +8,18 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `financialreport.combined`: two report templates. The coverage report says
+  what each regime's part of the lake holds and which of the eight measures
+  the annual reports of each regime and framework state. The comparison
+  report sets companies of the regimes beside one another on net margin,
+  equity ratio and return on equity, ratios of one report's own figures so
+  that nothing is converted, and prints the catalogue's caveats beside them.
+  Both count Japanese investment funds apart from companies -- they file
+  under the same document type, and were 456 of 605 annual reports on the
+  lake the reports were written against -- read a Japanese filer without
+  subsidiaries from its `NonConsolidatedMember` accounts, and count a
+  measure only under the framework of the filing.
+
 - `financialreport.esef.quality`: `DUPL_FILING_COPY`, a note that one report
   is held more than once for the same period and language with the same
   facts in every copy. `DUPL_FILING_PERIOD` now warns only where the copies
