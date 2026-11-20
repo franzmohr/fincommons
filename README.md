@@ -22,7 +22,7 @@ approaches for handling basic data pipelines.
 | `exchangerate` | the reference rates of the ECB and the BIS, combined into one table per calendar day and currency pair, and conversion of amounts |
 | `marketpricedata` | prices and rates from public publishers (ECB, Federal Reserve Bank of New York, Bank of England, Yahoo Finance and others) in one table, and the risk-free zero curves its overnight and swap rates imply |
 | `firds` | ESMA's FIRDS reference data: download, import and the historical database ESMA's instructions describe |
-| `sts` | ESMA's public register of the securitisations notified as simple, transparent and standardised, and the spreadsheets published beside it |
+| `sts` | ESMA's public register of the securitisations notified as simple, transparent and standardised: the notifications, their tranches, their parties, the claims they make against the criteria, and what has happened to them |
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
 | `famafrenchdata` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
 | `financialreport` | the regimes that require the periodic reports of listed issuers tagged in XBRL, one sub-module each -- `esef` for the European Single Electronic Format, `sec` for the inline XBRL mandate of the Securities and Exchange Commission, `edinet` for Japan, `dart` for Korea -- and `combined`, which puts them side by side. Each stands on its own; the namespace imports none of them |
@@ -373,8 +373,7 @@ it, under
 
 ESMA's public register of the securitisations notified to it as simple,
 transparent and standardised, read through the machine-to-machine services of
-its registers portal, which need no key and no registration. The Bronze layer
-is in place; the Silver tables are being built from what it collects.
+its registers portal, which need no key and no registration.
 
 ```yaml
 sts:
@@ -382,12 +381,22 @@ sts:
     silver: /data/sts/silver
 ```
 
+| Table | Holds |
+|-------|-------|
+| `notification` | one row per notification the register serves, with the identifier scheme that says whether it joins to anything |
+| `assertion` | the claims a public notification makes against the STS criteria, long rather than 130 columns wide |
+| `tranche` | its tranches, by ISIN, which join to `firds` |
+| `party` | its originators, original lenders, sponsors and special purpose entities, under one column for the role; the LEIs join to `entitymasterdata` |
+| `event` | what is known to have happened to a securitisation, folded from the register, two frozen spreadsheets and the difference between two snapshots |
+| `synthetic` | the synthetic STS securitisations, which are notified by e-mail and appear in no register |
+
 ```python
 from fincommons import sts
 
 sts.create_directory_tree("paths.yaml")
-sts.update_bronze_sts("paths.yaml")        # a snapshot of the register, and the spreadsheets
+sts.update_sts(spark, "paths.yaml")        # a snapshot, then the tables
 sts.collected_snapshots("paths.yaml")      # the days a snapshot is held for
+df = sts.connect_to_sts(spark, "paths.yaml", "notification")
 ```
 
 ```
@@ -415,6 +424,9 @@ lender and the sponsor carry legal entity identifiers, which join to
 `templates/sts-register-report.qmd` is a report on one snapshot: what the
 register holds, what it does not say, the census of its fields, the checks it
 fails, and what has arrived and left since the snapshot before.
+`templates/sts-country-factsheet.qmd` reports one country -- what it
+securitises, who originates it, where the vehicles are -- and the only setting
+it needs is the two-letter country code.
 
 The data is downloaded when the pipeline runs and is not shipped with the
 package. The details are documented in

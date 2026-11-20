@@ -8,6 +8,32 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `sts`: a Silver layer of six tables, built from one snapshot and rebuilt in
+  full. `notification` holds one row per notification, keyed on the register's
+  own document identifier because neither identifier the register publishes is
+  unique; `assertion` holds the claims a public notification makes against the
+  STS criteria, long rather than 130 columns wide, so that the revision of the
+  template now in prospect is a vocabulary that grows rather than a migration;
+  `tranche` and `party` hold the children, the four kinds of party under one
+  column for the role; `event` folds what is known to have happened to a
+  securitisation out of the register, the two frozen spreadsheets and the
+  difference between two snapshots; and `synthetic` holds the list of
+  synthetic STS securitisations, which are in no register. `update_sts`
+  collects and builds in one call, and `connect_to_sts` opens a table. On the
+  register of 20 November 2026 the tables are 1,147, 33,568, 2,275, 2,338,
+  2,395 and 228 rows, and 1,364 of the 2,250 distinct tranche ISINs are in
+  the FIRDS reference data.
+- `sts`: `templates/sts-country-factsheet.qmd`, a factsheet on the
+  securitisations of one country -- what is securitised there against the rest
+  of the register, when they were notified, who originates them, where their
+  vehicles are established, who verified them, and what has happened since.
+  The only setting is the two-letter country code, in the first chunk or in
+  `FINCOMMONS_COUNTRY`. It covers the public half of the register and says so,
+  a private notification carrying no party to attach to a country; it reports
+  counts rather than percentages for a country with fewer than ten
+  securitisations; and it tells a country that hosts more vehicles than it
+  originates, which is what a reader of Luxembourg or Ireland is after.
+
 - `entitymasterdata`: `entities_as_of` combines the registers as they stood on a
   day -- the latest Bronze snapshot of each on or before it, read and combined
   by the rules of the public table -- and `sector_counts_over_time` counts
