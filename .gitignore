@@ -12,6 +12,11 @@ spark-warehouse/
 # Rendered reports, rebuilt from their .qmd with quarto render
 docs/notebooks/*.html
 docs/notebooks/_cache/
+# and what rendering a template beside it leaves: the PDF, the Typst
+# source, and Quarto's cache of the fonts it found
+src/fincommons/**/templates/*.pdf
+src/fincommons/**/templates/*.typ
+.quarto/
 
 # The command history R writes into its working directory
 .Rhistory

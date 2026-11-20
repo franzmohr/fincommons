@@ -150,6 +150,104 @@ def test_an_issuer_presenting_by_liquidity_is_not_held_to_the_asset_split(spark,
     assert "IMBAL_ASSETS" not in codes(spark, config)
 
 
+def with_figures(changes):
+    """The sound report with some figures changed, added (by a concept it
+    does not carry) or, given None, left out."""
+    facts = []
+    for concept, flow, value in SOUND:
+        if concept in changes:
+            value = changes.pop(concept)
+            if value is None:
+                continue
+        facts.append(fact(concept, flow, value))
+    for concept, (flow, value) in changes.items():
+        facts.append(fact(concept, flow, value))
+    return facts
+
+
+def test_the_cash_flows_are_held_to_the_movement_before_exchange_rates(spark, lake):
+    """IAS 7 presents the effect of exchange rates on the cash held apart from
+    the three cash flows, which sum to the movement before it. Read against
+    the movement after it, every issuer with cash in a second currency was
+    out by its exchange differences."""
+    config = lake(with_figures({
+        "ifrs-full:IncreaseDecreaseInCashAndCashEquivalents": 45.0,
+        "ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents": (True, -5.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_the_movement_before_exchange_rates_is_read_where_it_is_tagged(spark, lake):
+    config = lake(with_figures({
+        "ifrs-full:IncreaseDecreaseInCashAndCashEquivalents": 45.0,
+        "ifrs-full:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges": (True, 50.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_the_movement_before_exchange_rates_tagged_as_the_one_after_is_not_a_gap(spark, lake):
+    """A report that puts the movement before the effect under the concept for
+    the movement after it has tagged a line wrongly, but its three cash flows
+    sum to the figure it gives, and that is what the check is about."""
+    config = lake(with_figures({
+        "ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents": (True, -5.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_an_exchange_rate_effect_does_not_hide_a_cash_flow_that_is_off(spark, lake):
+    config = lake(with_figures({
+        "ifrs-full:IncreaseDecreaseInCashAndCashEquivalents": 45.0,
+        "ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents": (True, -5.0),
+        "ifrs-full:CashFlowsFromUsedInOperatingActivities": 180.0,
+    }), [filing_row()])
+
+    assert "IMBAL_CASHFLOW" in codes(spark, config)
+
+
+def test_assets_held_for_sale_presented_below_the_current_assets_are_not_a_gap(spark, lake):
+    """IFRS 5 puts them on a line of their own, which some issuers present
+    beside the current assets rather than among them."""
+    config = lake(with_figures({
+        "ifrs-full:CurrentAssets": 330.0,
+        "ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners": (False, 70.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_assets_held_for_sale_explain_only_a_gap_of_their_own_size(spark, lake):
+    config = lake(with_figures({
+        "ifrs-full:CurrentAssets": 300.0,
+        "ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners": (False, 70.0),
+    }), [filing_row()])
+
+    assert "IMBAL_ASSETS" in codes(spark, config)
+
+
+def test_a_share_of_associates_presented_after_tax_is_not_a_gap(spark, lake):
+    """Most reports count it in the result before tax; ASML presents its share
+    of Carl Zeiss SMT below the tax line."""
+    config = lake(with_figures({
+        "ifrs-full:ProfitLoss": 110.0,
+        "ifrs-full:ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod": (True, 10.0),
+    }), [filing_row()])
+
+    assert codes(spark, config) == []
+
+
+def test_a_share_of_associates_explains_only_a_gap_of_its_own_size(spark, lake):
+    config = lake(with_figures({
+        "ifrs-full:ProfitLoss": 130.0,
+        "ifrs-full:ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod": (True, 10.0),
+    }), [filing_row()])
+
+    assert "IMBAL_PROFIT" in codes(spark, config)
+
+
 def test_a_breakdown_is_not_mistaken_for_a_total(spark, lake):
     """A figure broken down by segment is a part and not the whole."""
     facts = sound_facts()
@@ -230,7 +328,7 @@ def test_one_figure_tagged_twice_with_two_values_is_reported(spark, lake):
     facts = sound_facts()
     facts.append((COUNTRY, FILING, LEI, PERIODEND, f"{FILING}:second",
                   "ifrs-full:Assets", None, PERIODEND, "iso4217:EUR", None,
-                  999.0, None, -3, "en"))
+                  2600.0, None, -3, "en"))
     config = lake(facts, [filing_row()])
 
     found = quality.find_issues(spark, config)
@@ -238,6 +336,42 @@ def test_one_figure_tagged_twice_with_two_values_is_reported(spark, lake):
     # An instant has no period start, and an equi-join on an empty key matches
     # nothing: both facts have to come back.
     assert len(rows) == 2
+
+
+def test_one_figure_at_two_precisions_is_not_a_fault(spark, lake):
+    """673.3 million in the statements and 673 million in the notes: the
+    value stated in units lies within the thousand the other one rounds."""
+    facts = sound_facts()
+    facts.append((COUNTRY, FILING, LEI, PERIODEND, f"{FILING}:precise",
+                  "ifrs-full:Assets", None, PERIODEND, "iso4217:EUR", None,
+                  1000.4, None, 0, "en"))
+    config = lake(facts, [filing_row()])
+
+    assert "DUPL_FACT_VALUE" not in codes(spark, config)
+
+
+def test_two_values_a_rounding_step_apart_are_not_a_fault(spark, lake):
+    """Rounded to thousands each, one reads 1,000 and the other 2,000 --
+    their intervals meet at 1,500, which both could have been."""
+    facts = sound_facts()
+    facts.append((COUNTRY, FILING, LEI, PERIODEND, f"{FILING}:rounded",
+                  "ifrs-full:Assets", None, PERIODEND, "iso4217:EUR", None,
+                  2000.0, None, -3, "en"))
+    config = lake(facts, [filing_row()])
+
+    assert "DUPL_FACT_VALUE" not in codes(spark, config)
+
+
+def test_values_given_without_decimals_are_compared_exactly(spark, lake):
+    facts = [fact(*row) for row in SOUND]
+    facts = [row[:12] + (None,) + row[13:] if row[5] == "ifrs-full:Assets" else row
+             for row in facts]
+    facts.append((COUNTRY, FILING, LEI, PERIODEND, f"{FILING}:exact",
+                  "ifrs-full:Assets", None, PERIODEND, "iso4217:EUR", None,
+                  1000.4, None, None, "en"))
+    config = lake(facts, [filing_row()])
+
+    assert "DUPL_FACT_VALUE" in codes(spark, config)
 
 
 def test_the_same_figure_twice_with_one_value_is_not_a_fault(spark, lake):
@@ -292,10 +426,30 @@ def test_a_filing_with_no_facts_is_counted(spark, lake):
 
 def test_the_same_period_filed_twice_in_one_language_is_reported(spark, lake):
     second = f"{LEI}-2025-12-31-ESEF-AT-1"
+    facts = sound_facts() + [fact(*row, filing=second) for row in with_values(
+        {"ifrs-full:Revenue": 510.0, "ifrs-full:GrossProfit": 210.0})]
+    config = lake(facts, [filing_row(), filing_row(filing=second)])
+
+    found = codes(spark, config)
+    assert "DUPL_FILING_PERIOD" in found
+    assert "DUPL_FILING_COPY" not in found
+
+
+def test_the_same_report_held_twice_is_a_copy_and_not_a_correction(spark, lake):
+    """Two uploads of one file: the facts agree, the fact identifiers do not."""
+    second = f"{LEI}-2025-12-31-ESEF-AT-1"
     facts = sound_facts() + [fact(*row, filing=second) for row in SOUND]
     config = lake(facts, [filing_row(), filing_row(filing=second)])
 
-    assert "DUPL_FILING_PERIOD" in codes(spark, config)
+    found = codes(spark, config)
+    assert "DUPL_FILING_COPY" in found
+    assert "DUPL_FILING_PERIOD" not in found
+
+
+def with_values(changes):
+    """The rows of the sound report with some values changed."""
+    return [(concept, flow, changes.get(concept, value))
+            for concept, flow, value in SOUND]
 
 
 def test_the_same_period_filed_in_two_languages_is_not(spark, lake):
@@ -305,7 +459,9 @@ def test_the_same_period_filed_in_two_languages_is_not(spark, lake):
     config = lake(facts,
                   [filing_row(), filing_row(filing=second, lang="de")])
 
-    assert "DUPL_FILING_PERIOD" not in codes(spark, config)
+    found = codes(spark, config)
+    assert "DUPL_FILING_PERIOD" not in found
+    assert "DUPL_FILING_COPY" not in found
 
 
 def test_a_report_mostly_tagged_with_the_issuers_own_concepts_is_counted(spark, lake):

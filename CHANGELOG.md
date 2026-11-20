@@ -8,6 +8,13 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `financialreport.esef.quality`: `DUPL_FILING_COPY`, a note that one report
+  is held more than once for the same period and language with the same
+  facts in every copy. `DUPL_FILING_PERIOD` now warns only where the copies
+  state different facts, which is a correction; of the 77 filings it named
+  in the Austrian and Dutch reports, 42 were copies, most of them added to
+  the repository within minutes of each other.
+
 - `sts`: a Silver layer of six tables, built from one snapshot and rebuilt in
   full. `notification` holds one row per notification, keyed on the register's
   own document identifier because neither identifier the register publishes is
@@ -164,6 +171,19 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `esef-country-quality-factsheet.qmd`: where an arithmetic check fired, the
+  detail pages give the two sides of the identity, the gap and its share of
+  total assets or revenue, so that a gap of a tenth of a percent can be told
+  from a figure tagged on the wrong line. An issuer presenting a bank's loans
+  to other banks or deposits of its customers counts as a bank, which takes
+  Oesterreichische Kontrollbank, whose interest income is under another
+  concept, out of the ranking for missing revenue lines. `IMBAL_ASSETS` is
+  not counted for a bank or an insurer either, since a group with a bank
+  presents the bank's assets beside the current and the non-current ones;
+  Österreichische Post had ranked first on that alone. The fourth tile of
+  the cover is the share of issuer-years a screen flagged, and long concept
+  names wrap in the tables instead of running off the page.
+
 - `exchangerate`: the proprietary rates, `exchangerate.csv`, are headed
   `ref_date,base,quote,value,type,source`, the names of the Silver table they
   are combined into, and `internal_schema` declares them, as the proprietary
@@ -210,6 +230,30 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `financialreport.esef.quality`: `IMBAL_CASHFLOW` holds the three cash flows
+  to the movement in cash before the effect of exchange rates, which IAS 7
+  presents on a line of its own. It read the movement after that effect, so
+  an issuer with cash in a second currency was out by its exchange
+  differences: 59 of the 72 reports it found faulty in the Austrian and Dutch
+  reports of the lake. The movement is also accepted as tagged, because some
+  reports put the movement before the effect under the concept for the one
+  after it, and their figures agree.
+- `financialreport.esef.quality`: `IMBAL_ASSETS` takes a gap between total
+  assets and the two subtotals as explained where it is the assets held for
+  sale, which some issuers present below the current assets rather than among
+  them, under either of the two concepts the taxonomy has for that line. That
+  was 9 of the 12 reports it found faulty; the 3 left are Österreichische
+  Post's, which presents the assets of bank99 as a third block.
+- `financialreport.esef.quality`: `DUPL_FACT_VALUE` compares two values of
+  one figure as XBRL compares duplicate facts -- each stands for the interval
+  its decimals allow, and they disagree only where the intervals do not
+  meet. It compared the values exactly, so a figure stated as 673.3 million
+  in the statements and 673 million in the notes was a fault: 156 of the 196
+  facts it named in the Austrian and Dutch reports, and 24 of 31 filings.
+- `financialreport.esef.quality`: `IMBAL_PROFIT` takes a gap as explained
+  where it is the share of the profit of associates, which some issuers
+  present after the tax: ASML its share of Carl Zeiss SMT. That was all 4
+  reports it found faulty in the Austrian and Dutch reports of the lake.
 - `financialreport.edinet`: the quality checks read the dates a filing states
   with `try_to_timestamp` and a cast rather than with `try_to_date`. The
   Python API gained the date function in PySpark 4.1 and Spark 4.0 does not

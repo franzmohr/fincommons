@@ -129,6 +129,13 @@ CONCEPTS = {
     "assets": ["ifrs-full:Assets"],
     "current_assets": ["ifrs-full:CurrentAssets"],
     "noncurrent_assets": ["ifrs-full:NoncurrentAssets"],
+    # IFRS 5 presents the assets held for sale on a line of their own. Most
+    # issuers count that line among the current assets, as the taxonomy does;
+    # some present it below them, and their two subtotals then fall short of
+    # total assets by exactly that line. The line has two concepts, with and
+    # without the assets held for distribution to owners, and both are used.
+    "held_for_sale": ["ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners",
+                      "ifrs-full:NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSale"],
     "liabilities": ["ifrs-full:Liabilities"],
     "equity": ["ifrs-full:Equity"],
     "equity_and_liabilities": ["ifrs-full:EquityAndLiabilities"],
@@ -145,11 +152,31 @@ CONCEPTS = {
     # as faulty until it was read: the gaps were its discontinued operations
     # to the cent.
     "profit_discontinued": ["ifrs-full:ProfitLossFromDiscontinuedOperations"],
+    # The share of the profit of associates and joint ventures is a line of
+    # the result before tax in most reports, but some present it after the
+    # tax, as ASML presents its share of Carl Zeiss SMT. Its reports for 2023
+    # to 2025 were out by exactly that share -- 191.3, 209.8 and 216.7
+    # million -- and so was the one other report the check had found faulty
+    # among the Austrian and Dutch reports of the lake.
+    "associates": ["ifrs-full:ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod",
+                   "ifrs-full:ShareOfProfitLossOfAssociatesAccountedForUsingEquityMethod"],
     "operating_cash_flow": ["ifrs-full:CashFlowsFromUsedInOperatingActivities"],
     "investing_cash_flow": ["ifrs-full:CashFlowsFromUsedInInvestingActivities"],
     "financing_cash_flow": ["ifrs-full:CashFlowsFromUsedInFinancingActivities"],
-    "cash_change": ["ifrs-full:IncreaseDecreaseInCashAndCashEquivalents",
-                    "ifrs-full:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges"],
+    # The three cash flows sum to the movement in cash before the effect of
+    # exchange rates on the cash held, which IAS 7 presents on a line of its
+    # own. The check reads the movement before it where it is tagged and
+    # otherwise takes the effect off the movement after it; read against the
+    # movement after it, every issuer holding cash in a second currency was out
+    # by its exchange differences -- 59 of the 72 reports the check had found
+    # faulty among the Austrian and Dutch reports of the lake it was corrected
+    # on. Twenty other reports tag the movement before the effect under the
+    # concept for the movement after it, and their three cash flows sum to it
+    # exactly; that is a tag put on the wrong line, not figures that
+    # contradict one another, so the check accepts either reading.
+    "cash_change_before_fx": ["ifrs-full:IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges"],
+    "cash_change": ["ifrs-full:IncreaseDecreaseInCashAndCashEquivalents"],
+    "fx_effect_on_cash": ["ifrs-full:EffectOfExchangeRateChangesOnCashAndCashEquivalents"],
 }
 
 #: The columns that identify the record an issue is about. Every check returns
@@ -229,12 +256,18 @@ def check_imbalanced_assets(state):
 
     IAS 1 lets an issuer present its assets in order of liquidity instead of
     splitting them, in which case it tags neither subtotal and the check
-    passes over the filing rather than reporting it.
+    passes over the filing rather than reporting it. An issuer that presents
+    its assets held for sale below the current assets rather than among them
+    is short by that line, and the difference is taken as explained where it
+    is that line.
     """
+    gap = (func.col("assets") - func.col("current_assets")
+           - func.col("noncurrent_assets"))
+    explained = func.abs(gap - func.col("held_for_sale")) \
+        <= func.abs(func.col("assets")) * TOLERANCE
     return _imbalance(
         state["figures"],
-        func.col("assets") - func.col("current_assets")
-        - func.col("noncurrent_assets"),
+        func.when(explained, func.lit(0.0)).otherwise(gap),
         func.col("assets"))
 
 
@@ -248,21 +281,58 @@ def check_imbalanced_income(state):
 
 
 def check_imbalanced_profit(state):
-    """The result before tax against the tax and the result."""
+    """The result before tax against the tax and the result.
+
+    A report that presents the share of the profit of associates after the
+    tax rather than before it is short by that share, and the difference is
+    taken as explained where it is that share.
+    """
+    gap = (func.col("pretax") - func.col("income_tax")
+           + func.coalesce(func.col("profit_discontinued"), func.lit(0.0))
+           - func.col("profit"))
+    explained = func.abs(gap + func.col("associates")) \
+        <= func.abs(func.col("revenue")) * TOLERANCE
     return _imbalance(
         state["figures"],
-        func.col("pretax") - func.col("income_tax")
-        + func.coalesce(func.col("profit_discontinued"), func.lit(0.0))
-        - func.col("profit"),
+        func.when(explained, func.lit(0.0)).otherwise(gap),
         func.col("revenue"))
 
 
+def cash_change_before_fx():
+    """The movement in cash the three cash flows sum to.
+
+    The movement before the effect of exchange rates where the report tags
+    it, and otherwise the movement after it less that effect, which is
+    nothing where the report states none.
+    """
+    return func.coalesce(
+        func.col("cash_change_before_fx"),
+        func.col("cash_change")
+        - func.coalesce(func.col("fx_effect_on_cash"), func.lit(0.0)))
+
+
+def _smaller(a, b):
+    """Whichever of two differences is nearer nothing, and the one that is
+    known where only one is."""
+    return (func.when(a.isNull(), b).when(b.isNull(), a)
+            .when(func.abs(a) <= func.abs(b), a).otherwise(b))
+
+
 def check_imbalanced_cashflow(state):
-    """The three cash flows against the movement in cash."""
+    """The three cash flows against the movement in cash.
+
+    The movement is read before the effect of exchange rates, and, where the
+    report tags the movement after it, also as the report tags it, since a
+    report that puts the movement before the effect under the concept for the
+    one after it has tagged a line wrongly but has figures that agree. The
+    report is out where neither reading agrees with the three cash flows.
+    """
+    flows = (func.col("operating_cash_flow") + func.col("investing_cash_flow")
+             + func.col("financing_cash_flow"))
     return _imbalance(
         state["figures"],
-        func.col("cash_change") - func.col("operating_cash_flow")
-        - func.col("investing_cash_flow") - func.col("financing_cash_flow"),
+        _smaller(cash_change_before_fx() - flows,
+                 func.col("cash_change") - flows),
         func.col("assets"))
 
 
@@ -319,9 +389,14 @@ def check_duplicate_fact_value(state):
     """One figure tagged twice in one filing with two values.
 
     Twice with one value is ordinary: a figure appears in the statements and
-    again in the notes, and the table holds both facts. Twice with two values
-    is a fault, and which of them a reader should use cannot be decided here,
-    so both facts are named.
+    again in the notes, and the table holds both facts. So is twice at two
+    precisions -- 673.3 million in the statements and 673 million in the
+    notes -- and the values are compared as XBRL compares duplicate facts:
+    each stands for the interval its decimals allow, half a unit of the last
+    stated digit either side, and two values agree where their intervals
+    meet. On the Austrian reports most of the facts the check named were
+    such pairs. Values whose intervals do not meet are a fault, and which of
+    them a reader should use cannot be decided here, so both facts are named.
 
     The columns a fact is identified by include ones that are empty for an
     instant or for a figure with no breakdown, and an equi-join on an empty
@@ -337,9 +412,22 @@ def check_duplicate_fact_value(state):
             func.coalesce(func.col(key).cast("string"), func.lit("")))
     grouped = [f"_{key}" for key in keys]
 
+    # Half the step of the last digit stated; nothing where the decimals are
+    # not given, which XBRL reads as exact.
+    half_step = func.coalesce(
+        func.pow(func.lit(10.0), -func.col("decimals").cast("double")) / 2,
+        func.lit(0.0))
+    filled = (filled
+              .withColumn("_low", func.col("value") - half_step)
+              .withColumn("_high", func.col("value") + half_step))
+    # Intervals on a line all meet where the highest lower end is not above
+    # the lowest upper end.
     conflicting = (filled.groupBy(*grouped)
-                   .agg(func.countDistinct("value").alias("_values"))
-                   .where(func.col("_values") > 1)
+                   .agg(func.countDistinct("value").alias("_values"),
+                        func.max("_low").alias("_low"),
+                        func.min("_high").alias("_high"))
+                   .where((func.col("_values") > 1)
+                          & (func.col("_low") > func.col("_high")))
                    .select(*grouped))
     return filled.join(conflicting, grouped).select(*KEYS)
 
@@ -386,27 +474,72 @@ def check_no_facts(state):
         .select("country", "lei", "filing"))
 
 
-def check_duplicate_filing_period(state):
-    """The same issuer, period and language filed more than once, with facts.
+def _repeated_filings(state):
+    """The filings of an issuer, period and language filed more than once,
+    with facts, and whether the copies of each group state the same facts.
 
-    An issuer filing in two languages is two filings of the same figures and
-    is ordinary; two filings in one language for one period is a correction,
-    and a reader taking either without looking would be taking one of two.
+    A report the repository holds twice with the same facts in both is one
+    report received twice: on the Austrian reports most such pairs were
+    added within minutes of each other, and twenty of the thirty Austrian
+    groups were copies to the last fact. The fingerprint of a filing is a
+    hash over its facts, each written out with its concept, period,
+    dimensions, unit, value and a hash of its text, sorted, so that the
+    order the facts are stored in does not matter and the identifiers the
+    report gives its facts, which differ between two uploads of one file,
+    are left out.
     """
     filings = state["filings"]
+    facts = state["facts"]
     with_facts = (filings
-                  .join(state["facts"].select("filing").distinct(), "filing"))
+                  .join(facts.select("filing").distinct(), "filing")
+                  .withColumn("_lang", func.coalesce(func.col("lang"), func.lit(""))))
     repeated = (with_facts
-                .groupBy("lei", "period_end",
-                         func.coalesce(func.col("lang"), func.lit("")).alias("_lang"))
+                .groupBy("lei", "period_end", "_lang")
                 .agg(func.countDistinct("filing").alias("_filings"))
                 .where(func.col("_filings") > 1)
                 .select("lei", "period_end", "_lang"))
+    members = with_facts.join(repeated, ["lei", "period_end", "_lang"])
+    def part(name):
+        return func.coalesce(func.col(name).cast("string"), func.lit(""))
+    fingerprints = (facts
+                    .join(members.select("filing"), "filing")
+                    .withColumn("_fact", func.concat_ws(
+                        "|", part("concept"), part("prd_start"), part("prd_end"),
+                        part("dimensions"), part("unit"), part("value"),
+                        func.coalesce(func.sha2(func.col("text"), 256), func.lit(""))))
+                    .groupBy("filing")
+                    .agg(func.sha2(func.concat_ws(
+                        "\n", func.sort_array(func.collect_list("_fact"))), 256)
+                         .alias("_fingerprint")))
+    groups = (members.join(fingerprints, "filing")
+              .groupBy("lei", "period_end", "_lang")
+              .agg(func.countDistinct("_fingerprint").alias("_versions")))
+    return (members.join(groups, ["lei", "period_end", "_lang"])
+            .select("country", "lei", "filing", "_versions"))
+
+
+def check_duplicate_filing_period(state):
+    """The same issuer, period and language filed more than once, with facts
+    that differ.
+
+    An issuer filing in two languages is two filings of the same figures and
+    is ordinary; two filings in one language for one period that state
+    different facts are a correction, and a reader taking either without
+    looking would be taking one of two. Copies that state the same facts are
+    DUPL_FILING_COPY.
+    """
     return _filing_level(
-        with_facts
-        .withColumn("_lang", func.coalesce(func.col("lang"), func.lit("")))
-        .join(repeated, ["lei", "period_end", "_lang"])
-        .select("country", "lei", "filing"))
+        _repeated_filings(state).where(func.col("_versions") > 1))
+
+
+def check_duplicate_filing_copy(state):
+    """The same report held more than once, with the same facts in every copy.
+
+    Either copy gives the same figures, so it costs a reader nothing but the
+    care not to count the report twice.
+    """
+    return _filing_level(
+        _repeated_filings(state).where(func.col("_versions") == 1))
 
 
 def check_high_extension_share(state):
@@ -439,6 +572,7 @@ CHECKS = (
     ("IMPL_PRDEND_FUTURE", check_period_after_processing),
     ("VALIDATION_ERRORS", check_validation_errors),
     ("DUPL_FILING_PERIOD", check_duplicate_filing_period),
+    ("DUPL_FILING_COPY", check_duplicate_filing_copy),
     ("NO_FACTS", check_no_facts),
     ("HIGH_EXTENSION_SHARE", check_high_extension_share),
 )
@@ -448,8 +582,8 @@ def find_issues(spark, config_path, countries=None):
     """Run every check over the countries asked for, and return the issues.
 
     The frames the checks need are built once and handed to all of them, so
-    that the figures of the reports are derived once rather than eighteen
-    times.
+    that the figures of the reports are derived once rather than once per
+    check.
 
     Parameters
     ----------
