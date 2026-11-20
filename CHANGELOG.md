@@ -200,6 +200,14 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Fixed
 
+- `financialreport.edinet`: the quality checks read the dates a filing states
+  with `try_to_timestamp` and a cast rather than with `try_to_date`. The
+  Python API gained the date function in PySpark 4.1 and Spark 4.0 does not
+  register it as a SQL function either, so on the oldest PySpark the package
+  declares -- and the declaration is deliberate, the package taking the Spark
+  its runtime provides -- every date check raised an `AttributeError` instead
+  of running. For text stating a date the two agree.
+
 - `financialreport.edinet`: `update_silver_edinet_quality`, `find_issues` and
   `issues_schema` are importable from the package, as the README and the
   handbook call them, rather than only from `edinet.quality`.

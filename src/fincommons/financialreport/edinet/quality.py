@@ -213,8 +213,17 @@ def _stated_date(column):
     That is not a date, and it is not a fault either: it is null here, as any
     other text that does not read as a date is, rather than an error that
     stops every check.
+
+    The text is read by ``try_to_timestamp`` and cast, rather than by
+    ``try_to_date`` which reads the same text directly. The date function was
+    added to the Python API in PySpark 4.1, and Spark 4.0 does not register
+    it as a SQL function either, so neither it nor ``expr`` reaches it on the
+    oldest PySpark this package declares. The declaration is deliberate --
+    the package takes the Spark its runtime provides -- so the floor stands
+    and the function goes. For text stating a date the two agree: a timestamp
+    read from it falls at midnight, and the cast takes the day back out.
     """
-    return func.try_to_date(func.col(column))
+    return func.try_to_timestamp(func.col(column)).cast("date")
 
 
 def _filing_level(frame):
