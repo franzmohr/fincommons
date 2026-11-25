@@ -8,6 +8,22 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `financialreport.esef`: `export_esef_reports` writes one issuer's reports
+  to an OpenDocument spreadsheet, with a sheet that sets the filings side by
+  side -- one row per figure and period, one column per filing -- so that the
+  same field of different reports is read across a row and a figure a later
+  report restates shows as a row holding two values. Beside it the file holds
+  the filings covered, every fact of them, and a sheet saying what is not to
+  be read into the figures. On the seven filings PORR AG has in the lake, 182
+  of 953 rows differ between the filings that state them, 167 of them because
+  the two filings for 2024 are a thousandfold apart.
+
+- `spreadsheet`: tables written as an OpenDocument spreadsheet, `.ods`, from
+  the standard library alone -- no dependency is added to write the format.
+  Values keep their types, so a figure arrives as a figure and a date as a
+  date; the header is bold, repeated on every printed page and frozen on
+  screen; and a column is as wide as what stands in it.
+
 - `financialreport.combined`: two report templates. The coverage report says
   what each regime's part of the lake holds and which of the eight measures
   the annual reports of each regime and framework state. The comparison

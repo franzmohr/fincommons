@@ -20,7 +20,11 @@ lake in these stages:
     the table of filings, and one table with every fact of every report
     collected, rebuilt country by country,
 ``pipeline``
-    the whole pipeline in one call, :func:`update_esef`.
+    the whole pipeline in one call, :func:`update_esef`,
+``quality``
+    the checks the figures are held to, and the issues they find,
+``export``
+    one issuer's reports as a spreadsheet, :func:`export_esef_reports`.
 
 The facts are keyed by the LEI of the issuer, which is the key of
 :mod:`fincommons.entitymasterdata` too.
@@ -36,3 +40,4 @@ from .bronze import *
 from .silver import *
 from .quality import *
 from .pipeline import *
+from .export import *
