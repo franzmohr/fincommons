@@ -26,7 +26,7 @@ approaches for handling basic data pipelines.
 | `entitymasterdata` | who a legal entity is: GLEIF, and the registers of the ECB, EIOPA and ESMA |
 | `famafrenchdata` | the Kenneth R. French Data Library: the Fama-French factors, the portfolios they are built from and the breakpoints of the sorts, every file in one table |
 | `financialreport` | the regimes that require the periodic reports of listed issuers tagged in XBRL, one sub-module each -- `esef` for the European Single Electronic Format, `sec` for the inline XBRL mandate of the Securities and Exchange Commission, `edinet` for Japan -- and `combined`, which puts them side by side. Each stands on its own; the namespace imports none of them |
-| `addressing`, `storage`, `log`, `layout`, `schemas`, `columns` | the infrastructure the modules share: locations from `paths.yaml`, how a Silver table rebuilt in full is read and written as parquet or Delta, logging, the file layout of tables, declared schemas, and the catalogue of what a column holds |
+| `addressing`, `storage`, `log`, `layout`, `schemas`, `columns`, `spreadsheet` | the infrastructure the modules share: locations from `paths.yaml`, how a Silver table rebuilt in full is read and written as parquet or Delta, logging, the file layout of tables, declared schemas, the catalogue of what a column holds, and tables written out as OpenDocument spreadsheets |
 
 fincommons is open source and complete on its own. Pipelines on supervisory
 reporting data (EMIR, SFTR, SECR, MiFIR, SSR) can build on it and be
