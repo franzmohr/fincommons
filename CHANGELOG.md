@@ -8,6 +8,19 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `famafrenchdata`: a global factor factsheet,
+  `templates/famafrench-global-factsheet.qmd`, rendered with Quarto to a
+  PDF. For every region of the library -- the United States, North America,
+  Europe, Japan, Asia Pacific ex Japan, the emerging and the developed
+  markets -- up to the last month all of them hold (`FINCOMMONS_MONTH` and
+  `FINCOMMONS_REGIONS` choose others), three heatmaps set the five factors
+  and momentum side by side: the twelve-month return by its rank, the
+  drawdown by its depth against the deepest, and the volatility against its
+  median, all against the history since July 1990 that every region shares.
+  A line per region says what passes the factsheet's thresholds, and charts
+  show the market and the styles of every region over three years and the
+  U.S. value spread, the only book-to-market the library publishes.
+
 - `famafrenchdata`: a data contract for the Silver table and a product,
   `product_famafrenchdata.yaml`. The contract equals the declared schema,
   which a test holds it to; its key is the file, table, frequency, series

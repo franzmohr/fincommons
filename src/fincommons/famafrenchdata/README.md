@@ -245,3 +245,16 @@ Two cases fall outside it, and neither loses a table:
 
 * A title no rule matches is filed under a code made from the title -- `Median Dividend Yield -- Monthly` becomes `MEDIAN_DIVIDEND_YIELD_MONTHLY` -- and a `WARNING` names it on the driver. A table the library adds is thus in the table under a name that says what it is until a rule is written for it.
 * Two tables of one file that land on the same code and frequency are numbered, the later one `RET_VW_2`, with a `WARNING`. It happens once in the 202609 edition: `6_Portfolios_2x3_weekly` titles both of its first two tables `Average Value Weighted Returns -- Weekly`, where the daily file of the same portfolios has value- and then equal-weighted returns. Which of the two the second one is, the file does not say, so it is not guessed here.
+
+## A global factor factsheet
+
+`templates/famafrench-global-factsheet.qmd` is a factsheet on what the factors have done across the world, written in R and rendered with Quarto to a PDF of four pages. It reads the Silver table and nothing else:
+
+```bash
+cd src/fincommons/famafrenchdata/templates
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render famafrench-global-factsheet.qmd
+```
+
+It covers the five factors of Fama and French (2015) and momentum in every region of the library -- the United States, North America, Europe, Japan, Asia Pacific ex Japan, the emerging markets, the developed markets and the developed markets ex US -- up to the last month the library holds for all of them, or an earlier one with `FINCOMMONS_MONTH=2025-06`; `FINCOMMONS_REGIONS=US,Europe` narrows it. Three heatmaps, regions by factors, set them side by side: the twelve-month return coloured by its rank among every twelve-month return before it, the drawdown coloured by its depth against the deepest, and the volatility of the last quarter against its median. A line per region then says what passes the thresholds set at the top of the template -- a twelve-month return in the outer five per cent of its history, a volatility half again its median, a drawdown half as deep as the deepest -- and the charts follow: the market of every region over the last three years, the five styles likewise, and the spread of book-to-market between the cheapest and the dearest decile.
+
+Every region is held to the same history, since July 1990, when the regional files begin: the files of the United States reach back to 1926, and a rank over a century would not mean what a rank over thirty-six years means in Japan. Three limits are stated on the page. **The library is a month or two behind**, being rebuilt once a month after the month has closed, so the factsheet says what the factors did; what the market is doing today is for the prices of `fincommons.marketpricedata`. **The emerging markets have no daily file**, so their volatility is left empty rather than measured another way. And **the value spread is American**: the library publishes the book-to-market of its portfolios for the United States only, so the factsheet shows it as a reference and says so.

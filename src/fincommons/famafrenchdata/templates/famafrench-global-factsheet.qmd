@@ -1,0 +1,499 @@
+---
+format:
+  typst:
+    papersize: a4
+    fontsize: 9pt
+    margin:
+      top: 2.1cm
+      bottom: 1.9cm
+      left: 1.7cm
+      right: 1.7cm
+    mainfont: "Segoe UI"
+    section-numbering: ""
+brand:
+  color:
+    palette:
+      paper: "#FFFFFF"
+      ink: "#22282E"
+      ink-soft: "#5C666F"
+      red: "#C10016"
+      blue: "#0F4C81"
+    background: paper
+    foreground: ink
+    primary: blue
+
+  # No font is named beyond the one above, so nothing is fetched from a font
+  # service; a system without it falls back to the default of the renderer.
+  typography:
+    headings:
+      weight: bold
+      color: red
+knitr:
+  opts_chunk:
+    echo: false
+    message: false
+    warning: false
+    dev: "ragg_png"
+    dev.args: {bg: "white"}
+    dpi: 300
+    fig-width: 6.8
+    fig-height: 2.5
+execute:
+  # A chunk that fails stops the render, which is Quarto's default. Named
+  # here for the reason the other templates name it: under `error: true` a
+  # report over a lake it could not read still renders and still exits 0, and
+  # a scheduler only sees the exit code.
+  error: false
+---
+
+```{r setup}
+# --------------------------------------------------------------------------
+# What to set for a report
+# --------------------------------------------------------------------------
+
+# The path to the config file, whose famafrenchdata section names the Silver
+# layer of the module. A chunk runs with the directory of this template as its
+# working directory, which is inside the installed package, so the path is
+# taken from the environment variable FINCOMMONS_CONFIG where it is set and is
+# otherwise a paths.yaml beside the template.
+config_path <- Sys.getenv("FINCOMMONS_CONFIG", "paths.yaml")
+
+# The regions of the factsheet, in the order it lists them, by the name the
+# files of the library give them; US stands for the files of the United
+# States, which carry no region in their name. FINCOMMONS_REGIONS, separated
+# by commas, wins where it is set.
+regions <- c("US", "North_America", "Europe", "Japan", "Asia_Pacific_ex_Japan",
+             "Emerging", "Developed", "Developed_ex_US")
+if (nzchar(Sys.getenv("FINCOMMONS_REGIONS"))) {
+  regions <- trimws(strsplit(Sys.getenv("FINCOMMONS_REGIONS"), ",")[[1]])
+}
+
+# The last month the factsheet is about, as YYYY-MM, or NULL for the last
+# month the library holds for every region. FINCOMMONS_MONTH wins where it is
+# set, so that the factsheet of an earlier month can be rendered again.
+report_month <- NULL
+if (nzchar(Sys.getenv("FINCOMMONS_MONTH"))) report_month <- Sys.getenv("FINCOMMONS_MONTH")
+
+# The history every region is measured against. The regional files begin in
+# 1990 and those of the United States decades earlier; a rank or a median
+# over the longer history would not be comparable with the others, so every
+# region is held to the same years.
+history_start <- as.Date("1990-07-01")
+
+# How far back the charts of recent returns reach, and the window of the
+# volatility, in trading days: a quarter.
+recent_months <- 36
+volatility_days <- 63
+
+# When a figure is flagged: a twelve-month return in the outer five per cent
+# of its history, a volatility half again its median, a drawdown half as deep
+# as the deepest since the history begins.
+flag_percentile <- 5
+flag_volatility <- 1.5
+flag_drawdown <- 0.5
+
+# The point size of the text in a chart.
+chart_base_size <- 9
+
+# --------------------------------------------------------------------------
+# The corporate design
+# --------------------------------------------------------------------------
+
+# One file for the whole package, in the templates directory at the root of
+# it, so that a report of any module looks like the others. A copy beside
+# this template wins over it.
+library(ggplot2)
+design_file <- "r-corporate-design-functions-ggplot2.R"
+design_path <- c(design_file, file.path("..", "..", "templates", design_file))
+design_path <- design_path[file.exists(design_path)]
+if (length(design_path) == 0) {
+  stop("The corporate design script ", design_file, " is neither beside this ",
+       "template nor in the templates directory of the package.")
+}
+source(design_path[1])
+
+library(dplyr)
+library(tidyr)
+library(yaml)
+library(arrow)
+
+lang <- "en"
+theme_report <- theme_corporate_design(base_size = chart_base_size)
+source_line <- "Kenneth R. French Data Library."
+
+# --------------------------------------------------------------------------
+# Reading the library
+# --------------------------------------------------------------------------
+
+yaml_paths <- read_yaml(config_path)
+path_silver <- yaml_paths[["famafrenchdata"]][["silver"]]
+# A layer may be given as a mapping carrying a path and a table name. R reads
+# files, so it takes the path.
+if (is.list(path_silver)) path_silver <- path_silver[["path"]]
+if (is.null(path_silver)) {
+  stop("The configuration file ", config_path, " gives no silver layer for ",
+       "the famafrenchdata module.")
+}
+path_table <- file.path(path_silver, "famafrenchdata")
+if (!dir.exists(path_table)) {
+  stop("The Silver layer holds no table of the French Data Library. Build it ",
+       "first: fincommons.famafrenchdata.update_famafrenchdata(spark, '",
+       config_path, "')")
+}
+library_table <- open_dataset(path_table)
+held <- library_table %>% distinct(dataset) %>% collect() %>% pull(dataset)
+
+region_labels <- c(
+  US = "United States", North_America = "North America", Europe = "Europe",
+  Japan = "Japan", Asia_Pacific_ex_Japan = "Asia Pacific ex Japan",
+  Emerging = "Emerging markets", Developed = "Developed markets",
+  Developed_ex_US = "Developed ex US")
+region_label <- function(r) ifelse(r %in% names(region_labels), region_labels[r], gsub("_", " ", r))
+
+# The factors, in the order the factsheet lists them. The five of Fama and
+# French (2015) are in one file per region and momentum in another; the
+# momentum of the United States is named Mom, that of the regions WML.
+factor_labels <- c("Mkt-RF" = "Market", "SMB" = "Size", "HML" = "Value",
+                   "RMW" = "Profitability", "CMA" = "Investment",
+                   "WML" = "Momentum", "Mom" = "Momentum")
+factor_order <- unique(unname(factor_labels))
+
+# The files of a region. The library spells the momentum file Mom in some
+# regions and MOM in others, and the daily files _Daily or _daily, so the
+# names are matched without regard to case.
+files_of <- function(region, daily) {
+  if (region == "US") {
+    patterns <- c("^F-F_Research_Data_5_Factors_2x3", "^F-F_Momentum_Factor")
+  } else {
+    patterns <- paste0("^", region, c("_5_Factors", "_Mom_Factor"))
+  }
+  patterns <- paste0(patterns, if (daily) "_daily$" else "$")
+  unlist(lapply(patterns, function(p) held[grepl(p, held, ignore.case = TRUE)]))
+}
+
+read_factors <- function(daily) {
+  wanted <- lapply(regions, files_of, daily = daily)
+  names(wanted) <- regions
+  if (!daily) {
+    short <- regions[lengths(wanted) < 2]
+    if (length(short) > 0) {
+      stop("The table holds no factor files of ", paste(short, collapse = ", "),
+           ". Collect the whole library, or name only regions it holds in ",
+           "FINCOMMONS_REGIONS.")
+    }
+  }
+  files <- tibble(region = rep(names(wanted), lengths(wanted)), dataset = unlist(wanted))
+  if (nrow(files) == 0) return(tibble(region = character(), ref_date = as.Date(character()),
+                                      factor = factor(character(), levels = factor_order), r = numeric()))
+  library_table %>%
+    filter(dataset %in% files$dataset, table == "FACTORS",
+           frequency == if (daily) "D" else "M",
+           series %in% names(factor_labels)) %>%
+    select(dataset, ref_date, series, value) %>%
+    collect() %>%
+    inner_join(files, by = "dataset") %>%
+    filter(ref_date >= history_start) %>%
+    # The library publishes returns in percent.
+    mutate(r = value / 100,
+           factor = factor(factor_labels[series], levels = factor_order)) %>%
+    select(region, ref_date, factor, r)
+}
+
+monthly <- read_factors(FALSE)
+daily <- read_factors(TRUE)
+no_daily <- setdiff(regions, unique(daily$region))
+
+# The month reported on: the last the library holds for every factor of
+# every region, so that no region is reported for a month another lacks.
+last_common <- monthly %>% group_by(region, factor) %>%
+  summarise(last = max(ref_date), .groups = "drop") %>% pull(last) %>% min()
+if (is.null(report_month)) {
+  report_end <- last_common
+} else {
+  report_end <- as.Date(paste0(report_month, "-01"))
+  report_end <- as.Date(format(report_end + 31, "%Y-%m-01")) - 1
+  if (report_end > last_common) {
+    stop("The library holds no month after ", format(last_common, "%B %Y"),
+         " for every factor of every region; ", report_month, " cannot be reported.")
+  }
+}
+monthly <- monthly %>% filter(ref_date <= report_end)
+daily <- daily %>% filter(ref_date <= report_end)
+report_label <- format(report_end, "%B %Y")
+lag_days <- as.integer(Sys.Date() - report_end)
+
+# --------------------------------------------------------------------------
+# The measures
+# --------------------------------------------------------------------------
+
+compound <- function(r) prod(1 + r) - 1
+
+# The standard deviation of the last n values at every position, empty
+# before there are n of them; from running sums, so that a daily history of
+# thirty-six years is one pass.
+rolling_sd <- function(x, n) {
+  s1 <- as.numeric(stats::filter(x, rep(1, n), sides = 1))
+  s2 <- as.numeric(stats::filter(x^2, rep(1, n), sides = 1))
+  sqrt(pmax(s2 - s1^2 / n, 0) / (n - 1))
+}
+
+# Every rolling twelve-month return a factor has had since the history
+# begins, which is what the latest one is ranked among.
+rolling_12 <- monthly %>%
+  arrange(region, factor, ref_date) %>%
+  group_by(region, factor) %>%
+  mutate(r12 = exp(as.numeric(stats::filter(log1p(r), rep(1, 12), sides = 1))) - 1) %>%
+  ungroup()
+
+# The drawdown of a factor: how far its cumulated return stands below the
+# highest it reached before.
+drawdowns <- monthly %>%
+  arrange(region, factor, ref_date) %>%
+  group_by(region, factor) %>%
+  mutate(level = cumprod(1 + r), drawdown = level / cummax(level) - 1) %>%
+  ungroup()
+
+# The volatility over the last quarter of trading days, annualised.
+volatility <- daily %>%
+  arrange(region, factor, ref_date) %>%
+  group_by(region, factor) %>%
+  mutate(vol = sqrt(252) * rolling_sd(r, volatility_days)) %>%
+  ungroup() %>%
+  filter(!is.na(vol))
+
+year_start <- as.Date(format(report_end, "%Y-01-01"))
+facts <- monthly %>%
+  arrange(region, factor, ref_date) %>%
+  group_by(region, factor) %>%
+  summarise(month = r[ref_date == report_end],
+            ytd = compound(r[ref_date >= year_start]),
+            twelve = compound(utils::tail(r, 12)),
+            .groups = "drop") %>%
+  left_join(rolling_12 %>% filter(!is.na(r12)) %>% group_by(region, factor) %>%
+              summarise(rank12 = 100 * mean(r12 <= r12[ref_date == report_end]),
+                        .groups = "drop"), by = c("region", "factor")) %>%
+  left_join(drawdowns %>% group_by(region, factor) %>%
+              summarise(dd = drawdown[ref_date == report_end], worst = min(drawdown),
+                        .groups = "drop"), by = c("region", "factor")) %>%
+  left_join(volatility %>% group_by(region, factor) %>%
+              summarise(vol_now = vol[ref_date == max(ref_date)],
+                        vol_median = stats::median(vol), .groups = "drop"),
+            by = c("region", "factor")) %>%
+  mutate(vol_ratio = vol_now / vol_median,
+         depth = ifelse(worst < 0, dd / worst, 0),
+         region = factor(region, levels = rev(regions)))
+
+pct <- function(x, digits = 0) ifelse(is.na(x), "", sprintf(paste0("%+.", digits, "f"), 100 * x))
+```
+
+# Global factor factsheet
+
+**`r report_label`**, the last month the French Data Library holds for every region -- `r lag_days` days before the factsheet was rendered. The library is rebuilt once a month, after the month has closed, so this says what the factors have done rather than what they are doing; for the market of today, read the prices of `fincommons.marketpricedata`.
+
+The factors are the long-short portfolios of Fama and French, built the same way in each region: **Market** the market return over the risk-free rate, **Size** small stocks over big, **Value** high book-to-market over low, **Profitability** robust over weak operating profitability, **Investment** conservative over aggressive asset growth, **Momentum** the past year's winners over its losers. Every region is measured against its own history since July 1990, the start of the regional files, so that a rank in the United States means what it means in Japan. Returns are in U.S. dollars.
+
+```{r heat-helpers}
+heatmap <- function(data, fill, label, limits, palette_hue, title, note,
+                    midpoint = NULL, high_is_bad = FALSE) {
+  # White on a strong colour, ink on a pale one, so that every label can be
+  # read: the strength is how far the value lies from the pale end of the
+  # scale, as a share of the way to the strong end.
+  value <- rlang::eval_tidy(rlang::enquo(fill), data)
+  squished <- pmin(pmax(value, limits[1]), limits[2])
+  strength <- if (is.null(midpoint)) {
+    (squished - limits[1]) / diff(limits)
+  } else {
+    abs(squished - midpoint) / max(midpoint - limits[1], limits[2] - midpoint)
+  }
+  data$label_colour <- ifelse(!is.na(strength) & strength > 0.6, "white",
+                              design_colours()[["ink"]])
+  g <- ggplot(data, aes(factor, region)) +
+    geom_tile(aes(fill = {{ fill }}), colour = "white", linewidth = 0.8) +
+    geom_text(aes(label = {{ label }}, colour = label_colour),
+              size = chart_base_size / .pt * 0.95) +
+    scale_colour_identity() +
+    scale_x_discrete(position = "top", labels = function(x) x) +
+    scale_y_discrete(labels = region_label) +
+    labs(x = NULL, y = NULL, title = title,
+         caption = caption_corporate_design(source_line, last = report_label,
+                                            lang = lang, note = wrap_labels(note, 150))) +
+    theme_report +
+    theme(panel.grid = element_blank(), legend.position = "none",
+          axis.ticks = element_blank(),
+          axis.text.x.top = element_text(face = "bold"))
+  if (is.null(midpoint)) {
+    g + scale_fill_gradient(low = "white", high = palette_hue, limits = limits,
+                            oob = scales::squish, na.value = "grey95")
+  } else {
+    # Red for what is bad: a low rank, or a high volatility.
+    ends <- palette_corporate_design("diverging", 3)[c(1, 3)]
+    if (high_is_bad) ends <- rev(ends)
+    g + scale_fill_gradient2(low = ends[1], mid = "white", high = ends[2],
+                             midpoint = midpoint, limits = limits,
+                             oob = scales::squish, na.value = "grey95")
+  }
+}
+```
+
+## Twelve months
+
+```{r heat-twelve}
+#| fig-height: 2.75
+heatmap(facts, rank12, paste0(pct(twelve), "%"), c(0, 100), NULL,
+        title = NULL, midpoint = 50,
+        note = paste0("The twelve months to ", report_label, ", compounded from the monthly factors. ",
+                      "Colour: the rank of that return among every twelve-month return since July 1990, ",
+                      "red at the bottom, blue at the top."))
+```
+
+## Drawdowns
+
+```{r heat-drawdown}
+#| fig-height: 2.75
+heatmap(facts, depth, ifelse(dd > -0.005, "0%", sprintf("%.0f%%", 100 * dd)), c(0, 1), palette_corporate_design("diverging", 3)[1],
+        title = NULL,
+        note = paste0("How far each factor's cumulated return stands below its previous peak. ",
+                      "Colour: that depth as a share of the deepest since July 1990."))
+```
+
+## Volatility
+
+```{r heat-volatility}
+#| fig-height: 2.75
+heatmap(facts, vol_ratio, ifelse(is.na(vol_ratio), "n/a", sprintf("%.1f", vol_ratio)),
+        c(0.5, 2.5), NULL, title = NULL, midpoint = 1, high_is_bad = TRUE,
+        note = paste0("Volatility of the last ", volatility_days, " trading days against its median since July 1990; red above it, blue below. ",
+                      if (length(no_daily) > 0) paste0(paste(region_label(no_daily), collapse = ", "),
+                                                       ": the library publishes no daily file. ") else ""))
+```
+
+## What stands out
+
+```{r flags, results='asis'}
+# One entry per factor that passes a threshold, its findings after it, and
+# one line per region.
+flag_text <- facts %>%
+  mutate(region = as.character(region)) %>%
+  rowwise() %>%
+  mutate(findings = paste(c(
+    if (!is.na(rank12) && rank12 <= flag_percentile)
+      sprintf("twelve-month low (%s%%)", pct(twelve, 1)),
+    if (!is.na(rank12) && rank12 >= 100 - flag_percentile)
+      sprintf("twelve-month high (%s%%)", pct(twelve, 1)),
+    if (!is.na(vol_ratio) && vol_ratio >= flag_volatility)
+      sprintf("volatility %.1f times its median", vol_ratio),
+    if (worst < 0 && dd <= flag_drawdown * worst)
+      sprintf("%.0f%% below its peak, against %.0f%% at its deepest", -100 * dd, -100 * worst)),
+    collapse = ", ")) %>%
+  ungroup() %>%
+  filter(findings != "") %>%
+  arrange(match(region, regions), factor) %>%
+  group_by(region) %>%
+  summarise(text = paste0(factor, ": ", findings, collapse = "; "), .groups = "drop") %>%
+  arrange(match(region, regions))
+if (nrow(flag_text) == 0) {
+  cat("Nothing in ", report_label, " passes the thresholds of the factsheet.\n", sep = "")
+} else {
+  cat("Against the thresholds of the factsheet -- a twelve-month return in the outer ",
+      flag_percentile, "% of its history, a volatility ", flag_volatility,
+      " times its median, a drawdown half as deep as the deepest since 1990:\n\n", sep = "")
+  cat(paste0("- **", region_label(flag_text$region), "**. ", flag_text$text, ".", collapse = "\n"), "\n")
+}
+```
+
+## The market, region by region
+
+```{r market}
+#| fig-height: 3.0
+recent_start <- seq(report_end + 1, by = "-1 month", length.out = recent_months + 1)[recent_months + 1]
+recent <- monthly %>%
+  filter(ref_date >= recent_start) %>%
+  arrange(region, factor, ref_date) %>%
+  group_by(region, factor) %>%
+  mutate(cumulated = cumprod(1 + r) - 1) %>%
+  ungroup() %>%
+  mutate(region_name = factor(region_label(region), levels = region_label(regions)))
+
+market <- recent %>% filter(factor == "Market")
+ggplot(market, aes(ref_date, 100 * cumulated, colour = region_name)) +
+  geom_zeroline() +
+  geom_line(linewidth = linewidth_corporate_design) +
+  scale_colour_corporate_design(name = NULL) +
+  scale_x_date(date_labels = "%Y") +
+  labs(x = NULL, y = "cumulated, %",
+       caption = caption_corporate_design(
+         source_line, last = report_label, lang = lang,
+         note = paste0("The market factor, the return over the risk-free rate, cumulated over the last ",
+                       recent_months, " months."))) +
+  theme_report + theme(legend.position = "bottom")
+```
+
+## The styles, region by region
+
+```{r styles}
+#| fig-height: 4.0
+ggplot(recent %>% filter(factor != "Market"),
+       aes(ref_date, 100 * cumulated, colour = region_name)) +
+  geom_zeroline() +
+  geom_line(linewidth = 0.45) +
+  facet_wrap(~ factor, ncol = 3) +
+  scale_colour_corporate_design(name = NULL) +
+  scale_x_date(date_labels = "%Y") +
+  labs(x = NULL, y = "cumulated, %",
+       caption = caption_corporate_design(
+         source_line, last = report_label, lang = lang,
+         note = paste0("The five style factors cumulated over the last ", recent_months, " months."))) +
+  theme_report + theme(legend.position = "bottom")
+```
+
+## How cheap is value? The United States as a reference
+
+```{r value-spread}
+# The library publishes the book-to-market of its portfolios for the United
+# States only; none of the regional files carries it. The spread is the log
+# of the aggregate book-to-market of the highest decile over that of the
+# lowest, in the year the portfolios are formed, each June.
+spread <- library_table %>%
+  filter(dataset == "Portfolios_Formed_on_BE-ME", table == "BEME_SUM",
+         frequency == "A", series %in% c("Hi 10", "Lo 10")) %>%
+  select(ref_date, series, value) %>%
+  collect() %>%
+  pivot_wider(names_from = series, values_from = value) %>%
+  filter(`Hi 10` > 0, `Lo 10` > 0) %>%
+  mutate(year = as.integer(format(ref_date, "%Y")),
+         spread = log(`Hi 10` / `Lo 10`)) %>%
+  filter(year <= as.integer(format(report_end, "%Y"))) %>%
+  arrange(year)
+has_spread <- nrow(spread) > 1
+if (has_spread) {
+  spread_now <- spread$spread[nrow(spread)]
+  spread_year <- spread$year[nrow(spread)]
+  spread_rank <- 100 * mean(spread$spread <= spread_now)
+}
+```
+
+`r if (has_spread) paste0("The regional files of the library carry no book-to-market, so the spread between cheap and expensive stocks can only be read for the United States, where it is a common gauge of how stretched the pricing of value is. For the portfolios formed in June ", spread_year, " the highest decile by book-to-market had ", sprintf("%.1f", exp(spread_now)), " times the book-to-market of the lowest; ", sprintf("%.0f", spread_rank), "% of the years since ", spread$year[1], " had a spread no wider. A wide spread says value stocks are cheap relative to growth stocks, which has tended to precede a strong value factor -- tended, not foretold.") else "The table holds no portfolio book-to-market of the United States, so there is no value spread on this page."`
+
+```{r value-spread-chart}
+#| fig-height: 2.1
+if (has_spread) {
+  ggplot(spread, aes(year, spread)) +
+    geom_hline(yintercept = stats::median(spread$spread), linetype = "dashed",
+               colour = design_colours()[["ink_soft"]]) +
+    geom_line(colour = palette_corporate_design("cat", 1), linewidth = linewidth_corporate_design) +
+    geom_point(data = spread[nrow(spread), ], colour = palette_corporate_design("cat", 1)) +
+    labs(x = NULL, y = "log of Hi 10 / Lo 10",
+         caption = caption_corporate_design(
+           "Kenneth R. French Data Library, Portfolios Formed on BE/ME.",
+           last = as.character(spread_year), lang = lang,
+           note = "Aggregate book-to-market of the highest over the lowest decile, United States, by year of formation. Dashed: the median since 1927.")) +
+    theme_report
+}
+```
+
+## Notes
+
+- **Source.** Kenneth R. French Data Library: the five-factor and momentum files of each region, monthly and daily -- for the United States `F-F_Research_Data_5_Factors_2x3` and `F-F_Momentum_Factor` -- as collected into the lake by `fincommons.famafrenchdata`. The data are the library's, built by its author from commercial vendor data; this factsheet only reads them. Cite the library and Fama and French (1993, 2015) where they are used.
+- **Regions.** The library's regions overlap: North America contains the United States, and the developed markets contain North America, Europe, Japan and Asia Pacific. Europe is the developed markets of Europe, euro area and others alike. Every region is held to its history since July 1990; the files of the United States reach back to 1926, which this factsheet leaves aside so that the regions can be compared.
+- **Timeliness.** The library is updated once a month, so its last month is a month or two old. Each edition can revise history, which the dated collections of the Bronze layer keep.
+- **Thresholds.** The flags are this factsheet's, set at the top of the template, and say only that a figure is unusual for its own history.
