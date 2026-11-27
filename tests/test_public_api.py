@@ -47,7 +47,10 @@ PUBLIC_API = {
         "ContextFormatter", "DEFAULT_DATE_FORMAT", "DEFAULT_FORMAT", "LOGGER_NAME",
         "add_log_level_argument", "configure", "context", "pipeline_run",
     ],
-    "fincommons.marketpricedata": ["connect_to_marketpricedata", "curves"],
+    "fincommons.marketpricedata": [
+        "ELECTRICITY_ZONES", "connect_to_marketpricedata", "curves",
+        "load_list_of_yahoo_commodities",
+    ],
     "fincommons.marketpricedata.curves": [
         "OVERNIGHT_INSTRUMENT", "add_discount_factor", "build_curves",
         "build_segments", "discount_of", "parallel_shift", "read_pillars",
