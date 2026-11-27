@@ -2725,3 +2725,116 @@ def test_the_public_table_has_one_shape_whichever_way_gleif_is_read(spark, data_
         [(f.name, f.dataType) for f in spark_schema(contract)]
     assert [r.ref_date for r in frame.collect()] == [datetime.date(2026, 11, 3)]
     assert [r for r in check_quality(frame, contract) if r.passed is False] == []
+
+
+# The market identifier codes, from fincommons.gleif
+# --------------------------------------------------------------------------
+
+
+def with_mic_lei(spark, config_path, files):
+    """Give the lake a ``gleif`` section and build the MIC-to-LEI history of
+    fincommons.gleif from ``files``, a dict of a day to (lei, mic) pairs."""
+    from fincommons.gleif import common as gleif_common
+    from fincommons.gleif import mic_lei
+
+    base = os.path.dirname(config_path)
+    with open(config_path, "a", encoding="utf-8") as f:
+        f.write("gleif:\n" + "".join(
+            f"  {layer}: {os.path.join(base, 'gleif', layer)}\n"
+            for layer in ("landing", "bronze", "silver")))
+    gleif_common.create_directory_tree(config_path)
+    for day, pairs in files.items():
+        frame = pandas.DataFrame({"LEI": [p[0] for p in pairs],
+                                  "MIC": [p[1] for p in pairs]})
+        path = os.path.join(gleif_common.path_landing_mic_lei(config_path),
+                            f"LEI-MIC-{day}.zip")
+        with open(path, "wb") as f:
+            f.write(zipped_csv("lei-mic.csv", frame))
+        mic_lei.import_mic_lei_file(config_path, path)
+    mic_lei.write_mic_lei_history(spark, config_path)
+
+
+def test_an_entity_is_given_every_market_it_operates(spark, data_lake):
+    """An operator runs a MIC per market and per segment, so the column is a
+    list, sorted so that it is the same on every run."""
+    with_mic_lei(spark, data_lake, {"20261116": [
+        ("LEI1", "XWBO"), ("lei1 ", "wbah"), ("LEI9", "XNOT")]})
+    populated(data_lake, leis=["LEI1", "LEI2"])
+
+    em.update_silver_entitymasterdata_public(spark, data_lake)
+    frame = public(spark, data_lake)
+
+    assert list(entity(frame, "LEI1").mic) == ["WBAH", "XWBO"]
+    assert entity(frame, "LEI2").mic is None
+    # A MIC whose LEI GLEIF Level 1 does not know adds no entity.
+    assert sorted(frame.lei) == ["LEI1", "LEI2"]
+
+
+def test_the_mics_are_those_gleif_links_to_the_lei_now(spark, data_lake):
+    with_mic_lei(spark, data_lake, {"20261109": [("LEI1", "XWBO"), ("LEI1", "XOLD")],
+                                    "20261116": [("LEI1", "XWBO"), ("LEI2", "XOLD")]})
+    populated(data_lake, leis=["LEI1", "LEI2"])
+
+    em.update_silver_entitymasterdata_public(spark, data_lake)
+    frame = public(spark, data_lake)
+
+    assert list(entity(frame, "LEI1").mic) == ["XWBO"]
+    assert list(entity(frame, "LEI2").mic) == ["XOLD"]
+
+
+def test_the_mics_of_a_day_are_those_gleif_linked_then(spark, data_lake):
+    with_mic_lei(spark, data_lake, {"20261109": [("LEI1", "XOLD")],
+                                    "20261116": [("LEI2", "XOLD")]})
+    populated(data_lake, leis=["LEI1", "LEI2"])
+
+    entities, _ = em.entities_as_of(spark, data_lake, datetime.date(2026, 11, 10))
+
+    assert {r.lei: r.mic for r in entities.collect()} == {"LEI1": ["XOLD"], "LEI2": None}
+
+
+def test_the_table_is_built_without_the_mic_lei_history(spark, data_lake, caplog):
+    populated(data_lake, leis=["LEI1"])
+
+    with caplog.at_level(logging.WARNING, logger="fincommons"):
+        em.update_silver_entitymasterdata_public(spark, data_lake)
+
+    assert entity(public(spark, data_lake), "LEI1").mic is None
+    assert any("MIC-to-LEI history" in r.getMessage() for r in caplog.records)
+
+
+def test_an_entity_the_internal_list_describes_keeps_its_mics(spark, data_lake):
+    """The MICs are GLEIF's identifier for a market, not a description of the
+    entity the proprietary list could state otherwise."""
+    with_mic_lei(spark, data_lake, {"20261116": [("LEI1", "XWBO"), ("LEI2", "XFRA")]})
+    populated(data_lake, leis=["LEI1", "LEI2"])
+    em.update_silver_entitymasterdata_public(spark, data_lake)
+    write_internal(data_lake, pandas.DataFrame(
+        {"LEI": ["LEI1", None], "NAME": ["As we call it", "No LEI"]}))
+
+    em.update_silver_entitymasterdata(spark, data_lake)
+    frame = main(spark, data_lake)
+
+    assert list(entity(frame, "LEI1").mic) == ["XWBO"]
+    assert entity(frame, "LEI1")["name"] == "As we call it"
+    assert list(entity(frame, "LEI2").mic) == ["XFRA"]
+    assert frame[frame.lei.isna()].mic.isna().all()
+
+
+def test_a_public_table_built_before_the_mic_column_is_still_read(spark, built):
+    from fincommons.entitymasterdata import common
+
+    table = common.read_silver(spark, common.ref_silver_public(built)).drop("mic")
+    # Held apart from the files it was read from, which the write replaces.
+    table = spark.createDataFrame(table.collect(), table.schema)
+    common.write_silver(table, common.ref_silver_public(built))
+
+    em.update_silver_entitymasterdata(spark, built)
+
+    assert main(spark, built).mic.isna().all()
+
+
+def test_a_mic_column_in_the_internal_list_is_refused(spark, built):
+    write_internal(built, pandas.DataFrame({"LEI": ["LEI1"], "MIC": ["XWBO"]}))
+
+    with pytest.raises(ValueError, match="does not have"):
+        em.update_silver_entitymasterdata(spark, built)

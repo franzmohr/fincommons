@@ -108,6 +108,32 @@ schema:
     - property: source
       value: derived
       vendor: fincommons
+  - name: mic
+    businessName: Market identifier codes
+    logicalType: array
+    physicalType: array<string>
+    items:
+      name: mic
+      logicalType: string
+      physicalType: string
+    semanticType: dimension
+    description: >-
+      The market identifier codes (ISO 10383) of the markets and market segments
+      the entity operates, sorted, from the MIC-to-LEI history of fincommons.gleif
+      as it stands, or on the day for entities_as_of; empty where GLEIF links no
+      MIC to the LEI or the history has not been built. Taken by LEI whichever
+      source describes the entity, the proprietary list included.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: https://www.iso20022.org/market-identifier-codes
+      description: ISO 10383, the Market Identifier Code.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: MIC
+      vendor: fincommons
   - name: name
     businessName: Name
     logicalType: string

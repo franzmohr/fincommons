@@ -557,3 +557,216 @@ def test_the_tables_are_the_tables_their_contracts_describe(spark, lake):
         list(history.KEYS["level_1"]) + [history.VALID_FROM]
     assert assert_meets_contract(relationships, "fincommons.gleif.silver.relationships") == \
         list(history.KEYS["level_2"]) + [history.VALID_FROM]
+
+
+# The MIC-to-LEI mapping
+# --------------------------------------------------------------------------
+
+
+def mic_file(rows):
+    """A MIC-to-LEI file's rows from (lei, mic) pairs, under GLEIF's names."""
+    import pandas
+
+    return pandas.DataFrame({"LEI": [r[0] for r in rows], "MIC": [r[1] for r in rows]})
+
+
+def mic_versions(snapshots):
+    from fincommons.gleif import mic_lei
+
+    frame = mic_lei.mic_lei_versions(
+        [(date.fromisoformat(day), mic_file(rows)) for day, rows in snapshots])
+    return [(r.mic, r.lei, str(r.valid_from), None if r.valid_to is None else str(r.valid_to),
+             bool(r.latest_record)) for r in frame.itertuples(index=False)]
+
+
+def test_a_mic_holds_its_lei_until_a_file_names_another():
+    assert mic_versions([
+        ("2026-11-02", [("L1", "XWBO"), ("L1", "WBAH")]),
+        ("2026-11-09", [("L1", "XWBO"), ("L1", "WBAH")]),
+        ("2026-11-16", [("L2", "XWBO"), ("L1", "WBAH")]),
+    ]) == [
+        ("WBAH", "L1", "2026-11-02", None, True),
+        ("XWBO", "L1", "2026-11-02", "2026-11-15", False),
+        ("XWBO", "L2", "2026-11-16", None, True),
+    ]
+
+
+def test_a_mic_a_file_no_longer_names_ends_the_day_before_it():
+    """And one named again later opens a version of its own, since nothing is
+    known of the days between."""
+    assert mic_versions([
+        ("2026-11-02", [("L1", "XWBO")]),
+        ("2026-11-09", []),
+        ("2026-11-16", [("L1", "XWBO")]),
+    ]) == [
+        ("XWBO", "L1", "2026-11-02", "2026-11-08", False),
+        ("XWBO", "L1", "2026-11-16", None, True),
+    ]
+
+
+def test_a_mic_gleif_dropped_keeps_its_last_version_as_the_latest():
+    assert mic_versions([
+        ("2026-11-02", [("L1", "XWBO"), ("L1", "WBAH")]),
+        ("2026-11-09", [("L1", "XWBO")]),
+    ])[0] == ("WBAH", "L1", "2026-11-02", "2026-11-08", True)
+
+
+def test_the_files_give_the_same_history_in_whatever_order_they_come():
+    snapshots = [("2026-11-02", [("L1", "XWBO")]), ("2026-11-09", [("L2", "XWBO")])]
+    assert mic_versions(snapshots) == mic_versions(snapshots[::-1])
+
+
+def test_codes_are_written_as_iso_writes_them():
+    assert mic_versions([("2026-11-02", [("l1 ", " xwbo"), ("", "XNOT"), ("L3", "")])]) \
+        == [("XWBO", "L1", "2026-11-02", None, True)]
+
+
+def test_a_mic_linked_to_two_leis_in_one_file_takes_the_first(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="fincommons"):
+        versions = mic_versions([("2026-11-02", [("L2", "XWBO"), ("L1", "XWBO")])])
+
+    assert versions == [("XWBO", "L1", "2026-11-02", None, True)]
+    assert any("more than one LEI" in r.getMessage() for r in caplog.records)
+
+
+class MicSession:
+    """GLEIF's mapping API and its files, from a dict of url to answer."""
+
+    def __init__(self, answers, turned_away=0):
+        self.answers, self.calls, self.turned_away = answers, [], turned_away
+
+    def get(self, url, headers=None, stream=False, timeout=None):
+        self.calls.append(url)
+        answer = self.answers[url]
+        status = 200
+        if self.turned_away:
+            self.turned_away -= 1
+            status = 429
+
+        class Response:
+            raw = io.BytesIO(answer) if isinstance(answer, bytes) else None
+            status_code = status
+            headers = {"Retry-After": "34"} if status == 429 else {}
+
+            def close(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return answer
+
+        return Response()
+
+
+def mic_entry(day, uploaded=None, valid=True, name=None):
+    return {"type": "mic-lei", "id": day, "attributes": {
+        "fileName": name or f"LEI-MIC-{day}.zip",
+        "uploadedAt": uploaded or f"{day[:4]}-{day[4:6]}-{day[6:]}T12:00:00Z",
+        "downloadLink": f"https://mapping.gleif.org/api/v2/mic-lei/{day}{uploaded or ''}/download",
+        "processed": True, "valid": valid}}
+
+
+def mic_archive(rows, name="lei-mic.csv"):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(name, mic_file(rows).to_csv(index=False))
+    return buffer.getvalue()
+
+
+FIRST_PAGE = "https://mapping.gleif.org/api/v2/mic-lei?page%5Bsize%5D=100"
+
+
+def test_every_file_gleif_holds_is_listed_oldest_first():
+    from fincommons.gleif import mic_lei
+
+    second = "https://mapping.gleif.org/api/v2/mic-lei?page%5Bnumber%5D=2"
+    session = MicSession({
+        FIRST_PAGE: {"data": [mic_entry("20261116"), mic_entry("20261109", valid=False),
+                              mic_entry("20261102", "2026-11-02T09:00:00Z")],
+                     "links": {"next": second}},
+        second: {"data": [mic_entry("20261102", "2026-11-02T18:00:00Z"),
+                          mic_entry("20261026", name="readme.txt")], "links": {}},
+    })
+
+    files = mic_lei.list_mic_lei_files(session=session)
+
+    assert [f.label for f in files] == ["20261102", "20261116"]
+    # Of two files of one day, the one uploaded last.
+    assert files[0].url.endswith("2026-11-02T18:00:00Z/download")
+
+
+def test_a_request_turned_away_as_too_many_waits_as_gleif_says(monkeypatch):
+    from fincommons.gleif import mic_lei
+
+    waits = []
+    monkeypatch.setattr(mic_lei.time, "sleep", waits.append)
+    session = MicSession({FIRST_PAGE: {"data": [mic_entry("20261116")]}}, turned_away=2)
+
+    assert [f.label for f in mic_lei.list_mic_lei_files(session=session)] == ["20261116"]
+    assert waits == [34, 34]
+    assert session.calls == [FIRST_PAGE] * 3
+
+
+def test_an_api_that_names_no_file_is_refused():
+    from fincommons.gleif import mic_lei
+
+    with pytest.raises(ValueError, match="names no MIC-to-LEI file"):
+        mic_lei.list_mic_lei_files(session=MicSession({FIRST_PAGE: {"data": []}}))
+
+
+def test_the_mapping_is_brought_in_and_kept_as_its_contract_says(spark, lake):
+    """Two runs: the first brings in both files GLEIF holds, the second only
+    the one published since, and keeps the history of the first although
+    GLEIF no longer lists its oldest file."""
+    from fincommons.gleif import mic_lei
+
+    first = {FIRST_PAGE: {"data": [mic_entry("20261109"), mic_entry("20261102")]}}
+    first[mic_entry("20261102")["attributes"]["downloadLink"]] = \
+        mic_archive([("L1", "XWBO"), ("L1", "WBAH")])
+    first[mic_entry("20261109")["attributes"]["downloadLink"]] = \
+        mic_archive([("L2", "XWBO"), ("L1", "WBAH")])
+    assert mic_lei.update_gleif_mic_lei(spark, lake, session=MicSession(first)) == \
+        ["20261102", "20261109"]
+
+    later = {FIRST_PAGE: {"data": [mic_entry("20261116"), mic_entry("20261109")]}}
+    later[mic_entry("20261116")["attributes"]["downloadLink"]] = \
+        mic_archive([("L2", "XWBO")])
+    session = MicSession(later)
+    assert mic_lei.update_gleif_mic_lei(spark, lake, session=session) == ["20261116"]
+    assert session.calls == [FIRST_PAGE, mic_entry("20261116")["attributes"]["downloadLink"]]
+
+    table = mic_lei.connect_to_mic_lei(spark, lake)
+    assert sorted((r.mic, r.lei, str(r.valid_from), r.valid_to and str(r.valid_to))
+                  for r in table.collect()) == [
+        ("WBAH", "L1", "2026-11-02", "2026-11-15"),
+        ("XWBO", "L1", "2026-11-02", "2026-11-08"),
+        ("XWBO", "L2", "2026-11-09", None),
+    ]
+    assert {r.mic: r.lei for r in mic_lei.mic_lei_as_of(spark, lake, "2026-11-10").collect()} \
+        == {"WBAH": "L1", "XWBO": "L2"}
+    assert [r.mic for r in mic_lei.current_mic_lei(spark, lake).collect()] == ["XWBO"]
+    assert assert_meets_contract(table, "fincommons.gleif.silver.mic_lei") == \
+        list(mic_lei.MIC_LEI_KEY) + [history.VALID_FROM]
+
+
+def test_a_file_not_named_as_gleif_names_it_is_refused(lake):
+    from fincommons.gleif import mic_lei
+
+    folder = common.path_landing_mic_lei(lake)
+    os.makedirs(folder)
+    path = os.path.join(folder, "mic.zip")
+    with open(path, "wb") as f:
+        f.write(mic_archive([("L1", "XWBO")]))
+
+    with pytest.raises(ValueError, match="LEI-MIC-YYYYMMDD"):
+        mic_lei.import_mic_lei_file(lake, path)

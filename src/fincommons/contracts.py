@@ -450,7 +450,7 @@ def spark_schema(contract):
     The columns are in the order the contract lists them. A column is
     nullable unless the contract marks it ``required``. A physical type is
     either one of the simple types in lower case (``string``, ``date``,
-    ``double``, ...) or ``decimal(p,s)``.
+    ``double``, ...), ``decimal(p,s)``, or ``array<t>`` of a simple type.
 
     Raises
     ------
@@ -464,8 +464,11 @@ def spark_schema(contract):
         for prop in table.get("properties") or []:
             physical = str(prop.get("physicalType", "")).strip().lower()
             decimal = re.fullmatch(r"decimal\((\d+),\s*(\d+)\)", physical)
+            array = re.fullmatch(r"array<\s*(\w+)\s*>", physical)
             if decimal:
                 spark_type = types.DecimalType(int(decimal.group(1)), int(decimal.group(2)))
+            elif array and array.group(1) in _SPARK_TYPES:
+                spark_type = types.ArrayType(getattr(types, _SPARK_TYPES[array.group(1)])())
             elif physical in _SPARK_TYPES:
                 spark_type = getattr(types, _SPARK_TYPES[physical])()
             else:

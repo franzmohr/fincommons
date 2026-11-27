@@ -13,6 +13,13 @@ levels, and this module keeps a history of each:
     which company, and the periods of the relationship. GLEIF calls the file
     ``rr``.
 
+Beside the two levels it keeps a history of one of GLEIF's mappings:
+
+``mic_lei`` -- *which entity operates which market*
+    One record per market identifier code (MIC, ISO 10383) and the LEI of
+    the entity operating the market, from the files GLEIF publishes about
+    weekly; see :mod:`fincommons.gleif.mic_lei`.
+
 The configuration file names a ``gleif`` section with the three layers::
 
     gleif:
@@ -25,7 +32,7 @@ from __future__ import annotations
 
 import os
 
-from pyspark.sql.types import StringType, StructType
+from pyspark.sql.types import BooleanType, DateType, StringType, StructType
 
 from ..addressing import read_delta, resolve
 
@@ -38,6 +45,9 @@ LEVELS = {"level_1": "lei2", "level_2": "rr"}
 
 #: The tables of the Silver layer, one history per level.
 TABLES = {"level_1": "entities", "level_2": "relationships"}
+
+#: The folder and the Silver table of the MIC-to-LEI mapping.
+MIC_LEI = "mic_lei"
 
 #: The kinds of file a publication offers that the history reads: the full
 #: golden copy, and the delta of the records changed in the 24 hours before it.
@@ -143,6 +153,18 @@ level_1_schema = StructType() \
     .add("conformity_flag", StringType(), True)
 
 
+#: The history of the MIC-to-LEI mapping, as its contract states it: the MIC
+#: and the LEI of the entity operating the market, as text, and the days the
+#: link held; see :mod:`fincommons.gleif.mic_lei`.
+mic_lei_schema = StructType() \
+    .add("mic", StringType(), False) \
+    .add("lei", StringType(), False) \
+    .add("valid_from", DateType(), False) \
+    .add("publication", StringType(), False) \
+    .add("valid_to", DateType(), True) \
+    .add("latest_record", BooleanType(), False)
+
+
 #: How many of the numbered period and quantifier groups of a relationship the
 #: Bronze layer keeps. GLEIF writes five of each; a relationship states up to
 #: three periods -- of the relationship, of the accounts it rests on, of the
@@ -218,11 +240,28 @@ def ref_silver(config_path, level):
     return resolve(config_path, DATASET, "silver", TABLES[_check_level(level)])
 
 
+def path_landing_mic_lei(config_path):
+    """The folder of the landing zone the MIC-to-LEI files are downloaded to."""
+    return os.path.join(resolve(config_path, DATASET, "landing").path, MIC_LEI)
+
+
+def path_bronze_mic_lei(config_path):
+    """The folder of the Bronze layer the MIC-to-LEI files are imported to."""
+    return os.path.join(resolve(config_path, DATASET, "bronze").path, MIC_LEI)
+
+
+def ref_silver_mic_lei(config_path):
+    """Where the history of the MIC-to-LEI mapping lives in the Silver layer."""
+    return resolve(config_path, DATASET, "silver", MIC_LEI)
+
+
 def create_directory_tree(config_path):
     """Create the folders of the landing zone and the Bronze layer."""
     for level in LEVELS:
         os.makedirs(path_landing(config_path, level), exist_ok=True)
         os.makedirs(path_bronze(config_path, level), exist_ok=True)
+    os.makedirs(path_landing_mic_lei(config_path), exist_ok=True)
+    os.makedirs(path_bronze_mic_lei(config_path), exist_ok=True)
 
 
 def connect_to_gleif(spark, config_path, level="level_1"):
@@ -247,13 +286,18 @@ __all__ = [
     "LEVELS",
     "LEVEL_1_COLUMNS",
     "LEVEL_2_SOURCE_COLUMNS",
+    "MIC_LEI",
     "RELATIONSHIP_GROUPS",
     "SOURCE_COLUMNS",
     "TABLES",
     "connect_to_gleif",
     "level_1_schema",
+    "mic_lei_schema",
     "create_directory_tree",
     "path_bronze",
+    "path_bronze_mic_lei",
     "path_landing",
+    "path_landing_mic_lei",
     "ref_silver",
+    "ref_silver_mic_lei",
 ]
