@@ -8,6 +8,19 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `financialreport.esef`: data contracts for the three Silver tables,
+  `filings`, `facts` and `issues`, and a product, `product_esef.yaml`. The
+  contracts state each table's key, types and which columns may be empty,
+  equal to the declared schemas, which a test holds them to; the counts of
+  validation findings of a filing as additive measures; and `value` as no
+  measure, since the table holds every figure in one column. They state
+  quality rules: one row per filing, per fact and per issue, an LEI for every
+  filing outside Ukraine, whose filings carry the code of the Ukrainian
+  register, no fact both a number and a text, and a unit for every number;
+  and they point at the checks of `esef.quality` for the figures. The rules
+  hold on the lake, 27,732 filings and 265,777 facts. The 29 rows of `esef`
+  left `column_catalogue.csv`.
+
 - `contracts`: quality rules. `check_quality(frame, contract)` runs the
   rules a contract states on a table -- the predefined metrics of ODCS
   (`nullValues`, `missingValues`, `invalidValues`, `duplicateValues`,
@@ -291,6 +304,11 @@ release may change the public API, which `tests/test_public_api.py` lists.
   regime, and its note now says that a Japanese row is in yen.
 
 ### Changed
+
+- `financialreport.esef.connect_to_esef` and `connect_to_esef_issues`
+  return the columns in the order of the declared schema, `country` first,
+  whether the table is Parquet, which puts its partition column last when it
+  is read, or Delta.
 
 - `contracts.validate_product`: an input port accepts a contract shipped in
   the version it names or a later minor or patch version of the same major

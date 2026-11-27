@@ -230,3 +230,67 @@ def test_a_report_comes_back_in_chunks(tmp_path):
 
     assert [len(c) for c in chunks] == [2, 1]
     assert pandas.concat(chunks)["_ERROR"].isna().all()
+
+
+# The data contracts
+# --------------------------------------------------------------------------
+
+
+CONTRACTS = {
+    "filings": ("fincommons.esef.silver.filings", esef.filings_schema),
+    "facts": ("fincommons.esef.silver.facts", esef.facts_schema),
+    "issues": ("fincommons.esef.silver.issues", esef.issues_schema),
+}
+
+
+@pytest.mark.parametrize("table", sorted(CONTRACTS))
+def test_the_declared_schema_is_the_schema_of_the_contract(table):
+    """The code writes with the declared schema and a reader is told the
+    contract, so the two must agree in names, order, types and in which
+    columns may be empty."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    identifier, declared = CONTRACTS[table]
+
+    assert spark_schema(load_contract(identifier)) == declared
+
+
+def assert_meets_contract(table, identifier):
+    """The table is the table its contract describes, and meets its rules:
+    the same columns in the same order and of the same types, no empty value
+    where the contract says a column is required, one row per value of the
+    primary key, and no quality rule failed, warnings included."""
+    from pyspark.sql import functions as F
+
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+
+    contract = load_contract(identifier)
+    properties = contract["schema"][0]["properties"]
+
+    assert [(f.name, f.dataType) for f in table.schema] == \
+        [(f.name, f.dataType) for f in spark_schema(contract)]
+    for prop in properties:
+        if prop.get("required"):
+            assert table.where(F.col(prop["name"]).isNull()).count() == 0, prop["name"]
+    key = [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                     key=lambda p: p["primaryKeyPosition"])]
+    if key:
+        assert table.groupBy(*key).count().where("count > 1").count() == 0
+    failed = [r for r in check_quality(table, contract) if r.passed is False]
+    assert failed == []
+    return key
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, data_lake, collected):
+    """Built from the indexes and reports of the fixtures, with a filing
+    that has no report and so an issue about a filing rather than a fact."""
+    esef.update_silver_esef(spark, data_lake)
+    esef.update_silver_esef_quality(spark, data_lake)
+
+    issues = esef.connect_to_esef_issues(spark, data_lake)
+    assert issues.where("fact IS NULL").count() > 0
+    assert assert_meets_contract(esef.connect_to_esef_filings(spark, data_lake),
+                                 "fincommons.esef.silver.filings") == ["filing"]
+    assert assert_meets_contract(esef.connect_to_esef(spark, data_lake),
+                                 "fincommons.esef.silver.facts") == ["filing", "fact"]
+    assert assert_meets_contract(issues, "fincommons.esef.silver.issues") == []

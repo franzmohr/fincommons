@@ -26,9 +26,10 @@ SOURCE = "main.fincommons_exchangerate.exchangerate"
 def named(tmp_path):
     """A configuration file that gives every Silver layer a catalogue prefix."""
     config = tmp_path / "paths.yaml"
+    modules = {port["contractId"].split(".")[1]
+               for product in c.products().values() for port in product["outputPorts"]}
     config.write_text(yaml.safe_dump({
-        module: {"silver": {"table": f"main.fincommons_{module}"}}
-        for module in ("exchangerate", "firds", "gleif")}))
+        module: {"silver": {"table": f"main.fincommons_{module}"}} for module in modules}))
     return str(config)
 
 

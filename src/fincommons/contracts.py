@@ -612,9 +612,16 @@ def _measure(frame, view, column, rule, rows):
     if metric == "rowCount":
         return rows
     if metric == "duplicateValues":
-        counted = [column] if column else list(arguments["properties"])
-        present = frame.where(" AND ".join(f"`{c}` IS NOT NULL" for c in counted))
-        return present.count() - present.select(*counted).distinct().count()
+        # A column counts the values that repeat another, its empty rows
+        # aside. A key of several columns counts the rows that repeat another
+        # in all of them, an empty value being a value like any other: an
+        # issue about a filing as a whole has no fact, and two such issues of
+        # one check are a duplicate all the same.
+        if column:
+            present = frame.where(F.col(f"`{column}`").isNotNull())
+            return present.count() - present.select(f"`{column}`").distinct().count()
+        counted = [f"`{c}`" for c in arguments["properties"]]
+        return rows - frame.select(*counted).distinct().count()
     value = F.col(f"`{column}`")
     if metric == "nullValues":
         return frame.where(value.isNull()).count()

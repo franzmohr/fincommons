@@ -1,0 +1,422 @@
+# The data contract of the table of filings of the Silver layer of
+# fincommons.financialreport.esef, in the Open Data Contract Standard. It is
+# the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, esef,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.esef.silver.filings
+name: filings
+version: 1.0.0
+status: active
+domain: esef
+dataProduct: fincommons.esef
+description:
+  purpose: >-
+    Which annual financial reports in the European Single Electronic Format exist,
+    for which issuer and period, and how well they passed the validation of the
+    repository that collects them.
+  usage: >-
+    Join to the facts on filing. A filing without json_url has no facts: the repository
+    could not convert it. fincommons.financialreport.esef.connect_to_esef_filings(spark,
+    config) opens the table.
+  limitations: >-
+    The repository is not complete: a filing whose LEI or date it cannot determine
+    is missing altogether. An issuer may have several filings for one period, a
+    correction or a filing in another language among them.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/esef/silver.py
+- type: businessDefinition
+  url: https://www.esma.europa.eu/issuer-disclosure/electronic-reporting
+  description: The European Single Electronic Format, as ESMA describes it.
+- type: businessDefinition
+  url: https://filings.xbrl.org
+  description: >-
+    The repository of XBRL International the filings and their facts are read from.
+schema:
+- name: filings
+  physicalType: table
+  businessName: ESEF filings
+  description: >-
+    One row per filing the indexes of filings.xbrl.org list for the countries collected,
+    whether or not its report was collected: who filed it, where, for which period,
+    how its validation went and where its files are.
+  dataGranularityDescription: One row per filing.
+  quality:
+  - name: one_row_per_filing
+    description: No filing is listed twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: lei_is_an_lei
+    description: >-
+      Every filing outside Ukraine names its issuer by a well-formed LEI: eighteen
+      letters or digits and two check digits. A Ukrainian filing names the code
+      of the Ukrainian register instead.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE system <> 'UAIFRS' AND NOT lei RLIKE '^[A-Z0-9]{18}[0-9]{2}$'
+    mustBe: 0
+    dimension: conformity
+    severity: warning
+  properties:
+  - name: filing
+    businessName: Filing
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      Identifier of the filing at filings.xbrl.org: the LEI, the date, the filing
+      system, the country and a number (e.g. 529900PD3SI453KAW989-2026-03-31-ESEF-AT-0);
+      the name of its report in the Bronze layer.
+    synonyms:
+    - synonym: attributes.fxo_id
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: attributes.fxo_id
+      vendor: fincommons
+  - name: lei
+    businessName: Issuer LEI
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      LEI of the issuer that made the filing; for a fact, read off its entity (scheme:lei).
+      The key that joins the filings with entitymasterdata and gleif. A filing of
+      Ukraine (system UAIFRS) carries the code of the Ukrainian register (EDRPOU)
+      here instead, eight digits, since those filings are not keyed by an LEI.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    synonyms:
+    - synonym: included entity.identifier
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: included entity.identifier
+      vendor: fincommons
+  - name: name
+    businessName: Issuer
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The name of the issuer as filings.xbrl.org records it.
+    synonyms:
+    - synonym: included entity.name
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: included entity.name
+      vendor: fincommons
+  - name: country
+    businessName: Country
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      Country the filing was collected from, as filings.xbrl.org codes it (ISO 3166-1
+      alpha-2, e.g. AT, DE, GB); the partition column of the table of facts.
+    synonyms:
+    - synonym: attributes.country
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: attributes.country
+      vendor: fincommons
+  - name: system
+    businessName: Filing system
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The filing system the filing was made under, read off filing (ESEF, which
+      the repository uses for the filings of the United Kingdom too, or UAIFRS).
+    synonyms:
+    - synonym: attributes.fxo_id
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: attributes.fxo_id
+      vendor: fincommons
+  - name: period_end
+    businessName: Period end
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The last day of the period the filing reports on, usually the end of the financial
+      year; on a fact, that of its filing.
+    synonyms:
+    - synonym: attributes.period_end
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: attributes.period_end
+      vendor: fincommons
+  - name: lang
+    businessName: Language
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Language of the report (filings, read off the name of its file) or of a text
+      fact (facts), as an ISO 639-1 code (e.g. de, en); empty where none is stated,
+      as for the filings of the United Kingdom.
+    synonyms:
+    - synonym: dimensions.language
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: dimensions.language
+      vendor: fincommons
+  - name: published
+    businessName: Published
+    logicalType: timestamp
+    physicalType: timestamp
+    semanticType: dimension
+    description: >-
+      The time the filing was published by its source, where the source states it;
+      empty otherwise.
+    synonyms:
+    - synonym: attributes.published
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: attributes.published
+      vendor: fincommons
+  - name: added
+    businessName: Added to the repository
+    logicalType: timestamp
+    physicalType: timestamp
+    semanticType: dimension
+    description: The time filings.xbrl.org added the filing to its repository (UTC).
+    synonyms:
+    - synonym: attributes.date_added
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: attributes.date_added
+      vendor: fincommons
+  - name: processed
+    businessName: Processed
+    logicalType: timestamp
+    physicalType: timestamp
+    semanticType: dimension
+    description: >-
+      The time filings.xbrl.org last processed the filing (UTC); a report is collected
+      again where it changes.
+    synonyms:
+    - synonym: attributes.processed
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: attributes.processed
+      vendor: fincommons
+  - name: errors
+    businessName: Validation errors
+    logicalType: integer
+    physicalType: int
+    semanticType: measure
+    transformLogic: SUM(errors)
+    description: >-
+      The number of errors filings.xbrl.org found when it validated the filing.
+    synonyms:
+    - synonym: attributes.error_count
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: count
+      vendor: fincommons
+    - property: source
+      value: attributes.error_count
+      vendor: fincommons
+    - property: aggregation
+      value: additive
+      vendor: fincommons
+      description: A count of the findings of one filing, which adds up over filings.
+  - name: warnings
+    businessName: Validation warnings
+    logicalType: integer
+    physicalType: int
+    semanticType: measure
+    transformLogic: SUM(warnings)
+    description: >-
+      The number of warnings filings.xbrl.org raised when it validated the filing.
+    synonyms:
+    - synonym: attributes.warning_count
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: count
+      vendor: fincommons
+    - property: source
+      value: attributes.warning_count
+      vendor: fincommons
+    - property: aggregation
+      value: additive
+      vendor: fincommons
+      description: A count of the findings of one filing, which adds up over filings.
+  - name: inconsistencies
+    businessName: Calculation inconsistencies
+    logicalType: integer
+    physicalType: int
+    semanticType: measure
+    transformLogic: SUM(inconsistencies)
+    description: >-
+      The number of calculation inconsistencies filings.xbrl.org found in the filing.
+    synonyms:
+    - synonym: attributes.inconsistency_count
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: count
+      vendor: fincommons
+    - property: source
+      value: attributes.inconsistency_count
+      vendor: fincommons
+    - property: aggregation
+      value: additive
+      vendor: fincommons
+      description: A count of the findings of one filing, which adds up over filings.
+  - name: package_url
+    businessName: Report package
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Address of the report package as filed (.zip or .xbri), relative to https://filings.xbrl.org.
+    synonyms:
+    - synonym: attributes.package_url
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.package_url
+      vendor: fincommons
+  - name: report_url
+    businessName: Report
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Address of the report as XHTML with Inline XBRL, relative to https://filings.xbrl.org.
+    synonyms:
+    - synonym: attributes.report_url
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.report_url
+      vendor: fincommons
+  - name: viewer_url
+    businessName: Report in the viewer
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Address of the report in the Inline XBRL viewer of filings.xbrl.org, relative
+      to https://filings.xbrl.org.
+    synonyms:
+    - synonym: attributes.viewer_url
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.viewer_url
+      vendor: fincommons
+  - name: json_url
+    businessName: Report as xBRL-JSON
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Address of the report as xBRL-JSON, relative to https://filings.xbrl.org;
+      empty where the repository could not convert the filing, which then has no
+      facts.
+    synonyms:
+    - synonym: attributes.json_url
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.json_url
+      vendor: fincommons
+  - name: package_sha256
+    businessName: SHA-256 of the report package
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The SHA-256 of the report package as filed, as filings.xbrl.org gives it;
+      what a collected package is checked against.
+    synonyms:
+    - synonym: attributes.sha256
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: attributes.sha256
+      vendor: fincommons

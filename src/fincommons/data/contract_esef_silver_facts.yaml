@@ -1,0 +1,378 @@
+# The data contract of the table of facts of the Silver layer of
+# fincommons.financialreport.esef, in the Open Data Contract Standard. It is
+# the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, esef,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.esef.silver.facts
+name: facts
+version: 1.0.0
+status: active
+domain: esef
+dataProduct: fincommons.esef
+description:
+  purpose: >-
+    Every tagged figure and text of the annual financial reports collected, as the
+    issuer reported it, so that a figure can be read off a report without opening
+    it.
+  usage: >-
+    Filter on country first, since the table is partitioned by it, then on concept.
+    A figure for the financial year is a fact without dimensions whose prd_end is
+    the period_end of its filing; a fact with dimensions is a breakdown of it. The
+    value is as reported, in its unit, without scaling. fincommons.financialreport.esef.connect_to_esef(spark,
+    config) opens the table.
+  limitations: >-
+    The table holds many figures in one column: value is no measure, since summing
+    it adds revenue to assets and euros to shares. The measures of financial reports,
+    the same across regimes, are those of fincommons.financialreport.combined. A
+    report restating an earlier figure states it again under its own filing, so
+    a figure may appear in several filings.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/esef/silver.py
+- type: businessDefinition
+  url: https://www.esma.europa.eu/issuer-disclosure/electronic-reporting
+  description: The European Single Electronic Format, as ESMA describes it.
+- type: businessDefinition
+  url: https://filings.xbrl.org
+  description: >-
+    The repository of XBRL International the filings and their facts are read from.
+schema:
+- name: facts
+  physicalType: table
+  businessName: ESEF facts
+  description: >-
+    One row per fact of the reports collected: the concept of the taxonomy it is
+    tagged with, its period, unit and dimensions, and its value, a number in value
+    or anything else in text.
+  dataGranularityDescription: >-
+    One row per fact of a report: a filing and the identifier of the fact within
+    it.
+  quality:
+  - name: one_row_per_fact
+    description: No fact of a filing is read twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+      - fact
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: a_fact_is_not_both_a_number_and_a_text
+    description: >-
+      No fact has both a numeric value and a text; the reading of a report puts
+      a fact in one or the other.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE value IS NOT NULL AND text IS NOT NULL
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: a_number_has_a_unit
+    description: >-
+      A numeric fact states its unit, without which its value cannot be read.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE value IS NOT NULL AND unit IS NULL
+    mustBe: 0
+    dimension: completeness
+    severity: error
+  - name: the_checks_of_the_figures
+    description: >-
+      The figures are held to the checks of the module, which name each filing and
+      fact at fault, by code, in the table of issues rather than counting them:
+      among them a period that ends before it begins (IMPL_PERIOD), a fact with
+      neither a number nor a text (MISS_FACT_VALUE), and a balance sheet that does
+      not balance (IMBAL_BALANCE_SHEET). fincommons.dataquality.check_catalogue('esef')
+      lists them all.
+    type: custom
+    engine: fincommons
+    implementation: fincommons.financialreport.esef.quality.update_silver_esef_quality
+    dimension: accuracy
+  properties:
+  - name: country
+    businessName: Country
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      Country the filing was collected from, as filings.xbrl.org codes it (ISO 3166-1
+      alpha-2, e.g. AT, DE, GB); the partition column of the table of facts.
+    synonyms:
+    - synonym: attributes.country
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: attributes.country
+      vendor: fincommons
+  - name: filing
+    businessName: Filing
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      Identifier of the filing at filings.xbrl.org: the LEI, the date, the filing
+      system, the country and a number (e.g. 529900PD3SI453KAW989-2026-03-31-ESEF-AT-0);
+      the name of its report in the Bronze layer.
+    synonyms:
+    - synonym: attributes.fxo_id
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: attributes.fxo_id
+      vendor: fincommons
+  - name: lei
+    businessName: Issuer LEI
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      LEI of the issuer that made the filing; for a fact, read off its entity (scheme:lei).
+      The key that joins the filings with entitymasterdata and gleif. A filing of
+      Ukraine (system UAIFRS) carries the code of the Ukrainian register (EDRPOU)
+      here instead, eight digits, since those filings are not keyed by an LEI.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    synonyms:
+    - synonym: included entity.identifier
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: included entity.identifier
+      vendor: fincommons
+  - name: period_end
+    businessName: Period end
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The last day of the period the filing reports on, usually the end of the financial
+      year; on a fact, that of its filing.
+    synonyms:
+    - synonym: attributes.period_end
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: attributes.period_end
+      vendor: fincommons
+  - name: fact
+    businessName: Fact
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The identifier of the fact within its report, as the xBRL-JSON gives it; unique
+      within a filing only.
+    synonyms:
+    - synonym: facts key
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: facts key
+      vendor: fincommons
+  - name: concept
+    businessName: Concept
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The concept the fact reports, as a prefixed name of the taxonomy (e.g. ifrs-full:Revenue,
+      ifrs-full:Equity, or an extension concept of the issuer).
+    synonyms:
+    - synonym: dimensions.concept
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: dimensions.concept
+      vendor: fincommons
+  - name: prd_start
+    businessName: Start of the fact's period
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The first day of the period of a fact for a duration; empty for a fact for
+      an instant, such as a balance.
+    synonyms:
+    - synonym: dimensions.period
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: dimensions.period
+      vendor: fincommons
+  - name: prd_end
+    businessName: End of the fact's period
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The last day of the period of the fact, included, or the day of an instant;
+      xBRL-JSON writes it as the start of the following day, which is converted
+      back.
+    synonyms:
+    - synonym: dimensions.period
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: dimensions.period
+      vendor: fincommons
+  - name: unit
+    businessName: Unit
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The unit of a numeric fact (e.g. iso4217:EUR, xbrli:shares, iso4217:EUR/xbrli:shares,
+      xbrli:pure); empty for a text fact.
+    synonyms:
+    - synonym: dimensions.unit
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: dimensions.unit
+      vendor: fincommons
+  - name: dimensions
+    businessName: Dimensions
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The dimensions of the taxonomy the fact is reported for, as axis=member sorted
+      and joined by ';' (e.g. ifrs-full:ComponentsOfEquityAxis=ifrs-full:RetainedEarningsMember);
+      empty for a fact without dimensions, which is the total.
+    synonyms:
+    - synonym: dimensions
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: dimensions
+      vendor: fincommons
+  - name: value
+    businessName: Numeric value
+    logicalType: number
+    physicalType: double
+    semanticType: dimension
+    description: >-
+      The value of a numeric fact, as reported, in unit and without any scaling
+      (a report in thousands tags the full amount); empty for a text fact.
+    synonyms:
+    - synonym: value
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: amount
+      vendor: fincommons
+    - property: source
+      value: value
+      vendor: fincommons
+  - name: text
+    businessName: Text value
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The value of a fact without a unit, as text, and of a fact with a unit whose
+      value is not a number; text blocks, which carry markup, are left out of the
+      table.
+    synonyms:
+    - synonym: value
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: value
+      vendor: fincommons
+  - name: decimals
+    businessName: Decimals
+    logicalType: integer
+    physicalType: int
+    semanticType: dimension
+    description: >-
+      The decimals the issuer states for a numeric fact, i.e. to how many decimal
+      places it is accurate (0 for whole units, -3 for thousands); empty for INF
+      (exact) and for text facts.
+    synonyms:
+    - synonym: decimals
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: count
+      vendor: fincommons
+    - property: source
+      value: decimals
+      vendor: fincommons
+  - name: lang
+    businessName: Language
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Language of the report (filings, read off the name of its file) or of a text
+      fact (facts), as an ISO 639-1 code (e.g. de, en); empty where none is stated,
+      as for the filings of the United Kingdom.
+    synonyms:
+    - synonym: dimensions.language
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: dimensions.language
+      vendor: fincommons

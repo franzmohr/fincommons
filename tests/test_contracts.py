@@ -10,6 +10,7 @@ fails here and not in some later reader of a contract.
 from __future__ import annotations
 
 import copy
+from datetime import date
 from importlib import resources
 
 import pytest
@@ -340,3 +341,18 @@ def test_a_rule_counted_in_percent_is_a_share_of_the_rows(spark):
 
     assert result.value == 25.0
     assert result.passed is False
+
+
+def test_a_duplicate_key_of_several_columns_counts_an_empty_value_as_a_value(spark):
+    # Two issues of one check about a filing as a whole have no fact, and
+    # are a duplicate all the same; a column on its own leaves its empty
+    # rows aside.
+    contract = c.load_contract("fincommons.esef.silver.issues")
+    rows = [("AT", "L", "F", None, None, "NO_FACTS", date(2026, 1, 1)),
+            ("AT", "L", "F", None, None, "NO_FACTS", date(2026, 1, 1)),
+            ("AT", "L", "F", "f1", "c", "MIXED_UNIT", date(2026, 1, 1))]
+    frame = spark.createDataFrame(rows, c.spark_schema(contract))
+
+    (result,) = [r for r in c.check_quality(frame, contract) if r.rule == "one_row_per_issue"]
+
+    assert result.value == 1

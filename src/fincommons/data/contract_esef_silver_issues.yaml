@@ -1,0 +1,205 @@
+# The data contract of the table of issues of the Silver layer of
+# fincommons.financialreport.esef, in the Open Data Contract Standard. It is
+# the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, esef,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.esef.silver.issues
+name: issues
+version: 1.0.0
+status: active
+domain: esef
+dataProduct: fincommons.esef
+description:
+  purpose: >-
+    Which filings and facts fail which of the checks the figures of a report are
+    held to, so that a figure can be weighed before it is used.
+  usage: >-
+    Join to the filings on filing and to the facts on filing and fact; count by
+    issue to see which checks fail most. The table is partitioned by country, as
+    the facts are.
+  limitations: >-
+    A check is a judgement about a filing, not an issuer, and its severity is the
+    package's opinion. The issues of a country are replaced whenever the country
+    is checked again; checked says when.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/esef/quality.py
+- type: businessDefinition
+  url: https://www.esma.europa.eu/issuer-disclosure/electronic-reporting
+  description: The European Single Electronic Format, as ESMA describes it.
+- type: businessDefinition
+  url: https://filings.xbrl.org
+  description: >-
+    The repository of XBRL International the filings and their facts are read from.
+schema:
+- name: issues
+  physicalType: table
+  businessName: ESEF data quality issues
+  description: >-
+    One row per issue the data quality checks of the module found in a filing or
+    one of its facts, by the code of the check; fincommons.dataquality.describe_check
+    says what a code means.
+  dataGranularityDescription: >-
+    One row per issue found: a filing, and where the issue concerns one fact, that
+    fact, and the check it failed.
+  quality:
+  - name: one_row_per_issue
+    description: A filing, or a fact of it, fails one check once.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+      - fact
+      - concept
+      - issue
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  properties:
+  - name: country
+    businessName: Country
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      Country the filing was collected from, as filings.xbrl.org codes it (ISO 3166-1
+      alpha-2, e.g. AT, DE, GB); the partition column of the table of facts.
+    synonyms:
+    - synonym: attributes.country
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: attributes.country
+      vendor: fincommons
+  - name: lei
+    businessName: Issuer LEI
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      LEI of the issuer that made the filing; for a fact, read off its entity (scheme:lei).
+      The key that joins the filings with entitymasterdata and gleif. A filing of
+      Ukraine (system UAIFRS) carries the code of the Ukrainian register (EDRPOU)
+      here instead, eight digits, since those filings are not keyed by an LEI.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    synonyms:
+    - synonym: included entity.identifier
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: included entity.identifier
+      vendor: fincommons
+  - name: filing
+    businessName: Filing
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      Identifier of the filing at filings.xbrl.org: the LEI, the date, the filing
+      system, the country and a number (e.g. 529900PD3SI453KAW989-2026-03-31-ESEF-AT-0);
+      the name of its report in the Bronze layer.
+    synonyms:
+    - synonym: attributes.fxo_id
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: attributes.fxo_id
+      vendor: fincommons
+  - name: fact
+    businessName: Fact
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The identifier of the fact within its report, as the xBRL-JSON gives it; unique
+      within a filing only.
+    synonyms:
+    - synonym: facts key
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: facts key
+      vendor: fincommons
+  - name: concept
+    businessName: Concept
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The concept the fact reports, as a prefixed name of the taxonomy (e.g. ifrs-full:Revenue,
+      ifrs-full:Equity, or an extension concept of the issuer).
+    synonyms:
+    - synonym: dimensions.concept
+      source: filings.xbrl.org
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: dimensions.concept
+      vendor: fincommons
+  - name: issue
+    businessName: Issue
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The code of the data quality check the record failed, one row per check it
+      failed. fincommons.dataquality.describe_check turns it into the sentence that
+      says what the code means, how severe it is and what to do about it. A record
+      nothing objected to has no row in the table at all.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: checked
+    businessName: Checked on
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The day the run that wrote the row was made. The issues of a partition are
+      replaced as a whole when it is checked again, so this says when the rows that
+      are there were found rather than when the problem arose.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

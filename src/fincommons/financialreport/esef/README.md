@@ -139,6 +139,8 @@ A report is downloaded when the Bronze layer does not hold it, or holds it from 
 
 ## The Silver tables
 
+What the columns of each table hold, and what a reader may rely on, is stated by its data contract in the Open Data Contract Standard: `data/contract_esef_silver_filings.yaml`, `data/contract_esef_silver_facts.yaml` and `data/contract_esef_silver_issues.yaml`, which `data/product_esef.yaml` names as the output ports of the module. They are the one place the columns are described -- `fincommons.describe_column("prd_end", dataset="esef")` reads its answer from there -- and the declared schemas of the module are held to them by the tests. A contract states the key of its table (the filing; the filing and the fact) and rules the table is held to: one row per filing and per fact, an LEI outside Ukraine, a fact that is not both a number and a text, a number with a unit. `fincommons.contracts.check_quality` runs them; the checks that name each figure at fault are those of [Data quality](#data-quality), which the contract of the facts points at. The contract of the facts says, too, that `value` is no measure: it holds revenue, assets and share counts in one column, and the measures of a financial report are those of `fincommons.financialreport.combined`.
+
 ### `filings`
 
 One row per filing of the indexes, every country and year, whether its report was collected or not. It is rebuilt in full on every run.

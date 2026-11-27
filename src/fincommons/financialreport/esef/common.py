@@ -322,7 +322,14 @@ def connect_to_esef_issues(spark, config_path):
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     """
-    return read_silver(spark, ref_silver_issues(config_path))
+    # The schema lives with the checks, which import this module.
+    from .quality import issues_schema
+
+    # In the order of the declared schema, which is the order of the
+    # contract: a Parquet table puts its partition column last when it is
+    # read and a Delta table keeps it where it was written, and the order a
+    # reader sees should not depend on which of the two the table is.
+    return read_silver(spark, ref_silver_issues(config_path)).select(*issues_schema.names)
 
 
 def connect_to_esef(spark, config_path):
@@ -341,7 +348,10 @@ def connect_to_esef(spark, config_path):
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     """
-    return read_silver(spark, ref_silver_facts(config_path))
+    # In the order of the declared schema, which is the order of the
+    # contract, whether the table is Parquet or Delta; see
+    # connect_to_esef_issues.
+    return read_silver(spark, ref_silver_facts(config_path)).select(*facts_schema.names)
 
 
 def connect_to_esef_filings(spark, config_path):
