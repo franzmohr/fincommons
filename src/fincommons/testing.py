@@ -50,8 +50,11 @@ os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 #: single test and not enough for the whole suite: the session is shared by
 #: every module, and a run of several hundred tests accumulates broadcast
 #: relations, query plans and Delta log state in that one heap until it fails
-#: with an OutOfMemoryError in whichever test happens to be running.
-DRIVER_MEMORY = "4g"
+#: with an OutOfMemoryError in whichever test happens to be running. 4 GB
+#: lasted until the suite reached some 1,400 tests, when the heap ran out in
+#: the FIRDS Silver tests and every Spark test after them failed on the dead
+#: session; the suite passes in full at 8 GB.
+DRIVER_MEMORY = "8g"
 
 # The heap is settled when the JVM starts, which is what the builder below
 # cannot be relied on for. PySpark launches the JVM through spark-submit when

@@ -199,6 +199,10 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `testing`: the driver of the shared test session is started with 8 GB of
+  heap instead of 4 GB. At some 1,400 tests the suite ran out of heap in the
+  FIRDS Silver tests, and every Spark test after them failed on the dead
+  session.
 - `esef-country-quality-factsheet.qmd`: where an arithmetic check fired, the
   detail pages give the two sides of the identity, the gap and its share of
   total assets or revenue, so that a gap of a tenth of a percent can be told
