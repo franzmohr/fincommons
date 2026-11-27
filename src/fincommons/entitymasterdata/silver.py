@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 #: The columns of the entity master data set, in the order they are stored in.
 COLUMNS = ["id", "lei",
            "internal_id_1", "internal_id_2", "internal_id_3", "internal_id_4",
-           "name", "country", "sector", "subsector", "ultimate_parent_lei", "amc",
+           "mic", "name", "country", "sector", "subsector", "ultimate_parent_lei", "amc",
            "if_policy", "if_type", "if_ucits_compl"]
 
 #: What a column of a Bronze register, or of the proprietary list, is called
@@ -576,6 +576,43 @@ def normalise_gleif_level_2(data):
     )
 
 
+def normalise_gleif_mic_lei(data):
+    """The market identifier codes GLEIF links to each LEI, one row per LEI.
+
+    GLEIF links every MIC (ISO 10383) to the LEI of the entity that operates
+    the market, and an operator often runs several: a market segment carries
+    a MIC of its own beside that of the market, and a group runs a market per
+    asset class. Each LEI is therefore given the list of its MICs, sorted and
+    without repeats, so that the table stays one row per LEI and the list is
+    the same on every run. A MIC is written in upper case without blanks, as
+    ISO 10383 writes it, and the LEI as GLEIF writes it, see
+    :func:`normalised_lei`.
+
+    Parameters
+    ----------
+    data: pyspark.sql.DataFrame
+        The links of MICs to LEIs, in columns ``mic`` and ``lei``: the
+        versions of the history of :mod:`fincommons.gleif.mic_lei` that hold
+        on one day.
+
+    Returns
+    -------
+    pyspark.sql.DataFrame
+        A frame with an ``lei`` column and ``mic``, an array of text.
+    """
+    data = with_normalised_lei(text_columns(data, ["lei", "mic"]), "GLEIF_MIC")
+    mic = func.upper(func.regexp_replace(func.col("mic"), r"[\s\p{Z}]", ""))
+    return data.withColumn("mic", func.when(mic != "", mic)) \
+        .filter(func.col("lei").isNotNull() & func.col("mic").isNotNull()) \
+        .groupBy("lei") \
+        .agg(func.array_sort(func.collect_set("mic")).alias("mic"))
+
+
+#: The type of the ``mic`` column, for a table built without the MIC-to-LEI
+#: history.
+MIC_TYPE = "array<string>"
+
+
 def normalise_ecb_investment_fund(data):
     """The funds of one ECB list of investment funds.
 
@@ -654,7 +691,8 @@ def normalise_esma_ccp(data):
 # --------------------------------------------------------------------------
 
 
-def combine_registers(gleif_1, relationships, ccp, inun, orpi, mfi, invfund):
+def combine_registers(gleif_1, relationships, ccp, inun, orpi, mfi, invfund,
+                      mic_lei=None):
     """Combine the registers into the public entity master data, one row per LEI.
 
     The arguments are the registers as the ``normalise_`` functions of this
@@ -672,6 +710,9 @@ def combine_registers(gleif_1, relationships, ccp, inun, orpi, mfi, invfund):
         :func:`normalise_esma_ccp`, :func:`normalise_eiopa_insurance_undertaking`,
         :func:`normalise_eiopa_iorp`, :func:`normalise_ecb_mfi` and
         :func:`normalise_ecb_investment_fund`.
+    mic_lei: pyspark.sql.DataFrame, optional
+        :func:`normalise_gleif_mic_lei`. Where it is left out ``mic`` is empty
+        for every entity, so the table has the same shape either way.
     """
     # The fund register makes two different kinds of statement, and only one of
     # them is contested. The sector is a claim about what the entity is, which
@@ -756,7 +797,15 @@ def combine_registers(gleif_1, relationships, ccp, inun, orpi, mfi, invfund):
 
     # And with the ultimate parent and the asset management company GLEIF
     # Level 2 reports for it.
-    return result.join(relationships, on = "lei", how = "leftouter")
+    result = result.join(relationships, on = "lei", how = "leftouter")
+
+    # And with the markets it operates, which GLEIF's MIC-to-LEI mapping
+    # names. The mapping is joined onto GLEIF Level 1 rather than added to it:
+    # a MIC whose LEI the golden copy does not know names no entity of the
+    # table.
+    if mic_lei is None:
+        return result.withColumn("mic", func.lit(None).cast(MIC_TYPE))
+    return result.join(mic_lei, on = "lei", how = "leftouter")
 
 
 # The registers as they stood on a day
@@ -918,6 +967,11 @@ def entities_as_of(spark, config_path, day):
     names on ``day`` is in any later copy; what the later copy changes is the
     name and the relationships, which a count of sectors does not read.
 
+    ``mic`` holds the MICs GLEIF linked to an LEI on ``day`` where the
+    MIC-to-LEI history of :mod:`fincommons.gleif` has been built, and is empty
+    otherwise; it is not among the snapshots reported, since it says nothing
+    about a sector.
+
     Returns
     -------
     tuple
@@ -950,6 +1004,11 @@ def entities_as_of(spark, config_path, day):
         else:
             frames[name] = normalise(spark.read.parquet(snapshot[1]))
             used[name] = snapshot[0]
+    from ..gleif import mic_lei
+
+    if mic_lei.mic_lei_held(spark, config_path):
+        frames["mic_lei"] = normalise_gleif_mic_lei(
+            mic_lei.mic_lei_as_of(spark, config_path, day))
     return combine_registers(**frames), used
 
 
@@ -1055,6 +1114,7 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
         mfi=normalise_ecb_mfi(latest(common.path_bronze_ecb_mfi(config_path))),
         invfund=normalise_ecb_investment_fund(
             latest(common.path_bronze_ecb_investment_fund(config_path))),
+        mic_lei=gleif_mic_lei(spark, config_path),
     )
 
     common.write_silver(
@@ -1064,6 +1124,29 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     outcome["rows"] = common.read_silver(
         spark, common.ref_silver_public(config_path)
     ).count()
+
+
+def gleif_mic_lei(spark, config_path):
+    """The MICs GLEIF links to each LEI now, from :mod:`fincommons.gleif`, or ``None``.
+
+    The mapping is kept by the pipeline of its own in
+    :mod:`fincommons.gleif.mic_lei`, which this module reads rather than
+    downloads. Unlike a register, its absence does not stop the update: the
+    MICs add an identifier to entities the table describes already, so where
+    the configuration file has no ``gleif`` section, or the history has not
+    been built, the table is built with ``mic`` empty, and a warning says so.
+    """
+    from ..gleif import mic_lei
+
+    if not mic_lei.mic_lei_held(spark, config_path):
+        logger.warning(
+            "The MIC-to-LEI history of fincommons.gleif has not been built, "
+            "mic is left empty",
+            extra=context(module="entitymasterdata", layer="silver",
+                          source="GLEIF_MIC"),
+        )
+        return None
+    return normalise_gleif_mic_lei(mic_lei.current_mic_lei(spark, config_path))
 
 
 def update_silver_entitymasterdata(spark, config_path, file_format = None):
@@ -1119,6 +1202,15 @@ def _update_silver_entitymasterdata(spark, config_path, file_format, outcome):
 
     public = common.read_silver(spark, common.ref_silver_public(config_path))
 
+    # The MICs are GLEIF's statement of which markets an LEI operates, not a
+    # description of the entity, so they are taken by LEI whichever source
+    # describes it -- the proprietary list included, which has no column for
+    # them. A public table built before the column was is read as without it.
+    if "mic" in public.columns:
+        gleif_mic = public.select("lei", "mic").filter(func.col("mic").isNotNull())
+    else:
+        gleif_mic = spark.createDataFrame([], f"lei string, mic {MIC_TYPE}")
+
     if os.path.exists(path_internal):
         internal = read_internal_list(spark, path_internal)
 
@@ -1150,6 +1242,7 @@ def _update_silver_entitymasterdata(spark, config_path, file_format, outcome):
         [func.col("_source_rank"), func.col("internal_id_1").desc_nulls_last()],
     )
     result = with_lei.unionByName(without_lei).drop("_source_rank")
+    result = result.drop("mic").join(gleif_mic, on = "lei", how = "leftouter")
 
     # Number the entities. The window spans the whole table, which sorts it on
     # one partition, but the number is meant to be a running one and dense.
@@ -1304,6 +1397,7 @@ __all__ = [
     "LEI_UNKNOWN",
     "MFI_SECTORS",
     "MFI_SECTOR_OTHER",
+    "MIC_TYPE",
     "active_relationship",
     "check_internal_list",
     "combine_registers",
@@ -1321,6 +1415,8 @@ __all__ = [
     "gleif_history_held",
     "normalise_gleif_level_1",
     "normalise_gleif_level_2",
+    "normalise_gleif_mic_lei",
+    "gleif_mic_lei",
     "normalised_lei",
     "read_internal_list",
     "text_columns",
