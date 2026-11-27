@@ -28,6 +28,23 @@ release may change the public API, which `tests/test_public_api.py` lists.
   the table never held, are now `_fx` and `_fx_imputed` and are no longer
   catalogued.
 
+- `gleif`: a module of its own for GLEIF's reference data, keeping a history of
+  both levels in the Silver layer in the shape of the FIRDS history -- one
+  version per state a record held, with `valid_from`, `valid_to` and
+  `latest_record`. Level 1 (`entities`, keyed by LEI) keeps 39 of the golden
+  copy's some 340 columns; Level 2 (`relationships`, keyed by the two LEIs and
+  the type) keeps the relationship's own and accounting periods, the first
+  quantifier and the registration. `update_gleif(spark, config, start_date)`
+  begins the history from the first publication on or after a day the user
+  sets, carries it forward one full copy a month while GLEIF offers no delta
+  files and by the daily delta once it does, and on later runs carries it on
+  from where it stands, reading a full copy instead of the delta once a week
+  to close what the deltas do not report. A version begins on the day of the
+  record's last update; the update time and GLEIF's conformity flag, which
+  GLEIF recomputes without an update, open no version. Each publication is
+  applied in one Delta merge whose commit names it. `entitymasterdata` reads the entities and their parents from the history
+  where the configuration has a `gleif` section and the history is built.
+
 - `financialreport.esef`: `export_esef_reports` writes one issuer's reports
   to an OpenDocument spreadsheet, with a sheet that sets the filings side by
   side -- one row per figure and period, one column per filing -- so that the

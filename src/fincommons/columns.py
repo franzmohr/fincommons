@@ -60,7 +60,7 @@ __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
 #: ``marketpricedata.describe_instrument``.
 CATALOGUED_MODULES = ("firds", "entitymasterdata", "exchangerate",
                       "famafrenchdata", "esef", "sec", "edinet",
-                      "financialreport")
+                      "financialreport", "gleif")
 
 #: Lower-case names a module aliases that are not columns of any table, and
 #: that the leading underscore cannot be used to mark. ``src`` and ``tgt`` are
@@ -76,13 +76,14 @@ NOT_COLUMNS = frozenset({"src", "tgt", "checksum"})
 #: named here has to mark every intermediate column with a leading underscore,
 #: since upper case no longer does it.
 SNAKE_CASE_MODULES = ("exchangerate", "entitymasterdata", "famafrenchdata",
-                      "esef", "sec", "edinet", "financialreport", "firds")
+                      "esef", "sec", "edinet", "financialreport", "firds",
+                      "gleif")
 
 #: The modules that declare their schemas with ``StructType().add`` rather
 #: than building their columns with ``withColumn``; see :func:`defined_columns`.
 SCHEMA_DECLARING_MODULES = ("exchangerate", "entitymasterdata",
                             "famafrenchdata", "esef", "sec", "edinet",
-                            "financialreport")
+                            "financialreport", "gleif")
 
 #: Where a catalogued data set's code lives, for the data sets whose folder
 #: is not simply their name. The regimes that require a financial report

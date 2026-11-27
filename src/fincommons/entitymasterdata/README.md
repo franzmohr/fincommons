@@ -2,6 +2,8 @@
 
 This document describes the creation of a entity master data set that can be used in the context of, for example, the analysis of EMIR, SECR or SFTR data. The approach is based on [Lenoci and Letizia (2021)](https://link.springer.com/chapter/10.1007/978-3-030-66891-4_6).
 
+**GLEIF from its history.** Where the configuration file has a `gleif` section and the history of [`fincommons.gleif`](../gleif/README.md) has been built, the names, countries and parents of the entities are read from that history -- as they stand for the public table, and as they stood on a day for `entities_as_of` and the sector counts -- rather than from the golden copies this module's own Bronze layer holds. Without it, this module reads its own golden copies, as it always has. `gleif_history_held` says which applies.
+
 
 
 ```python
