@@ -813,6 +813,93 @@ def snapshot_as_of(snapshots, day):
     return held[-1] if held else None
 
 
+# GLEIF from the history of fincommons.gleif
+# --------------------------------------------------------------------------
+#
+# Where the configuration file has a ``gleif`` section and that module's
+# history has been built, the entities and their parents are read from it
+# rather than from the golden copies this module's Bronze layer holds: the
+# history says what GLEIF said on any day since it was begun, where the
+# snapshots say it only on the days they were downloaded. The frames are
+# given names the normalisation reads, so that everything after the reading
+# -- the normalisation, the combination -- is the same either way.
+
+
+def gleif_history_held(spark, config_path):
+    """Whether the GLEIF history of :mod:`fincommons.gleif` is there to read."""
+    from ..addressing import delta_table_exists
+    from ..gleif import common as gleif_common
+
+    try:
+        refs = [gleif_common.ref_silver(config_path, level)
+                for level in gleif_common.LEVELS]
+    except KeyError:
+        return False
+    return all(delta_table_exists(spark, ref) for ref in refs)
+
+
+def gleif_from_history(spark, config_path, day=None):
+    """GLEIF's entities and relationships, from the history, in this module's names.
+
+    Parameters
+    ----------
+    day: datetime.date, optional
+        The day to read them as of; the records in force now where left out.
+        For a day before the history was begun the state it was begun with is
+        read, as :func:`entities_as_of` reads the earliest golden copy where
+        none of the day is held.
+
+    Returns
+    -------
+    tuple
+        The frames :func:`normalise_gleif_level_1` and
+        :func:`normalise_gleif_level_2` read -- the entities under the Silver
+        names, the relationships under GLEIF's -- and the day the history was
+        read as of, which is the day it was begun where ``day`` is before it.
+    """
+    from datetime import datetime
+
+    from ..gleif import common as gleif_common
+    from ..gleif import history as gleif_history
+
+    frames, read_as_of = [], None
+    for level in ("level_1", "level_2"):
+        versions = gleif_common.connect_to_gleif(spark, config_path, level)
+        if day is None:
+            current = versions.where(func.col(gleif_history.VALID_TO).isNull())
+        else:
+            begun = versions.agg(func.min(gleif_history.PUBLICATION)).first()[0]
+            begun = datetime.strptime(begun, "%Y%m%d-%H%M").date()
+            as_of = max(day, begun)
+            read_as_of = as_of if read_as_of is None else max(read_as_of, as_of)
+            if day < begun:
+                # Before the history began, each record as it was begun with:
+                # its first version, whatever day that version starts.
+                first = Window.partitionBy(*gleif_history.KEYS[level]) \
+                    .orderBy(func.col(gleif_history.VALID_FROM))
+                current = versions.withColumn("_rank", func.row_number().over(first)) \
+                    .where(func.col("_rank") == 1).drop("_rank")
+            else:
+                current = gleif_history.records_as_of(versions, as_of)
+        frames.append(current)
+
+    entities, relationships = frames
+    # The Silver names already: normalise_gleif_level_1 renames the Bronze
+    # names of a golden copy into these, and leaves a frame that has them.
+    entities = entities.select(
+        "lei",
+        func.col("legal_name").alias("name"),
+        func.col("legal_address_country").alias("country"),
+    )
+    relationships = relationships.select(
+        func.col("start_lei").alias("Relationship.StartNode.NodeID"),
+        func.col("end_lei").alias("Relationship.EndNode.NodeID"),
+        func.col("relationship_type").alias("Relationship.RelationshipType"),
+        func.col("relationship_status").alias("Relationship.RelationshipStatus"),
+    )
+    return entities, relationships, read_as_of
+
+
 def entities_as_of(spark, config_path, day):
     """The public entity master data as the registers stood on ``day``.
 
@@ -822,9 +909,11 @@ def entities_as_of(spark, config_path, day):
     contributes nothing, which :func:`sector_counts_over_time` reports apart
     from a register that had no entity of a sector.
 
-    GLEIF is the exception. It is the frame the registers are joined onto
-    rather than a statement about a sector, so where no golden copy of ``day``
-    or before is held the earliest one is used. A golden copy keeps every LEI
+    GLEIF is read from the history of :mod:`fincommons.gleif` where it has
+    been built, as of ``day``; see :func:`gleif_from_history`. Otherwise it
+    is the exception among the snapshots. It is the frame the registers are
+    joined onto rather than a statement about a sector, so where no golden
+    copy of ``day`` or before is held the earliest one is used. A golden copy keeps every LEI
     ever issued, lapsed and retired ones included, so an entity a register
     names on ``day`` is in any later copy; what the later copy changes is the
     name and the relationships, which a count of sectors does not read.
@@ -836,7 +925,16 @@ def entities_as_of(spark, config_path, day):
         from, its reference date or ``None``.
     """
     frames, used = {}, {}
+    from_history = gleif_history_held(spark, config_path)
+    if from_history:
+        entities, relationships, read_as_of = gleif_from_history(
+            spark, config_path, day)
+        frames["gleif_1"] = normalise_gleif_level_1(entities)
+        frames["relationships"] = normalise_gleif_level_2(relationships)
+        used["gleif_1"] = used["relationships"] = read_as_of
     for name, (path_of, normalise) in SNAPSHOT_REGISTERS.items():
+        if from_history and name in ("gleif_1", "relationships"):
+            continue
         snapshots = snapshot_dates(path_of(config_path))
         if not snapshots:
             raise FileNotFoundError(
@@ -937,11 +1035,19 @@ def _update_silver_entitymasterdata_public(spark, config_path, file_format, outc
     def latest(path):
         return spark.read.parquet(latest_bronze_file(path))
 
+    # GLEIF from the history of fincommons.gleif where it has been built, and
+    # from the latest golden copy of this module's Bronze layer otherwise.
+    if gleif_history_held(spark, config_path):
+        entities, relationships, _ = gleif_from_history(spark, config_path)
+        outcome["gleif"] = "history"
+    else:
+        entities = latest(common.path_bronze_gleif_level_1(config_path))
+        relationships = latest(common.path_bronze_gleif_level_2(config_path))
+        outcome["gleif"] = "bronze"
+
     result = combine_registers(
-        gleif_1=normalise_gleif_level_1(
-            latest(common.path_bronze_gleif_level_1(config_path))),
-        relationships=normalise_gleif_level_2(
-            latest(common.path_bronze_gleif_level_2(config_path))),
+        gleif_1=normalise_gleif_level_1(entities),
+        relationships=normalise_gleif_level_2(relationships),
         ccp=normalise_esma_ccp(latest(common.path_bronze_esma_ccp(config_path))),
         inun=normalise_eiopa_insurance_undertaking(
             latest(common.path_bronze_eiopa_insurance_undertaking(config_path))),
@@ -1211,6 +1317,8 @@ __all__ = [
     "normalise_eiopa_insurance_undertaking",
     "normalise_eiopa_iorp",
     "normalise_esma_ccp",
+    "gleif_from_history",
+    "gleif_history_held",
     "normalise_gleif_level_1",
     "normalise_gleif_level_2",
     "normalised_lei",

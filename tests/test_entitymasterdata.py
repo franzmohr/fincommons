@@ -2567,3 +2567,74 @@ def test_the_catch_all_entities_are_not_named_as_malformed(spark, built, caplog)
 
     assert not [r for r in caplog.records
                 if getattr(r, "ctx", {}).get("source") == "INTERNAL"]
+
+
+# GLEIF from the history of fincommons.gleif
+# --------------------------------------------------------------------------
+
+
+def write_gleif_history(spark, config_path, steps):
+    """A GLEIF history, from (label, kind, entities, relationships), where an
+    entity is (lei, name, country, update) and a relationship is (child,
+    parent, type, update)."""
+    from fincommons.gleif import common as gleif, silver as gleif_silver
+
+    with open(config_path, "a", encoding="utf-8") as config:
+        base = os.path.dirname(config_path)
+        config.write("gleif:\n" + "".join(
+            f"  {layer}: {os.path.join(base, 'gleif', layer)}\n"
+            for layer in ("landing", "bronze", "silver")))
+
+    def bronze(level, label, kind, rows):
+        columns = gleif.SOURCE_COLUMNS[level]
+        records = [tuple(row.get(c) for c in columns) for row in rows]
+        path = os.path.join(gleif.path_bronze(config_path, level),
+                            f"{label}-{kind}.parquet")
+        spark.createDataFrame(records, ", ".join(f"`{c}` string" for c in columns)) \
+            .write.parquet(path)
+        return path
+
+    for label, kind, entities, relationships in steps:
+        level_1 = [{"LEI": lei, "Entity.LegalName": name,
+                    "Entity.LegalAddress.Country": country,
+                    "Registration.LastUpdateDate": update}
+                   for lei, name, country, update in entities]
+        level_2 = [{"Relationship.StartNode.NodeID": child,
+                    "Relationship.EndNode.NodeID": parent,
+                    "Relationship.RelationshipType": kind_,
+                    "Relationship.RelationshipStatus": "ACTIVE",
+                    "Registration.LastUpdateDate": update}
+                   for child, parent, kind_, update in relationships]
+        for level, rows in (("level_1", level_1), ("level_2", level_2)):
+            gleif_silver.apply_publication(spark, config_path, level, label, kind,
+                                           bronze(level, label, kind, rows))
+
+
+def test_gleif_is_read_from_its_history_where_it_has_been_built(spark, data_lake):
+    """No golden copy in this module's Bronze layer: the names, the countries
+    and the parents come from the history, as it stands and as it stood."""
+    write_gleif_history(spark, data_lake, [
+        ("20261101-0000", "full",
+         [("LEI1", "One", "AT", "2025-01-01T00:00:00Z"),
+          ("LEI2", "Two", "DE", "2025-01-01T00:00:00Z")],
+         [("LEI2", "LEI1", "IS_ULTIMATELY_CONSOLIDATED_BY", "2025-01-01T00:00:00Z")]),
+        ("20261103-0000", "delta",
+         [("LEI1", "One Holding", "AT", "2026-11-02T09:00:00Z")], []),
+    ])
+    write_ccp(data_lake, [])
+    write_eiopa(data_lake, ["LEI2"])
+    write_iorp(data_lake, [])
+    write_ecb_mfi(data_lake, [])
+    write_ecb_investment_fund(data_lake, [])
+    em.update_from_landing_to_bronze(data_lake)
+
+    assert em.gleif_history_held(spark, data_lake)
+    em.update_silver_entitymasterdata_public(spark, data_lake)
+    table = {r.lei: r for r in em.connect_to_entitymasterdata(spark, data_lake, "public").collect()}
+    assert table["LEI1"].name == "One Holding"
+    assert table["LEI2"].ultimate_parent_lei == "LEI1"
+    assert table["LEI2"].sector == "INUN"
+
+    then, used = em.entities_as_of(spark, data_lake, datetime.date(2026, 11, 1))
+    assert {r.lei: r.name for r in then.collect()}["LEI1"] == "One"
+    assert used["gleif_1"] == datetime.date(2026, 11, 1)
