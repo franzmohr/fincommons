@@ -27,7 +27,11 @@ PUBLIC_API = {
         "CATALOGUED_MODULES", "ColumnDescription", "SCHEMA_DECLARING_MODULES",
         "column_catalogue", "defined_columns", "describe_column",
     ],
-    "fincommons.contracts": ["catalogue_rows"],
+    "fincommons.contracts": [
+        "DRAFT_STATUSES", "catalogue_rows", "check_quality", "contracts",
+        "custom_property", "load_contract", "products", "spark_schema",
+        "validate_contract", "validate_product",
+    ],
     "fincommons.entitymasterdata": [
         "LEI_OTHER", "connect_to_entitymasterdata",
     ],
