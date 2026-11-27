@@ -28,7 +28,7 @@
 #   label_last(), wrap_labels()      labelling helpers
 #   caption_corporate_design()       standard source line
 #   save_chart()                     export at exact pixel sizes
-#   palette_accessible, scale_{colour,linetype}_accessible()   series told
+#   palette_accessible, scale_{colour,fill,linetype,shape}_accessible()   series told
 #                                    apart by more than colour, at 3:1
 #   contrast_ratio(), text_colour_on()   WCAG contrast
 #   typst_document_title(), typst_colour_table()   raw Typst for PDF/UA
@@ -435,6 +435,43 @@ scale_linetype_accessible <- function(...) {
   ggplot2::discrete_scale("linetype", palette = function(n) linetypes_accessible[seq_len(n)], ...)
 }
 
+# The same colours as fills, for bars and areas whose groups are named on the
+# chart as well, and six point shapes for series that are points rather than
+# lines -- a series held on a single date, say -- where a line type cannot
+# tell them apart. The categorical colours of the brand after the first fall
+# below 3:1 against white and are not to be used to tell groups apart.
+scale_fill_accessible <- function(...) {
+  ggplot2::discrete_scale("fill", palette = function(n) {
+    if (n > length(palette_accessible)) {
+      stop("An accessible chart tells at most ", length(palette_accessible),
+           " groups apart; draw ", n, " as small multiples.")
+    }
+    palette_accessible[seq_len(n)]
+  }, ...)
+}
+shapes_accessible <- c(16, 17, 15, 18, 1, 2)
+
+# Ten colours for the parts of a stacked bar, which has more parts than a
+# chart has series: each at least 3:1 against white, ordered so that two
+# neighbouring parts differ in hue. A stack names its parts directly on the
+# chart, so these need not stay apart under colour blindness as the six
+# above do; they need to stand out from the page and from one another.
+palette_accessible_stack <- c("#0072B2", "#C24F00", "#5B6D7E", "#882255",
+                              "#00785A", "#8A6500", "#004488", "#B8360B",
+                              "#A4387A", "#22282E")
+scale_fill_stack <- function(...) {
+  ggplot2::discrete_scale("fill", palette = function(n) {
+    if (n > length(palette_accessible_stack)) {
+      stop("A stack of ", n, " parts is more than ", length(palette_accessible_stack),
+           " colours can tell apart; group the smallest into one.")
+    }
+    palette_accessible_stack[seq_len(n)]
+  }, ...)
+}
+scale_shape_accessible <- function(...) {
+  ggplot2::discrete_scale("shape", palette = function(n) shapes_accessible[seq_len(n)], ...)
+}
+
 # The relative luminance of a colour and the contrast of two, as WCAG 2.2
 # defines them.
 relative_luminance <- function(colour) {
@@ -455,8 +492,11 @@ text_colour_on <- function(fill, ink = unname(design_colours()[["ink"]])) {
 }
 
 # Text as a Typst string literal, which Typst shows as it stands: nothing in
-# it is read as markup.
-typst_string <- function(x) {
+# it is read as markup. Named so that it does not collide with the helpers
+# several templates define for escaping text in their own raw Typst: a
+# template that defined a typst_string of its own would otherwise replace this
+# one, and the title and the tables below would come out as broken Typst.
+typst_literal <- function(x) {
   x <- gsub("\\\\", "\\\\\\\\", as.character(x))
   paste0("\"", gsub("\"", "\\\\\"", x), "\"")
 }
@@ -465,7 +505,7 @@ typst_string <- function(x) {
 # announces. Written as raw Typst from a chunk with results='asis', so that
 # it can be computed -- a country, a month -- without a title block.
 typst_document_title <- function(title) {
-  cat("\n```{=typst}\n#set document(title: ", typst_string(title), ")\n```\n\n", sep = "")
+  cat("\n```{=typst}\n#set document(title: ", typst_literal(title), ")\n```\n\n", sep = "")
 }
 
 # A table whose cells are coloured, written as raw Typst from a chunk with
@@ -479,22 +519,22 @@ typst_colour_table <- function(row_header, labels, fills, column_header,
   stopifnot(identical(dim(labels), dim(fills)), nrow(labels) == length(row_header),
             ncol(labels) == length(column_header))
   cell <- function(text, fill) {
-    if (is.na(fill)) return(paste0("[#", typst_string(text), "]"))
-    paste0("table.cell(fill: rgb(", typst_string(fill), "))[#text(fill: rgb(",
-           typst_string(text_colour_on(fill)), "))[#", typst_string(text), "]]")
+    if (is.na(fill)) return(paste0("[#", typst_literal(text), "]"))
+    paste0("table.cell(fill: rgb(", typst_literal(fill), "))[#text(fill: rgb(",
+           typst_literal(text_colour_on(fill)), "))[#", typst_literal(text), "]]")
   }
   body <- vapply(seq_len(nrow(labels)), function(i) {
-    paste(c(paste0("[#", typst_string(row_header[i]), "]"),
+    paste(c(paste0("[#", typst_literal(row_header[i]), "]"),
             vapply(seq_len(ncol(labels)), function(j) cell(labels[i, j], fills[i, j]),
                    character(1))), collapse = ", ")
   }, character(1))
   cat("\n```{=typst}\n",
-      "#figure(kind: table, caption: [#", typst_string(caption), "],\n",
+      "#figure(kind: table, caption: [#", typst_literal(caption), "],\n",
       "  table(columns: (auto,", strrep(" 1fr,", ncol(labels)), "),\n",
       "    align: (left,", strrep(" center,", ncol(labels)), "),\n",
       "    stroke: 0.5pt + white, inset: 5pt,\n",
-      "    table.header(", paste(c(paste0("[#strong(", typst_string(row_header_title), ")]"),
-                                 paste0("[#strong(", typst_string(column_header), ")]")),
+      "    table.header(", paste(c(paste0("[#strong(", typst_literal(row_header_title), ")]"),
+                                 paste0("[#strong(", typst_literal(column_header), ")]")),
                                collapse = ", "), "),\n",
       "    ", paste(body, collapse = ",\n    "), "))\n```\n\n", sep = "")
 }

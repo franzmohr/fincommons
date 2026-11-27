@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -566,6 +568,21 @@ late_share <- mean(filings_all$late, na.rm = TRUE) * 100
 no_facts_share <- mean(!filings_all$has_facts) * 100
 ```
 
+```{r title, results='asis'}
+# The title of the document, which a screen reader announces and PDF/UA
+# requires, and the language its text is in. The front matter says English,
+# which is right for the report as it is shipped; a report set to German
+# declares German here, so that a screen reader reads it with a German voice.
+typst_document_title(paste0(
+  if (report_lang == "de") "ESEF-Abdeckungsbericht, " else "ESEF coverage report, ",
+  # A record of many countries names how many rather than every one.
+  if (length(report_countries) <= 5) paste(report_countries, collapse = ", ")
+  else paste(length(report_countries), if (report_lang == "de") "Länder" else "countries"),
+  ", ",
+  if (report_lang == "de") "Geschäftsjahre " else "financial years ", period_range))
+cat("\n```{=typst}\n#set text(lang: \"", report_lang, "\")\n```\n\n", sep = "")
+```
+
 ```{r formats}
 # --------------------------------------------------------------------------
 # Writing numbers and words
@@ -628,23 +645,107 @@ render_years <- function(data, value, digits = 0, label_column = "label",
                align = paste0("l", strrep("r", length(report_years))))
 }
 
-# A chart of one line per group over the financial years.
+# A chart of one line per group over the financial years. The groups are
+# told apart by line type and marker as well as by colour, so that a reader
+# who does not see the colours apart, or reads a print in black and white,
+# can still follow a line. More groups than there are line types are drawn
+# as small multiples instead, one panel per group, the group in ink against
+# the others in grey, so that a group is found by its panel and not by its
+# colour.
 chart_by_year <- function(data, value, group, subtitle = "%", digits = 0,
                           ncol = 5, zero = TRUE) {
   d <- data %>% mutate(.v = {{ value }}, .g = {{ group }}) %>% filter(!is.na(.v))
-  g <- ggplot(d, aes(x = fy, y = .v, colour = .g)) +
-    geom_line(linewidth = linewidth_corporate_design) +
-    geom_point(size = 1.4) +
+  if (n_distinct(d$.g) <= length(palette_accessible)) {
+    g <- ggplot(d, aes(x = fy, y = .v, colour = .g, linetype = .g, shape = .g)) +
+      geom_line(linewidth = linewidth_corporate_design) +
+      geom_point(size = 1.6) +
+      scale_colour_accessible(name = NULL) +
+      scale_linetype_accessible(name = NULL) +
+      scale_shape_manual(name = NULL, values = c(16, 17, 15, 18, 1, 2)) +
+      guides(colour = guide_legend(ncol = ncol)) +
+      theme_corporate_design(base_size = chart_base_size,
+                             axis.title = element_blank()) +
+      theme(legend.key.width = grid::unit(2.2, "lines"))
+  } else {
+    g <- ggplot(d, aes(x = fy, y = .v)) +
+      geom_line(data = d %>% transmute(fy, .v, .other = .g),
+                aes(group = .other), colour = design_colours()[["mute"]],
+                linewidth = 0.4) +
+      geom_line(colour = design_colours()[["ink"]],
+                linewidth = linewidth_corporate_design) +
+      geom_point(colour = design_colours()[["ink"]], size = 1) +
+      facet_wrap(~ .g, ncol = 4) +
+      theme_corporate_design(base_size = chart_base_size,
+                             axis.title = element_blank()) +
+      theme(panel.spacing.x = grid::unit(1.4, "lines"))
+  }
+  g <- g +
     scale_x_continuous(breaks = report_years, labels = year_labels,
-                       expand = c(.02, 0)) +
+                       expand = c(if (n_distinct(d$.g) <= length(palette_accessible)) .02 else .08, 0)) +
     scale_y_continuous(labels = function(x) fmt(x, digits)) +
-    scale_colour_corporate_design() +
-    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
-    guides(colour = guide_legend(ncol = ncol)) +
-    theme_corporate_design(base_size = chart_base_size,
-                           axis.title = element_blank())
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle)
   if (zero) g <- g + geom_zeroline()
   g
+}
+
+# The height of a chart of chart_by_year: what the chunk gives it where the
+# groups are lines of one panel, and a row of panels per four groups where
+# they are small multiples.
+height_by_year <- function(data, group, height) {
+  n <- n_distinct(pull(data, {{ group }}))
+  if (n <= length(palette_accessible)) height else 0.9 + 1.3 * ceiling(n / 4)
+}
+
+# The alt text of a chart of chart_by_year: what kind of chart it is, what
+# it shows, and every value it draws, which over a handful of years and
+# groups is what a sighted reader takes from it. `what` names the measure.
+alt_by_year <- function(data, value, group, what, digits = 0) {
+  d <- data %>%
+    mutate(.v = {{ value }}, .g = as.character({{ group }})) %>%
+    filter(!is.na(.v)) %>%
+    arrange(.g, fy)
+  if (nrow(d) == 0) {
+    return(tr(paste0("No chart of ", what, ": there are no figures for it."),
+              paste0("Kein Diagramm zu ", what, ": es gibt keine Zahlen dazu.")))
+  }
+  n <- n_distinct(d$.g)
+  form <- if (n <= length(palette_accessible)) {
+    tr(paste0("Line chart, one line per group (", paste(unique(d$.g), collapse = ", "),
+              "), told apart by colour, line type and marker"),
+       paste0("Liniendiagramm, eine Linie je Gruppe (", paste(unique(d$.g), collapse = ", "),
+              "), unterschieden durch Farbe, Linienart und Markierung"))
+  } else {
+    tr(paste0("Small multiples, one panel for each of ", n,
+              " groups, the group against the others in grey"),
+       paste0("Kleine Mehrfachdiagramme, ein Feld für jede der ", n,
+              " Gruppen, die Gruppe vor den anderen in Grau"))
+  }
+  series <- d %>%
+    group_by(.g) %>%
+    summarise(text = paste0(.g[1], ": ",
+                            paste(year_labels[match(fy, report_years)],
+                                  fmt(.v, digits), collapse = ", ")),
+              .groups = "drop")
+  paste0(form, tr(", of ", ", zu "), what, tr(" by financial year, ", " nach Geschäftsjahr, "),
+         year_labels[match(min(d$fy), report_years)], " – ",
+         year_labels[match(max(d$fy), report_years)], ". ",
+         paste(series$text, collapse = "; "), ".")
+}
+
+# The alt text of a chart of chart_ranked: the bars from the longest down,
+# each with its value, which is the ranking the chart draws.
+alt_ranked <- function(data, value, label, what, digits = 0) {
+  d <- data %>%
+    mutate(.v = {{ value }}, .l = as.character({{ label }})) %>%
+    filter(!is.na(.v)) %>%
+    arrange(desc(.v))
+  if (nrow(d) == 0) {
+    return(tr(paste0("No chart of ", what, ": there are no figures for it."),
+              paste0("Kein Diagramm zu ", what, ": es gibt keine Zahlen dazu.")))
+  }
+  paste0(tr("Bar chart of ", "Balkendiagramm: "), what, tr(", one bar for each of ", ", ein Balken für jede der "),
+         nrow(d), tr(" items, from the highest to the lowest: ", " Positionen, von der höchsten zur niedrigsten: "),
+         paste(d$.l, fmt(d$.v, digits), collapse = "; "), ".")
 }
 
 # A chart of bars, one per category, read from top to bottom.
@@ -958,9 +1059,18 @@ render_years(selected %>% count(country, fy) %>% rename(label = country),
              n, header = tr("Country", "Land"))
 ```
 
+```{r record-years-alt}
+# The data of the chart below and its alt text, which the options of the
+# chunk that draws it read, and so are computed before it.
+record_years <- selected %>% count(country, fy)
+alt_record_years <- alt_by_year(record_years, n, country,
+                                tr("the reports with facts", "den Berichten mit Fakten"))
+```
+
 ```{r record-years-chart}
-#| fig-height: 2.3
-chart_by_year(selected %>% count(country, fy),
+#| fig-height: !expr height_by_year(record_years, country, 2.3)
+#| fig-alt: !expr alt_record_years
+chart_by_year(record_years,
               n, country,
               subtitle = tr("Reports with facts", "Berichte mit Fakten"))
 ```
@@ -1018,12 +1128,20 @@ knitr::kable(temp, align = "lrrrr", col.names = c(
   tr("Beyond the deadline, %", "Nach der Frist, %")))
 ```
 
+```{r timeliness-alt}
+timeliness_years <- filings_all %>%
+  filter(!is.na(lag_days)) %>%
+  group_by(country, fy) %>%
+  summarise(median = median(lag_days), .groups = "drop")
+alt_timeliness <- alt_by_year(timeliness_years, median, country,
+                              tr("the median days from the period end to publication",
+                                 "dem Median der Tage vom Stichtag zur Veröffentlichung"))
+```
+
 ```{r timeliness-chart}
-#| fig-height: 2.3
-chart_by_year(filings_all %>%
-                filter(!is.na(lag_days)) %>%
-                group_by(country, fy) %>%
-                summarise(median = median(lag_days), .groups = "drop"),
+#| fig-height: !expr height_by_year(timeliness_years, country, 2.3)
+#| fig-alt: !expr alt_timeliness
+chart_by_year(timeliness_years,
               median, country,
               subtitle = tr("Days from the period end to publication, median",
                             "Tage vom Stichtag zur Veröffentlichung, Median"))
@@ -1235,11 +1353,20 @@ knitr::kable(temp, align = "lrrl", col.names = c(
 
 ### `r tr("How much a report tags under its own concepts", "Wie viel ein Bericht unter eigenen Konzepten auszeichnet")`
 
+```{r own-share-alt}
+own_share_years <- per_filing %>%
+  group_by(country, fy) %>%
+  summarise(own = median(own_share), .groups = "drop")
+alt_own_share <- alt_by_year(own_share_years, own, country,
+                             tr("the median share of numeric facts under the issuer's own concepts, %",
+                                "dem Median des Anteils numerischer Fakten unter eigenen Konzepten, %"),
+                             digits = 1)
+```
+
 ```{r own-share-chart}
-#| fig-height: 2.3
-chart_by_year(per_filing %>%
-                group_by(country, fy) %>%
-                summarise(own = median(own_share), .groups = "drop"),
+#| fig-height: !expr height_by_year(own_share_years, country, 2.3)
+#| fig-alt: !expr alt_own_share
+chart_by_year(own_share_years,
               own, country,
               subtitle = tr("Numeric facts under the issuer's own concepts, median of the reports, %",
                             "Numerische Fakten unter eigenen Konzepten, Median der Berichte, %"),
@@ -1387,8 +1514,16 @@ render_years(line_coverage %>% filter(statement == "cf"), share, digits = 1,
 
 ### `r tr("The lines, ranked", "Die Zeilen, nach Rang")`
 
+```{r coverage-ranked-alt}
+alt_coverage_ranked <- alt_ranked(
+  line_coverage %>% filter(fy == latest_fy), share, label,
+  tr(paste0("the issuers tagging each line in ", latest_label, ", %"),
+     paste0("den Emittenten mit der Zeile in ", latest_label, ", %")))
+```
+
 ```{r coverage-ranked}
 #| fig-height: 7.6
+#| fig-alt: !expr alt_coverage_ranked
 chart_ranked(line_coverage %>% filter(fy == latest_fy),
              share, label,
              subtitle = tr(paste0("Issuers tagging the line in ",
@@ -1468,8 +1603,35 @@ knitr::kable(temp, col.names = c("", year_labels),
              align = paste0("l", strrep("r", length(report_years))))
 ```
 
+```{r lines-per-issuer-alt}
+# The alt text of the histogram: its shape, as the median, the quantiles,
+# the count most reports tag and how many tag every line.
+found_latest <- per_issuer %>% filter(fy == latest_fy) %>% pull(found)
+alt_lines_per_issuer <- if (length(found_latest) == 0) {
+  tr("No histogram: no report of the latest year was read.",
+     "Kein Histogramm: kein Bericht des letzten Jahres wurde gelesen.")
+} else {
+  mode_found <- as.integer(names(which.max(table(found_latest))))
+  tr(paste0("Histogram of the ", fmt(length(found_latest)), " reports of ", latest_label,
+            " by how many of the ", n_lines, " lines they tag, one bar per count. ",
+            "The median report tags ", fmt(median(found_latest)), " lines, the 10th percentile ",
+            fmt(quantile(found_latest, 0.1)), " and the 90th ", fmt(quantile(found_latest, 0.9)),
+            "; the most common count is ", mode_found, ", from a low of ",
+            min(found_latest), " to a high of ", max(found_latest), ". ",
+            fmt(sum(found_latest == n_lines)), " reports tag every line."),
+     paste0("Histogramm der ", fmt(length(found_latest)), " Berichte des Jahres ", latest_label,
+            " nach der Anzahl der ausgezeichneten Zeilen von ", n_lines, ", ein Balken je Anzahl. ",
+            "Der Median-Bericht zeichnet ", fmt(median(found_latest)), " Zeilen aus, das 10. Perzentil ",
+            fmt(quantile(found_latest, 0.1)), " und das 90. ", fmt(quantile(found_latest, 0.9)),
+            "; am häufigsten sind es ", mode_found, ", von ", min(found_latest), " bis ",
+            max(found_latest), ". ", fmt(sum(found_latest == n_lines)),
+            " Berichte zeichnen jede Zeile aus."))
+}
+```
+
 ```{r lines-per-issuer-chart}
 #| fig-height: 2.4
+#| fig-alt: !expr alt_lines_per_issuer
 # The distribution over the reports of the latest year rather than its
 # median: an analysis that needs every line of a statement lives in the
 # right tail of this chart.
@@ -1538,8 +1700,16 @@ render_years(indicator_coverage, share, digits = 1,
              order = order)
 ```
 
+```{r indicators-alt}
+alt_indicators <- alt_ranked(
+  indicator_coverage %>% filter(fy == latest_fy), share, label,
+  tr(paste0("the issuers each indicator is feasible for in ", latest_label, ", %"),
+     paste0("den Emittenten mit berechenbarer Kennzahl in ", latest_label, ", %")))
+```
+
 ```{r indicators-chart}
 #| fig-height: 3.8
+#| fig-alt: !expr alt_indicators
 chart_ranked(indicator_coverage %>% filter(fy == latest_fy),
              share, label,
              subtitle = tr(paste0("Issuers the indicator is feasible for in ",

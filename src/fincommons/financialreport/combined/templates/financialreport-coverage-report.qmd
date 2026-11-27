@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -287,6 +289,15 @@ parent_only <- stated %>%
 fact_count <- sum(read$facts)
 ```
 
+```{r title, results='asis'}
+# The title of the document, which a screen reader announces and without
+# which typst refuses to write a PDF/UA document.
+typst_document_title(paste0("Financial reports across regimes: coverage of ",
+                            paste(regimes_held, collapse = ", "),
+                            ", financial years ", min(annual$fy), "–",
+                            latest_year))
+```
+
 ```{r formats}
 fmt <- function(x, digits = 0) {
   x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
@@ -305,13 +316,16 @@ source_caption <- caption_corporate_design(
   source = paste("filings.xbrl.org, SEC EDGAR, EDINET;",
                  "the combined tables of fincommons.financialreport."),
   lang = "en")
-typst_string <- function(x) {
+# It is named apart from typst_string of the design script, which also puts
+# the quotes around the text and which the title of the document and its
+# coloured tables call: a function of the same name here would replace it.
+typst_escape <- function(x) {
   x <- gsub("\\\\", "\\\\\\\\", x)
   gsub("\"", "\\\\\"", x)
 }
 ts <- function(x) {
   x <- ifelse(is.na(x), "–", as.character(x))
-  paste0("\"", typst_string(x), "\"")
+  paste0("\"", typst_escape(x), "\"")
 }
 
 # A table written as Typst rather than as a Markdown table, which gives the
@@ -336,8 +350,11 @@ typst_table <- function(df, widths, align, size = 7.5) {
 }
 
 cols <- design_colours()
-regime_colours <- c("ESEF" = cols[["blue"]], "SEC" = cols[["red"]],
-                    "EDINET" = cols[["teal"]])
+# The colours of the regimes are the first three of the accessible palette of
+# the design, which stay apart for a reader who does not see red or green;
+# the comparison report beside this one uses the same three. No chart tells
+# the regimes apart by colour alone: each regime has a panel of its own.
+regime_colours <- setNames(palette_accessible[1:3], c("ESEF", "SEC", "EDINET"))
 ```
 
 ```{r cover, results='asis'}
@@ -442,17 +459,46 @@ cat("*Listed* is every filing the source index names, *read* the ones whose ",
     "statistic below.\n\n", sep = "")
 ```
 
-```{r years-chart}
-#| fig-height: 2.6
+```{r years-data}
 temp <- annual %>%
   filter(fy %in% years_charted) %>%
   count(source, fy) %>%
   mutate(regime = factor(unname(regimes[source]), levels = unname(regimes)))
-ggplot(temp, aes(x = factor(fy), y = n, fill = regime)) +
-  geom_col(position = position_dodge(preserve = "single"), width = 0.78) +
+
+# What the chart shows, as text for its alt text: each regime's count year by
+# year, and the year it holds most reports for.
+alt_years <- if (nrow(temp) == 0) {
+  paste0("Bar chart of the annual reports of companies read by financial year, ",
+         "which is empty: the lake holds no annual report of a company in the ",
+         "years ", min(years_charted), " to ", max(years_charted), ".")
+} else {
+  per_regime_years <- temp %>%
+    arrange(regime, fy) %>%
+    group_by(regime) %>%
+    summarise(text = paste0(regime[1], ", ", fmt(sum(n)), " in all, most in ",
+                            fy[which.max(n)], ": ",
+                            paste0(fy, " ", fmt(n), collapse = ", ")),
+              .groups = "drop")
+  paste0("Bar chart in one panel per regime of the annual reports of companies ",
+         "read, by financial year from ", min(years_charted), " to ",
+         max(years_charted), ", on one scale. ",
+         paste(per_regime_years$text, collapse = ". "), ".")
+}
+```
+
+```{r years-chart}
+#| fig-height: 2.6
+#| fig-alt: !expr alt_years
+# One panel per regime, named above it, rather than the bars of the regimes
+# side by side and told apart by their colour; the panels share one scale.
+ggplot(temp, aes(x = factor(fy, levels = years_charted), y = n, fill = regime)) +
+  geom_col(width = 0.72) +
   geom_zeroline() +
-  scale_fill_manual(values = regime_colours, drop = TRUE) +
-  scale_y_continuous(expand = expansion(mult = c(0, .06))) +
+  scale_fill_manual(values = regime_colours, drop = TRUE, guide = "none") +
+  scale_x_discrete(drop = FALSE,
+                   labels = function(y) ifelse(as.integer(y) %% 2 == latest_year %% 2, y, "")) +
+  scale_y_continuous(expand = expansion(mult = c(0, .06)), labels = function(x) fmt(x)) +
+  facet_wrap(~regime, nrow = 1) +
   labs(subtitle = "Annual reports of companies read, by financial year",
        caption = wrap_caption(source_caption)) +
   theme_corporate_design(base_size = chart_base_size, grid = "y",
@@ -493,8 +539,7 @@ if (nrow(temp) > 0) {
 
 ## Which measures the annual reports state
 
-```{r measure-heatmap}
-#| fig-height: 2.9
+```{r measure-heatmap, results='asis'}
 columns <- annual %>%
   filter(!is.na(framework)) %>%
   count(source, framework, name = "reports")
@@ -515,23 +560,32 @@ temp <- stated %>%
                                  match(framework, frameworks))])),
          measure = factor(unname(measure_names[measure]),
                           levels = rev(unname(measure_names))))
-ggplot(temp, aes(x = column, y = measure, fill = ifelse(defined, share, NA))) +
-  geom_tile(colour = "white", linewidth = 0.8) +
-  geom_text(aes(label = label,
-                colour = ifelse(defined & share >= 55, "light", "dark")),
-            size = 2.6, fontface = "bold") +
-  scale_colour_manual(values = c(light = "white", dark = cols[["ink"]]),
-                      guide = "none") +
-  scale_fill_gradient(low = cols[["seq_low"]], high = cols[["blue"]],
-                      limits = c(0, 100), na.value = cols[["grid"]],
-                      guide = "none") +
-  scale_x_discrete(position = "top") +
-  labs(subtitle = wrap_caption(paste0(
-         "Share of the annual reports of companies that state each measure, by ",
-         "regime and framework; the number of reports in brackets"), 100),
-       caption = wrap_caption(source_caption)) +
-  theme_corporate_design(base_size = chart_base_size, grid = "none",
-                         axis.title = element_blank())
+
+# A table rather than a picture of one: the shares are text a screen reader
+# reads, the header names the regime, the framework and the number of
+# reports of each column, and the blue that deepens with the share only
+# repeats the number in its cell. A measure the catalogue defines no concept
+# for is n/a in its cell and grey.
+row_order <- unname(measure_names)
+column_order <- levels(droplevels(temp$column))
+cell_of <- function(field) {
+  m <- matrix(NA, nrow = length(row_order), ncol = length(column_order))
+  m[cbind(match(as.character(temp$measure), row_order),
+          match(as.character(temp$column), column_order))] <- field
+  m
+}
+shade <- scales::seq_gradient_pal(cols[["seq_low"]], cols[["blue"]])
+typst_colour_table(
+  row_order,
+  cell_of(temp$label),
+  cell_of(ifelse(temp$defined, shade(pmin(pmax(temp$share, 0), 100) / 100),
+                 cols[["grid"]])),
+  sub("\n", " ", sub("\n", " ", column_order, fixed = TRUE), fixed = TRUE),
+  paste0("Share of the annual reports of companies that state each measure, by ",
+         "regime and framework; the number of reports in brackets. The blue ",
+         "deepens with the share; n/a and grey mark a measure the catalogue ",
+         "defines no concept for under that framework. ", source_caption),
+  row_header_title = "Measure")
 ```
 
 ```{r measure-notes, results='asis'}

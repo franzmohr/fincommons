@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -501,6 +503,13 @@ n_before <- sum(corporates$fy == latest_year - 1)
 partial <- n_before > 0 && n_latest < 0.9 * n_before
 ```
 
+```{r title, results='asis'}
+# The title of the document, which a screen reader announces and PDF/UA
+# requires.
+typst_document_title(paste0("ESEF economic factsheet, ", Country_name,
+                            ", financial years ", period_range))
+```
+
 ```{r formats}
 fmt <- function(x, digits = 0) {
   x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
@@ -651,9 +660,10 @@ cat(paste0("- ", bullets[!is.na(bullets)], collapse = "\n"), "\n")
 
 ## The trend
 
-```{r trend-chart}
-#| fig-height: 2.5
-temp <- by_year %>%
+```{r trend-alt}
+# The data of the chart below and its alt text, which the options of the
+# chunk that draws it read, and so are computed before it.
+trend <- by_year %>%
   select(fy, Revenue = revenue_lfl, `Operating profit` = operating_lfl,
          `Result for the year` = profit_lfl) %>%
   pivot_longer(-fy, names_to = "what", values_to = "value") %>%
@@ -661,14 +671,35 @@ temp <- by_year %>%
   mutate(what = factor(what, levels = c("Revenue", "Operating profit",
                                         "Result for the year")),
          fy = factor(fy))
+alt_trend <- if (nrow(trend) == 0) {
+  "No chart: no like-for-like change could be computed for any year."
+} else {
+  paste0("Bar chart in three panels, revenue, operating profit and the result for the ",
+         "year, each with one bar per financial year showing the like-for-like change on ",
+         "the year before in per cent, for the companies other than banks and insurers. ",
+         paste(vapply(levels(droplevels(trend$what)), function(w) {
+           d <- trend %>% filter(what == w)
+           paste0(w, ": ", paste(d$fy, paste0(fmt_signed(d$value), " %"), collapse = ", "))
+         }, character(1)), collapse = "; "), ".")
+}
+```
+
+```{r trend-chart}
+#| fig-height: 2.5
+#| fig-alt: !expr alt_trend
+# One panel per measure rather than three bars side by side in a colour
+# each, so that a bar is told what it measures by the title of its panel
+# and not by its colour alone. The fills stay, and are colours that stand
+# out from the page.
+temp <- trend
 ggplot(temp, aes(x = fy, y = value, fill = what)) +
-  geom_col(position = position_dodge(width = 0.78), width = 0.72) +
+  geom_col(width = 0.72, show.legend = FALSE) +
   geom_text(aes(label = fmt_signed(value),
                 vjust = ifelse(value >= 0, -0.35, 1.25)),
-            position = position_dodge(width = 0.78), size = 2.5,
-            colour = cols[["ink"]]) +
+            size = 2.5, colour = cols[["ink"]]) +
   geom_zeroline() +
-  scale_fill_manual(values = unname(cols[c("blue", "amber", "teal")])) +
+  facet_wrap(~what, nrow = 1) +
+  scale_fill_manual(values = c(cols[["blue"]], palette_accessible[2], cols[["teal"]])) +
   scale_y_continuous(labels = function(x) fmt(x), expand = expansion(mult = .15)) +
   labs(subtitle = paste("Change on the year before, like for like, %;",
                         "companies other than banks and insurers"),
@@ -710,8 +741,35 @@ cat(paste0("Sums are over the companies reporting in ", sum_currency,
            "Medians are over every company with the figures, in any currency.\n"))
 ```
 
+```{r margin-alt}
+margins <- corporates %>%
+  select(fy, `Operating margin` = op_margin, `Net margin` = net_margin,
+         `Return on equity` = roe, `Equity ratio` = equity_ratio) %>%
+  pivot_longer(-fy, names_to = "what", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  group_by(what, fy) %>%
+  filter(n() >= 3) %>%
+  summarise(q1 = quantile(value, .25), median = median(value),
+            q3 = quantile(value, .75), .groups = "drop")
+alt_margin <- if (nrow(margins) == 0) {
+  "No chart: too few companies state the figures for a median."
+} else {
+  paste0("Line charts in four panels, operating margin, net margin, return on equity and ",
+         "equity ratio, each showing the median across the companies by financial year in ",
+         "per cent, with the interquartile range as a shaded band. ",
+         paste(vapply(intersect(c("Operating margin", "Net margin", "Return on equity",
+                                  "Equity ratio"), margins$what), function(w) {
+           d <- margins %>% filter(what == w) %>% arrange(fy)
+           paste0(w, ", median: ", paste(d$fy, fmt(d$median, 1), collapse = ", "),
+                  " (", max(d$fy), " quartiles ", fmt(d$q1[nrow(d)], 1), " to ",
+                  fmt(d$q3[nrow(d)], 1), ")")
+         }, character(1)), collapse = "; "), ".")
+}
+```
+
 ```{r margin-chart}
 #| fig-height: 2.5
+#| fig-alt: !expr alt_margin
 temp <- corporates %>%
   select(fy, `Operating margin` = op_margin, `Net margin` = net_margin,
          `Return on equity` = roe, `Equity ratio` = equity_ratio) %>%
@@ -779,12 +837,27 @@ cat(paste0("By revenue in ", sum_currency, ", from the report for ", latest_year
            "\n"))
 ```
 
-```{r size-chart}
-#| fig-height: 2.4
-temp <- latest %>%
+```{r size-alt}
+concentration <- latest %>%
   filter(in_sum, !is.na(revenue), revenue > 0) %>%
   arrange(desc(revenue)) %>%
   mutate(rank = row_number(), share = 100 * cumsum(revenue) / sum(revenue))
+alt_size <- if (nrow(concentration) < 5) {
+  "No chart: fewer than five companies report a revenue in the currency of the sums."
+} else {
+  paste0("Step chart of the share of the total revenue of ", latest_year,
+         " held by the largest n companies, in per cent, for n from 1 to ",
+         nrow(concentration), ", with dashed lines at 50 and 80 per cent. The largest company holds ",
+         fmt(concentration$share[1]), " %, the five largest ", fmt(concentration$share[5]),
+         " %. Half the revenue is reached with ", which(concentration$share >= 50)[1],
+         " companies and 80 per cent with ", which(concentration$share >= 80)[1], ".")
+}
+```
+
+```{r size-chart}
+#| fig-height: 2.4
+#| fig-alt: !expr alt_size
+temp <- concentration
 if (nrow(temp) >= 5) {
   ggplot(temp, aes(x = rank, y = share)) +
     geom_step(colour = cols[["blue"]], linewidth = linewidth_corporate_design) +
@@ -877,8 +950,34 @@ cat(paste0("Sums over the companies reporting in ", sum_currency, " that tag the
            "of dividends is complete where the others may not be.\n"))
 ```
 
+```{r spread-alt}
+spread_alt <- latest %>%
+  select(issuer, `Operating margin` = op_margin, `Net margin` = net_margin,
+         `Return on equity` = roe, `Equity ratio` = equity_ratio) %>%
+  pivot_longer(-issuer, names_to = "what", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  group_by(what) %>%
+  summarise(n = n(), q1 = quantile(value, .25), median = median(value),
+            q3 = quantile(value, .75), low = min(value), high = max(value),
+            .groups = "drop") %>%
+  arrange(match(what, c("Operating margin", "Net margin", "Return on equity",
+                        "Equity ratio")))
+alt_spread <- if (nrow(spread_alt) == 0) {
+  "No chart: no company states the figures."
+} else {
+  paste0("Box plots with every company as a dot, one row each for ",
+         paste(spread_alt$what, collapse = ", "), ", in per cent, ", latest_year,
+         ", drawn between -50 and 100. ",
+         paste0(spread_alt$what, " (", spread_alt$n, " companies): median ",
+                fmt(spread_alt$median, 1), ", middle half from ", fmt(spread_alt$q1, 1),
+                " to ", fmt(spread_alt$q3, 1), ", range ", fmt(spread_alt$low, 1), " to ",
+                fmt(spread_alt$high, 1), collapse = "; "), ".")
+}
+```
+
 ```{r spread-chart}
 #| fig-height: 2.6
+#| fig-alt: !expr alt_spread
 temp <- latest %>%
   select(issuer, `Operating margin` = op_margin, `Net margin` = net_margin,
          `Return on equity` = roe, `Equity ratio` = equity_ratio) %>%

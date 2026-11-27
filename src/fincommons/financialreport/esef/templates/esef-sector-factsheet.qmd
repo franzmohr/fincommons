@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -1398,8 +1400,61 @@ scale_x_years <- function(...) {
                      expand = c(.04, 0), ...)
 }
 
+# The colours of the groups. Up to six groups take the colours the design
+# script picked to stand out from the page and from one another under the
+# common forms of colour blindness; a panel with more groups than that falls
+# back on the categorical palette. No chart below tells the groups apart by
+# colour alone: they are named in a panel each, on an axis, or by a marker
+# and a line type as well.
 group_colours <- setNames(
-  palette_corporate_design("cat")[seq_along(group_levels)], group_levels)
+  if (length(group_levels) <= length(palette_accessible)) {
+    palette_accessible[seq_along(group_levels)]
+  } else {
+    palette_accessible_stack[seq_along(group_levels)]
+  }, group_levels)
+group_shapes <- setNames(rep(c(16, 17, 15, 18, 1, 2, 0, 5), length.out = length(group_levels)),
+                         group_levels)
+group_linetypes <- setNames(rep(linetypes_accessible, length.out = length(group_levels)),
+                            group_levels)
+
+# A panel per group, named by its label.
+facet_groups <- function(ncol = 2) {
+  facet_wrap(~GROUP, ncol = ncol,
+             labeller = as_labeller(function(x) group_label(as.character(x))))
+}
+
+# Names at the end of lines that would overlap are pushed apart, keeping
+# their order, by at least `gap`, and kept between `low` and `high`.
+spread_labels <- function(y, gap, low = -Inf, high = Inf) {
+  n <- length(y)
+  if (n < 2) return(pmin(pmax(y, low), high))
+  o <- order(y)
+  z <- y[o]
+  z[1] <- max(z[1], low)
+  for (i in 2:n) z[i] <- max(z[i], z[i - 1] + gap)
+  z[n] <- min(z[n], high)
+  for (i in rev(seq_len(n - 1))) z[i] <- min(z[i], z[i + 1] - gap)
+  y[o] <- z
+  y
+}
+
+# The names of the issuers at the end of their lines, panel by panel, so
+# that a line is found by its name and not by its colour.
+end_labels <- function(data, y, gap, low = -Inf, high = Inf) {
+  data %>%
+    filter(!is.na(.data[[y]])) %>%
+    group_by(lei) %>%
+    filter(fy == max(fy)) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(value = pmin(pmax(.data[[y]], low), high)) %>%
+    group_by(GROUP) %>%
+    mutate(label_y = spread_labels(value, gap, low, high)) %>%
+    ungroup()
+}
+
+# A number in the text alternative of a chart.
+alt_num <- function(x, digits = 0) fmt_num(x, digits)
 ```
 
 ```{=typst}
@@ -1530,6 +1585,13 @@ provenance_note <- tr(
                   "und im Abschnitt über die Regime hinweg; die Tabellen ",
                   "dazwischen zeigen allein die europäischen Mitglieder.")
          else ""))
+
+# The title of the PDF, which a screen reader announces and PDF/UA requires,
+# and the language its text is in, which follows the language of the
+# factsheet rather than the `lang` of the front matter.
+typst_document_title(paste0(tr("ESEF sector factsheet, ", "ESEF-Branchen-Factsheet, "),
+                            title, ", ", latest_year))
+cat("\n```{=typst}\n#set text(lang: \"", report_lang, "\")\n```\n\n", sep = "")
 
 cat('```{=typst}\n')
 cat('#text(size: 20pt, weight: "bold", fill: rgb("#C10016"))[',
@@ -1726,6 +1788,7 @@ kable_note(temp, tr(paste0("Sums over the issuers that stated the ",
 ### `r tr("Revenue and result of the sector", "Umsatz und Ergebnis des Sektors")`
 
 ```{r glance-chart, fig.height = 2.6}
+#| fig-alt: !expr alt_glance
 # Revenue and the result of the year, each on a scale of its own. They are
 # two charts rather than two series of one because the result of this panel
 # is a twenty-fifth of its revenue: drawn against a revenue axis it is a
@@ -1747,10 +1810,24 @@ g <- ggplot(temp, aes(x = fy, y = value, fill = measure)) +
   geom_zeroline() +
   facet_wrap(~measure, nrow = 1, scales = "free_y") +
   scale_x_years() +
-  scale_fill_manual(values = unname(design_colours()[c("mute", "red")]),
+  # Slate rather than the pale grey the revenue had, so that its bars stand
+  # out from the page by the contrast WCAG asks of a graphic.
+  scale_fill_manual(values = unname(design_colours()[c("slate", "red")]),
                     guide = "none") +
   labs(x = NULL, y = amount_label, caption = source_caption) +
   theme_corporate_design(base_size = chart_base_size)
+
+# The text alternative: the two panels and their figures year by year.
+alt_series <- function(m) {
+  x <- temp %>% filter(measure == m, !is.na(value)) %>% arrange(fy)
+  paste0(m, ": ", paste0(x$fy, " ", alt_num(x$value), collapse = ", "))
+}
+alt_glance <- paste0(
+  tr("Two bar charts side by side, each on its own scale, in ",
+     "Zwei Säulendiagramme nebeneinander, jedes mit eigener Skala, in "),
+  amount_label, tr(", summed over the issuers of the panel by financial year. ",
+                   ", summiert über die Emittenten des Panels je Geschäftsjahr. "),
+  paste(vapply(levels(temp$measure), alt_series, character(1)), collapse = ". "), ".")
 g
 ```
 
@@ -1832,16 +1909,32 @@ kable_note(temp, tr(
 ```
 
 ```{r group-chart, fig.height = 2.6}
-g <- ggplot(by_group %>% filter(!is.na(ebit_margin)),
-            aes(x = fy, y = ebit_margin, colour = GROUP)) +
+#| fig-alt: !expr alt_group
+# The groups are told apart by colour, by line type and by marker, which a
+# legend shows together.
+temp <- by_group %>% filter(!is.na(ebit_margin))
+g <- ggplot(temp, aes(x = fy, y = ebit_margin, colour = GROUP,
+                      linetype = GROUP, shape = GROUP)) +
   geom_zeroline() +
   geom_line(linewidth = linewidth_corporate_design) +
-  geom_point(size = 1.6) +
+  geom_point(size = 1.8) +
   scale_x_years() +
   scale_colour_manual(values = group_colours, labels = group_label, name = NULL) +
+  scale_linetype_manual(values = group_linetypes, labels = group_label, name = NULL) +
+  scale_shape_manual(values = group_shapes, labels = group_label, name = NULL) +
   labs(x = NULL, y = tr("EBIT margin, %", "EBIT-Marge, %"),
        caption = source_caption) +
-  theme_corporate_design(base_size = chart_base_size)
+  theme_corporate_design(base_size = chart_base_size,
+                         legend.key.width = grid::unit(2.2, "lines"))
+
+alt_group <- paste0(
+  tr("Line chart of the EBIT margin of each group in per cent, operating result over revenue summed over its issuers, by financial year. ",
+     "Liniendiagramm der EBIT-Marge jeder Gruppe in Prozent, Betriebsergebnis über Umsatz summiert über ihre Emittenten, je Geschäftsjahr. "),
+  paste(vapply(split(temp, droplevels(temp$GROUP)), function(x) {
+    x <- x %>% arrange(fy)
+    paste0(group_label(as.character(x$GROUP[1])), ": ",
+           paste0(x$fy, " ", alt_num(x$ebit_margin, 1), collapse = ", "))
+  }, character(1)), collapse = ". "), ".")
 g
 ```
 
@@ -1884,7 +1977,9 @@ kable_note(temp, tr(paste0("Amounts in ", amount_label,
 
 ### `r tr("Each issuer against its own first year", "Jeder Emittent gegen sein eigenes erstes Jahr")`
 
-```{r revenue-index, fig.height = 2.9}
+```{r revenue-index}
+#| fig-height: 4.2
+#| fig-alt: !expr alt_index
 # The index is taken on the converted revenue rather than on the filed one,
 # because an issuer that redenominated -- as the Croatian ones did on the
 # euro changeover of 2023 -- has a filed series in two units, and an index
@@ -1906,35 +2001,6 @@ base <- shown %>%
 drawn <- n_distinct(base$lei)
 left_out <- n_distinct(shown$lei) - drawn
 
-g <- ggplot(mapping = aes(x = fy, y = index)) +
-  geom_hline(yintercept = 100, colour = design_colours()["grid"])
-
-if (drawn > max_lines) {
-  # The median of each group in front of every issuer's line, drawn faint.
-  medians <- base %>%
-    group_by(GROUP, fy) %>%
-    summarise(index = median(index, na.rm = TRUE), .groups = "drop")
-  g <- g +
-    geom_line(data = base, aes(group = lei),
-              colour = design_colours()["mute"], linewidth = .35, alpha = .7) +
-    geom_line(data = medians, aes(colour = GROUP),
-              linewidth = linewidth_corporate_design + .2) +
-    geom_point(data = medians, aes(colour = GROUP), size = 1.8)
-  index_note <- tr(
-    paste0("One faint line per issuer; in front of them the median of each ",
-           "group. A median of indices is not the index of a sum: it says ",
-           "what the middle issuer of the group did, not what the group did."),
-    paste0("Eine blasse Linie je Emittent; davor der Median jeder Gruppe. ",
-           "Ein Median von Indizes ist nicht der Index einer Summe: er sagt, ",
-           "was der mittlere Emittent der Gruppe getan hat, nicht die Gruppe."))
-} else {
-  g <- g +
-    geom_line(data = base, aes(colour = GROUP, group = SHORT),
-              linewidth = linewidth_corporate_design) +
-    geom_point(data = base, aes(colour = GROUP), size = 1.4)
-  index_note <- ""
-}
-
 # One issuer can carry this chart away. A filing whose revenue line is a
 # tenth of what it was the year before, or a hundred times it, is usually a
 # tagging error or a company that sold its business, and either way its
@@ -1950,10 +2016,72 @@ clipped <- base %>%
   ungroup() %>%
   distinct(lei, SHORT)
 
+# One panel per group, so that a group is found by the name above its panel
+# rather than by a colour. The line at 100 is the first year of every
+# issuer.
+g <- ggplot(mapping = aes(x = fy, y = index)) +
+  geom_hline(yintercept = 100, colour = design_colours()[["ink_soft"]],
+             linewidth = .3, linetype = "22")
+
+if (drawn > max_lines) {
+  # The median of each group in front of its issuers' lines, drawn faint.
+  medians <- base %>%
+    group_by(GROUP, fy) %>%
+    summarise(index = median(index, na.rm = TRUE), .groups = "drop")
+  g <- g +
+    geom_line(data = base, aes(group = lei),
+              colour = design_colours()["mute"], linewidth = .35, alpha = .7) +
+    geom_line(data = medians, colour = design_colours()[["ink"]],
+              linewidth = linewidth_corporate_design + .2) +
+    geom_point(data = medians, colour = design_colours()[["ink"]], size = 1.8)
+  index_note <- tr(
+    paste0("One faint line per issuer; in front of them the median of each ",
+           "group. A median of indices is not the index of a sum: it says ",
+           "what the middle issuer of the group did, not what the group did."),
+    paste0("Eine blasse Linie je Emittent; davor der Median jeder Gruppe. ",
+           "Ein Median von Indizes ist nicht der Index einer Summe: er sagt, ",
+           "was der mittlere Emittent der Gruppe getan hat, nicht die Gruppe."))
+  alt_groups <- vapply(split(medians, droplevels(medians$GROUP)), function(x) {
+    x <- x %>% arrange(fy)
+    paste0(group_label(as.character(x$GROUP[1])), " (",
+           n_distinct(base$lei[base$GROUP == x$GROUP[1]]), tr(" issuers", " Emittenten"),
+           tr("), median ", "), Median "), alt_num(x$index[nrow(x)]), tr(" in ", " in "), x$fy[nrow(x)])
+  }, character(1))
+  alt_index <- paste0(
+    tr("Small multiples, one panel per group, of the revenue of each issuer as an index of its own first year = 100, one faint grey line per issuer and the median of the group in black, by financial year. Latest medians: ",
+       "Kleine Vielfache, ein Feld je Gruppe, mit dem Umsatz jedes Emittenten als Index seines ersten Jahres = 100, eine blasse graue Linie je Emittent und der Median der Gruppe in Schwarz, je Geschäftsjahr. Jüngste Mediane: "),
+    paste(alt_groups, collapse = "; "), ".")
+} else {
+  # Every issuer's line in ink, named at its end.
+  named <- end_labels(base, "index", gap = upper * .1, low = 0, high = upper)
+  g <- g +
+    geom_line(data = base, aes(group = SHORT), colour = design_colours()[["ink"]],
+              linewidth = linewidth_corporate_design * .8) +
+    geom_point(data = base, colour = design_colours()[["ink"]], size = 1.2) +
+    geom_text(data = named, aes(x = fy + .15, y = label_y, label = SHORT),
+              hjust = 0, size = chart_base_size * .8 / .pt,
+              colour = design_colours()[["ink"]])
+  index_note <- ""
+  alt_index <- paste0(
+    tr("Small multiples, one panel per group, of the revenue of each issuer as an index of its own first year = 100, one line per issuer named at its end, by financial year. Latest index: ",
+       "Kleine Vielfache, ein Feld je Gruppe, mit dem Umsatz jedes Emittenten als Index seines ersten Jahres = 100, eine Linie je Emittent, am Ende benannt, je Geschäftsjahr. Jüngster Index: "),
+    paste0(named$SHORT, " (", group_label(as.character(named$GROUP)), ") ",
+           alt_num(named$index), tr(" in ", " in "), named$fy, collapse = "; "), ".")
+}
+if (nrow(clipped) > 0) {
+  alt_index <- paste0(alt_index, tr(" The axis is cut at ", " Die Achse ist abgeschnitten bei "),
+                      round(upper), ": ", paste(clipped$SHORT, collapse = ", "), ".")
+}
+if (left_out > 0) {
+  alt_index <- paste0(alt_index, " ", left_out,
+                      tr(" issuer(s) with only one year have no line.",
+                         " Emittent(en) mit nur einem Jahr haben keine Linie."))
+}
+
 g <- g +
-  scale_x_years() +
-  scale_colour_manual(values = group_colours, labels = group_label,
-                      name = NULL) +
+  facet_groups(ncol = 2) +
+  scale_x_continuous(breaks = years_shown, labels = as.character(years_shown),
+                     expand = expansion(mult = c(.04, .4))) +
   coord_cartesian(ylim = c(0, upper)) +
   labs(x = NULL, y = tr("First year = 100", "Erstes Jahr = 100"),
        caption = wrap_caption(paste(
@@ -1986,6 +2114,7 @@ if (left_out > 0) {
 ## `r tr("Margins and returns", "Margen und Renditen")`
 
 ```{r margin-chart, fig.height = 3.1}
+#| fig-alt: !expr alt_margin
 # The operating margin of the latest year. On a small panel that is one bar
 # per issuer, sorted. On a large one it is the spread within each group --
 # every issuer as a point, the group's quartiles as the box behind them --
@@ -2009,10 +2138,22 @@ if (nrow(temp) > max_lines) {
            "One point per issuer, the box the quartiles of its group. Issuers outside the whiskers are drawn as points like the rest, not twice.",
            "Ein Punkt je Emittent, die Box die Quartile seiner Gruppe. Emittenten ausserhalb der Whisker sind Punkte wie die ubrigen, nicht doppelt.")))) +
     theme_corporate_design(base_size = chart_base_size, grid = "x")
+  alt_margin <- paste0(
+    tr("Box plots of the EBIT margin in per cent in ", "Boxplots der EBIT-Marge in Prozent für "),
+    latest_year, tr(", one row per group with one point per issuer. ", ", eine Zeile je Gruppe mit einem Punkt je Emittent. "),
+    paste(vapply(split(temp, droplevels(temp$GROUP)), function(x) {
+      q <- stats::quantile(x$ebit_margin, c(.25, .5, .75))
+      paste0(group_label(as.character(x$GROUP[1])), " (", nrow(x),
+             tr(" issuers): median ", " Emittenten): Median "), alt_num(q[2], 1),
+             tr(", quartiles ", ", Quartile "), alt_num(q[1], 1), tr(" to ", " bis "), alt_num(q[3], 1),
+             tr(", range ", ", Spanne "), alt_num(min(x$ebit_margin), 1), tr(" to ", " bis "),
+             alt_num(max(x$ebit_margin), 1))
+    }, character(1)), collapse = "; "), ".")
 } else {
   temp <- temp %>% arrange(ebit_margin) %>%
     mutate(SHORT = factor(SHORT, levels = SHORT))
-  g <- ggplot(temp, aes(x = ebit_margin, y = SHORT, colour = GROUP)) +
+  # The group of an issuer is shown by the marker as well as by the colour.
+  g <- ggplot(temp, aes(x = ebit_margin, y = SHORT, colour = GROUP, shape = GROUP)) +
     geom_segment(aes(x = 0, xend = ebit_margin, yend = SHORT),
                  colour = design_colours()["mute"],
                  linewidth = linewidth_corporate_design) +
@@ -2020,9 +2161,20 @@ if (nrow(temp) > max_lines) {
     geom_zeroline(x = 0) +
     scale_colour_manual(values = group_colours, labels = group_label,
                         name = NULL) +
+    scale_shape_manual(values = group_shapes, labels = group_label,
+                       name = NULL) +
     labs(x = tr("EBIT margin, %", "EBIT-Marge, %"), y = NULL,
          caption = source_caption) +
     theme_corporate_design(base_size = chart_base_size)
+  alt_margin <- paste0(
+    tr("Dot chart of the EBIT margin in per cent in ", "Punktdiagramm der EBIT-Marge in Prozent für "),
+    latest_year, tr(", one row per issuer, sorted from the highest: ", ", eine Zeile je Emittent, absteigend sortiert: "),
+    paste0(rev(as.character(temp$SHORT)), " (", group_label(as.character(rev(temp$GROUP))), ") ",
+           alt_num(rev(temp$ebit_margin), 1), collapse = "; "), ".")
+}
+if (nrow(temp) == 0) {
+  alt_margin <- tr("No issuer of the panel states both an operating result and a revenue for the latest year, so the chart is empty.",
+                   "Kein Emittent des Panels weist für das jüngste Jahr Betriebsergebnis und Umsatz aus; das Diagramm ist leer.")
 }
 g
 ```
@@ -2062,7 +2214,14 @@ if (!is.null(bench_table)) {
 
 ### `r tr("Equity ratio against the market", "Eigenkapitalquote gegen den Markt")`
 
-```{r equity-band, fig.height = 3.0}
+```{r equity-band}
+#| fig-height: 4.2
+#| fig-alt: !expr alt_equity
+# One panel per group, the band of the market behind each, so that a group
+# is found by the name above its panel and an issuer by the name at the end
+# of its line rather than by a colour.
+alt_equity <- tr("No chart: the lake holds no combined table to draw the band of the market from.",
+                 "Kein Diagramm: der Data Lake enthält keine kombinierte Tabelle für das Band des Marktes.")
 if (!is.null(market_band)) {
   band <- market_band %>% filter(ratio == "equity_ratio")
   temp <- shown %>% filter(!is.na(equity_ratio), is.finite(equity_ratio))
@@ -2074,6 +2233,13 @@ if (!is.null(market_band)) {
               colour = design_colours()["ink_soft"],
               linewidth = linewidth_corporate_design, linetype = "22")
 
+  band_last <- band %>% filter(fy == max(fy))
+  alt_band <- paste0(
+    tr("The band of the other filers in ", "Das Band der übrigen Emittenten "), band_last$fy,
+    tr(" runs from ", " reicht von "), alt_num(band_last$q1, 1), tr(" to ", " bis "),
+    alt_num(band_last$q3, 1), tr(" with a median of ", " bei einem Median von "),
+    alt_num(band_last$median, 1), ". ")
+
   if (n_distinct(temp$lei) > max_lines) {
     medians <- temp %>%
       group_by(GROUP, fy) %>%
@@ -2081,23 +2247,43 @@ if (!is.null(market_band)) {
     g <- g +
       geom_line(data = temp, aes(x = fy, y = equity_ratio, group = lei),
                 colour = design_colours()["mute"], linewidth = .3, alpha = .55) +
-      geom_line(data = medians, aes(x = fy, y = equity_ratio, colour = GROUP),
+      geom_line(data = medians, aes(x = fy, y = equity_ratio),
+                colour = design_colours()[["ink"]],
                 linewidth = linewidth_corporate_design + .2) +
-      geom_point(data = medians, aes(x = fy, y = equity_ratio, colour = GROUP),
-                 size = 1.8)
+      geom_point(data = medians, aes(x = fy, y = equity_ratio),
+                 colour = design_colours()[["ink"]], size = 1.8)
+    last_medians <- medians %>% group_by(GROUP) %>% filter(fy == max(fy)) %>% ungroup()
+    alt_equity <- paste0(
+      tr("Small multiples, one panel per group, of the equity ratio in per cent by financial year: the interquartile band of the other filers in grey with their median dashed, one faint line per issuer and the median of the group in black. ",
+         "Kleine Vielfache, ein Feld je Gruppe, der Eigenkapitalquote in Prozent je Geschäftsjahr: das Quartilsband der übrigen Emittenten in Grau mit ihrem Median gestrichelt, eine blasse Linie je Emittent und der Median der Gruppe in Schwarz. "),
+      alt_band, tr("Latest group medians: ", "Jüngste Gruppenmediane: "),
+      paste0(group_label(as.character(last_medians$GROUP)), " ", alt_num(last_medians$equity_ratio, 1),
+             tr(" in ", " in "), last_medians$fy, collapse = "; "), ".")
   } else {
+    top <- max(c(temp$equity_ratio, band$q3), na.rm = TRUE)
+    bottom <- min(c(temp$equity_ratio, band$q1, 0), na.rm = TRUE)
+    named <- end_labels(temp, "equity_ratio", gap = (top - bottom) * .12)
     g <- g +
-      geom_line(data = temp, aes(x = fy, y = equity_ratio, colour = GROUP,
-                                 group = SHORT),
-                linewidth = linewidth_corporate_design) +
-      geom_point(data = temp, aes(x = fy, y = equity_ratio, colour = GROUP),
-                 size = 1.4)
+      geom_line(data = temp, aes(x = fy, y = equity_ratio, group = SHORT),
+                colour = design_colours()[["ink"]],
+                linewidth = linewidth_corporate_design * .8) +
+      geom_point(data = temp, aes(x = fy, y = equity_ratio),
+                 colour = design_colours()[["ink"]], size = 1.2) +
+      geom_text(data = named, aes(x = fy + .15, y = label_y, label = SHORT),
+                hjust = 0, size = chart_base_size * .8 / .pt,
+                colour = design_colours()[["ink"]])
+    alt_equity <- paste0(
+      tr("Small multiples, one panel per group, of the equity ratio in per cent by financial year: the interquartile band of the other filers in grey with their median dashed, and one line per issuer named at its end. ",
+         "Kleine Vielfache, ein Feld je Gruppe, der Eigenkapitalquote in Prozent je Geschäftsjahr: das Quartilsband der übrigen Emittenten in Grau mit ihrem Median gestrichelt, und eine Linie je Emittent, am Ende benannt. "),
+      alt_band, tr("Latest equity ratio: ", "Jüngste Eigenkapitalquote: "),
+      paste0(named$SHORT, " (", group_label(as.character(named$GROUP)), ") ",
+             alt_num(named$equity_ratio, 1), tr(" in ", " in "), named$fy, collapse = "; "), ".")
   }
 
   g <- g +
-    scale_x_years() +
-    scale_colour_manual(values = group_colours, labels = group_label,
-                        name = NULL) +
+    facet_groups(ncol = 2) +
+    scale_x_continuous(breaks = years_shown, labels = as.character(years_shown),
+                       expand = expansion(mult = c(.04, .4))) +
     labs(x = NULL, y = tr("Equity ratio, %", "Eigenkapitalquote, %"),
          caption = wrap_caption(paste0(
            source_caption, " ",
@@ -2110,7 +2296,12 @@ if (!is.null(market_band)) {
 
 {{< pagebreak >}}
 
-## `r if (is_cross_regime) tr("Across the regimes", "Über die Regime hinweg") else ""`
+```{r cross-regime-heading, results = "asis"}
+# The heading is written only for a panel that spans regimes. An empty
+# heading, which the section had for a panel of one regime, is one a tagged
+# PDF refuses: a screen reader would announce a heading with nothing in it.
+if (is_cross_regime) cat("## ", tr("Across the regimes", "Über die Regime hinweg"), "\n", sep = "")
+```
 
 ```{r cross-regime-note, results = "asis"}
 if (is_cross_regime) {

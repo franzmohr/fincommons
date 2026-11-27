@@ -65,6 +65,13 @@ def test_the_series_colours_stand_out_from_the_page():
         {c: round(contrast(c, "#FFFFFF"), 2) for c in palette}
 
 
+def test_the_parts_of_a_stack_stand_out_from_the_page():
+    palette = r_vector("palette_accessible_stack")
+
+    assert len(palette) == len(set(palette)) == 10
+    assert all(contrast(c, "#FFFFFF") >= 3 for c in palette)
+
+
 def test_no_two_series_share_a_line_type():
     linetypes = r_vector("linetypes_accessible")
 

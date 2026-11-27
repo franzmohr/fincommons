@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -140,17 +142,97 @@ day <- function(x) paste(as.integer(format(x, "%d")), format(x, "%B %Y"))
 source_caption <- caption_corporate_design(
   "ECB, EIOPA, ESMA, GLEIF; fincommons entity master data.", lang = "en", own = FALSE)
 
+# Six shapes for the points of the series, no two alike, so that a series
+# held on one date only -- a point and no line -- is told apart by more than
+# its colour too. The design script pairs its colours with line types, which
+# a single point does not show.
+shapes_accessible <- c(16, 17, 15, 18, 1, 2)
+
+# A chart of counts over time, one line per group. Up to six groups are told
+# apart by colour, line type and the shape of the points alike; more than six
+# are drawn as small multiples, each panel showing its group in ink against
+# the others in grey, so that a group is found by its panel and not by a
+# colour.
 line_chart <- function(d, colour_by, title_y = "Entities") {
-  ggplot(d, aes(x = date, y = entities, colour = .data[[colour_by]])) +
-    geom_line(linewidth = linewidth_corporate_design) +
-    geom_point(size = 1.2) +
+  groups_drawn <- sort(unique(d[[colour_by]]))
+  base <- if (length(groups_drawn) <= length(palette_accessible)) {
+    ggplot(d, aes(x = date, y = entities, colour = .data[[colour_by]],
+                  linetype = .data[[colour_by]], shape = .data[[colour_by]])) +
+      geom_line(linewidth = linewidth_corporate_design) +
+      geom_point(size = 1.4) +
+      scale_colour_accessible() +
+      scale_linetype_accessible() +
+      ggplot2::scale_shape_manual(values = shapes_accessible) +
+      labs(colour = NULL, linetype = NULL, shape = NULL)
+  } else {
+    ggplot(d, aes(x = date, y = entities)) +
+      # Without the column the panels are drawn by, the grey lines repeat in all.
+      geom_line(data = d %>% transmute(date, entities, other = .data[[colour_by]]),
+                aes(group = other), colour = design_colours()[["mute"]], linewidth = 0.4) +
+      geom_line(colour = design_colours()[["ink"]], linewidth = linewidth_corporate_design) +
+      geom_point(colour = design_colours()[["ink"]], size = 1) +
+      facet_wrap(stats::as.formula(paste("~", colour_by)), ncol = 4)
+  }
+  # A panel of the small multiples is a quarter of the width, so over more
+  # than a few months it is given a tick a year.
+  multiples <- length(groups_drawn) > length(palette_accessible)
+  base +
     scale_y_continuous(labels = scales::label_comma(), limits = c(0, NA)) +
     # Over a few weeks a month alone names every tick the same.
-    scale_x_date(labels = if (diff(range(d$date)) < 90) function(x) ifelse(is.na(x), "", paste(as.integer(format(x, "%d")), format(x, "%b %Y"))) else scales::label_date("%b %Y")) +
-    scale_colour_corporate_design() +
-    labs(x = NULL, y = title_y, colour = NULL, caption = source_caption) +
-    theme_corporate_design(base_size = chart_base_size)
+    (if (diff(range(d$date)) < 90) {
+      scale_x_date(labels = function(x) ifelse(is.na(x), "", paste(as.integer(format(x, "%d")), format(x, "%b %Y"))))
+    } else if (multiples) {
+      scale_x_date(breaks = scales::breaks_width("1 year"), labels = scales::label_date("%Y"))
+    } else {
+      scale_x_date(labels = scales::label_date("%b %Y"))
+    }) +
+    labs(x = NULL, y = title_y, caption = source_caption) +
+    theme_corporate_design(base_size = chart_base_size) +
+    theme(legend.key.width = grid::unit(2.2, "lines"))
 }
+
+# The alt text of such a chart, computed from what it draws: the kind of
+# chart, the groups, the dates, and for every group where it began and where
+# it stood on the latest date, largest first, which is what a sighted reader
+# takes from it.
+alt_lines <- function(d, colour_by, what) {
+  if (nrow(d) == 0) return(paste0("An empty chart: no ", what, " are counted on any date."))
+  dates <- sort(unique(d$date))
+  ends <- d %>%
+    group_by(group = .data[[colour_by]]) %>%
+    arrange(date, .by_group = TRUE) %>%
+    summarise(first = first(entities), first_date = first(date),
+              last = last(entities), last_date = last(date),
+              high = max(entities), .groups = "drop") %>%
+    arrange(desc(last))
+  kind <- if (length(dates) == 1) "Dot chart" else "Line chart"
+  layout <- if (nrow(ends) > length(palette_accessible)) {
+    "in small multiples, one panel per group drawn against the others in grey"
+  } else if (length(dates) == 1) {
+    "one point per group, told apart by colour and point shape"
+  } else {
+    "one line per group, told apart by colour, line type and point shape"
+  }
+  per_group <- vapply(seq_len(nrow(ends)), function(i) {
+    e <- ends[i, ]
+    if (e$first_date == e$last_date) {
+      paste0(e$group, " ", fmt(e$last))
+    } else {
+      paste0(e$group, " ", fmt(e$last), " on ", day(e$last_date), ", from ",
+             fmt(e$first), " on ", day(e$first_date),
+             if (e$high > max(e$first, e$last)) paste0(", highest ", fmt(e$high)) else "")
+    }
+  }, character(1))
+  paste0(kind, " of the number of ", what, " ",
+         if (length(dates) == 1) paste0("on ", day(dates)) else
+           paste0("on ", length(dates), " dates from ", day(min(dates)), " to ", day(max(dates))),
+         ", ", layout, ". ", paste(per_group, collapse = "; "), ".")
+}
+```
+
+```{r title, results='asis'}
+typst_document_title(paste0("Banks, insurers and investment funds over time, ",
+                            day(first_date), " to ", day(latest_date)))
 ```
 
 # Banks, insurers and investment funds over time
@@ -170,8 +252,13 @@ knitr::kable(overview, align = c("l", "l", "r"),
 
 The ECB's list of monetary financial institutions is published only as it stands on the day, so its history begins with the first download the pipeline made. Its category gives the sector: credit institutions, central banks, money market funds and other MFIs.
 
-```{r banks, fig.height = 2.4, results = "asis"}
+```{r banks-data}
 banks <- by_sector %>% filter(group == "Banks")
+alt_banks <- alt_lines(banks, "label", "banks by sector")
+```
+
+```{r banks, fig.height = 2.4, results = "asis"}
+#| fig-alt: !expr alt_banks
 lists_held <- function(r) n_distinct(na.omit(snapshots$snapshot[snapshots$register %in% r]))
 if (lists_held("mfi") < 2) {
   cat("\n\nThe list of MFIs has been downloaded on one day so far, so there is no",
@@ -184,8 +271,13 @@ line_chart(banks, "label")
 
 EIOPA publishes its registers of insurance undertakings and of institutions for occupational retirement provision only as they stand on the day, so their history, too, begins with the first download.
 
-```{r insurers, fig.height = 2.4, results = "asis"}
+```{r insurers-data}
 insurers <- by_sector %>% filter(group == "Insurers")
+alt_insurers <- alt_lines(insurers, "label", "insurers by sector")
+```
+
+```{r insurers, fig.height = 2.4, results = "asis"}
+#| fig-alt: !expr alt_insurers
 if (lists_held(c("inun", "orpi")) < 2) {
   cat("\n\nThe registers of EIOPA have been downloaded on one day so far, so there is no",
       "change over time to show yet.\n\n")
@@ -197,24 +289,36 @@ line_chart(insurers, "label")
 
 The ECB publishes its list of investment funds per month or quarter, in one archive per year, so this is the series that reaches furthest back. A fund's subsector says what the list states about UCITS compliance.
 
-```{r funds-subsector, fig.height = 2.4}
+```{r funds-subsector-data}
 funds <- counts %>% filter(sector == "IF")
-line_chart(funds %>%
-             mutate(subsector = coalesce(subsector_labels[subsector], "Not stated")) %>%
-             group_by(date, subsector) %>% summarise(entities = sum(entities), .groups = "drop"),
-           "subsector", "Funds")
+funds_subsector <- funds %>%
+  mutate(subsector = coalesce(subsector_labels[subsector], "Not stated")) %>%
+  group_by(date, subsector) %>% summarise(entities = sum(entities), .groups = "drop")
+alt_funds_subsector <- alt_lines(funds_subsector, "subsector",
+                                 "investment funds by what they state about UCITS compliance")
+```
+
+```{r funds-subsector, fig.height = 2.4}
+#| fig-alt: !expr alt_funds_subsector
+line_chart(funds_subsector, "subsector", "Funds")
 ```
 
 By investment policy, the `r top_policies` most common on `r day(latest_date)` named and the rest counted together:
 
-```{r funds-policy, fig.height = 2.8}
+```{r funds-policy-data}
 top <- funds %>% filter(date == latest_date, !is.na(if_policy)) %>%
   group_by(if_policy) %>% summarise(entities = sum(entities), .groups = "drop") %>%
   slice_max(entities, n = top_policies) %>% pull(if_policy)
-line_chart(funds %>%
-             mutate(policy = if_else(if_policy %in% top, if_policy, "Other")) %>%
-             group_by(date, policy) %>% summarise(entities = sum(entities), .groups = "drop"),
-           "policy", "Funds")
+funds_policy <- funds %>%
+  mutate(policy = if_else(if_policy %in% top, if_policy, "Other")) %>%
+  group_by(date, policy) %>% summarise(entities = sum(entities), .groups = "drop")
+alt_funds_policy <- alt_lines(funds_policy, "policy", "investment funds by investment policy")
+```
+
+```{r funds-policy}
+#| fig-alt: !expr alt_funds_policy
+#| fig-height: !expr if (n_distinct(funds_policy$policy) > 6) 0.8 + 1.3 * ceiling(n_distinct(funds_policy$policy) / 4) else 2.8
+line_chart(funds_policy, "policy", "Funds")
 ```
 
 ## The lists behind the counts

@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -267,6 +269,14 @@ if (nrow(year_rows) == 0) {
 regimes_in_year <- intersect(names(regimes), unique(year_rows$source))
 ```
 
+```{r title, results='asis'}
+# The title of the document, which a screen reader announces and without
+# which typst refuses to write a PDF/UA document.
+typst_document_title(paste0("Companies across regimes: ",
+                            paste(regimes[regimes_in_year], collapse = ", "),
+                            ", financial year ", report_year))
+```
+
 ```{r formats}
 fmt <- function(x, digits = 0) {
   x <- ifelse(!is.na(x) & abs(x) < 0.5 / 10^digits, 0, x)
@@ -281,13 +291,16 @@ source_caption <- caption_corporate_design(
   source = paste("filings.xbrl.org, SEC EDGAR, EDINET;",
                  "the combined tables of fincommons.financialreport."),
   lang = "en")
-typst_string <- function(x) {
+# It is named apart from typst_string of the design script, which also puts
+# the quotes around the text and which the title of the document and its
+# coloured tables call: a function of the same name here would replace it.
+typst_escape <- function(x) {
   x <- gsub("\\\\", "\\\\\\\\", x)
   gsub("\"", "\\\\\"", x)
 }
 ts <- function(x) {
   x <- ifelse(is.na(x), "–", as.character(x))
-  paste0("\"", typst_string(x), "\"")
+  paste0("\"", typst_escape(x), "\"")
 }
 typst_table <- function(df, widths, align, size = 7.5) {
   cells <- vapply(seq_len(nrow(df)), function(i) {
@@ -309,8 +322,13 @@ typst_table <- function(df, widths, align, size = 7.5) {
 breakable <- function(x) gsub("([a-z])([A-Z])", "\\1\u200b\\2", x, perl = TRUE)
 
 cols <- design_colours()
-regime_colours <- c("ESEF" = cols[["blue"]], "SEC" = cols[["red"]],
-                    "EDINET" = cols[["teal"]])
+# The colours of the regimes are the first three of the accessible palette of
+# the design, which stay apart for a reader who does not see red or green;
+# the coverage report beside this one uses the same three. No chart tells the
+# regimes apart by colour alone: the box plots name them on their axis, and
+# the lines over time differ by line type and point shape as well.
+regime_colours <- setNames(palette_accessible[1:3], c("ESEF", "SEC", "EDINET"))
+regime_shapes <- c("ESEF" = 16, "SEC" = 17, "EDINET" = 15)
 
 # The median and the quartiles of a ratio, over the companies that state its
 # two figures.
@@ -425,8 +443,7 @@ cat("Medians over the companies whose report states both figures of a ratio. ",
     "issuers filing with the Commission under IFRS.\n\n", sep = "")
 ```
 
-```{r year-chart}
-#| fig-height: 2.9
+```{r year-chart-data}
 limits <- c(net_margin = 60, equity_ratio = 100, roe = 80)
 temp <- year_rows %>%
   select(regime, net_margin, equity_ratio, roe) %>%
@@ -437,6 +454,35 @@ temp <- year_rows %>%
                         labels = c("Net margin, %", "Equity ratio, %",
                                    "Return on equity, %")),
          regime = factor(regime, levels = rev(unname(regimes))))
+
+# What the chart shows, as text for its alt text: for each ratio, each
+# regime's companies, median and quartiles.
+spread_text <- temp %>%
+  group_by(ratio, regime) %>%
+  summarise(text = paste0(as.character(regime[1]), " ", fmt(n()), " companies, median ",
+                          fmt(median(value), 1), ", quartiles ",
+                          fmt(quantile(value, .25), 1), " to ",
+                          fmt(quantile(value, .75), 1)),
+            .groups = "drop") %>%
+  arrange(ratio, desc(regime)) %>%
+  group_by(ratio) %>%
+  summarise(text = paste0(ratio[1], ": ", paste(text, collapse = "; ")),
+            .groups = "drop")
+alt_year <- if (nrow(temp) == 0) {
+  paste0("Box plots of the ratios of ", report_year, ", which are empty: no ",
+         "company states the figures of a ratio.")
+} else {
+  paste0("Box plots in three panels, net margin, equity ratio and return on ",
+         "equity in per cent, one row per regime named on the axis, with every ",
+         "company of ", report_year, " as a point; values beyond ",
+         paste0(limits, collapse = ", "), " per cent in the three panels are ",
+         "drawn at the edge. ", paste(spread_text$text, collapse = ". "), ".")
+}
+```
+
+```{r year-chart}
+#| fig-height: 2.9
+#| fig-alt: !expr alt_year
 ggplot(temp, aes(x = clipped, y = regime, colour = regime)) +
   geom_boxplot(outlier.shape = NA, width = 0.55, fill = NA,
                colour = cols[["ink_soft"]], linewidth = 0.35) +
@@ -456,8 +502,7 @@ ggplot(temp, aes(x = clipped, y = regime, colour = regime)) +
 
 ## Over time
 
-```{r trend}
-#| fig-height: 2.6
+```{r trend-data}
 years <- seq(report_year - n_years + 1, report_year)
 temp <- companies %>%
   filter(fy %in% years) %>%
@@ -471,10 +516,49 @@ temp <- companies %>%
   pivot_longer(-c(regime, fy, n), names_to = "ratio", values_to = "value") %>%
   mutate(ratio = factor(ratio, levels = c("Net margin, %", "Equity ratio, %",
                                           "Return on equity, %")))
-ggplot(temp, aes(x = fy, y = value, colour = regime)) +
+
+# What the chart shows, as text for its alt text: each regime's median of
+# each ratio in its first and its last year charted, with its highest and
+# lowest year.
+trend_text <- temp %>%
+  filter(!is.na(value)) %>%
+  arrange(ratio, regime, fy) %>%
+  group_by(ratio, regime) %>%
+  summarise(text = paste0(as.character(regime[1]), " ", fmt(value[1], 1), " in ", fy[1],
+                          if (n() > 1) paste0(" and ", fmt(value[n()], 1), " in ", fy[n()]) else "",
+                          if (n() > 2) paste0(", highest ", fmt(max(value), 1), " in ",
+                                              fy[which.max(value)], ", lowest ",
+                                              fmt(min(value), 1), " in ",
+                                              fy[which.min(value)]) else ""),
+            .groups = "drop") %>%
+  group_by(ratio) %>%
+  summarise(text = paste0(ratio[1], ": ", paste(text, collapse = "; ")),
+            .groups = "drop")
+alt_trend <- if (nrow(trend_text) == 0) {
+  paste0("Line chart of the medians by financial year, which is empty: no ",
+         "regime holds ", min_for_median, " companies in any year from ",
+         min(years), " to ", max(years), ".")
+} else {
+  paste0("Line chart in three panels of the median net margin, equity ratio ",
+         "and return on equity in per cent by financial year, ", min(years),
+         " to ", max(years), ", one line per regime told apart by colour, line ",
+         "type and point shape, drawn where a regime holds at least ",
+         min_for_median, " companies in the year. ",
+         paste(trend_text$text, collapse = ". "), ".")
+}
+```
+
+```{r trend}
+#| fig-height: 2.8
+#| fig-alt: !expr alt_trend
+ggplot(temp, aes(x = fy, y = value, colour = regime, linetype = regime,
+                 shape = regime)) +
   geom_line(linewidth = 0.7) +
-  geom_point(size = 1.2) +
-  scale_colour_manual(values = regime_colours) +
+  geom_point(size = 1.4) +
+  scale_colour_manual(values = regime_colours, name = NULL) +
+  scale_linetype_manual(values = setNames(linetypes_accessible[1:3], names(regime_colours)),
+                        name = NULL) +
+  scale_shape_manual(values = regime_shapes, name = NULL) +
   scale_x_continuous(breaks = function(l) seq(ceiling(l[1]), floor(l[2]), by = 2)) +
   facet_wrap(~ratio, nrow = 1, scales = "free_y") +
   labs(subtitle = wrap_caption(paste0(
@@ -482,7 +566,8 @@ ggplot(temp, aes(x = fy, y = value, colour = regime)) +
          min_for_median, " companies in the year"), 110),
        caption = wrap_caption(source_caption)) +
   theme_corporate_design(base_size = chart_base_size, grid = "y",
-                         axis.title = element_blank())
+                         axis.title = element_blank()) +
+  theme(legend.key.width = grid::unit(2.2, "lines"))
 ```
 
 ```{r trend-note, results='asis'}

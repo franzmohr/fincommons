@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -325,6 +327,13 @@ issues <- issues_all %>%
              by = c("country", "lei", "filing")) %>%
   left_join(catalogue %>% select(issue = code, severity, title),
             by = "issue")
+```
+
+```{r title, results='asis'}
+# The title of the document, which a screen reader announces and PDF/UA
+# requires.
+typst_document_title(paste0("ESEF data quality factsheet, ", Country_name, ", ",
+                            format(checked_on, "%Y-%m-%d")))
 ```
 
 ```{r screens}
@@ -826,7 +835,10 @@ typst_table <- function(df, widths, align, size = 7.5, groups = NULL) {
 }
 
 cols <- design_colours()
-severity_colours <- c("Error" = cols[["red"]], "Warning" = cols[["amber"]],
+# The warning is the dark orange of the accessible series colours rather
+# than the amber of the design, which stands out from the white page by
+# barely 2:1; every fill here has 4.5:1 or more, and carries white text.
+severity_colours <- c("Error" = cols[["red"]], "Warning" = palette_accessible[[2]],
                       "Screen" = cols[["blue"]])
 ```
 
@@ -912,8 +924,28 @@ if (nrow(set_aside) > 0) {
 
 ## The issuers with the most to check
 
+```{r ranking-alt}
+# The alt text of the chart below, which the options of the chunk that draws
+# it read, and so is computed before it: every issuer with its points and
+# where they come from, in the order of the chart.
+alt_ranking <- if (nrow(ranked) == 0) {
+  paste0("No chart: no check and no screen fired on any report of ", country_name, ".")
+} else {
+  paste0("Stacked bar chart of the points of the ", nrow(ranked), " issuers with the most ",
+         "to check, ", period_range, ", from the most down, each bar split into the points ",
+         "from errors, warnings and screens: ",
+         paste0(short_name(ranked$issuer, 34), " ", fmt(ranked$total), " (errors ",
+                fmt(ranked$error_points), ", warnings ", fmt(ranked$warning_points),
+                ", screens ", fmt(ranked$screen_points), ")", collapse = "; "), ".")
+}
+```
+
 ```{r ranking-chart}
 #| fig-height: 3.2
+#| fig-alt: !expr alt_ranking
+# Each part of a bar is labelled with the initial of its kind and its
+# points where it is wide enough, and each bar with its total, so that the
+# legend is not the only key to the fills.
 if (nrow(ranked) > 0) {
   temp <- ranked %>%
     mutate(label = short_name(issuer, 34)) %>%
@@ -922,16 +954,29 @@ if (nrow(ranked) > 0) {
     pivot_longer(-label, names_to = "kind", values_to = "points") %>%
     mutate(kind = factor(kind, levels = c("Screen", "Warning", "Error")),
            label = factor(label, levels = rev(short_name(ranked$issuer, 34))))
+  wide_enough <- 0.07 * max(ranked$total)
+  temp <- temp %>%
+    mutate(text = ifelse(points >= wide_enough,
+                         paste(substr(as.character(kind), 1, 1), points), ""),
+           ink = text_colour_on(severity_colours[as.character(kind)]))
+  totals <- tibble(label = factor(short_name(ranked$issuer, 34), levels = levels(temp$label)),
+                   total = ranked$total)
   ggplot(temp, aes(x = points, y = label, fill = kind)) +
     geom_col(width = 0.72) +
+    geom_text(aes(label = text, colour = ink, group = kind),
+              position = position_stack(vjust = 0.5), size = 2.2) +
+    geom_text(data = totals, aes(x = total, y = label, label = fmt(total)),
+              inherit.aes = FALSE, hjust = -0.25, size = 2.3,
+              colour = cols[["ink"]]) +
+    scale_colour_identity() +
     geom_zeroline(x = 0) +
     scale_fill_manual(values = severity_colours,
                       breaks = c("Error", "Warning", "Screen")) +
-    scale_x_continuous(expand = expansion(mult = c(0, .05))) +
+    scale_x_continuous(expand = expansion(mult = c(0, .08))) +
     labs(subtitle = wrap_caption(paste0(
            "Points, ", period_range, ": ", points[["error"]], " per error and ",
            points[["warning"]], " per warning, 1 to 3 per screen, each once ",
-           "per issuer and year"), 95),
+           "per issuer and year; E error, W warning, S screen"), 95),
          caption = wrap_caption(source_caption)) +
     theme_corporate_design(base_size = chart_base_size, grid = "x",
                            axis.title = element_blank())
@@ -973,8 +1018,11 @@ if (nrow(ranked) == 0) {
 
 ## Where the problems are
 
-```{r heatmap}
-#| fig-height: 3.9
+```{r heatmap, results='asis'}
+# A table rather than a picture of one: the counts are text a screen reader
+# reads and a reader can copy, and the header row is tagged as such. The
+# colour of a cell says the kind of the check, which the head of its column
+# also names, so the colour adds to the table and never carries it alone.
 codes_shown <- faults %>%
   filter(lei %in% ranked$lei) %>%
   distinct(issue, severity) %>%
@@ -985,22 +1033,29 @@ temp <- faults %>%
   count(lei, issue, kind, name = "n") %>%
   left_join(ranked %>% select(lei, issuer), by = "lei") %>%
   mutate(label = factor(short_name(issuer, 34),
-                        levels = rev(short_name(ranked$issuer, 34))),
+                        levels = unique(short_name(ranked$issuer, 34))),
          issue = factor(issue, levels = codes_shown$issue),
          kind = factor(kind, levels = c("Error", "Warning", "Screen")))
 if (nrow(temp) > 0) {
-  ggplot(temp, aes(x = issue, y = label, fill = kind)) +
-    geom_tile(colour = "white", linewidth = 0.8) +
-    geom_text(aes(label = n), size = 2.5, colour = "white", fontface = "bold") +
-    scale_fill_manual(values = severity_colours, drop = FALSE) +
-    scale_x_discrete(position = "top",
-                     labels = function(x) gsub("_", " ", x)) +
-    labs(subtitle = "Financial years of the issuer each check or screen fired in",
-         caption = wrap_caption(source_caption)) +
-    theme_corporate_design(base_size = chart_base_size, grid = "none",
-                           axis.title = element_blank()) +
-    theme(axis.text.x.top = element_text(angle = 35, hjust = 0, vjust = 0,
-                                         size = 6.3))
+  issuers_shown <- levels(temp$label)
+  counts <- matrix("", nrow = length(issuers_shown), ncol = nrow(codes_shown))
+  fills <- matrix(NA_character_, nrow = length(issuers_shown), ncol = nrow(codes_shown))
+  at <- cbind(match(as.character(temp$label), issuers_shown), as.integer(temp$issue))
+  counts[at] <- as.character(temp$n)
+  fills[at] <- unname(severity_colours[as.character(temp$kind)])
+  kind_of_code <- tolower(tools::toTitleCase(codes_shown$severity))
+  # The text of the table is smaller than that of the page, so that a column
+  # per check fits across it.
+  cat("\n```{=typst}\n#[\n#set text(size: 6.5pt)\n#set par(justify: false)\n```\n\n")
+  typst_colour_table(
+    issuers_shown, counts, fills,
+    paste0(gsub("_", " ", codes_shown$issue), " (", kind_of_code, ")"),
+    paste0("Financial years of the issuer each check or screen fired in, ",
+           period_range, "; an empty cell, none. The colour of a cell gives the ",
+           "kind of the check, which the head of its column names: red an error, ",
+           "orange a warning, blue a screen."),
+    row_header_title = "Issuer")
+  cat("\n```{=typst}\n]\n```\n\n")
 }
 ```
 

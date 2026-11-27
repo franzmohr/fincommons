@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -305,6 +307,10 @@ n_private <- sum(notifications$type == "Private", na.rm = TRUE)
 n_joinable <- sum(notifications$scheme == "LEI and period", na.rm = TRUE)
 ```
 
+```{r title, results='asis'}
+typst_document_title(paste0("STS register report, snapshot of ", report_snapshot))
+```
+
 # The register of STS securitisations
 
 ```{r opening, results='asis'}
@@ -395,8 +401,7 @@ knitr::kable(
 
 ## What the securitisations are backed by
 
-```{r exposures}
-#| fig-height: 4.6
+```{r exposures-data}
 # The register names an exposure in the wording of the technical standards,
 # which runs to ninety-eight characters for the longest of the eight. The
 # label is wrapped rather than cut -- a label shortened here would be a
@@ -405,10 +410,25 @@ knitr::kable(
 # than the space between two bars, and the bars are spaced by the height.
 exposures <- notifications %>%
   mutate(exposure = ifelse(is.na(exposure), "not stated", exposure)) %>%
-  count(exposure, sort = TRUE) %>%
+  count(exposure, sort = TRUE)
+
+# What the alt text of the chart says: every exposure and its count, in the
+# order of the bars, which is what a sighted reader takes from it.
+alt_exposures <- paste0(
+  "Horizontal bar chart of the ", format(n_notifications, big.mark = ","),
+  " notifications in the snapshot of ", report_snapshot,
+  " by the underlying exposure they are backed by, largest first, with the count ",
+  "printed at the end of each bar: ",
+  paste0(exposures$exposure, " ", format(exposures$n, big.mark = ","), collapse = "; "), ".")
+
+exposures <- exposures %>%
   mutate(exposure = wrap_labels(exposure, 40),
          exposure = factor(exposure, levels = rev(exposure)))
+```
 
+```{r exposures}
+#| fig-height: 4.6
+#| fig-alt: !expr alt_exposures
 ggplot(exposures, aes(x = n, y = exposure)) +
   geom_col(fill = palette_corporate_design("cat", 1)) +
   geom_text(aes(label = n), hjust = -0.2, size = chart_base_size / 3.2) +
@@ -422,17 +442,40 @@ ggplot(exposures, aes(x = n, y = exposure)) +
 
 ## When they were notified
 
-```{r notified-when}
-#| fig-height: 2.6
-
+```{r notified-when-data}
 by_year <- notifications %>%
   mutate(year = as.integer(format(first_notified, "%Y"))) %>%
   count(year, type)
 
+# What the alt text of the chart says: the count of every year, public and
+# private apart, and the year each peaked in.
+alt_by_year <- paste0(
+  "Column chart in ", n_distinct(by_year$type), " panels, one per type of notification (",
+  paste(sort(unique(by_year$type)), collapse = " and "), "), of the notifications in the ",
+  "snapshot of ", report_snapshot, " by the year of their first notification, from ",
+  min(by_year$year, na.rm = TRUE), " to ", max(by_year$year, na.rm = TRUE),
+  ", with the count printed above each column. ",
+  paste(vapply(split(by_year, by_year$type), function(d) {
+    d <- d[!is.na(d$year), ]
+    paste0(d$type[1], ": ", paste0(d$year, " ", d$n, collapse = ", "),
+           "; the most in ", d$year[which.max(d$n)], ".")
+  }, character(1)), collapse = " "))
+```
+
+```{r notified-when}
+#| fig-height: 2.6
+#| fig-alt: !expr alt_by_year
+# Public and private are drawn side by side rather than stacked, so that the
+# panel names the type and its colour does not have to; the count is printed
+# above each column.
 ggplot(by_year, aes(x = year, y = n, fill = type)) +
-  geom_col() +
-  scale_fill_corporate_design() +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = n), vjust = -0.4, size = chart_base_size / 3.4,
+            colour = design_colours()[["ink"]]) +
+  facet_wrap(~ type) +
+  scale_fill_manual(values = palette_accessible) +
   scale_x_continuous(breaks = sort(unique(by_year$year))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
   labs(x = NULL, y = NULL, fill = NULL,
        title = "First notification, by the year it was made in",
        caption = caption_corporate_design(

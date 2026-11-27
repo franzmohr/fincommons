@@ -8,6 +8,22 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- Reports: every report template renders to a tagged PDF/UA-1 document,
+  which Typst refuses to produce without a document title and alt text on
+  every chart. The templates state the language of their text, set a title
+  computed from what they report on, give every chart a text alternative
+  computed from its data, put the numbers that matter in tagged tables --
+  coloured tables such as heatmaps included, whose colour only adds to the
+  numbers -- and tell no series apart by colour alone. The design script
+  adds six series colours, each at least 4.5:1 on white and apart under the
+  three forms of colour blindness, with matching fill and shape scales, ten
+  colours of at least 4.5:1 for the parts of a stack, six distinct line
+  types, WCAG contrast helpers, and raw Typst for the document title and for
+  coloured tables. A template no longer has its typst_string replaced by the
+  design script's, which is now typst_literal.
+  `tests/test_report_accessibility.py` holds every template to the standard
+  and the colours to their contrast.
+
 - `famafrenchdata`: a global factor factsheet,
   `templates/famafrench-global-factsheet.qmd`, rendered with Quarto to a
   PDF. For every region of the library -- the United States, North America,

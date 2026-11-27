@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -654,6 +656,16 @@ cur <- wide %>% slice_tail(n = 1) %>% as.list()
 prv <- if (n_shown > 1) wide %>% slice(n_shown - 1) %>% as.list() else cur
 ```
 
+```{r title, results='asis'}
+# The title of the PDF, which a screen reader announces and PDF/UA requires,
+# and the language its text is in, which follows the language of the
+# factsheet rather than the `lang` of the front matter.
+typst_document_title(paste0(
+  if (report_lang == "de") "ESEF-Analysten-Factsheet, " else "ESEF analyst factsheet, ",
+  issuer_name, ", ", years[n_shown]))
+cat("\n```{=typst}\n#set text(lang: \"", report_lang, "\")\n```\n\n", sep = "")
+```
+
 ```{r texts}
 texts <- facts %>%
   filter(filing == latest$filing, !is.na(text), is.na(dimensions)) %>%
@@ -724,8 +736,11 @@ scale_x_years <- function(...) {
 }
 
 # Escape what typst reads as its own syntax, for the text that goes into the
-# raw blocks of the cover and of the running head.
-typst_string <- function(x) {
+# raw blocks of the cover and of the running head. It is named apart from
+# typst_string of the design script, which writes the quotes as well and
+# which the document title and the coloured tables of that script call: a
+# function of the same name here would take its place for them.
+typst_escape <- function(x) {
   x <- gsub("\\\\", "\\\\\\\\", x)
   gsub("\"", "\\\\\"", x)
 }
@@ -944,6 +959,17 @@ render_lines <- function(spec, data = wide, unit_header = NULL,
 
 # Each takes the keys of `wide` to show and their labels, in the order they
 # are to be read, and leaves the corporate design to the sourced script.
+#
+# No chart tells its series apart by colour alone, so that a reader who does
+# not see colour, or reads a print in black and white, reads it as well
+# (WCAG 2.2, 1.4.1): the lines differ by line type and by marker as well as
+# by colour, the bars of several figures stand in a panel each, named above
+# it, and the parts of a stack are named beside the last bar they appear in.
+# Each chart also carries a text alternative, written from the same figures
+# by `chart_alt` below and handed to the chunk as its `fig-alt`, which is
+# what a screen reader reads in place of the picture. knitr evaluates that
+# option after the code of the chunk has run, so a chunk builds its chart,
+# takes the text from it and then draws it.
 chart_data <- function(keys, labels, scale_by = scale, data = wide) {
   data %>%
     select(all_of(c("period_end", keys))) %>%
@@ -952,49 +978,156 @@ chart_data <- function(keys, labels, scale_by = scale, data = wide) {
            var = factor(var, levels = keys, labels = wrap_labels(labels, 34)))
 }
 
+# The text alternative of a chart: what kind of chart it is, in which unit
+# and over which years, and for every series its latest figure, its first
+# and its highest and lowest, which is what a sighted reader takes from it.
+# The tables beside the charts hold every figure.
+chart_alt <- function(kind, d, unit, digits = 0) {
+  d <- d %>% mutate(var = gsub("\n", " ", as.character(var)), year = fy_label(period_end))
+  series <- unique(d$var)
+  describe <- function(s) {
+    x <- d %>% filter(var == s, !is.na(value)) %>% arrange(period_end)
+    if (nrow(x) == 0) return(paste0(s, tr(": not stated", ": nicht angegeben")))
+    last <- x[nrow(x), ]
+    out <- paste0(s, " ", fmt(last$value, digits), tr(" in ", " in "), last$year)
+    if (nrow(x) > 1) {
+      hi <- x[which.max(x$value), ]
+      lo <- x[which.min(x$value), ]
+      out <- paste0(out, " (", fmt(x$value[1], digits), tr(" in ", " in "), x$year[1],
+                    tr("; highest ", "; höchster Wert "), fmt(hi$value, digits),
+                    tr(" in ", " in "), hi$year,
+                    tr(", lowest ", ", niedrigster "), fmt(lo$value, digits),
+                    tr(" in ", " in "), lo$year, ")")
+    }
+    out
+  }
+  years_d <- sort(unique(d$period_end))
+  what <- switch(kind,
+    stacked = tr("Stacked bar chart", "Gestapeltes Säulendiagramm"),
+    bars = tr("Bar charts, one panel per figure,", "Säulendiagramme, ein Feld je Größe,"),
+    lines = tr("Line chart", "Liniendiagramm"))
+  total <- ""
+  if (kind == "stacked") {
+    latest_d <- d %>% filter(period_end == max(years_d))
+    total <- paste0(tr(" The parts sum to ", " Die Teile ergeben "),
+                    fmt(sum(latest_d$value, na.rm = TRUE), digits), tr(" in ", " in "),
+                    fy_label(max(years_d)), ".")
+  }
+  paste0(what, " (", unit, ")", tr(", by financial year from ", ", je Geschäftsjahr von "),
+         fy_label(min(years_d)), tr(" to ", " bis "), fy_label(max(years_d)), ". ",
+         paste(vapply(series, describe, character(1)), collapse = "; "), ".", total)
+}
+
+# Where the name of each part of a stack goes. The name stands to the right
+# of the last bar the part appears in, level with the middle of the part,
+# with a thin line from one to the other; names that would overlap are
+# pushed apart, keeping their order, by the height of a line of text.
+stack_labels <- function(g) {
+  built <- ggplot_build(g)
+  segments <- built$data[[1]] %>%
+    filter(!is.na(ymax), !is.na(ymin)) %>%
+    group_by(group) %>%
+    filter(x == max(x)) %>%
+    slice(1) %>%
+    ungroup() %>%
+    transmute(group, x = xmax, mid = (ymin + ymax) / 2)
+  range <- built$layout$panel_params[[1]]$y.range
+  x_range <- built$layout$panel_params[[1]]$x.range
+  levels_var <- levels(g$data$var)
+  segments <- segments %>%
+    mutate(label = gsub("\n", " ", levels_var[group])) %>%
+    arrange(mid)
+  gap <- diff(range) * 0.058
+  n <- nrow(segments)
+  if (n == 0) {
+    segments$y <- segments$label_x <- segments$line_end <- numeric(0)
+    attr(segments, "x_range") <- x_range
+    return(segments)
+  }
+  y <- segments$mid
+  for (i in seq_len(n)[-1]) y[i] <- max(y[i], y[i - 1] + gap)
+  if (y[n] > range[2]) y[n] <- range[2]
+  for (i in rev(seq_len(n - 1))) y[i] <- min(y[i], y[i + 1] - gap)
+  segments$y <- y
+  # The names stand in the margin to the right of the panel, which the
+  # chart keeps free for them, so that they neither widen the axis of the
+  # years nor run into the last bar.
+  segments$label_x <- x_range[2] + 0.04 * diff(x_range)
+  segments$line_end <- x_range[2] + 0.03 * diff(x_range)
+  attr(segments, "x_range") <- x_range
+  segments
+}
+
 chart_stacked <- function(keys, labels, subtitle = amount_label,
                           scale_by = scale, ncol = 2, data = wide) {
-  ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = period_end, y = value, fill = var)) +
-    geom_col(width = 250) +
+  d <- chart_data(keys, labels, scale_by, data)
+  g <- ggplot(d, aes(x = period_end, y = value, fill = var)) +
+    # A white edge between the parts, so that two of them meet at a line
+    # rather than at a change of colour only.
+    geom_col(width = 250, colour = "white", linewidth = 0.25) +
     geom_zeroline() +
     scale_x_years() +
     scale_y_continuous(labels = function(x) fmt(x)) +
-    scale_fill_corporate_design() +
+    scale_fill_stack(guide = "none") +
     labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
-    guides(fill = guide_legend(ncol = ncol)) +
     theme_corporate_design(base_size = chart_base_size,
                            axis.title = element_blank())
+  named <- stack_labels(g)
+  as_day <- function(x) as.Date(x, origin = "1970-01-01")
+  g +
+    geom_segment(data = named, inherit.aes = FALSE,
+                 aes(x = as_day(x), xend = as_day(line_end), y = mid, yend = y),
+                 colour = design_colours()[["ink_soft"]], linewidth = 0.25) +
+    geom_text(data = named, inherit.aes = FALSE,
+              aes(x = as_day(label_x), y = y, label = label), hjust = 0,
+              size = chart_base_size * 0.8 / .pt,
+              colour = design_colours()[["ink"]]) +
+    coord_cartesian(xlim = as_day(attr(named, "x_range")), expand = FALSE,
+                    clip = "off") +
+    theme(plot.margin = margin(chart_base_size * 1.4, 150, chart_base_size,
+                               chart_base_size * 1.4)) +
+    labs(alt = chart_alt("stacked", d, subtitle))
 }
 
 chart_bars <- function(keys, labels, subtitle = amount_label,
                        scale_by = scale, digits = 0, ncol = 3, data = wide) {
-  ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = period_end, y = value, fill = var)) +
-    geom_col(position = position_dodge(width = 260), width = 240) +
+  d <- chart_data(keys, labels, scale_by, data)
+  # One panel per figure, named above it and on one scale, rather than the
+  # bars of the figures side by side in a year and told apart by a legend
+  # of colours. `ncol` gave the columns of that legend; two columns of
+  # panels leave room for the names of the years beneath each.
+  ggplot(d, aes(x = period_end, y = value, fill = var)) +
+    geom_col(width = 250) +
     geom_zeroline() +
+    facet_wrap(~var, ncol = min(2, length(keys))) +
     scale_x_years() +
     scale_y_continuous(labels = function(x) fmt(x, digits)) +
-    scale_fill_corporate_design() +
-    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
-    guides(fill = guide_legend(ncol = ncol)) +
+    scale_fill_manual(values = palette_accessible, guide = "none") +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle,
+         alt = chart_alt("bars", d, subtitle, digits)) +
     theme_corporate_design(base_size = chart_base_size,
                            axis.title = element_blank())
 }
 
 chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
                         digits = 0, zero = TRUE, ncol = 3, data = wide) {
-  g <- ggplot(chart_data(keys, labels, scale_by, data) %>% filter(!is.na(value)),
-              aes(x = period_end, y = value, colour = var)) +
+  d <- chart_data(keys, labels, scale_by, data)
+  g <- ggplot(d %>% filter(!is.na(value)),
+              aes(x = period_end, y = value, colour = var, linetype = var,
+                  shape = var)) +
     geom_line(linewidth = linewidth_corporate_design) +
-    geom_point(size = 1.4) +
+    geom_point(size = 1.6) +
     scale_x_years() +
     scale_y_continuous(labels = function(x) fmt(x, digits)) +
-    scale_colour_corporate_design() +
-    labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
+    scale_colour_accessible() +
+    scale_linetype_accessible() +
+    scale_shape_manual(values = c(16, 17, 15, 18, 1, 2)) +
+    labs(caption = wrap_caption(source_caption), subtitle = subtitle,
+         alt = chart_alt("lines", d, subtitle, digits)) +
     guides(colour = guide_legend(ncol = ncol)) +
     theme_corporate_design(base_size = chart_base_size,
-                           axis.title = element_blank())
+                           axis.title = element_blank(),
+                           legend.key.width = grid::unit(2.2, "lines"))
   if (zero) g <- g + geom_zeroline()
   g
 }
@@ -1011,7 +1144,7 @@ chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
 # being read as typst's own syntax.
 ts <- function(x) {
   if (length(x) == 0 || is.na(x)) x <- "–"
-  paste0("\"", typst_string(as.character(x)), "\"")
+  paste0("\"", typst_escape(as.character(x)), "\"")
 }
 
 # A column of the cover: a label and a value per row.
@@ -1294,12 +1427,16 @@ knitr::kable(
 ### `r tr("Revenue, result and cash", "Umsatz, Ergebnis und Cash")`
 
 ```{r glance-chart}
-chart_bars(c("revenue", "gross_profit", "ebit", "operating_cash_flow"),
-           c(tr("Revenue", "Umsatzerlöse"),
-             tr("Gross profit", "Bruttoergebnis"),
-             tr("Operating result (EBIT)", "Betriebsergebnis (EBIT)"),
-             tr("Operating cash flow", "Operativer Cashflow")),
-           ncol = 4)
+#| fig-height: 3.6
+#| fig-alt: !expr alt_glance
+chart_glance <- chart_bars(c("revenue", "gross_profit", "ebit", "operating_cash_flow"),
+                           c(tr("Revenue", "Umsatzerlöse"),
+                             tr("Gross profit", "Bruttoergebnis"),
+                             tr("Operating result (EBIT)", "Betriebsergebnis (EBIT)"),
+                             tr("Operating cash flow", "Operativer Cashflow")),
+                           ncol = 4)
+alt_glance <- get_alt_text(chart_glance)
+chart_glance
 ```
 
 {{< pagebreak >}}
@@ -1435,7 +1572,9 @@ render_lines(line_spec(
 ```
 
 ```{r assets-chart}
-chart_stacked(
+#| fig-height: 3.4
+#| fig-alt: !expr alt_assets
+chart_assets <- chart_stacked(
   c("ppe", "goodwill", "intangibles", "equity_method",
     "assets_rest_noncurrent", "inventories", "receivables", "cash",
     "assets_rest_current"),
@@ -1449,6 +1588,8 @@ chart_stacked(
     tr("Cash and cash equivalents", "Zahlungsmittel"),
     tr("Other current assets", "Sonstige kurzfristige Aktiva")),
   ncol = 3)
+alt_assets <- get_alt_text(chart_assets)
+chart_assets
 ```
 
 {{< pagebreak >}}
@@ -1486,7 +1627,9 @@ render_lines(line_spec(
 ```
 
 ```{r funding-chart}
-chart_stacked(
+#| fig-height: 3.4
+#| fig-alt: !expr alt_funding
+chart_funding <- chart_stacked(
   c("equity_owners", "nci", "financial_liabilities_noncurrent",
     "liabilities_rest_noncurrent", "financial_liabilities_current",
     "liabilities_rest_current"),
@@ -1497,6 +1640,8 @@ chart_stacked(
     tr("Current financial liabilities", "Kurzfristige Finanzverbindlichkeiten"),
     tr("Other current liabilities", "Sonstige kurzfristige Schulden")),
   ncol = 2)
+alt_funding <- get_alt_text(chart_funding)
+chart_funding
 ```
 
 {{< pagebreak >}}
@@ -1532,6 +1677,8 @@ render_lines(line_spec(
 ```
 
 ```{r uses-of-revenue}
+#| fig-height: 3.4
+#| fig-alt: !expr alt_uses_of_revenue
 # The parts add up to revenue: cost of sales and gross profit are revenue,
 # and gross profit is spent on distribution and administration and on the
 # other operating items, with EBIT left over. A year in which the other
@@ -1541,7 +1688,7 @@ temp <- wide %>%
   mutate(other_operating_total = gross_profit - coalesce(distribution_costs, 0) -
            coalesce(admin_expense, 0) - ebit)
 
-chart_stacked(
+chart_uses_of_revenue <- chart_stacked(
   c("cost_of_sales", "distribution_costs", "admin_expense",
     "other_operating_total", "ebit"),
   c(tr("Cost of sales", "Umsatzkosten"),
@@ -1550,17 +1697,23 @@ chart_stacked(
     tr("Other operating items, net", "Sonstige betriebliche Posten, netto"),
     tr("Operating result (EBIT)", "Betriebsergebnis (EBIT)")),
   data = temp)
+alt_uses_of_revenue <- get_alt_text(chart_uses_of_revenue)
+chart_uses_of_revenue
 ```
 
 ### `r tr("From the operating result to the profit", "Vom Betriebsergebnis zum Jahresergebnis")`
 
 ```{r ebit-to-profit}
-chart_bars(c("ebit", "profit_before_tax", "profit", "profit_owners"),
-           c(tr("Operating result (EBIT)", "Betriebsergebnis (EBIT)"),
-             tr("Profit before tax", "Ergebnis vor Steuern"),
-             tr("Profit for the year", "Jahresergebnis"),
-             tr("Owners of the parent", "Eigentümer")),
-           ncol = 4)
+#| fig-height: 3.6
+#| fig-alt: !expr alt_ebit_to_profit
+chart_ebit_to_profit <- chart_bars(c("ebit", "profit_before_tax", "profit", "profit_owners"),
+                                   c(tr("Operating result (EBIT)", "Betriebsergebnis (EBIT)"),
+                                     tr("Profit before tax", "Ergebnis vor Steuern"),
+                                     tr("Profit for the year", "Jahresergebnis"),
+                                     tr("Owners of the parent", "Eigentümer")),
+                                   ncol = 4)
+alt_ebit_to_profit <- get_alt_text(chart_ebit_to_profit)
+chart_ebit_to_profit
 ```
 
 ### `r tr("Growth on the year before", "Wachstum gegen das Vorjahr")`
@@ -1597,13 +1750,16 @@ render_lines(line_spec(
 ```
 
 ```{r margins-chart}
-chart_lines(c("gross_margin", "ebit_margin", "net_margin", "ocf_margin"),
-            c(tr("Gross margin", "Bruttomarge"),
-              tr("EBIT margin", "EBIT-Marge"),
-              tr("Net margin", "Nettomarge"),
-              tr("Operating cash flow to revenue",
-                 "Operativer Cashflow zu Umsatz")),
-            digits = 1, ncol = 4)
+#| fig-alt: !expr alt_margins
+chart_margins <- chart_lines(c("gross_margin", "ebit_margin", "net_margin", "ocf_margin"),
+                             c(tr("Gross margin", "Bruttomarge"),
+                               tr("EBIT margin", "EBIT-Marge"),
+                               tr("Net margin", "Nettomarge"),
+                               tr("Operating cash flow to revenue",
+                                  "Operativer Cashflow zu Umsatz")),
+                             digits = 1, ncol = 4)
+alt_margins <- get_alt_text(chart_margins)
+chart_margins
 ```
 
 {{< pagebreak >}}
@@ -1646,11 +1802,14 @@ render_lines(line_spec(
 ```
 
 ```{r leverage-chart}
-chart_lines(c("equity_ratio", "gearing", "debt_to_capital"),
-            c(tr("Equity to total assets", "Eigenkapitalquote"),
-              tr("Net debt to equity", "Nettoverschuldung zu Eigenkapital"),
-              tr("Net debt to total capital", "Nettoverschuldung zu Gesamtkapital")),
-            digits = 1, ncol = 3)
+#| fig-alt: !expr alt_leverage
+chart_leverage <- chart_lines(c("equity_ratio", "gearing", "debt_to_capital"),
+                              c(tr("Equity to total assets", "Eigenkapitalquote"),
+                                tr("Net debt to equity", "Nettoverschuldung zu Eigenkapital"),
+                                tr("Net debt to total capital", "Nettoverschuldung zu Gesamtkapital")),
+                              digits = 1, ncol = 3)
+alt_leverage <- get_alt_text(chart_leverage)
+chart_leverage
 ```
 
 {{< pagebreak >}}
@@ -1678,11 +1837,14 @@ render_lines(line_spec(
 ### `r tr("Liquidity", "Liquidität")`
 
 ```{r liquidity-chart}
-chart_lines(c("current_ratio", "quick_ratio", "cash_ratio"),
-            c(tr("Current ratio", "Liquidität 3. Grades"),
-              tr("Quick ratio", "Liquidität 2. Grades"),
-              tr("Cash ratio", "Liquidität 1. Grades")),
-            subtitle = tr("Times", "Faktor"), digits = 2, ncol = 3)
+#| fig-alt: !expr alt_liquidity
+chart_liquidity <- chart_lines(c("current_ratio", "quick_ratio", "cash_ratio"),
+                               c(tr("Current ratio", "Liquidität 3. Grades"),
+                                 tr("Quick ratio", "Liquidität 2. Grades"),
+                                 tr("Cash ratio", "Liquidität 1. Grades")),
+                               subtitle = tr("Times", "Faktor"), digits = 2, ncol = 3)
+alt_liquidity <- get_alt_text(chart_liquidity)
+chart_liquidity
 ```
 
 ### `r tr("What the debt costs", "Was die Verschuldung kostet")`
@@ -1735,22 +1897,29 @@ render_lines(line_spec(
 ```
 
 ```{r days-chart}
-chart_lines(c("days_inventory", "days_receivables", "days_payables",
-              "cash_conversion_cycle"),
-            c(tr("Days of inventory", "Vorratsdauer"),
-              tr("Days of receivables", "Forderungsdauer"),
-              tr("Days of payables", "Verbindlichkeitendauer"),
-              tr("Cash conversion cycle", "Geldumschlagsdauer")),
-            subtitle = tr("Days", "Tage"), digits = 0, ncol = 4)
+#| fig-alt: !expr alt_days
+chart_days <- chart_lines(c("days_inventory", "days_receivables", "days_payables",
+                            "cash_conversion_cycle"),
+                          c(tr("Days of inventory", "Vorratsdauer"),
+                            tr("Days of receivables", "Forderungsdauer"),
+                            tr("Days of payables", "Verbindlichkeitendauer"),
+                            tr("Cash conversion cycle", "Geldumschlagsdauer")),
+                          subtitle = tr("Days", "Tage"), digits = 0, ncol = 4)
+alt_days <- get_alt_text(chart_days)
+chart_days
 ```
 
 ```{r wc-chart}
-chart_bars(c("inventories", "receivables", "payables", "working_capital"),
-           c(tr("Inventories", "Vorräte"),
-             tr("Trade and other receivables", "Forderungen"),
-             tr("Trade and other payables", "Verbindlichkeiten"),
-             tr("Working capital", "Working Capital")),
-           ncol = 4)
+#| fig-height: 3.6
+#| fig-alt: !expr alt_wc
+chart_wc <- chart_bars(c("inventories", "receivables", "payables", "working_capital"),
+                       c(tr("Inventories", "Vorräte"),
+                         tr("Trade and other receivables", "Forderungen"),
+                         tr("Trade and other payables", "Verbindlichkeiten"),
+                         tr("Working capital", "Working Capital")),
+                       ncol = 4)
+alt_wc <- get_alt_text(chart_wc)
+chart_wc
 ```
 
 {{< pagebreak >}}
@@ -1775,12 +1944,15 @@ render_lines(line_spec(
 ```
 
 ```{r returns-chart}
-chart_lines(c("roe", "roa", "roce", "roic"),
-            c(tr("Return on equity", "Eigenkapitalrendite"),
-              tr("Return on total assets", "Gesamtkapitalrendite"),
-              tr("Return on capital employed", "Rendite eingesetztes Kapital"),
-              tr("Return on invested capital", "Rendite investiertes Kapital")),
-            digits = 1, ncol = 4)
+#| fig-alt: !expr alt_returns
+chart_returns <- chart_lines(c("roe", "roa", "roce", "roic"),
+                             c(tr("Return on equity", "Eigenkapitalrendite"),
+                               tr("Return on total assets", "Gesamtkapitalrendite"),
+                               tr("Return on capital employed", "Rendite eingesetztes Kapital"),
+                               tr("Return on invested capital", "Rendite investiertes Kapital")),
+                             digits = 1, ncol = 4)
+alt_returns <- get_alt_text(chart_returns)
+chart_returns
 ```
 
 ### `r tr("Where the return on equity comes from", "Woher die Eigenkapitalrendite kommt")`
@@ -1803,11 +1975,14 @@ render_lines(line_spec(
 ```
 
 ```{r dupont-chart}
-chart_lines(c("net_margin_owners", "asset_turnover", "equity_multiplier"),
-            c(tr("Net margin of the owners, %", "Nettomarge der Eigentümer, %"),
-              tr("Asset turnover, times", "Kapitalumschlag, Faktor"),
-              tr("Equity multiplier, times", "Eigenkapitalmultiplikator, Faktor")),
-            subtitle = tr("% and times", "% und Faktor"), digits = 1, ncol = 3)
+#| fig-alt: !expr alt_dupont
+chart_dupont <- chart_lines(c("net_margin_owners", "asset_turnover", "equity_multiplier"),
+                            c(tr("Net margin of the owners, %", "Nettomarge der Eigentümer, %"),
+                              tr("Asset turnover, times", "Kapitalumschlag, Faktor"),
+                              tr("Equity multiplier, times", "Eigenkapitalmultiplikator, Faktor")),
+                            subtitle = tr("% and times", "% und Faktor"), digits = 1, ncol = 3)
+alt_dupont <- get_alt_text(chart_dupont)
+chart_dupont
 ```
 
 {{< pagebreak >}}
@@ -1842,13 +2017,17 @@ render_lines(line_spec(
 ```
 
 ```{r cash-flow-chart}
-chart_bars(c("operating_cash_flow", "investing_cash_flow",
-             "financing_cash_flow", "free_cash_flow"),
-           c(tr("Operating activities", "Betriebstätigkeit"),
-             tr("Investing activities", "Investitionstätigkeit"),
-             tr("Financing activities", "Finanzierungstätigkeit"),
-             tr("Free cash flow", "Free Cashflow")),
-           ncol = 4)
+#| fig-height: 3.6
+#| fig-alt: !expr alt_cash_flow
+chart_cash_flow <- chart_bars(c("operating_cash_flow", "investing_cash_flow",
+                                "financing_cash_flow", "free_cash_flow"),
+                              c(tr("Operating activities", "Betriebstätigkeit"),
+                                tr("Investing activities", "Investitionstätigkeit"),
+                                tr("Financing activities", "Finanzierungstätigkeit"),
+                                tr("Free cash flow", "Free Cashflow")),
+                              ncol = 4)
+alt_cash_flow <- get_alt_text(chart_cash_flow)
+chart_cash_flow
 ```
 
 {{< pagebreak >}}
@@ -1890,11 +2069,15 @@ render_lines(line_spec(
 ```
 
 ```{r cash-quality-chart}
-chart_bars(c("operating_cash_flow", "capex", "free_cash_flow"),
-           c(tr("Operating cash flow", "Operativer Cashflow"),
-             tr("Capital expenditure", "Investitionen"),
-             tr("Free cash flow", "Free Cashflow")),
-           ncol = 3)
+#| fig-height: 3.6
+#| fig-alt: !expr alt_cash_quality
+chart_cash_quality <- chart_bars(c("operating_cash_flow", "capex", "free_cash_flow"),
+                                 c(tr("Operating cash flow", "Operativer Cashflow"),
+                                   tr("Capital expenditure", "Investitionen"),
+                                   tr("Free cash flow", "Free Cashflow")),
+                                 ncol = 3)
+alt_cash_quality <- get_alt_text(chart_cash_quality)
+chart_cash_quality
 ```
 
 {{< pagebreak >}}
@@ -1984,12 +2167,16 @@ if (nrow(members) == 0) {
 ```
 
 ```{r equity-chart}
-chart_bars(c("profit", "oci", "comprehensive_income", "dividends_paid"),
-           c(tr("Profit for the year", "Jahresergebnis"),
-             tr("Other comprehensive income", "Sonstiges Ergebnis"),
-             tr("Total comprehensive income", "Gesamtergebnis"),
-             tr("Dividends paid", "Gezahlte Dividenden")),
-           ncol = 4)
+#| fig-height: 3.6
+#| fig-alt: !expr alt_equity
+chart_equity <- chart_bars(c("profit", "oci", "comprehensive_income", "dividends_paid"),
+                           c(tr("Profit for the year", "Jahresergebnis"),
+                             tr("Other comprehensive income", "Sonstiges Ergebnis"),
+                             tr("Total comprehensive income", "Gesamtergebnis"),
+                             tr("Dividends paid", "Gezahlte Dividenden")),
+                           ncol = 4)
+alt_equity <- get_alt_text(chart_equity)
+chart_equity
 ```
 
 {{< pagebreak >}}
@@ -2032,10 +2219,13 @@ render_lines(line_spec(
 ```
 
 ```{r per-share-chart}
-chart_bars(c("eps", "dps"),
-           c(tr("Earnings per share", "Ergebnis je Aktie"),
-             tr("Dividend per share proposed", "Vorgeschlagene Dividende je Aktie")),
-           subtitle = currency, scale_by = 1, digits = 2, ncol = 2)
+#| fig-alt: !expr alt_per_share
+chart_per_share <- chart_bars(c("eps", "dps"),
+                              c(tr("Earnings per share", "Ergebnis je Aktie"),
+                                tr("Dividend per share proposed", "Vorgeschlagene Dividende je Aktie")),
+                              subtitle = currency, scale_by = 1, digits = 2, ncol = 2)
+alt_per_share <- get_alt_text(chart_per_share)
+chart_per_share
 ```
 
 {{< pagebreak >}}
@@ -2063,11 +2253,15 @@ score_rows <- tribble(
   "f_turnover",  "Asset turnover higher than last year",            "Kapitalumschlag höher als im Vorjahr"
 )
 
+# A test passed or failed is written as a word rather than as a tick or a
+# cross: a screen reader reads a word as it stands and a symbol by a name of
+# its own, and the fonts the PDF embeds have no cross, which a tagged PDF
+# refuses to show as a blank.
 temp <- tibble(item = if (report_lang == "de") score_rows$de else score_rows$en)
 for (i in seq_len(n_shown)) {
   temp[[years[i]]] <- vapply(score_rows$key, function(k) {
     v <- wide[[k]][i]
-    if (is.na(v)) "–" else if (v == 1) "✔" else "✕"
+    if (is.na(v)) "–" else if (v == 1) tr("yes", "ja") else tr("no", "nein")
   }, character(1))
 }
 total <- c(tr("**F-score, out of nine**", "**F-Score, von neun**"),
@@ -2097,10 +2291,13 @@ render_lines(line_spec(
 ```
 
 ```{r score-chart}
-chart_lines(c("z_score", "f_score"),
-            c(tr("Z''-score", "Z''-Score"),
-              tr("F-score, out of nine", "F-Score, von neun")),
-            subtitle = tr("Score", "Punktwert"), digits = 1, ncol = 2)
+#| fig-alt: !expr alt_score
+chart_score <- chart_lines(c("z_score", "f_score"),
+                           c(tr("Z''-score", "Z''-Score"),
+                             tr("F-score, out of nine", "F-Score, von neun")),
+                           subtitle = tr("Score", "Punktwert"), digits = 1, ncol = 2)
+alt_score <- get_alt_text(chart_score)
+chart_score
 ```
 
 {{< pagebreak >}}
@@ -2276,7 +2473,7 @@ temp <- filings_all %>%
   transmute(filing,
             period_end = format(period_end, "%Y-%m-%d"),
             lang = coalesce(lang, ""),
-            used = ifelse(filing %in% filings$filing, "✔", ""),
+            used = ifelse(filing %in% filings$filing, tr("yes", "ja"), ""),
             errors = coalesce(errors, 0L),
             warnings = coalesce(warnings, 0L),
             inconsistencies = coalesce(inconsistencies, 0L),

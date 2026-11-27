@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -1173,7 +1175,10 @@ scale_x_years <- function(...) {
 
 # Escape what typst reads as its own syntax, for the text that goes into the
 # raw blocks of the cover and of the running head.
-typst_string <- function(x) {
+# It is named apart from typst_string of the design script, which also puts
+# the quotes around the text and which the title of the document and its
+# coloured tables call: a function of the same name here would replace it.
+typst_escape <- function(x) {
   x <- gsub("\\\\", "\\\\\\\\", x)
   gsub("\"", "\\\\\"", x)
 }
@@ -1345,6 +1350,12 @@ render_lines <- function(spec, data = shown, unit_header = NULL,
 # labels are the English ones whatever `labels` is set to: a chart is drawn
 # by the graphics device in the font the design names, which covers no
 # Japanese, and a Japanese label would be drawn as empty boxes.
+#
+# No series is told apart by its colour alone, so that a reader who does not
+# see colour reads the chart as well as one who does (WCAG 2.2, 1.4.1): the
+# lines differ by their line type as well, a group of bars is split into one
+# panel per series, named above it, and every layer of the stack is named
+# beside it.
 chart_data <- function(keys, labels, scale_by = scale, data = shown) {
   present <- keys[keys %in% names(data)]
   labels <- labels[keys %in% names(data)]
@@ -1356,55 +1367,181 @@ chart_data <- function(keys, labels, scale_by = scale, data = shown) {
                         labels = wrap_labels(labels, 34)))
 }
 
+# What a chart shows, as text: the alt text of its figure, which a screen
+# reader reads in place of the picture. It names the kind of chart, the
+# series, the unit and the years, then each series year by year with its
+# highest and lowest year, which is what a sighted reader takes from a chart
+# of five years.
+chart_alt <- function(kind, keys, labels, unit, scale_by = scale, digits = 0,
+                      data = shown, note = "") {
+  present <- keys %in% names(data)
+  if (!any(present) || nrow(data) == 0) {
+    return(paste0(kind, " of ", paste(labels, collapse = ", "),
+                  ": the reports read state none of it, so the chart is empty."))
+  }
+  year_of <- data$year
+  series <- vapply(which(present), function(i) {
+    v <- data[[keys[i]]] / scale_by
+    if (all(is.na(v))) return(paste0(labels[i], ": not stated"))
+    known <- !is.na(v)
+    text <- paste0(year_of[known], " ", fmt(v[known], digits), collapse = ", ")
+    extremes <- if (sum(known) > 2) paste0(
+      "; highest in ", year_of[known][which.max(v[known])],
+      ", lowest in ", year_of[known][which.min(v[known])]) else ""
+    paste0(labels[i], ": ", text, extremes)
+  }, character(1))
+  absent <- if (any(!present)) paste0(" Not stated: ",
+                                      paste(labels[!present], collapse = ", "),
+                                      ".") else ""
+  paste0(kind, " of ", paste(labels[present], collapse = ", "), ", in ", unit,
+         ", financial years ", year_of[1], " to ", year_of[length(year_of)],
+         ", ", basis_label, " basis", note, ". ", paste(series, collapse = ". "),
+         ".", absent)
+}
+
+# A stack of the parts of a whole, each layer named beside the last bar and
+# joined to it by a leader line, so that the legend is not the only key to
+# the colours. Where layers lie close together their names are spread apart
+# along the axis, the leader line still pointing to the layer itself.
 chart_stacked <- function(keys, labels, subtitle = amount_label,
                           scale_by = scale, ncol = 2, data = shown,
                           width = 250) {
-  ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = period_end, y = value, fill = var)) +
+  long <- chart_data(keys, labels, scale_by, data)
+  last <- long %>%
+    filter(period_end == max(period_end), !is.na(value), value > 0) %>%
+    # geom_col stacks the first level of the factor on top.
+    arrange(desc(as.integer(var))) %>%
+    mutate(top = cumsum(value), middle = top - value / 2)
+  gap <- 0.09 * max(c(sum(last$value), 1))
+  position <- last$middle
+  for (i in seq_along(position)[-1]) {
+    position[i] <- max(position[i], position[i - 1] + gap)
+  }
+  # Pushed up from the bottom, the names may run over the top of the stack;
+  # they are pulled back down by as much as they overrun it.
+  overrun <- max(0, max(c(position, 0)) - sum(last$value))
+  last$label_y <- pmax(position - overrun, 0)
+  x_bar <- max(long$period_end) + width / 2
+  x_text <- max(long$period_end) + width / 2 + 120
+  ggplot(long, aes(x = period_end, y = value, fill = var)) +
     geom_col(width = width) +
     geom_zeroline() +
-    scale_x_years() +
+    geom_segment(data = last, aes(x = x_bar, xend = x_text - 10,
+                                  y = middle, yend = label_y),
+                 inherit.aes = FALSE, colour = design_colours()[["ink_soft"]],
+                 linewidth = 0.25) +
+    geom_text(data = last, aes(x = x_text, y = label_y, label = var),
+              inherit.aes = FALSE, hjust = 0, size = chart_base_size / 3.2,
+              lineheight = 0.85, colour = design_colours()[["ink"]]) +
+    scale_x_date(expand = expansion(mult = c(.02, 0.02)),
+                 breaks = data$period_end,
+                 labels = function(d) year_labels[as.character(d)]) +
+    coord_cartesian(xlim = c(min(long$period_end) - width / 2,
+                             x_text + 700), clip = "off") +
     scale_y_continuous(labels = function(x) fmt(x)) +
-    scale_fill_corporate_design() +
+    scale_fill_stack(guide = "none") +
     labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
-    guides(fill = guide_legend(ncol = ncol)) +
     theme_corporate_design(base_size = chart_base_size,
                            axis.title = element_blank())
 }
 
+# A group of bars, one panel per series, its name above it: the panels share
+# one scale, so the bars of two series compare as they would side by side.
+# The name tells the series apart, so the bars of every panel are in the one
+# colour of the design that stands out most from the page.
 chart_bars <- function(keys, labels, subtitle = amount_label,
                        scale_by = scale, digits = 0, ncol = 3, data = shown,
                        width = 240) {
-  ggplot(chart_data(keys, labels, scale_by, data),
-         aes(x = period_end, y = value, fill = var)) +
-    geom_col(position = position_dodge(width = width + 20), width = width) +
+  long <- chart_data(keys, labels, scale_by, data)
+  panels <- nlevels(long$var) > 1
+  g <- ggplot(long, aes(x = period_end, y = value)) +
+    geom_col(width = width, fill = palette_corporate_design("cat", 1)) +
     geom_zeroline() +
-    scale_x_years() +
+    # A panel is a third of the width, and the name of a year is broken
+    # before the month its year ends in so that the names do not overlap.
+    scale_x_date(expand = c(.02, 0), breaks = shown$period_end,
+                 labels = function(d) {
+                   l <- year_labels[as.character(d)]
+                   if (panels) sub(" (", "\n(", l, fixed = TRUE) else l
+                 }) +
     scale_y_continuous(labels = function(x) fmt(x, digits)) +
-    scale_fill_corporate_design() +
     labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
-    guides(fill = guide_legend(ncol = ncol)) +
     theme_corporate_design(base_size = chart_base_size,
                            axis.title = element_blank())
+  if (panels) g <- g + facet_wrap(~var, nrow = 1)
+  g
 }
 
+# A set of lines, told apart by colour and by line type, with the key of
+# both below the chart.
 chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
                         digits = 0, zero = TRUE, ncol = 3, data = shown) {
   g <- ggplot(chart_data(keys, labels, scale_by, data) %>%
                 filter(!is.na(value)),
-              aes(x = period_end, y = value, colour = var)) +
+              aes(x = period_end, y = value, colour = var, linetype = var)) +
     geom_line(linewidth = linewidth_corporate_design) +
     geom_point(size = 1.4) +
     scale_x_years() +
     scale_y_continuous(labels = function(x) fmt(x, digits)) +
-    scale_colour_corporate_design() +
+    scale_colour_accessible(name = NULL) +
+    scale_linetype_accessible(name = NULL) +
     labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
-    guides(colour = guide_legend(ncol = ncol)) +
+    guides(colour = guide_legend(ncol = ncol), linetype = guide_legend(ncol = ncol)) +
     theme_corporate_design(base_size = chart_base_size,
-                           axis.title = element_blank())
+                           axis.title = element_blank()) +
+    theme(legend.key.width = grid::unit(2.2, "lines"))
   if (zero) g <- g + geom_zeroline()
   g
 }
+
+# The alt text of every chart of the factsheet, written here from the same
+# keys and labels the chunks below draw.
+alt_revenue <- chart_alt("Bar chart", "revenue", "Revenue", amount_label)
+alt_profit <- chart_alt("Bar chart in two panels",
+                        c("ordinary_income", "profit_shown"),
+                        c("Ordinary profit", "Net profit"), amount_label)
+alt_cash_flows <- chart_alt("Bar chart in three panels",
+                            c("operating_cash_flow", "investing_cash_flow",
+                              "financing_cash_flow"),
+                            c("Operating cash flow", "Investing cash flow",
+                              "Financing cash flow"), amount_label)
+alt_margins <- chart_alt("Line chart", c("margin_ordinary", "margin_net", "roe"),
+                         c("Ordinary margin", "Net margin", "Return on equity"),
+                         "per cent", scale_by = 1, digits = 1)
+asset_keys <- c("cash_and_deposits", "receivables", "inventories",
+                "other_current_assets", "ppe", "goodwill", "intangibles",
+                "investments", "equity_method", "other_noncurrent_assets")
+asset_labels <- c("Cash and deposits", "Trade receivables", "Inventories",
+                  "Other current", "Property, plant and equipment", "Goodwill",
+                  "Intangibles", "Investments", "Equity-method associates",
+                  "Other non-current")
+alt_assets <- chart_alt("Stacked bar chart, one bar a year making up total assets,",
+                        asset_keys, asset_labels, amount_label, data = shown_stmt,
+                        note = "; each part is named beside the last bar")
+alt_cash_to_profit <- chart_alt("Line chart", "cash_to_profit",
+                                "Operating cash flow to net profit", "multiples",
+                                scale_by = 1, digits = 1)
+alt_workforce <- chart_alt("Bar chart in two panels",
+                           c("employees", "temporary_workers"),
+                           c("Employees", "Temporary workers"), "people",
+                           scale_by = 1)
+alt_tsr <- chart_alt("Line chart", c("tsr", "tsr_index"),
+                     c("Total shareholder return", "Comparison index"),
+                     "cumulative multiples of the value at the start",
+                     scale_by = 1, digits = 2)
+```
+
+```{r title, results='asis'}
+# The title of the document, which a screen reader announces and without
+# which typst refuses to write a PDF/UA document: the filer and the years,
+# by the names the cover gives them.
+period_range <- if (n_shown > 1) paste0(years[1], " – ", years[n_shown]) else
+  years[n_shown]
+
+filer_row <- if (is.null(filers)) NULL else as.list(filers[1, ])
+display_name <- coalesce(filer_name_en, filer_row$name_en, filer_name_ja)
+typst_document_title(paste0("EDINET analyst factsheet, ", display_name,
+                            ", financial years ", period_range))
 ```
 
 ```{r cover, results='asis'}
@@ -1418,7 +1555,7 @@ chart_lines <- function(keys, labels, subtitle = "%", scale_by = 1,
 # read as typst's own syntax.
 ts <- function(x) {
   if (length(x) == 0 || is.na(x)) x <- "–"
-  paste0("\"", typst_string(as.character(x)), "\"")
+  paste0("\"", typst_escape(as.character(x)), "\"")
 }
 
 # A column of the cover: a label and a value per row.
@@ -1431,11 +1568,6 @@ typst_kv <- function(items) {
          paste(rows, collapse = "\n"), "\n)")
 }
 
-period_range <- if (n_shown > 1) paste0(years[1], " – ", years[n_shown]) else
-  years[n_shown]
-
-filer_row <- if (is.null(filers)) NULL else as.list(filers[1, ])
-display_name <- coalesce(filer_name_en, filer_row$name_en, filer_name_ja)
 subtitle_name <- if (!is.na(filer_name_ja) &&
                      !identical(filer_name_ja, display_name))
   filer_name_ja else NA_character_
@@ -1715,12 +1847,14 @@ render_lines(
 ### Revenue
 
 ```{r glance-revenue-chart}
+#| fig-alt: !expr alt_revenue
 chart_bars("revenue", "Revenue")
 ```
 
 ### The two results
 
 ```{r glance-profit-chart}
+#| fig-alt: !expr alt_profit
 # In a chart of its own and not beside the revenue: Kojima's revenue of
 # 297,632 million stands against an ordinary profit of 8,911 million, and
 # bars three orders of magnitude apart in one panel leave the smaller two
@@ -1732,6 +1866,7 @@ chart_bars(c("ordinary_income", "profit_shown"),
 ### Where the cash went
 
 ```{r glance-cash-chart}
+#| fig-alt: !expr alt_cash_flows
 chart_bars(c("operating_cash_flow", "investing_cash_flow",
              "financing_cash_flow"),
            c("Operating", "Investing", "Financing"))
@@ -1923,6 +2058,7 @@ render_lines(
 ```
 
 ```{r summary-margin-chart}
+#| fig-alt: !expr alt_margins
 chart_lines(c("margin_ordinary", "margin_net", "roe"),
             c("Ordinary margin", "Net margin", "Return on equity"),
             digits = 1)
@@ -2046,14 +2182,9 @@ render_lines(
 ```
 
 ```{r assets-chart}
-chart_stacked(c("cash_and_deposits", "receivables", "inventories",
-                "other_current_assets", "ppe", "goodwill", "intangibles",
-                "investments", "equity_method", "other_noncurrent_assets"),
-              c("Cash and deposits", "Trade receivables", "Inventories",
-                "Other current", "Property, plant and equipment", "Goodwill",
-                "Intangibles", "Investments", "Equity-method associates",
-                "Other non-current"),
-              data = shown_stmt, width = 160)
+#| fig-alt: !expr alt_assets
+#| fig-height: 3.4
+chart_stacked(asset_keys, asset_labels, data = shown_stmt, width = 160)
 ```
 
 ### Liabilities and net assets
@@ -2217,6 +2348,7 @@ if (!is.na(stated_capex)) {
 ```
 
 ```{r cash-chart}
+#| fig-alt: !expr alt_cash_to_profit
 chart_lines(c("cash_to_profit"),
             c("Operating cash flow to net profit"),
             subtitle = "times", digits = 1)
@@ -2258,6 +2390,7 @@ knitr::kable(items, col.names = c(paste("The filer at", years[n_shown]), ""),
 ```
 
 ```{r workforce-chart}
+#| fig-alt: !expr alt_workforce
 chart_bars(c("employees", "temporary_workers"),
            c("Employees", "Temporary workers"),
            subtitle = "People", scale_by = 1)
@@ -2392,6 +2525,7 @@ render_lines(
 ```
 
 ```{r tsr-chart}
+#| fig-alt: !expr alt_tsr
 chart_lines(c("tsr", "tsr_index"),
             c("Total shareholder return", "Comparison index"),
             subtitle = "Cumulative, times", digits = 2, scale_by = 1)

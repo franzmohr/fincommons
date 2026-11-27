@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -494,6 +496,13 @@ identity_state <- rated %>%
 checked_on <- range(issues_all$checked)
 ```
 
+```{r title, results='asis'}
+# The title of the document, which a screen reader announces and without
+# which Typst does not write a PDF/UA document.
+typst_document_title(paste0("The quality of the SEC filing record, filings of ",
+                            min(report_years), " to ", max(report_years)))
+```
+
 ```{r formats}
 # --------------------------------------------------------------------------
 # Writing numbers and words
@@ -519,7 +528,9 @@ source_caption <- caption_corporate_design(
   last = format(max(checked_on), "%d %b %Y"),
   lang = "en")
 
-typst_string <- function(x) {
+# Named apart from the typst_string of the design script, which wraps the
+# text in quotes as well and which typst_document_title relies on.
+typst_escape <- function(x) {
   x <- gsub("\\\\", "\\\\\\\\", x)
   gsub("\"", "\\\\\"", x)
 }
@@ -550,26 +561,53 @@ render_years <- function(data, value, digits = 0, label_column = "label",
                align = paste0("l", strrep("r", length(report_years))))
 }
 
-# A chart of one line per group over the years filed.
+# A chart of one line per group over the years filed. The groups are told
+# apart by line type as well as by colour, so that a reader who cannot tell
+# the colours apart, or reads a print in black and white, can still tell
+# the lines apart (WCAG 2.2, 1.4.1); the scales of the design script take up
+# to six of them.
 chart_by_year <- function(data, value, group, subtitle = "%", digits = 0,
                           ncol = 5, zero = TRUE) {
   d <- data %>% mutate(.v = {{ value }}, .g = {{ group }}) %>% filter(!is.na(.v))
-  g <- ggplot(d, aes(x = fy, y = .v, colour = .g)) +
+  g <- ggplot(d, aes(x = fy, y = .v, colour = .g, linetype = .g)) +
     geom_line(linewidth = linewidth_corporate_design) +
     geom_point(size = 1.4) +
     scale_x_continuous(breaks = report_years, labels = year_labels,
                        expand = c(.02, 0)) +
     scale_y_continuous(labels = function(x) fmt(x, digits)) +
-    scale_colour_corporate_design() +
+    scale_colour_accessible(name = NULL) +
+    scale_linetype_accessible(name = NULL) +
     labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
-    guides(colour = guide_legend(ncol = ncol)) +
+    guides(colour = guide_legend(ncol = ncol), linetype = guide_legend(ncol = ncol)) +
     theme_corporate_design(base_size = chart_base_size,
-                           axis.title = element_blank())
+                           axis.title = element_blank()) +
+    theme(legend.key.width = grid::unit(2.4, "lines"))
   if (zero) g <- g + geom_zeroline()
   g
 }
 
-# A chart of bars, one per category, read from top to bottom.
+# What a chart of chart_by_year shows, in words, for its alt text: for each
+# group where it began and ended over the years filed and where it was
+# highest and lowest.
+describe_by_year <- function(data, value, group, digits = 1, unit = " %") {
+  d <- data %>% mutate(.v = {{ value }}, .g = as.character({{ group }})) %>%
+    filter(!is.na(.v)) %>% arrange(.g, fy)
+  if (nrow(d) == 0) return("There are no values to show.")
+  parts <- vapply(unique(d$.g), function(g) {
+    x <- d[d$.g == g, ]
+    paste0(g, ": ", fmt(x$.v[1], digits), unit, " in ", x$fy[1], ", ",
+           fmt(x$.v[nrow(x)], digits), unit, " in ", x$fy[nrow(x)],
+           ", highest ", fmt(max(x$.v), digits), unit, " in ", x$fy[which.max(x$.v)],
+           ", lowest ", fmt(min(x$.v), digits), unit, " in ", x$fy[which.min(x$.v)])
+  }, character(1))
+  paste0(paste(parts, collapse = "; "), ".")
+}
+
+# A chart of bars, one per category, read from top to bottom. Where the bars
+# are coloured by a group, the group is also written at the end of each bar
+# beside its value, so that the legend is not the only key to the colours;
+# the colours are those of the accessible palette, which stand out from the
+# page at more than 4.5:1.
 chart_ranked <- function(data, value, label, subtitle = "%", digits = 0,
                          wrap = 44, fill = NULL) {
   d <- data %>%
@@ -581,18 +619,24 @@ chart_ranked <- function(data, value, label, subtitle = "%", digits = 0,
   # the data, is what `is.null` would do.
   g <- if (missing(fill)) {
     ggplot(d, aes(x = .v, y = .l)) +
-      geom_col(fill = palette_corporate_design("cat")[1], width = 0.72)
+      geom_col(fill = palette_corporate_design("cat")[1], width = 0.72) +
+      geom_text(aes(label = fmt(.v, digits)), hjust = -0.15,
+                size = chart_base_size * 0.8 / .pt,
+                colour = design_colours()[["ink"]])
   } else {
     d <- d %>% mutate(.f = {{ fill }})
     ggplot(d, aes(x = .v, y = .l, fill = .f)) +
       geom_col(width = 0.72) +
-      scale_fill_corporate_design() +
+      geom_text(aes(label = paste0(fmt(.v, digits), ", ", .f)), hjust = -0.08,
+                size = chart_base_size * 0.8 / .pt,
+                colour = design_colours()[["ink"]]) +
+      scale_fill_manual(values = palette_accessible, name = NULL) +
       guides(fill = guide_legend(ncol = 3))
   }
   g +
     geom_zeroline(x = 0) +
     scale_x_continuous(labels = function(x) fmt(x, digits),
-                       expand = expansion(mult = c(0, .06))) +
+                       expand = expansion(mult = c(0, .22))) +
     labs(caption = wrap_caption(source_caption), subtitle = subtitle) +
     theme_corporate_design(base_size = chart_base_size, grid = "x",
                            axis.title = element_blank())
@@ -606,7 +650,7 @@ chart_ranked <- function(data, value, label, subtitle = "%", digits = 0,
 
 ts <- function(x) {
   if (length(x) == 0 || is.na(x)) x <- "–"
-  paste0("\"", typst_string(as.character(x)), "\"")
+  paste0("\"", typst_escape(as.character(x)), "\"")
 }
 
 typst_kv <- function(items) {
@@ -914,8 +958,25 @@ knitr::kable(temp %>% transmute(label, Findings = fmt(findings),
 
 ### The checks that fire
 
+```{r found-code-alt}
+# The alt text of the chart below: every check that fired, from the one that
+# named the largest share of the filings it is asked of, with its severity.
+fired <- by_code %>% filter(affected > 0) %>% arrange(desc(share))
+alt_found_code <- if (nrow(fired) == 0) {
+  "No chart: no check named any filing of this selection."
+} else {
+  paste0("Horizontal bar chart of the share of the filings each check named, ",
+         "in per cent of the filings the check is asked of, for the ", nrow(fired),
+         " checks that fired, from the highest at the top; each bar is coloured by ",
+         "its severity and labelled with its value and severity. ",
+         paste0(fired$title, ": ", fmt(fired$share, 1), " %, ",
+                tolower(severity_label(fired$severity)), collapse = "; "), ".")
+}
+```
+
 ```{r found-code-chart}
 #| fig-height: 4.0
+#| fig-alt: !expr alt_found_code
 chart_ranked(by_code %>% filter(affected > 0),
              share, title,
              subtitle = paste("Filings the check named, % of the filings it",
@@ -976,8 +1037,7 @@ cat("\nThe loudest one per cent of the annual reports -- ",
 
 ### By year filed
 
-```{r found-year-chart}
-#| fig-height: 2.6
+```{r found-year-data}
 temp <- by_year %>%
   select(fy, error_share, warning_share, info_share) %>%
   pivot_longer(-fy, names_to = "severity", values_to = "share") %>%
@@ -985,6 +1045,16 @@ temp <- by_year %>%
                            warning_share = "A warning",
                            info_share = "A note"))
 
+alt_found_year <- paste0(
+  "Line chart of the share of the annual reports of each year filed, ",
+  min(report_years), " to ", max(report_years), ", that carry a finding of ",
+  "each severity, in per cent; the three severities are told apart by colour ",
+  "and by line type. ", describe_by_year(temp, share, severity))
+```
+
+```{r found-year-chart}
+#| fig-height: 2.6
+#| fig-alt: !expr alt_found_year
 chart_by_year(temp, share, severity,
               subtitle = paste("Annual reports carrying a finding of the",
                                "severity, %"),
@@ -1017,14 +1087,23 @@ knitr::kable(by_registrant %>%
 
 ### How much of it is free of errors
 
-```{r clean-chart}
-#| fig-height: 2.6
+```{r clean-data}
 temp <- by_year %>%
   select(fy, clean, spotless) %>%
   pivot_longer(-fy, names_to = "measure", values_to = "share") %>%
   mutate(measure = recode(measure, clean = "No error",
                           spotless = "No finding of any severity"))
 
+alt_clean <- paste0(
+  "Line chart of the share of the annual reports of each year filed, ",
+  min(report_years), " to ", max(report_years), ", in which no error was found ",
+  "and in which nothing at all was found, in per cent; the two lines are told ",
+  "apart by colour and by line type. ", describe_by_year(temp, share, measure))
+```
+
+```{r clean-chart}
+#| fig-height: 2.6
+#| fig-alt: !expr alt_clean
 chart_by_year(temp, share, measure,
               subtitle = "Annual reports of the year, %", digits = 1,
               ncol = 2)
