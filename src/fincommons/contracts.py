@@ -497,7 +497,7 @@ def spark_schema(contract):
 # complementary, and neither replaces the other.
 
 #: How severe a failed rule is, as the examples of ODCS name them.
-QUALITY_SEVERITIES = ("info", "warning", "error")
+QUALITY_SEVERITIES = ("error", "warning", "info")
 
 #: The predefined metrics of ODCS, by where they are stated: on a column, or
 #: on the table. ``duplicateValues`` is stated on a column, or on the table
@@ -675,7 +675,10 @@ def check_quality(frame, contract):
                     results.append(QualityResult(value=None, passed=None, **common))
                     continue
                 value = _measure(frame, view, column, rule, rows)
-                if rule.get("unit") == "percent" and rule.get("metric") != "rowCount":
+                # A query may measure nothing -- a SUM over no rows is NULL --
+                # and a rule that measured nothing fails rather than raising.
+                if (value is not None and rule.get("unit") == "percent"
+                        and rule.get("metric") != "rowCount"):
                     value = 100.0 * value / rows if rows else 0.0
                 operator = next(o for o in _OPERATORS if o in rule)
                 passed = value is not None and bool(_OPERATORS[operator](value, rule[operator]))

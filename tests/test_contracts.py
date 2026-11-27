@@ -283,7 +283,7 @@ def test_the_exchange_rates_state_quality_rules_the_framework_runs():
 
 
 @pytest.mark.parametrize("change, problem", [
-    (lambda q: q.pop("severity"), "severity is one of info, warning, error"),
+    (lambda q: q.pop("severity"), "severity is one of error, warning, info"),
     (lambda q: q.pop("dimension"), "has no dimension"),
     (lambda q: q.update(mustBeLessThan=1), "states one comparison"),
     (lambda q: q.update(metric="nullValues"), "the metric 'nullValues' is not one of a table"),
@@ -340,6 +340,25 @@ def test_a_rule_counted_in_percent_is_a_share_of_the_rows(spark):
     result = next(r for r in c.check_quality(frame, contract) if r.rule == "quote_is_a_currency_code")
 
     assert result.value == 25.0
+    assert result.passed is False
+
+
+def test_a_sql_rule_in_percent_that_measures_nothing_fails_rather_than_raising(spark):
+    # A SUM over no matching rows is NULL; scaled to a percentage it used to
+    # raise a TypeError and take every other rule's result with it.
+    contract = a_contract()
+    rule = column(contract, "quote")["quality"][0]
+    for key in ("metric", "arguments", "mustBe"):
+        rule.pop(key, None)
+    rule.update(type="sql", unit="percent", mustBeLessOrEqualTo=10,
+                query="SELECT SUM(value) FROM ${table} WHERE quote = 'XXX'")
+    rows = [("2020-01-01", "EUR", "USD", 1.0, "ref", "ECB", False)]
+    frame = spark.createDataFrame(rows, "ref_date string, base string, quote string, "
+                                        "value double, type string, source string, imputed boolean")
+
+    result = next(r for r in c.check_quality(frame, contract) if r.rule == "quote_is_a_currency_code")
+
+    assert result.value is None
     assert result.passed is False
 
 
