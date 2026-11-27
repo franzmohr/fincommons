@@ -180,6 +180,14 @@ contract = load_contract("fincommons.exchangerate.silver.exchangerate")
 spark_schema(contract)
 ```
 
+On Databricks the contract also serves dashboards and assistants, through the semantic layer that `fincommons.semantic` generates from it: a metric view beside the table, whose measure `exchange_rate` gives the rate of one currency pair and is empty for a group holding several, the descriptions of the contract as comments on the table and its columns, and instructions for an assistant such as Genie, from the `context` of `data/product_exchangerate.yaml` -- how to compute a cross rate, what not to do, and example questions. The Silver layer has to be addressed by catalogue name for this.
+
+```python
+from fincommons import semantic
+generated = semantic.databricks("paths.yaml", "fincommons.exchangerate")  # text, anywhere
+instructions = semantic.apply_databricks(spark, "paths.yaml", "fincommons.exchangerate")  # on Databricks
+```
+
 `connect_to_exchangerate` and `convert2ccy` read the table in whichever form it is addressed and stored in, so the choice does not have to be repeated when the table is queried. A table that exists already keeps its format: an update that asks for the other one is refused before anything is written, because Delta will not adopt parquet files it has no transaction log for, and parquet written over a Delta table would throw its history away. Delete the directory before the first update in the new format to change it. The storage itself is shared with the other modules and described in `fincommons.storage`.
                                                                       
 

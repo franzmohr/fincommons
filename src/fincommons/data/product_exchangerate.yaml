@@ -1,7 +1,8 @@
 # The data product of fincommons.exchangerate, in the Open Data Product
 # Standard. Its output port names the contract of the Silver table by
 # identifier and version; the test suite checks that the contract is shipped
-# in that version. See fincommons.contracts.
+# in that version. Its context is what an assistant is told about the
+# tables, which fincommons.semantic passes on. See fincommons.contracts.
 apiVersion: v1.1.0
 kind: DataProduct
 id: fincommons.exchangerate
@@ -14,6 +15,34 @@ description:
   purpose: >-
     Daily exchange rates for converting amounts reported in any currency,
     built from public sources and an optional proprietary file.
+context:
+  instructions: >-
+    A rate states how many units of the quoted currency one unit of the base
+    currency buys on a day. The table holds the rates of one base currency,
+    the euro unless the deployment rebased it, so a rate between two other
+    currencies is computed from two rows of the same day: the rate of US
+    dollars in pounds is the EUR/GBP rate divided by the EUR/USD rate. To
+    convert an amount into the base currency, divide it by the rate of its
+    currency on the day of the amount. Every calendar day has a row; a day on
+    which no source quoted the pair carries the last rate before it and is
+    marked imputed, and a question about the rates actually quoted leaves
+    those days out.
+  constraints:
+    - constraint: >-
+        Do not combine the rates of different currency pairs in one figure;
+        the metric view returns an empty value where a group holds more than
+        one pair, and that empty value is the answer, not an error to work
+        around.
+    - constraint: >-
+        Do not invert a rate by swapping base and quote in a filter: a pair
+        the table does not hold has no row, and its rate is 1 divided by the
+        rate of the pair it does hold.
+  verifiedStatements:
+    - question: What was the euro reference rate of the US dollar on 30 June 2025?
+    - question: What was the average EUR/GBP rate in the first quarter of 2025?
+    - question: On how many days in 2025 was the EUR/JPY rate carried forward from an earlier day?
+    - question: How many euros were 1,000 US dollars worth on 31 December 2024?
+    - question: What was the rate of the US dollar in Swiss francs on 2 January 2025?
 outputPorts:
   - name: silver_exchangerate
     type: table

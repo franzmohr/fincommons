@@ -8,6 +8,22 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `semantic`: the semantic layer, generated from the contracts for
+  Databricks. `databricks(config, product)` returns, for every output port of
+  a product, the statements that put the descriptions of the contract on the
+  table and its columns, and the statement that creates a metric view
+  (specification 1.1) beside the table; and, for the product, instructions
+  for an assistant such as Genie, from the product's ODPS `context` and the
+  rules of aggregation of its contracts. `apply_databricks(spark, config,
+  product)` runs the statements. A dimension becomes a field under its column
+  name, with its business name and synonyms; a measure is named after its
+  business name, and a rate or an amount that may only be aggregated within
+  some columns -- a currency pair, a currency -- returns its aggregate only
+  where the group holds one value of them and is empty otherwise. The tables
+  have to be addressed by catalogue name. The exchange rate product states
+  its `context`: how to compute a cross rate, what not to do, and example
+  questions.
+
 - `contracts`: data contracts in the Open Data Contract Standard 3.2.0 and
   data products in the Open Data Product Standard 1.1.0, as the handbook
   section on data contracts and the semantic layer describes. A package
