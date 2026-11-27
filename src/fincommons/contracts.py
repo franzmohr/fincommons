@@ -67,7 +67,7 @@ from importlib import resources
 import yaml
 
 __all__ = ["ODCS_VERSION", "ODPS_VERSION", "VENDOR", "CUSTOM_PROPERTIES",
-           "AGGREGATIONS", "DEPLOYMENT_SECTIONS", "ContractError",
+           "AGGREGATIONS", "DEPLOYMENT_SECTIONS", "DRAFT_STATUSES", "ContractError",
            "contracts", "products", "load_contract", "validate_contract",
            "validate_product", "custom_property", "catalogue_rows",
            "spark_schema"]
@@ -102,6 +102,12 @@ CUSTOM_PROPERTIES = ("kind", "source", "aggregation", "aggregateWithin",
 KINDS = ("identifier", "code", "text", "date", "datetime", "amount",
          "currency", "rate", "flag", "count", "quantity", "number", "weight",
          "other")
+
+#: The states of a contract whose table no code writes yet. Such a contract
+#: is the specification of a table still to be built: it is validated like any
+#: other, but it is no description of a column a reader can find, so
+#: :func:`catalogue_rows` leaves it out until it becomes active.
+DRAFT_STATUSES = ("proposed", "draft")
 
 #: The sections of a contract that describe a deployment rather than a
 #: table, and which a shipped contract therefore leaves out.
@@ -375,6 +381,9 @@ def catalogue_rows(packages=("fincommons",)):
     first among its output ports, the table the others are derived from, so
     that the catalogue describes the column where it originates. The contract
     of each table still describes the column as that table holds it.
+
+    A contract in one of the :data:`DRAFT_STATUSES` describes a table no code
+    writes yet, and its columns are not rows of the catalogue.
     """
     shipped = contracts(packages)
     port_order = {}
@@ -383,6 +392,8 @@ def catalogue_rows(packages=("fincommons",)):
             port_order.setdefault(port.get("contractId"), position)
     rows, seen = [], set()
     for identifier in sorted(shipped, key=lambda i: (port_order.get(i, len(port_order)), i)):
+        if shipped[identifier].get("status") in DRAFT_STATUSES:
+            continue
         parts = _identifier_parts(identifier)
         if parts is None:
             raise ContractError(f"id {identifier!r} is not "

@@ -8,6 +8,14 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `contracts`: a contract in status `proposed` or `draft`, which specifies
+  a table no code writes yet, is validated like any other but left out of
+  `catalogue_rows`, and so of the column catalogue, until it is active.
+  `semantic` serves no table whose contract is a draft: it writes no
+  comment and no metric view for it and leaves it out of the instructions
+  for an assistant.
+  `DRAFT_STATUSES` names the two states.
+
 - `semantic`: the semantic layer, generated from the contracts for
   Databricks. `databricks(config, product)` returns, for every output port of
   a product, the statements that put the descriptions of the contract on the
