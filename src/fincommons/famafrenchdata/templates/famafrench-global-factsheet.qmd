@@ -1,6 +1,8 @@
 ---
+lang: en
 format:
   typst:
+    pdf-standard: ua-1
     papersize: a4
     fontsize: 9pt
     margin:
@@ -93,7 +95,7 @@ flag_volatility <- 1.5
 flag_drawdown <- 0.5
 
 # The point size of the text in a chart.
-chart_base_size <- 9
+chart_base_size <- 10
 
 # --------------------------------------------------------------------------
 # The corporate design
@@ -286,85 +288,91 @@ facts <- monthly %>%
 pct <- function(x, digits = 0) ifelse(is.na(x), "", sprintf(paste0("%+.", digits, "f"), 100 * x))
 ```
 
+```{r title, results='asis'}
+typst_document_title(paste0("Global factor factsheet, ", report_label))
+```
+
 # Global factor factsheet
 
 **`r report_label`**, the last month the French Data Library holds for every region -- `r lag_days` days before the factsheet was rendered. The library is rebuilt once a month, after the month has closed, so this says what the factors have done rather than what they are doing; for the market of today, read the prices of `fincommons.marketpricedata`.
 
 The factors are the long-short portfolios of Fama and French, built the same way in each region: **Market** the market return over the risk-free rate, **Size** small stocks over big, **Value** high book-to-market over low, **Profitability** robust over weak operating profitability, **Investment** conservative over aggressive asset growth, **Momentum** the past year's winners over its losers. Every region is measured against its own history since July 1990, the start of the regional files, so that a rank in the United States means what it means in Japan. Returns are in U.S. dollars.
 
-```{r heat-helpers}
-heatmap <- function(data, fill, label, limits, palette_hue, title, note,
-                    midpoint = NULL, high_is_bad = FALSE) {
-  # White on a strong colour, ink on a pale one, so that every label can be
-  # read: the strength is how far the value lies from the pale end of the
-  # scale, as a share of the way to the strong end.
-  value <- rlang::eval_tidy(rlang::enquo(fill), data)
-  squished <- pmin(pmax(value, limits[1]), limits[2])
-  strength <- if (is.null(midpoint)) {
-    (squished - limits[1]) / diff(limits)
-  } else {
-    abs(squished - midpoint) / max(midpoint - limits[1], limits[2] - midpoint)
-  }
-  data$label_colour <- ifelse(!is.na(strength) & strength > 0.6, "white",
-                              design_colours()[["ink"]])
-  g <- ggplot(data, aes(factor, region)) +
-    geom_tile(aes(fill = {{ fill }}), colour = "white", linewidth = 0.8) +
-    geom_text(aes(label = {{ label }}, colour = label_colour),
-              size = chart_base_size / .pt * 0.95) +
-    scale_colour_identity() +
-    scale_x_discrete(position = "top", labels = function(x) x) +
-    scale_y_discrete(labels = region_label) +
-    labs(x = NULL, y = NULL, title = title,
-         caption = caption_corporate_design(source_line, last = report_label,
-                                            lang = lang, note = wrap_labels(note, 150))) +
-    theme_report +
-    theme(panel.grid = element_blank(), legend.position = "none",
-          axis.ticks = element_blank(),
-          axis.text.x.top = element_text(face = "bold"))
-  if (is.null(midpoint)) {
-    g + scale_fill_gradient(low = "white", high = palette_hue, limits = limits,
-                            oob = scales::squish, na.value = "grey95")
-  } else {
-    # Red for what is bad: a low rank, or a high volatility.
-    ends <- palette_corporate_design("diverging", 3)[c(1, 3)]
-    if (high_is_bad) ends <- rev(ends)
-    g + scale_fill_gradient2(low = ends[1], mid = "white", high = ends[2],
-                             midpoint = midpoint, limits = limits,
-                             oob = scales::squish, na.value = "grey95")
-  }
+```{r tables}
+# The three tables of the first page. Their numbers are text, which a screen
+# reader reads and a reader can copy; the colour of a cell adds to its number
+# and never replaces it, since the number itself, or the one beside it,
+# says what the colour does.
+in_order <- facts %>%
+  mutate(region = as.character(region)) %>%
+  arrange(match(region, regions), factor)
+as_matrix <- function(column) {
+  matrix(column, nrow = length(regions), byrow = TRUE,
+         dimnames = list(regions, factor_order))
 }
+red <- palette_corporate_design("diverging", 3)[1]
+blue <- palette_corporate_design("diverging", 3)[3]
+diverging <- function(x) {
+  ifelse(is.na(x), NA, scales::div_gradient_pal(red, "#FFFFFF", blue)(pmin(pmax(x, 0), 1)))
+}
+deepening <- function(x) {
+  ifelse(is.na(x), NA, scales::seq_gradient_pal("#FFFFFF", red)(pmin(pmax(x, 0), 1)))
+}
+# A volatility below its median is blue and one above it red, on a scale
+# that reaches its strongest colour at half and at two and a half times it.
+calming <- function(ratio) {
+  position <- ifelse(ratio < 1, 0.5 - 0.5 * pmin((1 - ratio) / 0.5, 1),
+                     0.5 + 0.5 * pmin((ratio - 1) / 1.5, 1))
+  ifelse(is.na(ratio), NA, scales::div_gradient_pal(blue, "#FFFFFF", red)(position))
+}
+region_names <- region_label(regions)
 ```
 
 ## Twelve months
 
-```{r heat-twelve}
-#| fig-height: 2.75
-heatmap(facts, rank12, paste0(pct(twelve), "%"), c(0, 100), NULL,
-        title = NULL, midpoint = 50,
-        note = paste0("The twelve months to ", report_label, ", compounded from the monthly factors. ",
-                      "Colour: the rank of that return among every twelve-month return since July 1990, ",
-                      "red at the bottom, blue at the top."))
+```{r table-twelve, results='asis'}
+typst_colour_table(
+  region_names,
+  as_matrix(ifelse(is.na(in_order$rank12), pct(in_order$twelve),
+                   paste0(pct(in_order$twelve), "% (", sprintf("%.0f", in_order$rank12), ")"))),
+  as_matrix(diverging(in_order$rank12 / 100)),
+  factor_order,
+  paste0("The twelve months to ", report_label, ", compounded from the monthly factors, ",
+         "and in brackets the rank of that return among every twelve-month return since ",
+         "July 1990, from 0 at the lowest to 100 at the highest. The colour follows the ",
+         "rank: red towards the lowest, blue towards the highest."),
+  row_header_title = "Region")
 ```
 
 ## Drawdowns
 
-```{r heat-drawdown}
-#| fig-height: 2.75
-heatmap(facts, depth, ifelse(dd > -0.005, "0%", sprintf("%.0f%%", 100 * dd)), c(0, 1), palette_corporate_design("diverging", 3)[1],
-        title = NULL,
-        note = paste0("How far each factor's cumulated return stands below its previous peak. ",
-                      "Colour: that depth as a share of the deepest since July 1990."))
+```{r table-drawdown, results='asis'}
+drawdown_text <- function(x) ifelse(x > -0.005, "0%", sprintf("%.0f%%", 100 * x))
+typst_colour_table(
+  region_names,
+  as_matrix(paste0(drawdown_text(in_order$dd), " (", drawdown_text(in_order$worst), ")")),
+  as_matrix(deepening(in_order$depth)),
+  factor_order,
+  paste0("How far each factor's cumulated return stands below its previous peak in ",
+         report_label, ", and in brackets the deepest it has been since July 1990. The ",
+         "red deepens with the share of the deepest that the drawdown has reached."),
+  row_header_title = "Region")
 ```
 
 ## Volatility
 
-```{r heat-volatility}
-#| fig-height: 2.75
-heatmap(facts, vol_ratio, ifelse(is.na(vol_ratio), "n/a", sprintf("%.1f", vol_ratio)),
-        c(0.5, 2.5), NULL, title = NULL, midpoint = 1, high_is_bad = TRUE,
-        note = paste0("Volatility of the last ", volatility_days, " trading days against its median since July 1990; red above it, blue below. ",
-                      if (length(no_daily) > 0) paste0(paste(region_label(no_daily), collapse = ", "),
-                                                       ": the library publishes no daily file. ") else ""))
+```{r table-volatility, results='asis'}
+typst_colour_table(
+  region_names,
+  as_matrix(ifelse(is.na(in_order$vol_ratio), "no daily data", sprintf("%.1f", in_order$vol_ratio))),
+  as_matrix(calming(in_order$vol_ratio)),
+  factor_order,
+  paste0("The volatility of the last ", volatility_days, " trading days to ", report_label,
+         " as a multiple of its median since July 1990: above 1 more volatile than usual, ",
+         "red; below 1 calmer, blue.",
+         if (length(no_daily) > 0) paste0(" ", paste(region_label(no_daily), collapse = ", "),
+                                          ": the library publishes no daily file.") else ""),
+  row_header_title = "Region")
 ```
 
 ## What stands out
@@ -403,8 +411,7 @@ if (nrow(flag_text) == 0) {
 
 ## The market, region by region
 
-```{r market}
-#| fig-height: 3.0
+```{r recent}
 recent_start <- seq(report_end + 1, by = "-1 month", length.out = recent_months + 1)[recent_months + 1]
 recent <- monthly %>%
   filter(ref_date >= recent_start) %>%
@@ -414,36 +421,66 @@ recent <- monthly %>%
   ungroup() %>%
   mutate(region_name = factor(region_label(region), levels = region_label(regions)))
 
+# What the alt text of the two charts says: where each series ended.
+market_end <- recent %>% filter(factor == "Market") %>%
+  group_by(region_name) %>% summarise(end = cumulated[ref_date == max(ref_date)], .groups = "drop") %>%
+  arrange(desc(end))
+alt_market <- paste0(
+  "Small multiples, one panel per region, each showing the market factor of that region ",
+  "cumulated over the ", recent_months, " months to ", report_label,
+  " against the other regions in grey. Over the period the market factor gained ",
+  paste0(market_end$region_name, " ", sprintf("%.0f%%", 100 * market_end$end), collapse = ", "), ".")
+
+styles_end <- recent %>% filter(factor != "Market") %>%
+  group_by(region_name, factor) %>% summarise(end = cumulated[ref_date == max(ref_date)], .groups = "drop") %>%
+  group_by(region_name) %>% summarise(text = paste0(factor, " ", sprintf("%+.0f%%", 100 * end), collapse = ", "), .groups = "drop")
+alt_styles <- paste0(
+  "Small multiples, one panel per region, each showing the five style factors cumulated over the ",
+  recent_months, " months to ", report_label, ", told apart by colour and by line type. Where they ended: ",
+  paste0(styles_end$region_name, ": ", styles_end$text, collapse = "; "), ".")
+```
+
+```{r market}
+#| fig-height: 3.6
+#| fig-alt: !expr alt_market
 market <- recent %>% filter(factor == "Market")
-ggplot(market, aes(ref_date, 100 * cumulated, colour = region_name)) +
+# Every panel shows all regions in grey and its own in ink, so that a region
+# is found by its panel and read against the others, not by its colour.
+ggplot(market, aes(ref_date, 100 * cumulated)) +
   geom_zeroline() +
-  geom_line(linewidth = linewidth_corporate_design) +
-  scale_colour_corporate_design(name = NULL) +
+  # Without the column the panels are drawn by, the grey lines repeat in all.
+  geom_line(data = market %>% transmute(ref_date, cumulated, group_name = region_name),
+            aes(group = group_name), colour = design_colours()[["mute"]], linewidth = 0.4) +
+  geom_line(colour = design_colours()[["ink"]], linewidth = linewidth_corporate_design) +
+  facet_wrap(~ region_name, ncol = 4) +
   scale_x_date(date_labels = "%Y") +
   labs(x = NULL, y = "cumulated, %",
        caption = caption_corporate_design(
          source_line, last = report_label, lang = lang,
          note = paste0("The market factor, the return over the risk-free rate, cumulated over the last ",
-                       recent_months, " months."))) +
-  theme_report + theme(legend.position = "bottom")
+                       recent_months, " months; in each panel its region, against the others in grey."))) +
+  theme_report
 ```
 
 ## The styles, region by region
 
 ```{r styles}
-#| fig-height: 4.0
-ggplot(recent %>% filter(factor != "Market"),
-       aes(ref_date, 100 * cumulated, colour = region_name)) +
+#| fig-height: 4.4
+#| fig-alt: !expr alt_styles
+ggplot(recent %>% filter(factor != "Market") %>% mutate(factor = droplevels(factor)),
+       aes(ref_date, 100 * cumulated, colour = factor, linetype = factor)) +
   geom_zeroline() +
-  geom_line(linewidth = 0.45) +
-  facet_wrap(~ factor, ncol = 3) +
-  scale_colour_corporate_design(name = NULL) +
+  geom_line(linewidth = 0.55) +
+  facet_wrap(~ region_name, ncol = 4) +
+  scale_colour_accessible(name = NULL) +
+  scale_linetype_accessible(name = NULL) +
   scale_x_date(date_labels = "%Y") +
   labs(x = NULL, y = "cumulated, %",
        caption = caption_corporate_design(
          source_line, last = report_label, lang = lang,
-         note = paste0("The five style factors cumulated over the last ", recent_months, " months."))) +
-  theme_report + theme(legend.position = "bottom")
+         note = paste0("The five style factors cumulated over the last ", recent_months,
+                       " months, told apart by colour and by line type."))) +
+  theme_report + theme(legend.position = "bottom", legend.key.width = grid::unit(2.2, "lines"))
 ```
 
 ## How cheap is value? The United States as a reference
@@ -469,6 +506,14 @@ if (has_spread) {
   spread_now <- spread$spread[nrow(spread)]
   spread_year <- spread$year[nrow(spread)]
   spread_rank <- 100 * mean(spread$spread <= spread_now)
+  alt_spread <- paste0(
+    "Line chart of the U.S. value spread, the log of the book-to-market of the highest decile over the lowest, ",
+    "by year of portfolio formation from ", spread$year[1], " to ", spread_year, ", with its median as a dashed line. ",
+    "It peaked in ", spread$year[which.max(spread$spread)], " at ", sprintf("%.2f", max(spread$spread)),
+    " and stood at ", sprintf("%.2f", spread_now), " in ", spread_year, ", above ",
+    sprintf("%.0f", spread_rank), "% of the years; its median is ", sprintf("%.2f", stats::median(spread$spread)), ".")
+} else {
+  alt_spread <- "No value spread: the table holds no portfolio book-to-market of the United States."
 }
 ```
 
@@ -476,6 +521,7 @@ if (has_spread) {
 
 ```{r value-spread-chart}
 #| fig-height: 2.1
+#| fig-alt: !expr alt_spread
 if (has_spread) {
   ggplot(spread, aes(year, spread)) +
     geom_hline(yintercept = stats::median(spread$spread), linetype = "dashed",

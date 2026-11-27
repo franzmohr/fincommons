@@ -28,6 +28,10 @@
 #   label_last(), wrap_labels()      labelling helpers
 #   caption_corporate_design()       standard source line
 #   save_chart()                     export at exact pixel sizes
+#   palette_accessible, scale_{colour,linetype}_accessible()   series told
+#                                    apart by more than colour, at 3:1
+#   contrast_ratio(), text_colour_on()   WCAG contrast
+#   typst_document_title(), typst_colour_table()   raw Typst for PDF/UA
 # ---------------------------------------------------------------------------
 
 library(ggplot2)
@@ -393,6 +397,106 @@ save_chart <- function(plot, name, lang = NULL, format = "portrait",
                   bg = unname(design_colours(mode)[["paper"]]))
   message("wrote ", path, " (", dims[1], "x", dims[2], ")")
   invisible(path)
+}
+
+# -- Accessibility -----------------------------------------------------------
+# What a report needs to be read by everyone, and to be a tagged PDF/UA-1
+# document, which Typst refuses to produce without it: a title for the
+# document, alt text on every chart, series that are told apart by more than
+# colour, colours that stand out from the page, and numbers in tables rather
+# than only in pictures. The reports state `pdf-standard: ua-1` and `lang` in
+# their front matter and use what is here.
+
+# Six colours for the series of a line chart, each with a contrast of at
+# least 4.5:1 against the white page, where WCAG 2.2 asks 3:1 of a graphic
+# (1.4.11). They were chosen from twenty candidates of the palettes of Okabe
+# and Ito and of Tol so that every two stay apart under the three forms of
+# colour blindness as Machado, Oliveira and Fernandes (2009) simulate them:
+# no pair comes closer than 15 units in CIELAB under any of them. A chart
+# pairs them with the line types below, so that no series is told apart by
+# colour alone (WCAG 2.2, 1.4.1); more than six series belong in small
+# multiples.
+palette_accessible <- c("#0072B2", "#C24F00", "#22282E", "#882255",
+                        "#004488", "#5B6D7E")
+# Six line types, no two alike, so that the series stay apart in a print in
+# black and white as well.
+linetypes_accessible <- c("solid", "22", "62", "4212", "1343", "F282")
+
+scale_colour_accessible <- function(...) {
+  ggplot2::discrete_scale("colour", palette = function(n) {
+    if (n > length(palette_accessible)) {
+      stop("An accessible chart tells at most ", length(palette_accessible),
+           " series apart; draw ", n, " as small multiples.")
+    }
+    palette_accessible[seq_len(n)]
+  }, ...)
+}
+scale_linetype_accessible <- function(...) {
+  ggplot2::discrete_scale("linetype", palette = function(n) linetypes_accessible[seq_len(n)], ...)
+}
+
+# The relative luminance of a colour and the contrast of two, as WCAG 2.2
+# defines them.
+relative_luminance <- function(colour) {
+  rgb <- grDevices::col2rgb(colour) / 255
+  linear <- ifelse(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055)^2.4)
+  as.numeric(c(0.2126, 0.7152, 0.0722) %*% linear)
+}
+contrast_ratio <- function(a, b) {
+  la <- vapply(a, relative_luminance, numeric(1))
+  lb <- vapply(b, relative_luminance, numeric(1))
+  (pmax(la, lb) + 0.05) / (pmin(la, lb) + 0.05)
+}
+
+# The text colour that reads best on a fill: ink or white, whichever has the
+# higher contrast with it.
+text_colour_on <- function(fill, ink = unname(design_colours()[["ink"]])) {
+  ifelse(contrast_ratio(fill, ink) >= contrast_ratio(fill, "#FFFFFF"), ink, "#FFFFFF")
+}
+
+# Text as a Typst string literal, which Typst shows as it stands: nothing in
+# it is read as markup.
+typst_string <- function(x) {
+  x <- gsub("\\\\", "\\\\\\\\", as.character(x))
+  paste0("\"", gsub("\"", "\\\\\"", x), "\"")
+}
+
+# The title of the document, which PDF/UA requires and a screen reader
+# announces. Written as raw Typst from a chunk with results='asis', so that
+# it can be computed -- a country, a month -- without a title block.
+typst_document_title <- function(title) {
+  cat("\n```{=typst}\n#set document(title: ", typst_string(title), ")\n```\n\n", sep = "")
+}
+
+# A table whose cells are coloured, written as raw Typst from a chunk with
+# results='asis': the numbers are text a screen reader reads and a reader can
+# copy, the header row is tagged as such, and the colour of a cell only adds
+# to what its number says. `labels` and `fills` are matrices of the shape of
+# the body; `fills` may hold NA for a cell left white. The text of a cell is
+# ink or white, whichever reads better on its fill.
+typst_colour_table <- function(row_header, labels, fills, column_header,
+                               caption, row_header_title = "") {
+  stopifnot(identical(dim(labels), dim(fills)), nrow(labels) == length(row_header),
+            ncol(labels) == length(column_header))
+  cell <- function(text, fill) {
+    if (is.na(fill)) return(paste0("[#", typst_string(text), "]"))
+    paste0("table.cell(fill: rgb(", typst_string(fill), "))[#text(fill: rgb(",
+           typst_string(text_colour_on(fill)), "))[#", typst_string(text), "]]")
+  }
+  body <- vapply(seq_len(nrow(labels)), function(i) {
+    paste(c(paste0("[#", typst_string(row_header[i]), "]"),
+            vapply(seq_len(ncol(labels)), function(j) cell(labels[i, j], fills[i, j]),
+                   character(1))), collapse = ", ")
+  }, character(1))
+  cat("\n```{=typst}\n",
+      "#figure(kind: table, caption: [#", typst_string(caption), "],\n",
+      "  table(columns: (auto,", strrep(" 1fr,", ncol(labels)), "),\n",
+      "    align: (left,", strrep(" center,", ncol(labels)), "),\n",
+      "    stroke: 0.5pt + white, inset: 5pt,\n",
+      "    table.header(", paste(c(paste0("[#strong(", typst_string(row_header_title), ")]"),
+                                 paste0("[#strong(", typst_string(column_header), ")]")),
+                               collapse = ", "), "),\n",
+      "    ", paste(body, collapse = ",\n    "), "))\n```\n\n", sep = "")
 }
 
 # -- Legacy ------------------------------------------------------------------
