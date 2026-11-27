@@ -44,8 +44,9 @@ PUBLIC_API = {
     "fincommons.famafrenchdata": [
         "connect_to_famafrenchdata", "series", "update_famafrenchdata",
     ],
-    "fincommons.firds": ["connect_to_firds"],
+    "fincommons.firds": ["connect_to_firds", "get_metadata_maxdate"],
     "fincommons.firds.common": ["path_silver_compact"],
+    "fincommons.firds.history": ["records_as_of"],
     "fincommons.layout": ["rebalanced"],
     "fincommons.log": [
         "ContextFormatter", "DEFAULT_DATE_FORMAT", "DEFAULT_FORMAT", "LOGGER_NAME",
