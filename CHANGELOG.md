@@ -8,6 +8,22 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `contracts`: quality rules. `check_quality(frame, contract)` runs the
+  rules a contract states on a table -- the predefined metrics of ODCS
+  (`nullValues`, `missingValues`, `invalidValues`, `duplicateValues`,
+  `rowCount`) and SQL queries over `${table}` and `${column}`, each compared
+  as the rule says -- and returns a `QualityResult` per rule;
+  `quality_failures` keeps the failed ones of a severity. Rules in words or
+  for another engine are listed but not run. `validate_contract` holds a rule
+  the framework runs to a unique name, a dimension, a severity, one
+  comparison, and a metric that belongs where it is stated.
+
+- `exchangerate`: the contract, now version 1.1.0, states eight quality
+  rules: one rate per day and pair, a table that is not empty, no currency
+  quoted in itself, ISO 4217 codes, every rate stated and positive, and -- a
+  warning -- no rate carried more than a week (`MAX_FILL_DAYS`) after its
+  quote. The table the module writes meets them, rebased or not.
+
 - `contracts`: a contract in status `proposed` or `draft`, which specifies
   a table no code writes yet, is validated like any other but left out of
   `catalogue_rows`, and so of the column catalogue, until it is active.
@@ -275,6 +291,12 @@ release may change the public API, which `tests/test_public_api.py` lists.
   regime, and its note now says that a Japanese row is in yen.
 
 ### Changed
+
+- `contracts.validate_product`: an input port accepts a contract shipped in
+  the version it names or a later minor or patch version of the same major
+  version, as a minor version only adds to a contract; an output port still
+  names the version its module ships. finsupverse's DORA product, which names
+  the exchange rate contract in 1.0.0, is served by 1.1.0.
 
 - `testing`: the driver of the shared test session is started with 8 GB of
   heap instead of 4 GB. At some 1,400 tests the suite ran out of heap in the

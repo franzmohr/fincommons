@@ -181,9 +181,35 @@ def test_a_product_names_contracts_that_are_shipped_in_that_version():
 
     with pytest.raises(c.ContractError) as raised:
         c.validate_product(product)
-    assert "is shipped in version 1.0.0, the port names 2.0.0" in str(raised.value)
+    assert "is shipped in version 1.1.0, the port names 2.0.0" in str(raised.value)
     assert "no package ships the contract 'fincommons.exchangerate.gold.rates'" \
         in str(raised.value)
+
+
+@pytest.mark.parametrize("named, accepted", [
+    ("1.0.0", True), ("1.1.0", True), ("1.2.0", False), ("0.9.0", False), ("2.0.0", False),
+    ("1.0", False)])
+def test_an_input_port_accepts_a_later_minor_version_of_the_same_major(named, accepted):
+    # The exchange rate contract is shipped in 1.1.0. A consumer written
+    # against 1.0.0 is served by it; one written against a later version or
+    # another major version is not.
+    product = copy.deepcopy(c.products()["fincommons.exchangerate"])
+    product["inputPorts"] = [{"name": "rates", "version": named,
+                              "contractId": EXCHANGERATE}]
+
+    if accepted:
+        c.validate_product(product)
+    else:
+        with pytest.raises(c.ContractError, match=f"the port names {named}"):
+            c.validate_product(product)
+
+
+def test_an_output_port_names_the_version_it_writes():
+    product = copy.deepcopy(c.products()["fincommons.exchangerate"])
+    product["outputPorts"][0]["version"] = "1.0.0"
+
+    with pytest.raises(c.ContractError, match="the port names 1.0.0"):
+        c.validate_product(product)
 
 
 def test_a_draft_contract_is_not_in_the_catalogue(monkeypatch):
@@ -242,3 +268,75 @@ def test_a_decimal_keeps_its_precision_and_an_unknown_type_is_an_error():
     column(contract, "value")["physicalType"] = "money"
     with pytest.raises(c.ContractError, match="no Spark type"):
         c.spark_schema(contract)
+
+
+# Quality rules
+# --------------------------------------------------------------------------
+
+
+def test_the_exchange_rates_state_quality_rules_the_framework_runs():
+    rules = [r for _, r in c._rules(a_contract()["schema"][0])]
+
+    assert len(rules) == 8
+    assert all(r.get("type", "library") in ("library", "sql") for r in rules)
+
+
+@pytest.mark.parametrize("change, problem", [
+    (lambda q: q.pop("severity"), "severity is one of info, warning, error"),
+    (lambda q: q.pop("dimension"), "has no dimension"),
+    (lambda q: q.update(mustBeLessThan=1), "states one comparison"),
+    (lambda q: q.update(metric="nullValues"), "the metric 'nullValues' is not one of a table"),
+    (lambda q: q.update(arguments={"properties": ["ref_date", "currency"]}),
+     "names its columns in arguments.properties"),
+])
+def test_a_rule_of_the_table_states_what_it_needs_to_be_run(change, problem):
+    contract = a_contract()
+    change(contract["schema"][0]["quality"][0])
+
+    assert problem in problems(contract)
+
+
+def test_a_rule_of_a_column_states_what_it_needs_to_be_run():
+    contract = a_contract()
+    rule = column(contract, "base")["quality"][0]
+    rule["arguments"] = {}
+    rule["metric"] = "rowCount"
+    column(contract, "quote")["quality"][0]["name"] = "base_is_a_currency_code"
+    contract["schema"][0]["quality"][2]["query"] = "SELECT COUNT(*) FROM rates"
+
+    found = problems(contract)
+
+    assert "the metric 'rowCount' is not one of a column" in found
+    assert "two rules have the name 'base_is_a_currency_code'" in found
+    assert "the query reads the table as ${table}" in found
+
+
+def test_a_rule_in_words_or_for_another_engine_is_listed_but_not_run(spark):
+    contract = a_contract()
+    contract["schema"][0]["quality"] = [
+        {"type": "text", "description": "Rates are as the ECB published them."},
+        {"type": "custom", "engine": "soda", "implementation": "row_count > 0"}]
+    for prop in contract["schema"][0]["properties"]:
+        prop.pop("quality", None)
+    c.validate_contract(contract)
+    frame = spark.createDataFrame([], c.spark_schema(contract))
+
+    results = c.check_quality(frame, contract)
+
+    assert [(r.value, r.passed) for r in results] == [(None, None), (None, None)]
+    assert c.quality_failures(results) == []
+
+
+def test_a_rule_counted_in_percent_is_a_share_of_the_rows(spark):
+    contract = a_contract()
+    rule = column(contract, "quote")["quality"][0]
+    rule.update(unit="percent", mustBeLessOrEqualTo=10)
+    rule.pop("mustBe")
+    rows = [("2020-01-01", "EUR", q, 1.0, "ref", "ECB", False) for q in ("USD", "usd", "GBP", "JPY")]
+    frame = spark.createDataFrame(rows, "ref_date string, base string, quote string, "
+                                        "value double, type string, source string, imputed boolean")
+
+    result = next(r for r in c.check_quality(frame, contract) if r.rule == "quote_is_a_currency_code")
+
+    assert result.value == 25.0
+    assert result.passed is False

@@ -180,6 +180,15 @@ contract = load_contract("fincommons.exchangerate.silver.exchangerate")
 spark_schema(contract)
 ```
 
+The contract also states the rules the table is held to: one rate per day and pair, no currency quoted in itself, ISO 4217 codes, every rate stated and greater than zero, and, as a warning, no rate carried more than a week after its quote. `check_quality` runs them on the table and says, for each, what it counted and whether it passed:
+
+```python
+from fincommons.contracts import check_quality, load_contract, quality_failures
+results = check_quality(ex.connect_to_exchangerate(spark, "paths.yaml"),
+                        load_contract("fincommons.exchangerate.silver.exchangerate"))
+quality_failures(results)              # the errors; severities=("error", "warning") for both
+```
+
 On Databricks the contract also serves dashboards and assistants, through the semantic layer that `fincommons.semantic` generates from it: a metric view beside the table, whose measure `exchange_rate` gives the rate of one currency pair and is empty for a group holding several, the descriptions of the contract as comments on the table and its columns, and instructions for an assistant such as Genie, from the `context` of `data/product_exchangerate.yaml` -- how to compute a cross rate, what not to do, and example questions. The Silver layer has to be addressed by catalogue name for this.
 
 ```python

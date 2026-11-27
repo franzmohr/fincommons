@@ -48,4 +48,4 @@ outputPorts:
     type: table
     description: The Silver table of exchange rates, one row per day and currency pair.
     contractId: fincommons.exchangerate.silver.exchangerate
-    version: 1.0.0
+    version: 1.1.0

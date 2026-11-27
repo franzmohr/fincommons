@@ -1157,3 +1157,69 @@ def test_the_table_is_the_table_its_contract_describes(spark, data_lake, options
         key=lambda p: p["primaryKeyPosition"])]
     assert key == ["ref_date", "base", "quote"]
     assert table.groupBy(*key).count().filter("count > 1").count() == 0
+
+
+# The quality rules of the contract
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("options", [{}, {"rebase": "USD"}], ids=["euro", "rebased"])
+def test_the_table_meets_the_quality_rules_of_its_contract(spark, data_lake, options):
+    """Every rule the contract states holds on the table the module writes,
+    the warnings included, along both the paths that build it."""
+    from fincommons.contracts import check_quality, load_contract
+
+    write_ecb(data_lake, ["2020-01-03", "2020-01-06", "2020-01-20"],
+              USD=[1.10, 1.20, 1.15], GBP=[0.90, 0.92, 0.91])
+    write_internal(data_lake, [("2020-01-04", "EUR", "GBP", 0.91)])
+
+    ex.update_silver_exchangerate(spark, data_lake, **options)
+    results = check_quality(ex.connect_to_exchangerate(spark, data_lake),
+                            load_contract("fincommons.exchangerate.silver.exchangerate"))
+
+    assert {r.rule for r in results} == {
+        "one_rate_per_day_and_pair", "not_empty", "no_rate_of_a_currency_in_itself",
+        "carried_forward_at_most_a_week", "base_is_a_currency_code",
+        "quote_is_a_currency_code", "rate_is_stated", "rate_is_positive"}
+    assert [r for r in results if not r.passed] == []
+
+
+def test_a_broken_table_fails_the_rules_it_breaks(spark):
+    """One fault per rule, so that each rule is seen to count what it says."""
+    from fincommons.contracts import check_quality, load_contract, quality_failures, spark_schema
+
+    contract = load_contract("fincommons.exchangerate.silver.exchangerate")
+    day = lambda n: date(2020, 1, n)  # noqa: E731
+    rows = [
+        (day(1), "EUR", "USD", 1.1, "ref", "ECB", False),
+        (day(1), "EUR", "USD", 1.1, "ref", "ECB", False),       # a key twice
+        (day(1), "EUR", "EUR", 1.0, "ref", "ECB", False),       # a currency in itself
+        (day(1), "EUR", "usd", 1.1, "ref", "ECB", False),       # not a code
+        (day(1), "EUR", "GBP", -0.9, "ref", "ECB", False),      # negative
+    ] + [(day(n), "EUR", "JPY", 120.0, "ref", "ECB", n > 1) for n in range(1, 11)]
+    # JPY quoted on the 1st and carried to the 10th: the 9th and 10th are
+    # more than a week after the quote.
+
+    results = {r.rule: r for r in check_quality(
+        spark.createDataFrame(rows, spark_schema(contract)), contract)}
+
+    assert results["one_rate_per_day_and_pair"].value == 1
+    assert results["no_rate_of_a_currency_in_itself"].value == 1
+    assert results["quote_is_a_currency_code"].value == 1
+    assert results["rate_is_positive"].value == 1
+    assert results["carried_forward_at_most_a_week"].value == 2
+    assert results["carried_forward_at_most_a_week"].severity == "warning"
+    assert results["not_empty"].passed and results["base_is_a_currency_code"].passed
+    assert sorted(r.rule for r in quality_failures(results.values())) == [
+        "no_rate_of_a_currency_in_itself", "one_rate_per_day_and_pair",
+        "quote_is_a_currency_code", "rate_is_positive"]
+
+
+def test_the_rule_on_carrying_forward_is_the_limit_the_module_applies():
+    from fincommons.contracts import load_contract
+    from fincommons.exchangerate import silver as ex_silver
+
+    (rule,) = [r for r in load_contract("fincommons.exchangerate.silver.exchangerate")
+               ["schema"][0]["quality"] if r["name"] == "carried_forward_at_most_a_week"]
+
+    assert f"> {ex_silver.MAX_FILL_DAYS})" in " ".join(rule["query"].split())

@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from importlib import resources
 
 import yaml
@@ -70,7 +71,8 @@ __all__ = ["ODCS_VERSION", "ODPS_VERSION", "VENDOR", "CUSTOM_PROPERTIES",
            "AGGREGATIONS", "DEPLOYMENT_SECTIONS", "DRAFT_STATUSES", "ContractError",
            "contracts", "products", "load_contract", "validate_contract",
            "validate_product", "custom_property", "catalogue_rows",
-           "spark_schema"]
+           "spark_schema", "QUALITY_SEVERITIES", "QualityResult",
+           "check_quality", "quality_failures"]
 
 #: The version of ODCS the contracts are written against. A new version of
 #: the standard is adopted by changing this, the shipped JSON schema and the
@@ -290,6 +292,8 @@ def validate_contract(contract, file_name=None):
     schema object named like the table, no section that describes a
     deployment, and on every column a description, a logical and a physical
     type, a kind and a source, and the custom properties a measure needs.
+    A quality rule the framework runs states what :func:`check_quality`
+    needs to run it; see :func:`_quality_errors`.
 
     Raises
     ------
@@ -325,19 +329,40 @@ def validate_contract(contract, file_name=None):
             errors.append(f"{table.get('name')}: a column is named twice")
         for prop in properties:
             errors.extend(_property_errors(table.get("name"), prop, names))
+        errors.extend(_quality_errors(table, names))
     if errors:
         raise ContractError(f"The contract {contract.get('id')} is not valid:\n  "
                             + "\n  ".join(errors))
+
+
+def _version(text):
+    parts = str(text).split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def _accepts(kind, named, shipped):
+    """Whether a port that names version ``named`` is served by ``shipped``."""
+    if kind == "outputPorts":
+        return named == shipped
+    named, shipped = _version(named), _version(shipped)
+    return (named is not None and shipped is not None
+            and shipped[0] == named[0] and shipped >= named)
 
 
 def validate_product(product, packages=("fincommons",)):
     """Check a data product against the standard and against the contracts shipped.
 
     Every output port names, by ``contractId`` and ``version``, a contract
-    that one of ``packages`` ships in exactly that version, and so does
-    every input port. That is what makes the dependency of one module on the
-    tables of another a statement a test can check rather than one visible
-    only in the code.
+    that one of ``packages`` ships in exactly that version: a module states
+    the version of the tables it writes. Every input port names a contract
+    that is shipped in a version the port accepts -- the same major version,
+    and a minor and patch version no older than the port's -- since a minor
+    version adds to a contract and a patch corrects its wording, and neither
+    breaks a consumer written against the version before. That is what makes
+    the dependency of one module on the tables of another a statement a test
+    can check rather than one visible only in the code.
 
     Raises
     ------
@@ -357,7 +382,7 @@ def validate_product(product, packages=("fincommons",)):
             if contract is None:
                 errors.append(f"{kind} {port.get('name')}: no package ships the "
                               f"contract {port.get('contractId')!r}")
-            elif contract.get("version") != port.get("version"):
+            elif not _accepts(kind, port.get("version"), contract.get("version")):
                 errors.append(f"{kind} {port.get('name')}: the contract "
                               f"{port.get('contractId')} is shipped in version "
                               f"{contract.get('version')}, the port names "
@@ -449,3 +474,208 @@ def spark_schema(contract):
             fields.append(types.StructField(prop["name"], spark_type,
                                             not prop.get("required", False)))
     return types.StructType(fields)
+
+
+# Quality rules
+# --------------------------------------------------------------------------
+#
+# ODCS lets a contract state, on the table and on each column, the rules its
+# data is to meet: a predefined metric of the standard compared with a
+# threshold (type "library"), a SQL query whose result is compared the same
+# way ("sql"), a rule for a named engine ("custom"), or a sentence ("text").
+# The framework runs the first two itself, with Spark, so that the rules of a
+# contract are checks that are executed rather than promises. A rule of
+# another engine, or one in words, is left to whoever reads it.
+#
+# These are rules about a table as a whole -- that no key is repeated, that
+# no rate is negative -- and they answer with one number per rule. The
+# checks of fincommons.dataquality answer with one row per record they find
+# at fault, which is what a reader of a financial report needs; the two are
+# complementary, and neither replaces the other.
+
+#: How severe a failed rule is, as the examples of ODCS name them.
+QUALITY_SEVERITIES = ("info", "warning", "error")
+
+#: The predefined metrics of ODCS, by where they are stated: on a column, or
+#: on the table. ``duplicateValues`` is stated on a column, or on the table
+#: with the columns it counts in ``arguments.properties``.
+_COLUMN_METRICS = ("nullValues", "missingValues", "invalidValues", "duplicateValues")
+_TABLE_METRICS = ("rowCount", "duplicateValues")
+
+#: The comparisons of ODCS, each with the test a measured value has to pass.
+_OPERATORS = {
+    "mustBe": lambda v, x: v == x,
+    "mustNotBe": lambda v, x: v != x,
+    "mustBeGreaterThan": lambda v, x: v > x,
+    "mustBeGreaterOrEqualTo": lambda v, x: v >= x,
+    "mustBeLessThan": lambda v, x: v < x,
+    "mustBeLessOrEqualTo": lambda v, x: v <= x,
+    "mustBeBetween": lambda v, x: x[0] <= v <= x[1],
+    "mustNotBeBetween": lambda v, x: not (x[0] <= v <= x[1]),
+}
+
+#: What a query names the table and the column by; ODCS writes them so.
+_TABLE_PLACEHOLDER = "${table}"
+_COLUMN_PLACEHOLDER = "${column}"
+
+
+def _rules(table):
+    """Every quality rule of a table: ``(column, rule)``, the column ``None`` for the table's own."""
+    found = [(None, rule) for rule in table.get("quality") or []]
+    for prop in table.get("properties") or []:
+        found += [(prop.get("name"), rule) for rule in prop.get("quality") or []]
+    return found
+
+
+def _runs(rule):
+    return rule.get("type", "library") in ("library", "sql")
+
+
+def _quality_errors(table, names):
+    """The problems of the quality rules of a table that the framework runs.
+
+    A rule the framework runs has a name unique in its contract, a dimension
+    and a severity of :data:`QUALITY_SEVERITIES`, so that a failure can be
+    named, counted and weighed; one comparison; and what its type needs: a
+    metric that belongs where it is stated, with the arguments it takes, or a
+    query that reads the table.
+    """
+    errors, seen = [], set()
+    for column, rule in _rules(table):
+        where = f"{table.get('name')}{'.' + column if column else ''} rule {rule.get('name')!r}"
+        if not _runs(rule):
+            continue
+        name = rule.get("name")
+        if not name:
+            errors.append(f"{where}: a rule the framework runs has a name")
+        elif name in seen:
+            errors.append(f"{where}: two rules have the name {name!r}")
+        seen.add(name)
+        if not rule.get("dimension"):
+            errors.append(f"{where}: has no dimension")
+        if rule.get("severity") not in QUALITY_SEVERITIES:
+            errors.append(f"{where}: severity is one of {', '.join(QUALITY_SEVERITIES)}")
+        operators = [o for o in _OPERATORS if o in rule]
+        if len(operators) != 1:
+            errors.append(f"{where}: states one comparison, e.g. mustBe")
+        if rule.get("type", "library") == "sql":
+            if _TABLE_PLACEHOLDER not in rule.get("query", ""):
+                errors.append(f"{where}: the query reads the table as {_TABLE_PLACEHOLDER}")
+            if _COLUMN_PLACEHOLDER in rule.get("query", "") and column is None:
+                errors.append(f"{where}: a rule of the table has no {_COLUMN_PLACEHOLDER}")
+            continue
+        metric = rule.get("metric")
+        arguments = rule.get("arguments") or {}
+        allowed = _COLUMN_METRICS if column else _TABLE_METRICS
+        if metric not in allowed:
+            errors.append(f"{where}: the metric {metric!r} is not one of a "
+                          f"{'column' if column else 'table'}: {', '.join(allowed)}")
+        if metric == "invalidValues" and not ("validValues" in arguments or "pattern" in arguments):
+            errors.append(f"{where}: invalidValues names its validValues or its pattern")
+        if metric == "duplicateValues" and column is None:
+            counted = arguments.get("properties") or []
+            if not counted or not set(counted) <= names:
+                errors.append(f"{where}: a duplicate key of the table names its "
+                              "columns in arguments.properties")
+    return errors
+
+
+@dataclass(frozen=True)
+class QualityResult:
+    """The outcome of one quality rule of a contract on one table.
+
+    ``value`` is what was measured -- a count of rows, or a percentage where
+    the rule's unit is ``percent`` -- and ``passed`` whether it meets the
+    rule's comparison. A rule the framework does not run has neither.
+    """
+
+    contract: str
+    rule: str
+    column: str | None
+    dimension: str | None
+    severity: str | None
+    description: str
+    value: float | None
+    passed: bool | None
+
+
+def _measure(frame, view, column, rule, rows):
+    from pyspark.sql import functions as F
+
+    if rule.get("type", "library") == "sql":
+        query = rule["query"].replace(_TABLE_PLACEHOLDER, view)
+        if column is not None:
+            query = query.replace(_COLUMN_PLACEHOLDER, f"`{column}`")
+        return frame.sparkSession.sql(query).first()[0]
+    metric = rule["metric"]
+    arguments = rule.get("arguments") or {}
+    if metric == "rowCount":
+        return rows
+    if metric == "duplicateValues":
+        counted = [column] if column else list(arguments["properties"])
+        present = frame.where(" AND ".join(f"`{c}` IS NOT NULL" for c in counted))
+        return present.count() - present.select(*counted).distinct().count()
+    value = F.col(f"`{column}`")
+    if metric == "nullValues":
+        return frame.where(value.isNull()).count()
+    if metric == "missingValues":
+        missing = [m for m in arguments.get("missingValues") or [] if m is not None]
+        return frame.where(value.isNull() | value.isin(missing)).count()
+    if metric == "invalidValues":
+        valid = value.isNotNull()
+        if "validValues" in arguments:
+            bad = valid & ~value.isin(list(arguments["validValues"]))
+        else:
+            bad = valid & ~value.cast("string").rlike(arguments["pattern"])
+        return frame.where(bad).count()
+    raise ContractError(f"the metric {metric!r} is not one the framework runs")
+
+
+def check_quality(frame, contract):
+    """Run the quality rules of a contract on a table.
+
+    Parameters
+    ----------
+    frame: pyspark.sql.DataFrame
+        The table the contract describes, as read.
+    contract: dict
+        Its contract, from :func:`load_contract`.
+
+    Returns
+    -------
+    list of QualityResult
+        One per rule, the rules of the table first and then those of each
+        column, in the order the contract states them. A rule of type
+        ``text`` or ``custom`` is listed with no value and no verdict.
+    """
+    import uuid
+
+    view = f"_contract_{uuid.uuid4().hex}"
+    frame.createOrReplaceTempView(view)
+    try:
+        rows = frame.count()
+        results = []
+        for table in contract.get("schema") or []:
+            for column, rule in _rules(table):
+                common = dict(contract=contract.get("id"), rule=rule.get("name") or "",
+                              column=column, dimension=rule.get("dimension"),
+                              severity=rule.get("severity"),
+                              description=" ".join(str(rule.get("description", "")).split()))
+                if not _runs(rule):
+                    results.append(QualityResult(value=None, passed=None, **common))
+                    continue
+                value = _measure(frame, view, column, rule, rows)
+                if rule.get("unit") == "percent" and rule.get("metric") != "rowCount":
+                    value = 100.0 * value / rows if rows else 0.0
+                operator = next(o for o in _OPERATORS if o in rule)
+                passed = value is not None and bool(_OPERATORS[operator](value, rule[operator]))
+                results.append(QualityResult(value=value, passed=passed, **common))
+        return results
+    finally:
+        frame.sparkSession.catalog.dropTempView(view)
+
+
+def quality_failures(results, severities=("error",)):
+    """The rules among ``results`` that failed with one of ``severities``."""
+    return [r for r in results if r.passed is False and r.severity in severities]
+

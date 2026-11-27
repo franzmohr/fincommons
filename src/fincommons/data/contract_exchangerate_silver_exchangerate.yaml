@@ -12,7 +12,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: fincommons.exchangerate.silver.exchangerate
 name: exchangerate
-version: 1.0.0
+version: 1.1.0
 status: active
 domain: exchangerate
 dataProduct: fincommons.exchangerate
@@ -46,6 +46,47 @@ schema:
       which no source quotes the pair carry the last rate quoted before them,
       and are marked as imputed.
     dataGranularityDescription: One rate per reference date, base currency and quoted currency.
+    quality:
+      - name: one_rate_per_day_and_pair
+        description: No day and currency pair has more than one rate.
+        type: library
+        metric: duplicateValues
+        arguments:
+          properties: [ref_date, base, quote]
+        mustBe: 0
+        dimension: uniqueness
+        severity: error
+      - name: not_empty
+        description: The table holds rates.
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+      - name: no_rate_of_a_currency_in_itself
+        description: >-
+          No row quotes a currency in itself; a rebase drops the rate of the
+          rebase currency in itself rather than keeping a rate of one.
+        type: sql
+        query: SELECT COUNT(*) FROM ${table} WHERE base = quote
+        mustBe: 0
+        dimension: consistency
+        severity: error
+      - name: carried_forward_at_most_a_week
+        description: >-
+          No day carries a rate more than a week after the last day the pair
+          was quoted (MAX_FILL_DAYS in fincommons.exchangerate.silver). A
+          rebased table can exceed it where the rate of the rebase currency
+          was carried on a day the pair was quoted, so this is a warning.
+        type: sql
+        query: >-
+          SELECT COUNT(*) FROM (SELECT ref_date, imputed, MAX(CASE WHEN NOT
+          imputed THEN ref_date END) OVER (PARTITION BY base, quote ORDER BY
+          ref_date) AS quoted FROM ${table}) WHERE imputed AND (quoted IS NULL
+          OR DATEDIFF(ref_date, quoted) > 7)
+        mustBe: 0
+        dimension: consistency
+        severity: warning
     properties:
       - name: ref_date
         businessName: Reference date
@@ -90,6 +131,16 @@ schema:
         customProperties:
           - {property: kind, value: currency, vendor: fincommons}
           - {property: source, value: declared, vendor: fincommons}
+        quality:
+          - name: base_is_a_currency_code
+            description: The base currency is written as an ISO 4217 code, three capital letters.
+            type: library
+            metric: invalidValues
+            arguments:
+              pattern: '^[A-Z]{3}$'
+            mustBe: 0
+            dimension: conformity
+            severity: error
       - name: quote
         businessName: Quoted currency
         logicalType: string
@@ -110,6 +161,16 @@ schema:
         customProperties:
           - {property: kind, value: currency, vendor: fincommons}
           - {property: source, value: declared, vendor: fincommons}
+        quality:
+          - name: quote_is_a_currency_code
+            description: The quoted currency is written as an ISO 4217 code, three capital letters.
+            type: library
+            metric: invalidValues
+            arguments:
+              pattern: '^[A-Z]{3}$'
+            mustBe: 0
+            dimension: conformity
+            severity: error
       - name: value
         businessName: Exchange rate
         logicalType: number
@@ -134,6 +195,21 @@ schema:
               A rate is the price of one currency in another. Rates are never
               summed, and their average is only meaningful for one pair.
           - {property: aggregateWithin, value: [base, quote], vendor: fincommons}
+        quality:
+          - name: rate_is_stated
+            description: Every row states a rate.
+            type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            severity: error
+          - name: rate_is_positive
+            description: A rate is the price of one currency in another, and is greater than zero.
+            type: sql
+            query: SELECT COUNT(*) FROM ${table} WHERE ${column} <= 0
+            mustBe: 0
+            dimension: accuracy
+            severity: error
       - name: type
         businessName: Kind of rate
         logicalType: string
