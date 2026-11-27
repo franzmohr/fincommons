@@ -107,6 +107,10 @@ def _yfinance():
 def load_list_of_yahoo_tickers():
     """Read the ISIN to Yahoo ticker mapping shipped with the package.
 
+    Its columns are ``isin``, ``yahoo``, ``first_date`` and ``name``. The ISIN
+    is named as the Silver table names it, since that is the table the
+    mapping is read beside.
+
     The data directory is located relative to this module rather than through a
     hard coded package name, as in :mod:`fincommons.schemas`, so that the
     package works whether it is imported as ``fincommons`` or, from the
@@ -404,8 +408,11 @@ def update_bronze_yahoo(spark, config_path, min_date=YAHOO_FIRST_DATE):
     --------
     >>> update_bronze_yahoo(spark, "path/to/configuration/file", "2024-01-01")
     """
+    # The Bronze layer keeps the name it was written with, ISIN, while the
+    # mapping names the column as the Silver table does; the download writes
+    # the column it is told the identifier is in, so it is told the Bronze one.
     download_yahoo_prices(spark,
-                          load_list_of_yahoo_tickers(),
+                          load_list_of_yahoo_tickers().rename(columns={"isin": "ISIN"}),
                           "ISIN",
                           path_bronze_yahoo_marketpricedata(config_path),
                           min_date)

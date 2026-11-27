@@ -340,7 +340,7 @@ def describe_instrument(identifier, config_path=None):
              "The exchange serves two years of history; the lake holds what it "
              "collected since."])
 
-    row = _yahoo_row(load_list_of_yahoo_tickers(), "ISIN", ident)
+    row = _yahoo_row(load_list_of_yahoo_tickers(), "isin", ident)
     if row is not None:
         ticker = row["yahoo"]
         index = ticker.startswith("^") or ident in _INDEX_ISINS
