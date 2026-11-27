@@ -186,6 +186,24 @@ def test_a_product_names_contracts_that_are_shipped_in_that_version():
         in str(raised.value)
 
 
+def test_a_draft_contract_is_not_in_the_catalogue(monkeypatch):
+    # A draft specifies a table no code writes yet, so its columns are no
+    # description of anything a reader can find.
+    shipped = c.contracts()
+    draft = copy.deepcopy(shipped["fincommons.exchangerate.silver.exchangerate"])
+    draft["id"] = "fincommons.exchangerate.silver.planned"
+    draft["status"] = "draft"
+    draft["schema"][0]["name"] = "planned"
+    draft["schema"][0]["properties"][0]["name"] = "planned_column"
+    monkeypatch.setattr(c, "contracts",
+                        lambda packages=("fincommons",): {**shipped, draft["id"]: draft})
+
+    columns = {column for _, column, *_ in c.catalogue_rows()}
+
+    assert "planned_column" not in columns
+    assert "ref_date" in columns
+
+
 def test_an_unknown_contract_names_those_that_exist():
     with pytest.raises(KeyError, match=EXCHANGERATE):
         c.load_contract("fincommons.sec.silver.facts")

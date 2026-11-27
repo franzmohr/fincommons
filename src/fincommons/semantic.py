@@ -289,6 +289,9 @@ def assistant_instructions(product, packages=("fincommons",)):
     constraints = [_text(c["constraint"]) for c in context.get("constraints") or []]
     for port in product.get("outputPorts") or []:
         contract = shipped[port["contractId"]]
+        if contract.get("status") in _contracts.DRAFT_STATUSES:
+            # A draft describes a table no code writes yet.
+            continue
         table = _table(contract)
         key = [p["name"] for p in sorted(
             (p for p in table.get("properties") or [] if p.get("primaryKey")),
@@ -329,7 +332,8 @@ def databricks(config_path, product_id, packages=("fincommons",), suffix="_metri
     -------
     dict
         ``"statements"``: the statements to run, in order, without closing
-        semicolons -- the comments and the metric view of every output port;
+        semicolons -- the comments and the metric view of every output port
+        whose contract is not a draft (:data:`fincommons.contracts.DRAFT_STATUSES`);
         ``"assistant"``: the instructions for an assistant, as Markdown.
 
     Raises
@@ -347,6 +351,10 @@ def databricks(config_path, product_id, packages=("fincommons",), suffix="_metri
     statements = []
     for port in product.get("outputPorts") or []:
         contract = _contracts.load_contract(port["contractId"], packages)
+        if contract.get("status") in _contracts.DRAFT_STATUSES:
+            # A draft describes a table no code writes yet, so there is
+            # nothing for a comment or a metric view to describe.
+            continue
         _, module, layer, table = port["contractId"].split(".")
         ref = resolve(config_path, module, layer, table)
         if not ref.is_named:

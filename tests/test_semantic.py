@@ -199,6 +199,29 @@ def test_every_shipped_product_can_be_served(named, product):
         assert yaml.safe_load(statement.split("$$")[1])["fields"]
 
 
+def test_a_draft_table_is_not_served(named, monkeypatch):
+    # A draft contract specifies a table no code writes yet: no comment, no
+    # metric view and no instructions describe it.
+    shipped = c.contracts()
+    draft = copy.deepcopy(shipped[EXCHANGERATE])
+    draft["id"] = "fincommons.exchangerate.silver.planned"
+    draft["status"] = "draft"
+    draft["schema"][0]["name"] = "planned"
+    product = copy.deepcopy(c.products()["fincommons.exchangerate"])
+    product["outputPorts"].append({"name": "silver_planned", "contractId": draft["id"],
+                                   "version": draft["version"]})
+    monkeypatch.setattr(c, "contracts",
+                        lambda packages=("fincommons",): {**shipped, draft["id"]: draft})
+    monkeypatch.setattr(c, "products",
+                        lambda packages=("fincommons",): {product["id"]: product})
+
+    generated = semantic.databricks(named, "fincommons.exchangerate")
+
+    assert not any("planned" in statement for statement in generated["statements"])
+    assert [s for s in generated["statements"] if s.startswith("CREATE OR REPLACE VIEW")]
+    assert "planned" not in generated["assistant"]
+
+
 def test_a_table_addressed_by_path_cannot_be_served(tmp_path):
     config = tmp_path / "paths.yaml"
     config.write_text(yaml.safe_dump({"exchangerate": {"silver": str(tmp_path / "silver")}}))
