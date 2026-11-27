@@ -1,0 +1,161 @@
+# The data contract of the mic_lei table of the Silver layer of fincommons.gleif,
+# in the Open Data Contract Standard. It is the single source of truth for
+# what the columns of the table mean: fincommons.columns reads its
+# descriptions from here, and the test suite holds it against the code and
+# against the table the module writes. See fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.gleif.silver.mic_lei
+name: mic_lei
+version: 1.0.0
+status: active
+domain: gleif
+dataProduct: fincommons.gleif
+description:
+  purpose: >-
+    Which legal entity operated which market, by the market identifier code (MIC,
+    ISO 10383) GLEIF links to its LEI, as it stood on any day since the first file
+    the history holds.
+  usage: >-
+    Read what held on a day with fincommons.gleif.mic_lei_as_of(spark, config, day),
+    and what holds now with fincommons.gleif.current_mic_lei(spark, config). Join lei
+    to the entities on lei, or mic to the trading venue of a FIRDS instrument.
+  limitations: >-
+    GLEIF publishes the mapping about weekly and its files carry no dates of their
+    own, so a version begins on the day of the first file that states it, up to a
+    week after the change. An operator of several markets or segments has one row
+    per MIC. Before the first file the Bronze layer holds nothing is known.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/gleif/mic_lei.py
+- type: businessDefinition
+  url: https://mapping.gleif.org/api/v2/mic-lei
+  description: >-
+    The list of GLEIF's MIC-to-LEI files, from which the history is read.
+schema:
+- name: mic_lei
+  physicalType: table
+  businessName: MIC-to-LEI history
+  description: >-
+    Every version of the link between a market identifier code and the LEI of the
+    entity operating the market. A version holds from valid_from to valid_to, both
+    inclusive.
+  dataGranularityDescription: >-
+    One version of a MIC: one row per MIC and first day of validity.
+  properties:
+  - name: mic
+    businessName: Market identifier code
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The market identifier code (ISO 10383) of a trading venue or of a segment of
+      one, in upper case.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: https://www.iso20022.org/market-identifier-codes
+      description: ISO 10383, the Market Identifier Code.
+    synonyms:
+    - synonym: MIC
+      source: GLEIF MIC-to-LEI file
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: MIC
+      vendor: fincommons
+  - name: lei
+    businessName: Operator
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The LEI of the entity operating the market, normalised the way GLEIF writes
+      it (blanks removed, upper case).
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    synonyms:
+    - synonym: LEI
+      source: GLEIF MIC-to-LEI file
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: LEI
+      vendor: fincommons
+  - name: valid_from
+    businessName: Valid from
+    logicalType: date
+    physicalType: date
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The first day the version held: the day of the first MIC-to-LEI file that
+      linked the MIC to the LEI.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: publication
+    businessName: Publication
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: The MIC-to-LEI file the version was first read from, YYYYMMDD.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: valid_to
+    businessName: Valid to
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The last day the version held, the day before the first file that no longer
+      linked the MIC to the LEI; empty while the latest file still does.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: latest_record
+    businessName: Latest record
+    logicalType: boolean
+    physicalType: boolean
+    required: true
+    semanticType: dimension
+    description: >-
+      Whether the version is the most recent one known for its MIC, including a
+      MIC GLEIF no longer lists.
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

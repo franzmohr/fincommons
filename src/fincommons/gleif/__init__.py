@@ -12,14 +12,19 @@ entity is, Level 2 who owns or manages whom.
 ``history``
     the rules a history is built by, independently of its storage, and
 ``silver``
-    the Delta tables of the Silver layer and the pipeline that keeps them.
+    the Delta tables of the Silver layer and the pipeline that keeps them,
+``mic_lei``
+    a pipeline of its own for GLEIF's mapping of market identifier codes
+    (MIC) to LEIs, and the history of which entity operated which market.
 
 :mod:`fincommons.entitymasterdata` reads the entities and their parents from
-here where the configuration file has a ``gleif`` section.
+here where the configuration file has a ``gleif`` section, and the MICs an
+entity operates where the MIC-to-LEI history has been built.
 """
 
 from .common import *
 from .landing import *
 from .bronze import *
 from .silver import *
+from .mic_lei import *
 from . import history
