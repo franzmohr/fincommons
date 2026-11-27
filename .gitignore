@@ -34,6 +34,21 @@ docs/handbook/*.run.xml
 docs/handbook/*.synctex.gz
 docs/handbook/*.toc
 docs/handbook/*.pdf
+# and what TeXstudio adds: the SyncTeX file while it is being written, the
+# lists of figures and tables, an index, and DVI output
+docs/handbook/*.synctex(busy)
+docs/handbook/*.lof
+docs/handbook/*.lot
+docs/handbook/*.idx
+docs/handbook/*.ilg
+docs/handbook/*.ind
+docs/handbook/*.dvi
+docs/handbook/*.xdv
+docs/handbook/*.bak
+docs/handbook/*~
+
+# The folder settings macOS's Finder writes
+.DS_Store
 
 # Editor settings, which belong to the person rather than to the project
 .vscode/
