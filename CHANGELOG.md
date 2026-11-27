@@ -318,6 +318,11 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `marketpricedata`: the ISIN column of `data/isin_yahoo.csv` is headed
+  `isin`, as the Silver table names it, rather than `ISIN`. The Bronze layer
+  of the Yahoo instruments keeps `ISIN`, and the download translates the
+  name. A copy of the file kept elsewhere needs the one header changed. The
+  other mapping tables keep `INSTRID` for now.
 - `financialreport.sec.connect_to_sec` returns each table in the order of
   its declared schema, `filed_year` third, whether the table is Parquet or
   Delta.

@@ -1862,9 +1862,9 @@ def test_the_mapping_table_is_shipped_with_the_package():
 
     # first_date is optional per row: the history a new ticker is asked for
     # when it is not the default (see bronze_yahoo.new_ticker_starts).
-    assert list(tickers.columns) == ["ISIN", "yahoo", "first_date", "name"]
+    assert list(tickers.columns) == ["isin", "yahoo", "first_date", "name"]
     assert len(tickers) > 0
-    assert tickers["ISIN"].is_unique
+    assert tickers["isin"].is_unique
     given = tickers["first_date"].dropna()
     assert given.str.fullmatch(r"\d{4}-\d{2}-\d{2}").all()
 
@@ -1883,9 +1883,9 @@ def test_the_mapping_table_pairs_each_instrument_exactly_once():
     instrument and is quietly taken for a delivery from an internal source."""
     tickers = mp.load_list_of_yahoo_tickers()
 
-    assert tickers["ISIN"].is_unique
+    assert tickers["isin"].is_unique
     assert tickers["yahoo"].is_unique
-    assert tickers["ISIN"].str.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]").all()
+    assert tickers["isin"].str.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]").all()
 
 
 def rows_of(spark, data_lake, refdt, instrid, value):
