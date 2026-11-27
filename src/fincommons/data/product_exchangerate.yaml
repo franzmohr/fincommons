@@ -1,0 +1,22 @@
+# The data product of fincommons.exchangerate, in the Open Data Product
+# Standard. Its output port names the contract of the Silver table by
+# identifier and version; the test suite checks that the contract is shipped
+# in that version. See fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.exchangerate
+name: exchangerate
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: exchangerate
+description:
+  purpose: >-
+    Daily exchange rates for converting amounts reported in any currency,
+    built from public sources and an optional proprietary file.
+outputPorts:
+  - name: silver_exchangerate
+    type: table
+    description: The Silver table of exchange rates, one row per day and currency pair.
+    contractId: fincommons.exchangerate.silver.exchangerate
+    version: 1.0.0

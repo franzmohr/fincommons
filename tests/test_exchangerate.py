@@ -1123,3 +1123,37 @@ def test_the_imputed_column_is_boolean_and_never_empty(spark, data_lake):
 
     assert isinstance(table.schema["imputed"].dataType, BooleanType)
     assert table.filter("imputed IS NULL").count() == 0
+
+
+# The data contract
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("options", [{}, {"rebase": "USD"}], ids=["euro", "rebased"])
+def test_the_table_is_the_table_its_contract_describes(spark, data_lake, options):
+    """The contract is what a reader is told about the table, so the table
+    the module writes has to be that table: the same columns in the same order
+    and of the same types, no empty value where the contract says a column is
+    required, and one row per value of the primary key. A rebase builds the
+    table along another path, so it is held to the contract as well."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    write_ecb(data_lake, ["2020-01-03", "2020-01-06"], USD=[1.10, 1.20], GBP=[0.90, 0.92])
+    write_internal(data_lake, [("2020-01-04", "EUR", "GBP", 0.91)])
+
+    ex.update_silver_exchangerate(spark, data_lake, **options)
+    table = ex.connect_to_exchangerate(spark, data_lake)
+    contract = load_contract("fincommons.exchangerate.silver.exchangerate")
+    promised = spark_schema(contract)
+    properties = contract["schema"][0]["properties"]
+
+    assert [(f.name, f.dataType) for f in table.schema] == \
+        [(f.name, f.dataType) for f in promised]
+    for prop in properties:
+        if prop.get("required"):
+            assert table.filter(f"{prop['name']} IS NULL").count() == 0, prop["name"]
+    key = [p["name"] for p in sorted(
+        (p for p in properties if p.get("primaryKey")),
+        key=lambda p: p["primaryKeyPosition"])]
+    assert key == ["ref_date", "base", "quote"]
+    assert table.groupBy(*key).count().filter("count > 1").count() == 0

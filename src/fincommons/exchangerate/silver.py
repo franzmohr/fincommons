@@ -399,13 +399,13 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
         eur_usd = ecb \
             .filter((func.col("base") == "EUR") & (func.col("quote") == "USD")) \
             .select("ref_date", "value") \
-            .withColumnRenamed("value", "fx")
+            .withColumnRenamed("value", "_fx")
         
         bis = bis \
             .join(eur_usd, on = "ref_date", how = "leftouter") \
-            .filter(func.col("fx").isNotNull()) \
-            .withColumn("value", func.col("value") * func.col("fx")) \
-            .drop("fx") \
+            .filter(func.col("_fx").isNotNull()) \
+            .withColumn("value", func.col("value") * func.col("_fx")) \
+            .drop("_fx") \
             .withColumn("base", func.lit("EUR"))
     
     # Internal over ECB over BIS. The precedence is carried by an explicit rank
@@ -485,16 +485,16 @@ def update_silver_exchangerate(spark, config_path, rebase = None, use_bis = Fals
         eur_rebase = result \
             .filter((func.col("base") == "EUR") & (func.col("quote") == rebase)) \
             .select("ref_date", "value", "imputed") \
-            .withColumnRenamed("value", "fx") \
-            .withColumnRenamed("imputed", "fx_imputed")
+            .withColumnRenamed("value", "_fx") \
+            .withColumnRenamed("imputed", "_fx_imputed")
         
         result = result \
             .filter(func.col("base") == "EUR") \
             .join(eur_rebase, on = "ref_date", how = "leftouter") \
-            .filter(func.col("fx").isNotNull()) \
-            .withColumn("value", func.col("value") / func.col("fx")) \
-            .withColumn("imputed", func.col("imputed") | func.col("fx_imputed")) \
-            .drop("fx", "fx_imputed") \
+            .filter(func.col("_fx").isNotNull()) \
+            .withColumn("value", func.col("value") / func.col("_fx")) \
+            .withColumn("imputed", func.col("imputed") | func.col("_fx_imputed")) \
+            .drop("_fx", "_fx_imputed") \
             .withColumn("base", func.lit(rebase)) \
             .filter(func.col("base") != func.col("quote"))
 

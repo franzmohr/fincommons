@@ -172,6 +172,14 @@ fxrate = ex.connect_to_exchangerate(spark, config_path)
 fxrate
 ```
 
+What the columns of the table hold, and what a reader may rely on, is stated by its data contract, `data/contract_exchangerate_silver_exchangerate.yaml`, written in the Open Data Contract Standard. It is the one place the columns are described: `fincommons.describe_column("imputed")` reads its answer from there. The contract also states that the reference date, the base and the quote identify a row, and that a rate is never summed and is averaged only within one currency pair. The tests hold the table the module writes to the contract, with and without a rebase. `data/product_exchangerate.yaml` describes the module as a data product whose one output port is this table. See `fincommons.contracts`.
+
+```python
+from fincommons.contracts import load_contract, spark_schema
+contract = load_contract("fincommons.exchangerate.silver.exchangerate")
+spark_schema(contract)
+```
+
 `connect_to_exchangerate` and `convert2ccy` read the table in whichever form it is addressed and stored in, so the choice does not have to be repeated when the table is queried. A table that exists already keeps its format: an update that asks for the other one is refused before anything is written, because Delta will not adopt parquet files it has no transaction log for, and parquet written over a Delta table would throw its history away. Delete the directory before the first update in the new format to change it. The storage itself is shared with the other modules and described in `fincommons.storage`.
                                                                       
 

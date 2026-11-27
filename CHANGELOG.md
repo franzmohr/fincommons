@@ -8,6 +8,26 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `contracts`: data contracts in the Open Data Contract Standard 3.2.0 and
+  data products in the Open Data Product Standard 1.1.0, as the handbook
+  section on data contracts and the semantic layer describes. A package
+  ships them in its data directory. `validate_contract` and
+  `validate_product` hold them to the JSON schema of their standard and to
+  the framework's rules: no section that describes a deployment, a kind and
+  a source on every column, and an aggregation on every measure. Both JSON
+  schemas are vendored under the Apache License 2.0, so the licence of the
+  package is now `EUPL-1.2 AND Apache-2.0`. Validation needs `jsonschema`,
+  which the `dev` extra installs; reading a contract needs nothing new.
+  `spark_schema` turns a contract into a Spark schema.
+
+- `exchangerate`: the Silver table has the framework's first data contract
+  and product. The contract is now where its columns are described. Their
+  rows left `column_catalogue.csv`, `column_catalogue` reads them from the
+  contract, and `describe_column` names the stage `exchangerate.silver` as
+  the one that writes them. The helper columns `fx` and `fx_imputed`, which
+  the table never held, are now `_fx` and `_fx_imputed` and are no longer
+  catalogued.
+
 - `financialreport.esef`: `export_esef_reports` writes one issuer's reports
   to an OpenDocument spreadsheet, with a sheet that sets the filings side by
   side -- one row per figure and period, one column per filing -- so that the
@@ -199,6 +219,10 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `testing`: the driver of the shared test session is started with 8 GB of
+  heap instead of 4 GB. At some 1,400 tests the suite ran out of heap in the
+  FIRDS Silver tests, and every Spark test after them failed on the dead
+  session.
 - `esef-country-quality-factsheet.qmd`: where an arithmetic check fired, the
   detail pages give the two sides of the identity, the gap and its share of
   total assets or revenue, so that a gap of a tenth of a percent can be told

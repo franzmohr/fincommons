@@ -11,3 +11,19 @@ path = "**"
 precedence = "override"
 SPDX-FileCopyrightText = "The fincommons contributors"
 SPDX-License-Identifier = "EUPL-1.2"
+
+# The JSON schemas of the Open Data Contract Standard and the Open Data
+# Product Standard, vendored unchanged so that the test suite can validate
+# the data contracts shipped in src/fincommons/data against them. They are
+# published by the Bitol project of the Linux Foundation AI & Data under the
+# Apache License 2.0, in LICENSES/Apache-2.0.txt. Their origin:
+#   odcs_json_schema_v3_2_0.json  bitol-io/open-data-contract-standard,
+#     schema/odcs-json-schema-v3.2.0-20261117.json, git blob 5bf1b0ef
+#   odps_json_schema_v1_1_0.json  bitol-io/open-data-product-standard,
+#     schema/odps-json-schema-v1.1.0.json, git blob 3384d244
+[[annotations]]
+path = ["src/fincommons/data/odcs_json_schema_v3_2_0.json",
+        "src/fincommons/data/odps_json_schema_v1_1_0.json"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Bitol project contributors"
+SPDX-License-Identifier = "Apache-2.0"

@@ -12,6 +12,7 @@ import pytest
 import fincommons
 from fincommons.columns import (CATALOGUED_MODULES, column_catalogue,
                                  defined_columns, describe_column)
+from fincommons.contracts import catalogue_rows
 
 KINDS = {"identifier", "code", "text", "date", "datetime", "amount", "currency",
          "rate", "quantity", "flag", "count", "weight", "other"}
@@ -32,8 +33,20 @@ def test_every_column_the_code_defines_is_catalogued_and_no_other():
 def test_the_catalogue_names_the_tables_the_code_writes_a_column_in():
     defined = defined_columns().set_index(["module", "column"])["tables"]
     catalogue = column_catalogue().set_index(["module", "column"])["tables"]
+    contracted = {(module, column) for module, column, *_ in catalogue_rows()}
+    listed = defined[[key not in contracted for key in defined.index]]
 
-    assert (catalogue.reindex(defined.index) == defined).all()
+    assert (catalogue.reindex(listed.index) == listed).all()
+
+
+def test_a_contract_names_the_stage_that_writes_its_columns():
+    # A contract describes a table, not the files of the code, so it names
+    # the one stage that writes the table rather than every file that names
+    # the column -- the schema of the proprietary file declares the columns of
+    # the exchange rates as well. That stage has to be among the files.
+    defined = defined_columns().set_index(["module", "column"])["tables"]
+    for module, column, stage, *_ in catalogue_rows():
+        assert stage in defined[(module, column)].split(";"), (module, column)
 
 
 def test_every_entry_is_described_with_a_known_kind():

@@ -1,0 +1,182 @@
+# The data contract of the Silver table of fincommons.exchangerate, in the
+# Open Data Contract Standard. It is the single source of truth for what the
+# columns of the table mean: fincommons.columns reads its descriptions from
+# here, and the test suite holds it against the code and against the table the
+# module writes. See fincommons.contracts and the handbook section on data
+# contracts and the semantic layer.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment (servers, service levels, team, support, price). Where the table
+# lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.exchangerate.silver.exchangerate
+name: exchangerate
+version: 1.0.0
+status: active
+domain: exchangerate
+dataProduct: fincommons.exchangerate
+description:
+  purpose: >-
+    One exchange rate per calendar day and currency pair, combined from the
+    euro foreign exchange reference rates of the ECB, optionally the daily
+    average rates of the BIS, and optionally a proprietary file, so that an
+    amount reported in any currency on any day can be converted.
+  usage: >-
+    Convert amounts with fincommons.exchangerate.convert2ccy rather than by
+    joining the table by hand: it joins on the date, the base and the quote,
+    and leaves an amount it cannot convert empty rather than approximated.
+  limitations: >-
+    The table is rebuilt in full from the Bronze layer on every run. A rate is
+    carried forward for at most a week after its last quote, so a pair that
+    goes unquoted for longer has no rate on the days beyond. Where the BIS is
+    used, the table ends on the last day the BIS has published.
+authoritativeDefinitions:
+  - type: implementation
+    url: https://github.com/franzmohr/fincommons/blob/main/src/fincommons/exchangerate/silver.py
+  - type: businessDefinition
+    url: https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html
+    description: The euro foreign exchange reference rates of the ECB, the primary source of the table.
+schema:
+  - name: exchangerate
+    physicalType: table
+    businessName: Daily exchange rates
+    description: >-
+      One row per calendar day, base currency and quoted currency. Days on
+      which no source quotes the pair carry the last rate quoted before them,
+      and are marked as imputed.
+    dataGranularityDescription: One rate per reference date, base currency and quoted currency.
+    properties:
+      - name: ref_date
+        businessName: Reference date
+        logicalType: date
+        physicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        semanticType: dimension
+        description: >-
+          Reference date of the rate, one row per calendar day in the Silver
+          table (from 'Date' in ECB data, 'TIME_PERIOD' in BIS data).
+        synonyms:
+          - synonym: Date
+            source: ECB
+          - synonym: TIME_PERIOD
+            source: BIS
+          - synonym: REFDT
+            source: legacy-name
+            description: The name of the column in the proprietary file before the columns of the package were put into snake case.
+        customProperties:
+          - {property: kind, value: date, vendor: fincommons}
+          - {property: source, value: declared, vendor: fincommons}
+      - name: base
+        businessName: Base currency
+        logicalType: string
+        physicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        semanticType: dimension
+        description: >-
+          ISO 4217 code of the base currency of the rate: EUR for ECB and
+          (converted) BIS rates, or the rebase currency where the table is
+          rebased.
+        authoritativeDefinitions:
+          - type: businessDefinition
+            url: https://www.iso.org/iso-4217-currency-codes.html
+        synonyms:
+          - synonym: BASE
+            source: legacy-name
+        customProperties:
+          - {property: kind, value: currency, vendor: fincommons}
+          - {property: source, value: declared, vendor: fincommons}
+      - name: quote
+        businessName: Quoted currency
+        logicalType: string
+        physicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        semanticType: dimension
+        description: >-
+          ISO 4217 code of the quoted currency (for BIS data the first three
+          characters of the currency field).
+        authoritativeDefinitions:
+          - type: businessDefinition
+            url: https://www.iso.org/iso-4217-currency-codes.html
+        synonyms:
+          - synonym: QUOTE
+            source: legacy-name
+        customProperties:
+          - {property: kind, value: currency, vendor: fincommons}
+          - {property: source, value: declared, vendor: fincommons}
+      - name: value
+        businessName: Exchange rate
+        logicalType: number
+        physicalType: double
+        required: true
+        semanticType: measure
+        transformLogic: AVG(value)
+        description: >-
+          Exchange rate: units of quote per one unit of base. BIS USD-based
+          rates are converted to EUR-based ones by multiplying with EUR/USD,
+          and a rebase divides by the EUR to rebase-currency rate.
+        synonyms:
+          - synonym: VALUE
+            source: legacy-name
+        customProperties:
+          - {property: kind, value: rate, vendor: fincommons}
+          - {property: source, value: declared, vendor: fincommons}
+          - property: aggregation
+            value: nonAdditive
+            vendor: fincommons
+            description: >-
+              A rate is the price of one currency in another. Rates are never
+              summed, and their average is only meaningful for one pair.
+          - {property: aggregateWithin, value: [base, quote], vendor: fincommons}
+      - name: type
+        businessName: Kind of rate
+        logicalType: string
+        physicalType: string
+        required: true
+        semanticType: dimension
+        description: >-
+          Kind of rate: 'ref' for ECB euro foreign exchange reference rates,
+          'avg' for BIS daily average rates, or as stated in the internal
+          file.
+        synonyms:
+          - synonym: TYPE
+            source: legacy-name
+        customProperties:
+          - {property: kind, value: code, vendor: fincommons}
+          - {property: source, value: declared, vendor: fincommons}
+      - name: source
+        businessName: Source of the rate
+        logicalType: string
+        physicalType: string
+        required: true
+        semanticType: dimension
+        description: >-
+          Source of the rate: ECB, BIS, or whatever the proprietary (internal)
+          rate file states; where several sources quote a pair on a date,
+          internal takes precedence over ECB and ECB over BIS.
+        synonyms:
+          - synonym: SOURCE
+            source: legacy-name
+        customProperties:
+          - {property: kind, value: code, vendor: fincommons}
+          - {property: source, value: declared, vendor: fincommons}
+      - name: imputed
+        businessName: Carried forward
+        logicalType: boolean
+        physicalType: boolean
+        required: true
+        semanticType: dimension
+        description: >-
+          True where the day carries the last available rate of the pair from
+          an earlier day (e.g. weekends, TARGET closing days) rather than a
+          rate quoted on that day; after rebasing, also true where the
+          conversion rate was imputed.
+        customProperties:
+          - {property: kind, value: flag, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}

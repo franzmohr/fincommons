@@ -8,7 +8,9 @@ name = "fincommons"
 version = "0.5.2"
 description = "Shared infrastructure for basic financial data work: data lakes from public financial data on Spark and Delta Lake."
 readme = "README.md"
-license = "EUPL-1.2"
+# The JSON schemas of the data contract standards in src/fincommons/data are
+# vendored under their own licence; see REUSE.toml.
+license = "EUPL-1.2 AND Apache-2.0"
 license-files = ["LICENSES/*"]
 requires-python = ">=3.11"
 authors = [{ name = "Franz X. Mohr" }]
@@ -69,7 +71,11 @@ local = ["pyspark>=4.0", "delta-spark>=4.0"]
 # yfinance; the ECB, the New York Fed and the internal sources of
 # fincommons.marketpricedata run without it. See its README.
 marketprice = ["yfinance>=0.2"]
-dev = ["pytest>=7", "pytest-cov>=4", "pyspark>=4.0", "delta-spark>=4.0"]
+# jsonschema validates the shipped data contracts against the JSON schemas of
+# their standards; 4.18 is the first release resolving references through
+# the referencing library the 2019-09 schemas rely on.
+dev = ["pytest>=7", "pytest-cov>=4", "pyspark>=4.0", "delta-spark>=4.0",
+       "jsonschema>=4.18"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fincommons"]
