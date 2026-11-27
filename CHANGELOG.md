@@ -8,6 +8,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `financialreport.edinet`: data contracts for the four Silver tables,
+  `filings`, `facts`, `filers` and `issues`, and a product,
+  `product_edinet.yaml`, in the shape of those of ESEF and SEC. They equal
+  the declared schemas, which a test holds them to, and state quality rules:
+  one row per document, fact, filer and issue; the document management
+  number, EDINET code, corporate number and securities code in their forms,
+  the securities code allowing the letters of Tokyo's newer codes and a
+  filer's codes allowing a blank; the flags `has_xbrl`, `has_csv` and
+  `has_english` '0' or '1'; a period that ends after it begins; `filed_year`
+  the year of submission; no fact both a number and a text; a unit for every
+  number; and they point at the checks of `edinet.quality`. The rules hold on
+  the lake: 22,083 filings, 2,123,404 facts, 11,471 filers. The 48 rows of
+  `edinet` left `column_catalogue.csv`.
+
 - `financialreport.sec`: data contracts for the three Silver tables,
   `filings`, `facts` and `issues`, and a product, `product_sec.yaml`, in the
   shape of those of ESEF. They equal the declared schemas, which a test holds
@@ -317,6 +331,11 @@ release may change the public API, which `tests/test_public_api.py` lists.
   regime, and its note now says that a Japanese row is in yen.
 
 ### Changed
+
+- `financialreport.edinet.connect_to_edinet` returns each table in the
+  order of its declared schema whether the table is Parquet or Delta, and the
+  docstring of `filings_schema` says what the data shows: `filed_year` is the
+  year of submission, and `index_date` can fall a year later.
 
 - `financialreport.sec.connect_to_sec` returns each table in the order of
   its declared schema, `filed_year` third, whether the table is Parquet or

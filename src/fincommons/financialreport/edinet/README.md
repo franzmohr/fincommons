@@ -133,6 +133,12 @@ edinet.update_edinet(spark, "paths.yaml", start=earliest_retrievable())
 
 ## The Silver tables
 
+What the columns of each table hold, and what a reader may rely on, is stated by its data contract in the Open Data Contract Standard: `data/contract_edinet_silver_filings.yaml`, `..._facts.yaml`, `..._filers.yaml` and `..._issues.yaml`, which `data/product_edinet.yaml` names as the output ports of the module. They are the one place the columns are described -- `fincommons.describe_column("relative", dataset="edinet")` reads its answer from there -- and the declared schemas of the module are held to them by the tests. A contract states the key of its table (the document management number; that and the fact; the EDINET code) and the rules the table is held to: one row per document, fact, filer and issue, the document management number, the EDINET code, the corporate number and the securities code in their forms, the three flags '0' or '1', a period that ends after it begins, `filed_year` the year the document was submitted, no fact both a number and a text, and a unit for every number. `fincommons.contracts.check_quality` runs them; the checks that name each figure at fault are those of [Data quality](#data-quality), which the contract of the facts points at. As for the other regimes, `value` is no measure.
+
+Two things the contracts state that are easy to miss. `filed_year` is the year a document was submitted, not the year of the index that named it: a document an official corrected appears again in a later day's index, and six of 22,083 in one lake had an `index_date` a year after their submission. And the table of filers keeps a value the agency's list leaves blank as an empty string, not as null, as the other tables do: 4,177 of 11,471 filers have an empty corporate number, and the rules on the codes of a filer accept a blank.
+
+`connect_to_edinet` returns each table in the order of its declared schema, whether it is stored as Parquet, which puts the partition column `filed_year` last when it is read, or as Delta.
+
 ### `filings`
 
 One row per document the collected indexes name, partitioned by `filed_year`. `filing` is the 書類管理番号, the document management number the API addresses a filing by and the key of everything else here; `index_date` is the calendar day whose index the row came from, which is what a run collects by.

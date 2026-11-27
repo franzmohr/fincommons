@@ -1,0 +1,586 @@
+# The data contract of the table of filings of the Silver layer of
+# fincommons.financialreport.edinet, in the Open Data Contract Standard. It
+# is the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, edinet,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.edinet.silver.filings
+name: filings
+version: 1.0.0
+status: active
+domain: edinet
+dataProduct: fincommons.edinet
+description:
+  purpose: >-
+    Which securities reports and other documents the filers collected lodged with
+    Japan's Financial Services Agency, for which period, and which of them carry
+    figures.
+  usage: >-
+    Join to the facts on filing. A filing whose has_csv is not '1' has no facts.
+    A document withdrawn, edited or withheld is carried with its state rather than
+    dropped. fincommons.financialreport.edinet.connect_to_edinet(spark, config,
+    'filings') opens the table.
+  limitations: >-
+    Eight of the twenty-nine fields of an index are left out: those of the large-holding
+    report, the takeover bid and the extraordinary report, and the ones that mean
+    nothing once several days are in one table. A filer is identified by its EDINET
+    code and corporate number, not by an LEI.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/edinet/silver.py
+- type: businessDefinition
+  url: https://disclosure2.edinet-fsa.go.jp
+  description: >-
+    EDINET, the electronic disclosure system of Japan's Financial Services Agency,
+    whose API the filings and the CSV conversion of their XBRL are read from.
+schema:
+- name: filings
+  physicalType: table
+  businessName: EDINET filings
+  description: >-
+    One row per document the daily indexes of EDINET name: who filed it, the form
+    and the kind of document, the period it reports on, when it was submitted, the
+    states that travel with it, and whether the agency converted its XBRL to CSV.
+  dataGranularityDescription: One row per document, by document management number.
+  quality:
+  - name: one_row_per_filing
+    description: No filing is listed twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: the_partition_is_the_year_submitted
+    description: >-
+      filed_year, which the table is partitioned by, is the year the filing was
+      submitted, or the year of its index where it has no submission time.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE COALESCE(YEAR(submitted), YEAR(index_date))
+      <> filed_year
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: a_period_ends_after_it_begins
+    description: No filing reports on a period that ends before it begins.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE period_start > period_end
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  properties:
+  - name: filing
+    businessName: Document management number
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The document management number (書類管理番号) the API addresses a filing by, for
+      instance S100VWVY. It identifies a document within EDINET and is the key a
+      filing is collected and read by.
+    synonyms:
+    - synonym: docID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: docID
+      vendor: fincommons
+    quality:
+    - name: filing_is_a_document_number
+      description: >-
+        The document management number is an S and seven digits or capital letters.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^S[0-9A-Z]{7}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: edinet_code
+    businessName: EDINET code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The EDINET code of the filer, a letter E and five digits, which is the key
+      the tables of this module are organised by. It is not the securities code
+      and not the corporate number; all three are carried and none is derived from
+      another.
+    synonyms:
+    - synonym: edinetCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: edinetCode
+      vendor: fincommons
+    quality:
+    - name: edinet_code_is_an_edinet_code
+      description: The EDINET code is a letter E and five digits.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^E[0-9]{5}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: sec_code
+    businessName: Securities code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The securities code of a listed filer: the four-digit ticker with a check
+      digit appended, so 13760 is ticker 1376. Empty for a filer that is not listed.
+    synonyms:
+    - synonym: secCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: secCode
+      vendor: fincommons
+    quality:
+    - name: sec_code_is_a_securities_code
+      description: >-
+        The securities code is four digits or capital letters, the ticker, and a
+        check digit 0.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[0-9A-Z]{4}0$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: jcn
+    businessName: Corporate number
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The corporate number (法人番号) of the National Tax Agency, thirteen digits, which
+      every Japanese legal person has. It is the identifier of these tables most
+      likely to be shared with a register outside EDINET; whether it reaches the
+      legal entity identifier the esef tables are keyed by is a question for the
+      data and nothing here derives one from the other.
+    synonyms:
+    - synonym: JCN
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: JCN
+      vendor: fincommons
+    quality:
+    - name: jcn_is_thirteen_digits
+      description: The corporate number is thirteen digits.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[0-9]{13}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: name
+    businessName: Filer
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The name of the filer, as the agency records it, in Japanese.
+    synonyms:
+    - synonym: filerName
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: filerName
+      vendor: fincommons
+  - name: fund_code
+    businessName: Fund code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The fund code, where the document is filed for an investment fund rather than
+      for the filer as a whole; empty for an operating company's report.
+    synonyms:
+    - synonym: fundCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: fundCode
+      vendor: fincommons
+  - name: ordinance
+    businessName: Ordinance code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The ordinance code of the document, which with the form code says which prescribed
+      form it was filed on.
+    synonyms:
+    - synonym: ordinanceCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: ordinanceCode
+      vendor: fincommons
+  - name: form
+    businessName: Form code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The form code of the document, which with the ordinance code says which prescribed
+      form it was filed on.
+    synonyms:
+    - synonym: formCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: formCode
+      vendor: fincommons
+  - name: doc_type
+    businessName: Document type
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The kind of document, as the agency codes it (120 annual securities report,
+      130 its correction, 140 quarterly, 160 semi-annual). fincommons.financialreport.edinet.common.REPORT_TYPES
+      names the ones that carry statements.
+    synonyms:
+    - synonym: docTypeCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: docTypeCode
+      vendor: fincommons
+  - name: period_start
+    businessName: Period start
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The first day of the period the document reports on; empty for a document
+      that reports on an instant or on no period.
+    synonyms:
+    - synonym: periodStart
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: periodStart
+      vendor: fincommons
+  - name: period_end
+    businessName: Period end
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The last day of the period the document reports on, which for a securities
+      report is its financial year and for a quarterly report its quarter.
+    synonyms:
+    - synonym: periodEnd
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: periodEnd
+      vendor: fincommons
+  - name: submitted
+    businessName: Submitted
+    logicalType: timestamp
+    physicalType: timestamp
+    semanticType: dimension
+    description: When the document was submitted to EDINET, as the agency states
+      it.
+    synonyms:
+    - synonym: submitDateTime
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: submitDateTime
+      vendor: fincommons
+  - name: filed_year
+    businessName: Year filed
+    logicalType: integer
+    physicalType: int
+    required: true
+    semanticType: dimension
+    description: >-
+      The year the filing was submitted, which the tables of filings, facts and
+      issues are partitioned by, or the year of index_date for a filing without
+      a submission time. A corrected filing can appear again in a later day's index,
+      so index_date can fall in a later year.
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: index_date
+    businessName: Index date
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The calendar day whose index named the filing. The index API answers for one
+      day at a time, so this is the unit a run collects by and what says which index
+      a row came from.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: description
+    businessName: Document description
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The description of the document shown in the search results of the disclosure
+      site, which names the kind of report and the period in Japanese.
+    synonyms:
+    - synonym: docDescription
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: docDescription
+      vendor: fincommons
+  - name: parent
+    businessName: Parent document
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The document management number of the document this one belongs to, where
+      it is part of another; empty for a document that stands alone.
+    synonyms:
+    - synonym: parentDocID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: parentDocID
+      vendor: fincommons
+  - name: withdrawn
+    businessName: Withdrawal status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the document is a withdrawal ('1'), a document that was withdrawn
+      ('2'), or neither ('0'). Carried as published: a withdrawn filing is not dropped
+      from the table, so that a population can be read as what was filed.
+    synonyms:
+    - synonym: withdrawalStatus
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: withdrawalStatus
+      vendor: fincommons
+  - name: edited
+    businessName: Edited by a finance bureau
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether an official of a finance bureau has corrected the information held
+      about the document. Carried as published.
+    synonyms:
+    - synonym: docInfoEditStatus
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: docInfoEditStatus
+      vendor: fincommons
+  - name: disclosed
+    businessName: Disclosure status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether an official of a finance bureau has withheld the document from disclosure.
+      Carried as published and acted on nowhere: a filing is not dropped for it.
+    synonyms:
+    - synonym: disclosureStatus
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: disclosureStatus
+      vendor: fincommons
+  - name: legal
+    businessName: Legal status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the document is on public view ('1'), within the administrative extension
+      period ('2'), or past both ('0'). A filing in the last state is still named
+      by an index collected earlier and can no longer be fetched, which is why the
+      Bronze layer of this module is the only lasting copy of what it holds.
+    synonyms:
+    - synonym: legalStatus
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: legalStatus
+      vendor: fincommons
+  - name: has_xbrl
+    businessName: Has XBRL
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the document carries XBRL ('1' yes). The CSV conversion is made from
+      it, so a filing without XBRL has no CSV either.
+    synonyms:
+    - synonym: xbrlFlag
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: xbrlFlag
+      vendor: fincommons
+    quality:
+    - name: has_xbrl_is_a_flag
+      description: has_xbrl is '1' or '0', as the agency writes a flag.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - '0'
+        - '1'
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: has_csv
+    businessName: Has CSV
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the agency converted the filing's XBRL to CSV ('1' yes). It is the
+      column that decides whether a filing can contribute figures at all, the counterpart
+      of a null JSONURL in the esef module.
+    synonyms:
+    - synonym: csvFlag
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: csvFlag
+      vendor: fincommons
+    quality:
+    - name: has_csv_is_a_flag
+      description: has_csv is '1' or '0', as the agency writes a flag.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - '0'
+        - '1'
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: has_english
+    businessName: Has an English document
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the filer lodged an English version of the document ('1' yes). It
+      is a document in its own right and not a translation of the Japanese one.
+    synonyms:
+    - synonym: englishDocFlag
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: englishDocFlag
+      vendor: fincommons
+    quality:
+    - name: has_english_is_a_flag
+      description: has_english is '1' or '0', as the agency writes a flag.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - '0'
+        - '1'
+      mustBe: 0
+      dimension: conformity
+      severity: error

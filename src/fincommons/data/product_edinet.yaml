@@ -1,0 +1,41 @@
+# The data product of fincommons.financialreport.edinet, in the Open Data
+# Product Standard. Its output ports name the contracts of the four Silver
+# tables by identifier and version; the test suite checks that the contracts
+# are shipped in those versions. The order of the ports is the order in which
+# the column catalogue takes a column named in several tables: from the
+# first. See fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.edinet
+name: edinet
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: edinet
+description:
+  purpose: >-
+    The securities reports that filers lodge with Japan's Financial Services
+    Agency through EDINET, with the figures the agency converts from their
+    XBRL: one row per document, one row per fact, the agency's list of
+    filers, and the issues the data quality checks find.
+outputPorts:
+  - name: silver_filings
+    type: table
+    description: One row per document the daily indexes name.
+    contractId: fincommons.edinet.silver.filings
+    version: 1.0.0
+  - name: silver_facts
+    type: table
+    description: One row per fact of the agency's CSV conversion of a filing.
+    contractId: fincommons.edinet.silver.facts
+    version: 1.0.0
+  - name: silver_filers
+    type: table
+    description: One row per filer the agency lists.
+    contractId: fincommons.edinet.silver.filers
+    version: 1.0.0
+  - name: silver_issues
+    type: table
+    description: One row per issue the data quality checks found in a filing or a fact.
+    contractId: fincommons.edinet.silver.issues
+    version: 1.0.0

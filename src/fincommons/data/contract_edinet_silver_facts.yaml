@@ -1,0 +1,429 @@
+# The data contract of the table of facts of the Silver layer of
+# fincommons.financialreport.edinet, in the Open Data Contract Standard. It
+# is the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, edinet,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.edinet.silver.facts
+name: facts
+version: 1.0.0
+status: active
+domain: edinet
+dataProduct: fincommons.edinet
+description:
+  purpose: >-
+    Every tagged figure and text of the reports collected, as the filer reported
+    it, so that a figure can be read off a report without opening it.
+  usage: >-
+    Filter on filed_year first, since the table is partitioned by it, then on concept.
+    The period of a fact is resolved from its context: anchored on the filer's own
+    dates for the current year and the comparative, shifted by whole years for anything
+    further back, which context and relative let a reader check. fincommons.financialreport.edinet.connect_to_edinet(spark,
+    config, 'facts') opens the table.
+  limitations: >-
+    The agency's conversion carries no dates for a context, so a period further
+    back than the comparative is shifted rather than reported, and is exact only
+    where the filer's years are of equal length. The table holds every figure in
+    one column, so value is no measure: summing it adds net sales to assets and
+    yen to shares. The measures of financial reports, the same across regimes, are
+    those of fincommons.financialreport.combined.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/edinet/silver.py
+- type: businessDefinition
+  url: https://disclosure2.edinet-fsa.go.jp
+  description: >-
+    EDINET, the electronic disclosure system of Japan's Financial Services Agency,
+    whose API the filings and the CSV conversion of their XBRL are read from.
+schema:
+- name: facts
+  physicalType: table
+  businessName: EDINET facts
+  description: >-
+    One row per fact of the agency's CSV conversion of a filing's XBRL: the element
+    and its Japanese label, the context, the period resolved from it, the unit,
+    and the value, a number in value or anything else in text. The columns a fact
+    shares with ESEF and SEC are spelled the same.
+  dataGranularityDescription: >-
+    One row per fact of a filing: a document management number and the identifier
+    of the fact within it.
+  quality:
+  - name: one_row_per_fact
+    description: No fact of a filing is read twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+      - fact
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: a_fact_is_not_both_a_number_and_a_text
+    description: No fact has both a numeric value and a text.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE value IS NOT NULL AND text IS NOT NULL
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: a_number_has_a_unit
+    description: >-
+      A numeric fact states its unit, without which its value cannot be read.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE value IS NOT NULL AND unit IS NULL
+    mustBe: 0
+    dimension: completeness
+    severity: error
+  - name: the_checks_of_the_figures
+    description: >-
+      The figures are held to the checks of the module, which name each filing and
+      fact at fault, by code, in the table of issues rather than counting them:
+      among them a period that ends before it begins (IMPL_PERIOD), a period shifted
+      by whole years that drifts (PERIOD_SHIFT_INEXACT) and a balance sheet that
+      does not balance (IMBAL_BALANCE_SHEET). fincommons.dataquality.check_catalogue('edinet')
+      lists them all.
+    type: custom
+    engine: fincommons
+    implementation: fincommons.financialreport.edinet.quality.update_silver_edinet_quality
+    dimension: accuracy
+  properties:
+  - name: edinet_code
+    businessName: EDINET code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The EDINET code of the filer, a letter E and five digits, which is the key
+      the tables of this module are organised by. It is not the securities code
+      and not the corporate number; all three are carried and none is derived from
+      another.
+    synonyms:
+    - synonym: edinetCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: edinetCode
+      vendor: fincommons
+  - name: filing
+    businessName: Document management number
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The document management number (書類管理番号) the API addresses a filing by, for
+      instance S100VWVY. It identifies a document within EDINET and is the key a
+      filing is collected and read by.
+    synonyms:
+    - synonym: docID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: docID
+      vendor: fincommons
+  - name: filed_year
+    businessName: Year filed
+    logicalType: integer
+    physicalType: int
+    required: true
+    semanticType: dimension
+    description: >-
+      The year the filing was submitted, which the tables of filings, facts and
+      issues are partitioned by, or the year of index_date for a filing without
+      a submission time. A corrected filing can appear again in a later day's index,
+      so index_date can fall in a later year.
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: fact
+    businessName: Fact
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The identifier of a fact. The conversion gives one none, so it is made from
+      the filing, the document of it, the element, the context and an occurrence
+      number. The number is needed because the element and the context do not identify
+      a fact: a figure is often tagged in several places in one report.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: concept
+    businessName: Element
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The element the fact reports, as the conversion writes it, prefix and name
+      (jppfs_cor:Assets, jpcrp_cor:NetSales). Four prefixes are the taxonomy --
+      jppfs_cor the financial statements, jpcrp_cor the disclosure ordinance, jpdei_cor
+      the document and entity information, jpigp_cor the IFRS edition -- and a prefix
+      built from the form and the filer's own EDINET code, as in jpcrp030000-asr_E03270-000,
+      marks a concept the filer created for its own report.
+    synonyms:
+    - synonym: 要素ID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: 要素ID
+      vendor: fincommons
+  - name: label
+    businessName: Japanese label
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The Japanese name of the element, which the conversion states beside it. Neither
+      of the other two regimes carries a label, the ESEF labels living in a taxonomy
+      this package does not read and the Commission publishing none, so it is the
+      only thing in these tables that says what a concept means to a reader who
+      does not know the taxonomy.
+    synonyms:
+    - synonym: 項目名
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: 項目名
+      vendor: fincommons
+  - name: context
+    businessName: Context
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The context identifier of the fact, as the conversion writes it, for instance
+      CurrentYearDuration or Prior1YearInstant_NonConsolidatedMember. It names the
+      period relative to the filing's own and then the dimensions, and it is carried
+      verbatim because prd_start and prd_end are resolved from it rather than reported.
+    synonyms:
+    - synonym: コンテキストID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: コンテキストID
+      vendor: fincommons
+  - name: relative
+    businessName: Relative period
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Which period the fact is about, relative to the filing, in the agency's own
+      words ('当期', '前期', '前々期', '提出日時点'). It says the same as the period part of
+      the context identifier and is kept so that what prd_start and prd_end were
+      resolved from can be read without parsing a context.
+    synonyms:
+    - synonym: 相対年度
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: 相対年度
+      vendor: fincommons
+  - name: basis
+    businessName: Basis
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the figure is consolidated or of the filer alone, as the conversion
+      labels it ('連結', '個別', 'その他'). The context identifier carries the same thing
+      as a dimension member and is the more reliable of the two, so both are kept.
+    synonyms:
+    - synonym: 連結・個別
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: 連結・個別
+      vendor: fincommons
+  - name: shape
+    businessName: Flow or balance
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the element is a flow over a period or a balance at a moment, as the
+      conversion labels it ('期間' a period, '時点' an instant).
+    synonyms:
+    - synonym: 期間・時点
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: 期間・時点
+      vendor: fincommons
+  - name: prd_start
+    businessName: Start of the fact's period
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The first day of the period the fact is about; empty for a fact reported at
+      an instant, which is how the two are told apart. Resolved rather than reported,
+      as prd_end is.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: prd_end
+    businessName: End of the fact's period
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The last day of the period the fact is about, or the day an instant stands
+      for. It is resolved and not reported: for the current year and the comparative
+      it is the date the filing states for itself in its document and entity information,
+      and for anything further back it is that date shifted by whole years, which
+      is exact only where the filer's years are of equal length. Empty where the
+      context names a period this module does not resolve.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: dimensions
+    businessName: Dimensions
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The dimensions of the fact, as the part of the context identifier that follows
+      the period, for instance NonConsolidatedMember or OrdinaryShareMember. A report
+      may break a figure down by a member it created itself, including one per director.
+    synonyms:
+    - synonym: コンテキストID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: コンテキストID
+      vendor: fincommons
+  - name: unit
+    businessName: Unit
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The unit of the fact as the conversion names it (JPY, shares, pure, JPYPerShares,
+      tCO2e); empty where the element has none. The conversion also states a label
+      for it in Japanese, which is not carried.
+    synonyms:
+    - synonym: ユニットID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: ユニットID
+      vendor: fincommons
+  - name: value
+    businessName: Value
+    logicalType: number
+    physicalType: double
+    semanticType: dimension
+    description: >-
+      The value of a numeric fact, as reported, in unit and without any scaling.
+      Empty where the fact has no number, which includes a fact that carries a unit
+      and a full-width dash for its value because the figure does not apply to the
+      filer.
+    synonyms:
+    - synonym: 値
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: amount
+      vendor: fincommons
+    - property: source
+      value: 値
+      vendor: fincommons
+  - name: text
+    businessName: Text value
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The value of a fact that is not a number, as the conversion writes it. It
+      also holds the full-width dash the conversion writes where a figure does not
+      apply, which is a statement about the figure and is kept rather than dropped.
+    synonyms:
+    - synonym: 値
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: 値
+      vendor: fincommons
+  - name: doc_form
+    businessName: Document of the filing
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Which document of the filing the fact came from, by the form that names the
+      file in the archive: jpcrp030000-asr for an annual securities report, jpaud-aai-cn
+      for the audit report the agency converts beside it.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

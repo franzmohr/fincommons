@@ -1,0 +1,199 @@
+# The data contract of the table of issues of the Silver layer of
+# fincommons.financialreport.edinet, in the Open Data Contract Standard. It
+# is the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, edinet,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.edinet.silver.issues
+name: issues
+version: 1.0.0
+status: active
+domain: edinet
+dataProduct: fincommons.edinet
+description:
+  purpose: >-
+    Which filings and facts fail which of the checks the figures of a report are
+    held to, so that a figure can be weighed before it is used.
+  usage: >-
+    Join to the filings on filing and to the facts on filing and fact; count by
+    issue to see which checks fail most. The table is partitioned by filed_year,
+    as the facts are.
+  limitations: >-
+    A check is a judgement about a filing, not a filer, and its severity is the
+    package's opinion. The issues of a partition are replaced whenever it is checked
+    again; checked says when.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/edinet/quality.py
+- type: businessDefinition
+  url: https://disclosure2.edinet-fsa.go.jp
+  description: >-
+    EDINET, the electronic disclosure system of Japan's Financial Services Agency,
+    whose API the filings and the CSV conversion of their XBRL are read from.
+schema:
+- name: issues
+  physicalType: table
+  businessName: EDINET data quality issues
+  description: >-
+    One row per issue the data quality checks of the module found in a filing or
+    one of its facts, by the code of the check; fincommons.dataquality.describe_check
+    says what a code means.
+  dataGranularityDescription: >-
+    One row per issue found: a filing, and where the issue concerns one fact, that
+    fact, and the check it failed.
+  quality:
+  - name: one_row_per_issue
+    description: A filing, or a fact of it, fails one check once.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+      - fact
+      - concept
+      - issue
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  properties:
+  - name: edinet_code
+    businessName: EDINET code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The EDINET code of the filer, a letter E and five digits, which is the key
+      the tables of this module are organised by. It is not the securities code
+      and not the corporate number; all three are carried and none is derived from
+      another.
+    synonyms:
+    - synonym: edinetCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: edinetCode
+      vendor: fincommons
+  - name: filed_year
+    businessName: Year filed
+    logicalType: integer
+    physicalType: int
+    required: true
+    semanticType: dimension
+    description: >-
+      The year the filing was submitted, which the tables of filings, facts and
+      issues are partitioned by, or the year of index_date for a filing without
+      a submission time. A corrected filing can appear again in a later day's index,
+      so index_date can fall in a later year.
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: filing
+    businessName: Document management number
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The document management number (書類管理番号) the API addresses a filing by, for
+      instance S100VWVY. It identifies a document within EDINET and is the key a
+      filing is collected and read by.
+    synonyms:
+    - synonym: docID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: docID
+      vendor: fincommons
+  - name: fact
+    businessName: Fact
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The identifier of a fact. The conversion gives one none, so it is made from
+      the filing, the document of it, the element, the context and an occurrence
+      number. The number is needed because the element and the context do not identify
+      a fact: a figure is often tagged in several places in one report.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: concept
+    businessName: Element
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The element the fact reports, as the conversion writes it, prefix and name
+      (jppfs_cor:Assets, jpcrp_cor:NetSales). Four prefixes are the taxonomy --
+      jppfs_cor the financial statements, jpcrp_cor the disclosure ordinance, jpdei_cor
+      the document and entity information, jpigp_cor the IFRS edition -- and a prefix
+      built from the form and the filer's own EDINET code, as in jpcrp030000-asr_E03270-000,
+      marks a concept the filer created for its own report.
+    synonyms:
+    - synonym: 要素ID
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: 要素ID
+      vendor: fincommons
+  - name: issue
+    businessName: Issue
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The code of the data quality check the record failed, one row per check it
+      failed. fincommons.dataquality.describe_check turns it into the sentence that
+      says what the code means, how severe it is and what to do about it. A record
+      nothing objected to has no row in the table at all.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: checked
+    businessName: Checked on
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The day the run that wrote the row was made. The issues of a partition are
+      replaced as a whole when it is checked again, so this says when the rows that
+      are there were found rather than when the problem arose.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

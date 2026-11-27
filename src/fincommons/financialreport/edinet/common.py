@@ -187,8 +187,11 @@ filings_schema = StructType() \
 ``filing`` is the 書類管理番号, the document management number the API
 addresses a filing by, and the key of everything else here. ``index_date`` is
 the calendar day whose index the row came from, which is what a run collects
-by; ``filed_year`` is its year and the partition column, as it is on the table
-of facts of the other two regimes.
+by. ``filed_year`` is the year the filing was submitted -- the year of
+``index_date`` only for a filing without a submission time -- and the
+partition column, as it is on the table of facts of the other two regimes. A
+filing an official corrected can appear again in a later day's index, so
+``index_date`` may fall in a later year than ``filed_year``.
 
 ``has_csv`` is the column the module turns on. The agency converts the XBRL of
 a filing to CSV where it can, and says per filing whether it did; a filing
@@ -450,14 +453,21 @@ def connect_to_edinet(spark, config_path, table="filings"):
         :mod:`fincommons.financialreport.edinet.quality` writes, which a lake
         that has never run the checks does not have.
     """
+    # In the order of the declared schema, which is the order of the
+    # contract: a Parquet table puts its partition column last when it is
+    # read and a Delta table keeps it where it was written, and the order a
+    # reader sees should not depend on which of the two the table is.
     if table == "facts":
-        return read_silver(spark, ref_silver_facts(config_path))
+        return read_silver(spark, ref_silver_facts(config_path)).select(*facts_schema.names)
     if table == "filings":
-        return read_silver(spark, ref_silver_filings(config_path))
+        return read_silver(spark, ref_silver_filings(config_path)).select(*filings_schema.names)
     if table == "filers":
-        return read_silver(spark, ref_silver_filers(config_path))
+        return read_silver(spark, ref_silver_filers(config_path)).select(*filers_schema.names)
     if table == "issues":
-        return read_silver(spark, ref_silver_issues(config_path))
+        # The schema lives with the checks, which import this module.
+        from .quality import issues_schema
+
+        return read_silver(spark, ref_silver_issues(config_path)).select(*issues_schema.names)
     raise ValueError(
         f"Table {table!r} not recognised. Use 'facts', 'filings', 'filers' "
         "or 'issues'.")

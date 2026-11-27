@@ -1,0 +1,346 @@
+# The data contract of the table of filers of the Silver layer of
+# fincommons.financialreport.edinet, in the Open Data Contract Standard. It
+# is the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, edinet,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.edinet.silver.filers
+name: filers
+version: 1.0.0
+status: active
+domain: edinet
+dataProduct: fincommons.edinet
+description:
+  purpose: >-
+    Who the filers of EDINET are, so that a lake that wants companies by name, ticker
+    or corporate number finds the codes to collect them by.
+  usage: >-
+    Join to the filings on edinet_code. year_end says which filers close on a day
+    other than 31 March, which a comparison assuming the Japanese financial year
+    must not overlook. fincommons.financialreport.edinet.connect_to_edinet(spark,
+    config, 'filers') opens the table.
+  limitations: >-
+    The list is the agency's as of the day it was read, without history. A value
+    the agency leaves blank is an empty string rather than null, unlike in the other
+    tables of the module. capital and year_end are carried as the agency writes
+    them, as text.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/edinet/silver.py
+- type: businessDefinition
+  url: https://disclosure2.edinet-fsa.go.jp
+  description: >-
+    EDINET, the electronic disclosure system of Japan's Financial Services Agency,
+    whose API the filings and the CSV conversion of their XBRL are read from.
+schema:
+- name: filers
+  physicalType: table
+  businessName: EDINET filers
+  description: >-
+    One row per filer the agency lists: its kind, whether it is listed and consolidates,
+    its capital and year end, its name in Japanese, Latin script and katakana, its
+    address and industry, and its securities code and corporate number.
+  dataGranularityDescription: One row per filer, by EDINET code.
+  quality:
+  - name: one_row_per_filer
+    description: No filer is listed twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - edinet_code
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  properties:
+  - name: edinet_code
+    businessName: EDINET code
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The EDINET code of the filer, a letter E and five digits, which is the key
+      the tables of this module are organised by. It is not the securities code
+      and not the corporate number; all three are carried and none is derived from
+      another.
+    synonyms:
+    - synonym: edinetCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: edinetCode
+      vendor: fincommons
+    quality:
+    - name: edinet_code_is_an_edinet_code
+      description: The EDINET code is a letter E and five digits.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^E[0-9]{5}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: kind
+    businessName: Kind of filer
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The kind of filer, as the agency classifies it (a domestic legal person or
+      partnership, a foreign company, an individual), in Japanese.
+    synonyms:
+    - synonym: attributes.提出者種別
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.提出者種別
+      vendor: fincommons
+  - name: listed
+    businessName: Listed
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the filer is listed, as the agency records it ('上場' listed, '非上場'
+      not). The agency's list leaves a value blank rather than empty, and the table
+      keeps it as an empty string, not null.
+    synonyms:
+    - synonym: attributes.上場区分
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: attributes.上場区分
+      vendor: fincommons
+  - name: consolidated
+    businessName: Consolidates
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the filer reports on a consolidated basis, as the agency records it
+      ('有' yes, '無' no). The agency's list leaves a value blank rather than empty,
+      and the table keeps it as an empty string, not null.
+    synonyms:
+    - synonym: attributes.連結の有無
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: attributes.連結の有無
+      vendor: fincommons
+  - name: capital
+    businessName: Stated capital
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The stated capital of the filer in millions of yen, carried as the agency
+      publishes it rather than parsed; empty for a filer that states none. The agency's
+      list leaves a value blank rather than empty, and the table keeps it as an
+      empty string, not null.
+    synonyms:
+    - synonym: attributes.資本金
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: amount
+      vendor: fincommons
+    - property: source
+      value: attributes.資本金
+      vendor: fincommons
+  - name: year_end
+    businessName: Financial year end
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The day the filer's financial year ends, as the agency writes it ('5月31日'
+      for 31 May), with no year in it and so not a date. Worth carrying because
+      it says which filers do not close in March: of 3,816 listed filers in the
+      list of November 2026, 1,633 do not.
+    synonyms:
+    - synonym: attributes.決算日
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.決算日
+      vendor: fincommons
+  - name: name
+    businessName: Filer
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The name of the filer, as the agency records it, in Japanese.
+    synonyms:
+    - synonym: filerName
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: filerName
+      vendor: fincommons
+  - name: name_en
+    businessName: Filer in Latin script
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The name of the filer in Latin script, as the agency records it. The agency's
+      list leaves a value blank rather than empty, and the table keeps it as an
+      empty string, not null.
+    synonyms:
+    - synonym: attributes.提出者名（英字）
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.提出者名（英字）
+      vendor: fincommons
+  - name: name_kana
+    businessName: Filer in katakana
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The reading of the filer's name in katakana, which is how the agency's own
+      search orders them.
+    synonyms:
+    - synonym: attributes.提出者名（ヨミ）
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.提出者名（ヨミ）
+      vendor: fincommons
+  - name: address
+    businessName: Address
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The address of the filer, as the agency records it, in Japanese.
+    synonyms:
+    - synonym: attributes.所在地
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.所在地
+      vendor: fincommons
+  - name: industry
+    businessName: Industry
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The industry of the filer, in the agency's own classification, in Japanese.
+    synonyms:
+    - synonym: attributes.提出者業種
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: attributes.提出者業種
+      vendor: fincommons
+  - name: sec_code
+    businessName: Securities code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The securities code of a listed filer: the four-digit ticker with a check
+      digit appended, so 13760 is ticker 1376. Empty for a filer that is not listed.
+      The agency's list leaves a value blank rather than empty, and the table keeps
+      it as an empty string, not null.
+    synonyms:
+    - synonym: secCode
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: secCode
+      vendor: fincommons
+    quality:
+    - name: sec_code_is_a_securities_code_or_blank
+      description: >-
+        The securities code is four digits or capital letters and a check digit
+        0, or blank for a filer that is not listed.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^([0-9A-Z]{4}0)?$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: jcn
+    businessName: Corporate number
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The corporate number (法人番号) of the National Tax Agency, thirteen digits, which
+      every Japanese legal person has. It is the identifier of these tables most
+      likely to be shared with a register outside EDINET; whether it reaches the
+      legal entity identifier the esef tables are keyed by is a question for the
+      data and nothing here derives one from the other. The agency's list leaves
+      a value blank rather than empty, and the table keeps it as an empty string,
+      not null.
+    synonyms:
+    - synonym: JCN
+      source: EDINET
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: JCN
+      vendor: fincommons
+    quality:
+    - name: jcn_is_thirteen_digits_or_blank
+      description: >-
+        The corporate number is thirteen digits, or blank where the agency gives
+        none.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^([0-9]{13})?$
+      mustBe: 0
+      dimension: conformity
+      severity: error

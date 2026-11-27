@@ -47,14 +47,16 @@ def test_a_contract_names_the_stage_that_writes_its_columns():
     # file of rules the stage applies: FIRDS keeps the rules of its history,
     # and with them the names of the version columns, in firds.history, and
     # GLEIF those and the columns it reads in gleif.history and gleif.common.
-    # ESEF and SEC declare the schemas of their tables in their common
+    # ESEF, SEC and EDINET declare the schemas of their tables in their common
     # modules and, for their issues, in their quality modules.
     applied_by = {"firds.silver": {"firds.silver", "firds.history"},
                   "gleif.silver": {"gleif.silver", "gleif.history", "gleif.common"},
                   "esef.silver": {"financialreport.esef.common",
                                   "financialreport.esef.quality"},
                   "sec.silver": {"financialreport.sec.common",
-                                 "financialreport.sec.quality"}}
+                                 "financialreport.sec.quality"},
+                  "edinet.silver": {"financialreport.edinet.common",
+                                    "financialreport.edinet.quality"}}
     defined = defined_columns().set_index(["module", "column"])["tables"]
     for module, column, stage, *_ in catalogue_rows():
         writers = applied_by.get(stage, {stage})

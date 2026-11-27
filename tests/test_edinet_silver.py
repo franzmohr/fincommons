@@ -205,3 +205,83 @@ def test_a_lake_with_no_filers_list_writes_no_filers_and_does_not_fail(
 
     filings = common.connect_to_edinet(spark, lake, "filings")
     assert filings.count() == 3
+
+
+# The data contracts
+# --------------------------------------------------------------------------
+
+
+def schema_of(table):
+    from fincommons.financialreport.edinet import quality
+
+    return {"filings": common.filings_schema, "facts": common.facts_schema,
+            "filers": common.filers_schema, "issues": quality.issues_schema}[table]
+
+
+@pytest.mark.parametrize("table", ["filings", "facts", "filers", "issues"])
+def test_the_declared_schema_is_the_schema_of_the_contract(table):
+    """The code writes with the declared schema and a reader is told the
+    contract, so the two must agree in names, order, types and in which
+    columns may be empty."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    assert spark_schema(load_contract(f"fincommons.edinet.silver.{table}")) == schema_of(table)
+
+
+def write_filers(config_path):
+    """The agency's list of filers, with a filer that is not listed and has
+    no corporate number, whose blanks the list keeps as empty strings."""
+    import csv
+    import io
+    import zipfile
+
+    rows = [
+        ["ダウンロード実行日", "2026年11月14日現在", "件数", "2件"],
+        ["ＥＤＩＮＥＴコード", "提出者種別", "上場区分", "連結の有無", "資本金", "決算日",
+         "提出者名", "提出者名（英字）", "提出者名（ヨミ）", "所在地", "提出者業種",
+         "証券コード", "提出者法人番号"],
+        ["E03270", "内国法人・組合", "上場", "有", "1491", "8月31日", "株式会社例",
+         "EXAMPLE CO., LTD.", "カブシキガイシャレイ", "東京都", "小売業", "99990",
+         "5070001000715"],
+        ["E99999", "外国法人・組合", "非上場", "無", "", "12月31日", "例外国会社",
+         "", "レイガイコクガイシャ", "", "", "", ""],
+    ]
+    text = io.StringIO()
+    csv.writer(text, lineterminator="\r\n").writerows(rows)
+    os.makedirs(os.path.dirname(common.path_bronze_filers(config_path)), exist_ok=True)
+    with zipfile.ZipFile(common.path_bronze_filers(config_path), "w") as archive:
+        archive.writestr("EdinetcodeDlInfo.csv", text.getvalue().encode(common.FILERS_ENCODING))
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, lake):
+    """The four tables built from the fixture index, conversion and list of
+    filers are those their contracts describe -- columns, types and order, no
+    empty value where one is required, one row per key -- and meet their
+    quality rules, warnings included."""
+    from pyspark.sql import functions as F
+
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+    from fincommons.financialreport.edinet import quality
+
+    write_filers(lake)
+    silver.update_silver_edinet(spark, lake, filers=True)
+    quality.update_silver_edinet_quality(spark, lake)
+
+    keys = {"filings": ["filing"], "facts": ["filing", "fact"],
+            "filers": ["edinet_code"], "issues": []}
+    assert common.connect_to_edinet(spark, lake, "filers").count() == 2
+    for table, key in keys.items():
+        frame = common.connect_to_edinet(spark, lake, table)
+        contract = load_contract(f"fincommons.edinet.silver.{table}")
+        properties = contract["schema"][0]["properties"]
+
+        assert [(f.name, f.dataType) for f in frame.schema] == \
+            [(f.name, f.dataType) for f in spark_schema(contract)], table
+        for prop in properties:
+            if prop.get("required"):
+                assert frame.where(F.col(prop["name"]).isNull()).count() == 0, (table, prop["name"])
+        assert [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                          key=lambda p: p["primaryKeyPosition"])] == key
+        if key:
+            assert frame.groupBy(*key).count().where("count > 1").count() == 0, table
+        assert [r for r in check_quality(frame, contract) if r.passed is False] == [], table
