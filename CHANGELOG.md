@@ -4,10 +4,36 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
-## Unreleased
+## 0.6.0
+
+Every Silver table now has a data contract in the Open Data Contract
+Standard, and the contracts are where a column is described: the column
+catalogue file is gone. Two modules are new -- `gleif`, a day-by-day history
+of GLEIF's reference data and of its mapping of market identifier codes to
+LEIs, and `sts`, ESMA's register of STS securitisations -- and every report
+template renders to a tagged PDF/UA-1 document. The READMEs are rewritten to
+lead with a quick start, and a guide says how to build a Spark session. The
+renamed curve columns of `marketpricedata` and the removed catalogue file
+change the public API.
 
 ### Added
 
+- `gleif`: a history of GLEIF's mapping of market identifier codes (MIC,
+  ISO 10383) to LEIs, in a pipeline of its own, `update_gleif_mic_lei`. Every
+  file GLEIF's mapping API still holds (81, back to August 2022) is
+  downloaded, imported into Bronze one file per day, and the history rebuilt
+  from them into the Delta table `mic_lei`, keyed by MIC and `valid_from`. A
+  version holds from the first file that links the MIC to its LEI to the day
+  before the first that no longer does. Requests GLEIF turns away with 429
+  wait as `Retry-After` says. The table has a data contract and is an output
+  port of the product; `connect_to_mic_lei`, `current_mic_lei` and
+  `mic_lei_as_of` read it.
+- `entitymasterdata`: both Silver tables carry `mic`, the market identifier
+  codes GLEIF links to the LEI, as a sorted list. They are read from the
+  `mic_lei` history of `fincommons.gleif` rather than downloaded here; without
+  it `mic` is empty and a warning says so. The main table takes `mic` by LEI
+  whichever source describes the entity, the proprietary list included, and
+  `entities_as_of` takes the MICs that held on its day.
 - Data contracts for the last Silver tables: `entitymasterdata`'s `public`
   and `main`, the combined `financialreport` layer's `fact` and `filing`
   (with products `product_entitymasterdata.yaml` and
@@ -414,6 +440,12 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Changed
 
+- `contracts.QUALITY_SEVERITIES` lists the most severe first, `error`,
+  `warning`, `info`, in the order `dataquality.SEVERITIES` has always used.
+- `schemas` imports PySpark only in `load_pyspark_schema`, so
+  `load_replacement_table` works without it; `columns.__all__` names
+  `SCHEMA_DECLARING_MODULES`, and `layout`, `schemas` and `testing` state an
+  `__all__` of their own.
 - The column catalogue of fincommons is read from the data contracts alone:
   `data/column_catalogue.csv` is removed. `column_catalogue` and
   `describe_column` answer as before for the Silver columns; a package that
@@ -525,6 +557,21 @@ release may change the public API, which `tests/test_public_api.py` lists.
   `add_discount_factor`, has to use the new names.
 
 ### Fixed
+
+- `contracts.check_quality`: a SQL rule in percent whose query returns NULL
+  -- a SUM over no matching rows -- fails as any rule that measured nothing
+  does. It was scaled as `100.0 * None`, and the `TypeError` took the results
+  of every other rule of the contract with it.
+- `firds.history`: `from fincommons.firds.history import *` works again;
+  `__all__` named `operation` rather than the constant `OPERATION`.
+- `famafrenchdata.series`: the error for a table the library does not hold
+  names the columns in lower case, as the table now spells them.
+- Docstrings: `tools/ecb_csv_to_spark_schema.py` no longer says the Bronze
+  import reads the ECB answers without a header; `dataquality.run_checks`
+  says its frame may be a mapping of frames, as the financialreport quality
+  modules pass it; the example of `spreadsheet` imports `date`; and
+  `credentials` names OpenDART as an example rather than a source a module
+  reads.
 
 - `esef-sector-factsheet.qmd`: the Japanese benchmark reads a filer without
   subsidiaries from the accounts it states under `NonConsolidatedMember`,
@@ -664,6 +711,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
 - `financialreport`: a Japanese filing the accounting standard does not apply
   to, a large-holding report or a fund's, has no framework. It was given the
   conversion's mark for not applicable, `－`, as its framework.
+
+### Project
+
+- Every README follows one order -- what the module gives you, a quick start
+  that runs as written, the columns of every table, recipes for common tasks,
+  running it on a schedule, how it works, a reference of configuration keys
+  and functions, and troubleshooting -- and was checked against the code:
+  every function an example calls exists, and every link and anchor
+  resolves.
+- New pages: `docs/spark-session.md`, on building a local Spark session (the
+  interpreter, cores and memory, the scratch directory, reading the settings
+  back) and what to do when one misbehaves; `src/fincommons/README.md`, on
+  the shared infrastructure modules; and `src/fincommons/financialreport/README.md`,
+  on which of `esef`, `sec`, `edinet` and `combined` to start with.
 
 ## 0.5.2
 
