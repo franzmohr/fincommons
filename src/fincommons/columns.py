@@ -29,6 +29,12 @@ code and the reports alone ends in "(inferred)". :func:`defined_columns`
 reads the column names out of the modules' code, and the test suite checks
 the two against each other, so a column added to a module without a
 catalogue entry fails a test rather than going undocumented.
+
+A table that has a data contract is described by its contract instead, and
+its columns have no row in the file: the contract is the single source of
+truth for them, and :func:`column_catalogue` takes their rows from it, in the
+same shape (see :mod:`fincommons.contracts`). The exchange rates are the first
+data set described this way.
 """
 
 from __future__ import annotations
@@ -40,6 +46,8 @@ from dataclasses import dataclass
 from importlib import resources
 
 import pandas as pd
+
+from . import contracts as _contracts
 
 __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
            "defined_columns", "CATALOGUED_MODULES", "CATALOGUES",
@@ -153,6 +161,12 @@ def column_catalogue(dataset=None, catalogues=None):
         with resources.files(_root(package)).joinpath("data", "column_catalogue.csv") \
                 .open(encoding="utf-8") as handle:
             parts.append(pd.read_csv(handle, dtype=str, keep_default_na=False))
+    # The tables that have a data contract are described by it and by nothing
+    # else. Their rows join those of the modules that have none yet, in the
+    # same shape.
+    parts.append(pd.DataFrame(
+        _contracts.catalogue_rows(tuple(catalogues)),
+        columns=["module", "column", "tables", "source", "kind", "description"]))
     # In the order of a single catalogue, whichever packages contributed.
     catalogue = pd.concat(parts, ignore_index=True) \
         .sort_values(["module", "column"], kind="stable")

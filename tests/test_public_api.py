@@ -27,6 +27,7 @@ PUBLIC_API = {
         "CATALOGUED_MODULES", "ColumnDescription", "SCHEMA_DECLARING_MODULES",
         "column_catalogue", "defined_columns", "describe_column",
     ],
+    "fincommons.contracts": ["catalogue_rows"],
     "fincommons.entitymasterdata": [
         "LEI_OTHER", "connect_to_entitymasterdata",
     ],

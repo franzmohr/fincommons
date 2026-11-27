@@ -48,6 +48,9 @@ def test_the_licence_is_present():
 # pyproject.toml and added here; anything else is refused.
 OPEN_DEPENDENCIES = {
     "delta",      # delta-spark
+    # the dev extra: fincommons.contracts imports it only to validate a
+    # contract against the JSON schema of its standard
+    "jsonschema",
     "numpy",
     "openpyxl",
     "pandas",
