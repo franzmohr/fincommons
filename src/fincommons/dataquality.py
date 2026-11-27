@@ -236,8 +236,12 @@ def run_checks(frame, checks, keys, catalogue_dataset=None,
 
     Parameters
     ----------
-    frame: pyspark.sql.DataFrame
+    frame: pyspark.sql.DataFrame, or any object the checks take
         What the checks are run over, usually one partition of a Silver table.
+        It is handed to each check function as it is, so it may also be a
+        mapping of several frames, as the quality modules of
+        :mod:`fincommons.financialreport` pass, where a check needs more than
+        one table.
     checks: iterable of (str, callable)
         The checks to run, in the order they are to be run.
     keys: iterable of str

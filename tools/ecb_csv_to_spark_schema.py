@@ -31,9 +31,10 @@ everything else
 The header line
 ---------------
 
-An answer carries its column names as its first line. A reader that parses it
-with a declared schema and no ``header`` option -- which is how the package
-reads these files -- takes that line as an ordinary record. Typing
+An answer carries its column names as its first line. The package's Bronze
+import reads these files with the ``header`` option and so skips that line,
+but a reader that parses an answer with a declared schema and no ``header``
+option takes it as an ordinary record. Typing
 ``TIME_PERIOD`` as a date is what makes such a record recognisable: Spark
 parses permissively, so the literal text ``TIME_PERIOD`` does not parse as a
 date and the record is null in that one column, where every real observation

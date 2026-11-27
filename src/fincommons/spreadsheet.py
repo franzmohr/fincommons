@@ -30,6 +30,8 @@ What a writer of a workbook has to get right, and what this one does:
 
 One call writes a file::
 
+    from datetime import date
+
     from fincommons.spreadsheet import Sheet, write_ods
 
     write_ods("revenue.ods", [

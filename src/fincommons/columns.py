@@ -62,8 +62,8 @@ from . import contracts as _contracts
 
 __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
            "defined_columns", "CATALOGUED_MODULES", "CATALOGUES",
-           "SNAKE_CASE_MODULES", "NOT_COLUMNS", "CONTRACTED_MODULES",
-           "OUTPUT_COLUMNS", "MODULE_FOLDERS"]
+           "SNAKE_CASE_MODULES", "SCHEMA_DECLARING_MODULES", "NOT_COLUMNS",
+           "CONTRACTED_MODULES", "OUTPUT_COLUMNS", "MODULE_FOLDERS"]
 
 #: The modules whose data sets the catalogue of this package covers.
 #: marketpricedata is not among them: its one table has three columns, and

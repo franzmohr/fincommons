@@ -570,7 +570,7 @@ __all__ = [
     "INSERT",
     "KEY_COLUMNS",
     "LATEST_RECORD",
-    "operation",
+    "OPERATION",
     "REPLACE",
     "VALID_FROM",
     "VALID_TO",

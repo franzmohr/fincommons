@@ -31,6 +31,8 @@ from .log import context
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["rebalanced", "compact_partitions", "TARGET_FILE_SIZE"]
+
 #: The size :func:`compact_partitions` aims at for a file, in bytes. Large
 #: enough that the fixed cost of opening a file is small against reading it,
 #: small enough that a partition of a few hundred megabytes is still read by

@@ -394,7 +394,7 @@ def series(data, dataset, table, frequency, columns=None):
         raise LookupError(
             f"The table of the library holds no row for {dataset!r}, table "
             f"{table!r} at frequency {frequency!r}. Check the names against "
-            "the DATASET, TABLE and FREQUENCY columns."
+            "the dataset, table and frequency columns."
         )
     wide = frame.assign(ref_date=pandas.to_datetime(frame["ref_date"])) \
         .pivot(index="ref_date", columns="series", values="value") \

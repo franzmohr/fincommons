@@ -1,11 +1,13 @@
 """Where a key comes from, for the sources that will not answer without one.
 
-Most of what fincommons reads is published to anyone who asks. Two sources
-are not: the EDINET API of Japan's Financial Services Agency and the OpenDART
-API of Korea's Financial Supervisory Service each refuse a request that
-carries no registered key. This module is the one place that says where such
-a key comes from, so that a module reading one of them does not invent its
-own answer.
+Most of what fincommons reads is published to anyone who asks. Some sources
+are not: the EDINET API of Japan's Financial Services Agency, which
+:mod:`fincommons.financialreport.edinet` reads, refuses a request that
+carries no registered key, as does, for instance, the OpenDART API of Korea's
+Financial Supervisory Service, which no module of this package reads yet.
+This module is the one place that says where such a key comes from, so that
+a module reading one of them -- here or in a package built on fincommons --
+does not invent its own answer.
 
 Three places are looked in, in this order:
 
