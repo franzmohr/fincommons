@@ -1,0 +1,322 @@
+# The data contract of the table of filings of the Silver layer of
+# fincommons.financialreport.sec, in the Open Data Contract Standard. It is
+# the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, sec,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sec.silver.filings
+name: filings
+version: 1.0.0
+status: active
+domain: sec
+dataProduct: fincommons.sec
+description:
+  purpose: >-
+    Which periodic reports the registrants collected filed with the Commission,
+    for which period, and under which accounting framework.
+  usage: >-
+    Join to the facts on filing. An amendment carries the form it amends with /A.
+    fincommons.financialreport.sec.connect_to_sec(spark, config, 'filings') opens
+    the table.
+  limitations: >-
+    A filing appears only if the company file states a fact of it, and only with
+    the forms the run kept. The registrant is identified by its CIK: neither the
+    Commission nor GLEIF publishes a mapping from it to the LEI.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/sec/silver.py
+- type: businessDefinition
+  url: https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip
+  description: >-
+    The bulk archive of the company files of the Commission, one JSON file per registrant,
+    which the facts are read from.
+schema:
+- name: filings
+  physicalType: table
+  businessName: SEC filings
+  description: >-
+    One row per filing the facts name: who filed it, on which form, when, for which
+    period and fiscal year, under which framework, and how many facts it stated.
+    The row is reconstructed from the facts, which state their filing, rather than
+    read from an index.
+  dataGranularityDescription: One row per filing, by accession number.
+  quality:
+  - name: one_row_per_filing
+    description: No filing is listed twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: a_filing_states_facts
+    description: >-
+      Every filing states at least one fact, since the table is reconstructed from
+      the facts.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE facts < 1
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  properties:
+  - name: filing
+    businessName: Accession number
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The accession number of the filing the fact came from. A company file is organised
+      by concept rather than by filing, so this is what a filing is reconstructed
+      by, and a figure a later filing restates appears again under that filing rather
+      than replacing the first.
+    synonyms:
+    - synonym: accn
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: accn
+      vendor: fincommons
+    quality:
+    - name: filing_is_an_accession_number
+      description: 'The filing is named by its accession number: ten digits, two,
+        six.'
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[0-9]{10}-[0-9]{2}-[0-9]{6}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: cik
+    businessName: CIK
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The central index key of the registrant, padded to the ten digits the company
+      files use. Neither the Commission nor GLEIF publishes a mapping from it to
+      the legal entity identifier the ESEF and entity master data tables are keyed
+      by; the LEI records that name EDGAR as their register are nearly all funds,
+      by series identifier, and this module invents nothing.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: sec.gov
+      vendor: fincommons
+    quality:
+    - name: cik_is_ten_digits
+      description: The CIK is padded to the ten digits the company files use.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[0-9]{10}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: name
+    businessName: Registrant
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The name of the registrant, as the Commission holds it.
+    synonyms:
+    - synonym: entityName
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: entityName
+      vendor: fincommons
+  - name: form
+    businessName: Form
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The form the filing was made on, such as 10-K, 10-Q or 20-F. An amendment
+      carries the form it amends with /A appended.
+    synonyms:
+    - synonym: form
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: form
+      vendor: fincommons
+  - name: filed
+    businessName: Filed
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: The day the filing was made with the Commission.
+    synonyms:
+    - synonym: filed
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: filed
+      vendor: fincommons
+  - name: period_end
+    businessName: Period end
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The last day of the latest period the filing reports on under a reporting
+      taxonomy, which for a periodic report is the period it is about; the earlier
+      periods in it are its comparatives. The cover page is not counted: it states
+      a date after the period closed.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: fy
+    businessName: Fiscal year
+    logicalType: integer
+    physicalType: int
+    semanticType: dimension
+    description: The fiscal year the filing reports on, as the Commission states
+      it.
+    synonyms:
+    - synonym: fy
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: fy
+      vendor: fincommons
+  - name: fp
+    businessName: Fiscal period
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The fiscal period the filing reports on, as the Commission labels it: FY for
+      an annual report, Q1 to Q4 for a quarterly one.
+    synonyms:
+    - synonym: fp
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: fp
+      vendor: fincommons
+    quality:
+    - name: fiscal_period_is_known
+      description: >-
+        The fiscal period is one the Commission uses for a periodic report, FY or
+        Q1 to Q4.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - FY
+        - Q1
+        - Q2
+        - Q3
+        - Q4
+      mustBe: 0
+      dimension: conformity
+      severity: warning
+  - name: taxonomies
+    businessName: Taxonomies
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The taxonomies the filing tagged against, separated by semicolons, for instance
+      dei;us-gaap. framework is derived from them.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: framework
+    businessName: Accounting framework
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The accounting framework the filing was prepared under, IFRS or US-GAAP, taken
+      from the taxonomies it tagged against. A foreign private issuer reporting
+      under IFRS tags against the IFRS taxonomy and is recorded as such, rather
+      than being taken for a US GAAP filer because of where it filed.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: framework_is_known
+      description: A framework, where it can be told, is IFRS or US-GAAP.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - IFRS
+        - US-GAAP
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: facts
+    businessName: Facts stated
+    logicalType: integer
+    physicalType: int
+    required: true
+    semanticType: measure
+    transformLogic: SUM(facts)
+    description: >-
+      How many facts the filing stated, of the forms the run kept. It counts what
+      the company file carries, which is the undimensioned numeric facts and not
+      the whole of the filing.
+    customProperties:
+    - property: kind
+      value: count
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    - property: aggregation
+      value: additive
+      vendor: fincommons
+      description: A count of the facts of one filing, which adds up over filings.

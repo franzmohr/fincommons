@@ -75,6 +75,10 @@ A registrant is found by ticker with `registrants(contact)`, which reads the Com
 
 ## The Silver tables
 
+What the columns of each table hold, and what a reader may rely on, is stated by its data contract in the Open Data Contract Standard: `data/contract_sec_silver_filings.yaml`, `data/contract_sec_silver_facts.yaml` and `data/contract_sec_silver_issues.yaml`, which `data/product_sec.yaml` names as the output ports of the module. They are the one place the columns are described -- `fincommons.describe_column("fp", dataset="sec")` reads its answer from there -- and the declared schemas of the module are held to them by the tests. A contract states the key of its table (the accession number; the accession number and the fact) and the rules the table is held to: one row per filing, per fact and per issue, a CIK of ten digits, an accession number in its form, a framework of IFRS or US-GAAP, a unit for every value, and a partition that is the year the filing was made. `fincommons.contracts.check_quality` runs them; the checks that name each figure at fault are those of [Data quality](#data-quality), which the contract of the facts points at. As for ESEF, `value` is no measure: it holds every figure in one column, and the measures of a financial report are those of `fincommons.financialreport.combined`.
+
+`connect_to_sec` returns each table in the order of its declared schema, whether it is stored as Parquet, which puts the partition column `filed_year` last when it is read, or as Delta.
+
 ### `filings`
 
 One row per filing the company file names, reconstructed from the facts. `filing` is the accession number; `period_end` is the latest period the filing reports on, which for a periodic report is the period it is about and not one of its comparatives; `fy` and `fp` are the fiscal year and period of the cover page, which is how a registrant whose financial year ends in January names it; `framework` is `US-GAAP` or `IFRS`, taken from the taxonomies the filing tagged against, so that a foreign private issuer reporting under IFRS is recognised as such rather than taken for a US GAAP filer because of where it filed.

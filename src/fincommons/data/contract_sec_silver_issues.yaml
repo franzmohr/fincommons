@@ -1,0 +1,191 @@
+# The data contract of the table of issues of the Silver layer of
+# fincommons.financialreport.sec, in the Open Data Contract Standard. It is
+# the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, sec,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sec.silver.issues
+name: issues
+version: 1.0.0
+status: active
+domain: sec
+dataProduct: fincommons.sec
+description:
+  purpose: >-
+    Which filings and facts fail which of the checks the figures of a report are
+    held to, so that a figure can be weighed before it is used.
+  usage: >-
+    Join to the filings on filing and to the facts on filing and fact; count by
+    issue to see which checks fail most. The table is partitioned by filed_year,
+    as the facts are.
+  limitations: >-
+    A check is a judgement about a filing, not a registrant, and its severity is
+    the package's opinion. The issues of a partition are replaced whenever it is
+    checked again; checked says when.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/sec/quality.py
+- type: businessDefinition
+  url: https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip
+  description: >-
+    The bulk archive of the company files of the Commission, one JSON file per registrant,
+    which the facts are read from.
+schema:
+- name: issues
+  physicalType: table
+  businessName: SEC data quality issues
+  description: >-
+    One row per issue the data quality checks of the module found in a filing or
+    one of its facts, by the code of the check; fincommons.dataquality.describe_check
+    says what a code means.
+  dataGranularityDescription: >-
+    One row per issue found: a filing, and where the issue concerns one fact, that
+    fact, and the check it failed.
+  quality:
+  - name: one_row_per_issue
+    description: A filing, or a fact of it, fails one check once.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+      - fact
+      - concept
+      - issue
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  properties:
+  - name: cik
+    businessName: CIK
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The central index key of the registrant, padded to the ten digits the company
+      files use. Neither the Commission nor GLEIF publishes a mapping from it to
+      the legal entity identifier the ESEF and entity master data tables are keyed
+      by; the LEI records that name EDGAR as their register are nearly all funds,
+      by series identifier, and this module invents nothing.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: sec.gov
+      vendor: fincommons
+  - name: filed_year
+    businessName: Year filed
+    logicalType: integer
+    physicalType: int
+    required: true
+    semanticType: dimension
+    description: >-
+      The year of filed, which the table of facts is partitioned by. The year a
+      filing was made is monotonic; the fiscal year is not, since one filing states
+      several of them.
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: filing
+    businessName: Accession number
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The accession number of the filing the fact came from. A company file is organised
+      by concept rather than by filing, so this is what a filing is reconstructed
+      by, and a figure a later filing restates appears again under that filing rather
+      than replacing the first.
+    synonyms:
+    - synonym: accn
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: accn
+      vendor: fincommons
+  - name: fact
+    businessName: Fact
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The identifier of a fact. A company file gives its facts none, so one is made
+      from what identifies a fact within its filing, which is what lets a file be
+      read again without the table growing.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: concept
+    businessName: Concept
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The concept a fact was tagged with, as taxonomy and name, for instance us-gaap:Revenues.
+      It is not resolved across frameworks: what a concept of one framework means
+      in the other is a judgement, and not one this table makes.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: sec.gov
+      vendor: fincommons
+  - name: issue
+    businessName: Issue
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The code of the data quality check the record failed, one row per check it
+      failed. fincommons.dataquality.describe_check turns it into the sentence that
+      says what the code means, how severe it is and what to do about it. A record
+      nothing objected to has no row in the table at all.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: checked
+    businessName: Checked on
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The day the run that wrote the row was made. The issues of a partition are
+      replaced as a whole when it is checked again, so this says when the rows that
+      are there were found rather than when the problem arose.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

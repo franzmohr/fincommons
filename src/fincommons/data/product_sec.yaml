@@ -1,0 +1,36 @@
+# The data product of fincommons.financialreport.sec, in the Open Data
+# Product Standard. Its output ports name the contracts of the three Silver
+# tables by identifier and version; the test suite checks that the contracts
+# are shipped in those versions. The order of the ports is the order in which
+# the column catalogue takes a column named in several tables: from the
+# first. See fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.sec
+name: sec
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: sec
+description:
+  purpose: >-
+    The tagged figures of the periodic reports that registrants file with the
+    U.S. Securities and Exchange Commission, as its company files publish
+    them: one row per filing, one row per fact, and the issues the data
+    quality checks find in them.
+outputPorts:
+  - name: silver_filings
+    type: table
+    description: One row per filing the facts name.
+    contractId: fincommons.sec.silver.filings
+    version: 1.0.0
+  - name: silver_facts
+    type: table
+    description: One row per fact of a filing.
+    contractId: fincommons.sec.silver.facts
+    version: 1.0.0
+  - name: silver_issues
+    type: table
+    description: One row per issue the data quality checks found in a filing or a fact.
+    contractId: fincommons.sec.silver.issues
+    version: 1.0.0

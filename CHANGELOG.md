@@ -8,6 +8,19 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `financialreport.sec`: data contracts for the three Silver tables,
+  `filings`, `facts` and `issues`, and a product, `product_sec.yaml`, in the
+  shape of those of ESEF. They equal the declared schemas, which a test holds
+  them to, state the count of facts of a filing as an additive measure and
+  `value` as no measure, and state quality rules: one row per filing, per
+  fact and per issue, a filing that states facts, a CIK of ten digits, an
+  accession number in its form, a framework of IFRS or US-GAAP, a fiscal
+  period of FY or Q1 to Q4 (a warning), a unit for every value, and
+  `filed_year` the year of `filed`; and they point at the checks of
+  `sec.quality`. The rules hold on the lake: 4,533 filings, 1,929,797 facts.
+  The 21 rows of `sec` left `column_catalogue.csv`, and the description of
+  `fp` now spells the annual period `FY`, as the data does.
+
 - `financialreport.esef`: data contracts for the three Silver tables,
   `filings`, `facts` and `issues`, and a product, `product_esef.yaml`. The
   contracts state each table's key, types and which columns may be empty,
@@ -304,6 +317,10 @@ release may change the public API, which `tests/test_public_api.py` lists.
   regime, and its note now says that a Japanese row is in yen.
 
 ### Changed
+
+- `financialreport.sec.connect_to_sec` returns each table in the order of
+  its declared schema, `filed_year` third, whether the table is Parquet or
+  Delta.
 
 - `financialreport.esef.connect_to_esef` and `connect_to_esef_issues`
   return the columns in the order of the declared schema, `country` first,

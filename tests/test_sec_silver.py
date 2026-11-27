@@ -124,3 +124,54 @@ def test_building_from_an_empty_bronze_layer_is_refused(spark, tmp_path):
 def test_an_unknown_table_is_rejected(spark, config):
     with pytest.raises(ValueError, match="not recognised"):
         common.connect_to_sec(spark, config, "factz")
+
+
+# The data contracts
+# --------------------------------------------------------------------------
+
+
+def contracted(table):
+    from fincommons.financialreport.sec import quality
+
+    return {"filings": common.filings_schema, "facts": common.facts_schema,
+            "issues": quality.issues_schema}[table]
+
+
+@pytest.mark.parametrize("table", ["filings", "facts", "issues"])
+def test_the_declared_schema_is_the_schema_of_the_contract(table):
+    """The code writes with the declared schema and a reader is told the
+    contract, so the two must agree in names, order, types and in which
+    columns may be empty."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    assert spark_schema(load_contract(f"fincommons.sec.silver.{table}")) == contracted(table)
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, config):
+    """The tables built from the fixture company files are those their
+    contracts describe -- columns, types and order, no empty value where one
+    is required, one row per key -- and meet their quality rules, warnings
+    included."""
+    from pyspark.sql import functions as F
+
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+    from fincommons.financialreport.sec import quality
+
+    silver.update_silver_sec(spark, config)
+    quality.update_silver_sec_quality(spark, config)
+
+    for table, key in [("filings", ["filing"]), ("facts", ["filing", "fact"]), ("issues", [])]:
+        frame = common.connect_to_sec(spark, config, table)
+        contract = load_contract(f"fincommons.sec.silver.{table}")
+        properties = contract["schema"][0]["properties"]
+
+        assert [(f.name, f.dataType) for f in frame.schema] == \
+            [(f.name, f.dataType) for f in spark_schema(contract)], table
+        for prop in properties:
+            if prop.get("required"):
+                assert frame.where(F.col(prop["name"]).isNull()).count() == 0, (table, prop["name"])
+        assert [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                          key=lambda p: p["primaryKeyPosition"])] == key
+        if key:
+            assert frame.groupBy(*key).count().where("count > 1").count() == 0, table
+        assert [r for r in check_quality(frame, contract) if r.passed is False] == [], table

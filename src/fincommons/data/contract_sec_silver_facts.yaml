@@ -1,0 +1,317 @@
+# The data contract of the table of facts of the Silver layer of
+# fincommons.financialreport.sec, in the Open Data Contract Standard. It is
+# the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does, sec,
+# rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sec.silver.facts
+name: facts
+version: 1.0.0
+status: active
+domain: sec
+dataProduct: fincommons.sec
+description:
+  purpose: >-
+    Every undimensioned numeric fact the registrants collected reported to the Commission,
+    as reported, so that a figure can be read off a filing without opening it.
+  usage: >-
+    Filter on filed_year first, since the table is partitioned by it, then on concept.
+    A figure a later filing restates appears again under that filing, so the figure
+    for a period is read from the filing that reports on it. fincommons.financialreport.sec.connect_to_sec(spark,
+    config, 'facts') opens the table.
+  limitations: >-
+    The company files hold the undimensioned numeric facts only: no breakdown, no
+    text, no concept the registrant created, and no decimals. The table holds every
+    figure in one column, so value is no measure: summing it adds revenue to assets
+    and dollars to shares. The measures of financial reports, the same across regimes,
+    are those of fincommons.financialreport.combined.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/sec/silver.py
+- type: businessDefinition
+  url: https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip
+  description: >-
+    The bulk archive of the company files of the Commission, one JSON file per registrant,
+    which the facts are read from.
+schema:
+- name: facts
+  physicalType: table
+  businessName: SEC facts
+  description: >-
+    One row per fact of a filing, as the company files of data.sec.gov state them:
+    the concept, the period, the unit and the value. The columns a fact shares with
+    the facts of ESEF are spelled the same.
+  dataGranularityDescription: >-
+    One row per fact of a filing: an accession number and the identifier of the
+    fact within it.
+  quality:
+  - name: one_row_per_fact
+    description: No fact of a filing is read twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - filing
+      - fact
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: a_number_has_a_unit
+    description: >-
+      A fact with a value states its unit, without which the value cannot be read.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE value IS NOT NULL AND unit IS NULL
+    mustBe: 0
+    dimension: completeness
+    severity: error
+  - name: the_partition_is_the_year_filed
+    description: filed_year, which the table is partitioned by, is the year of filed.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE filed IS NOT NULL AND YEAR(filed) <> filed_year
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: the_checks_of_the_figures
+    description: >-
+      The figures are held to the checks of the module, which name each filing and
+      fact at fault, by code, in the table of issues rather than counting them:
+      among them a period that ends before it begins (IMPL_PERIOD), a balance sheet
+      that does not balance (IMBAL_BALANCE_SHEET) and a figure a later report restates
+      materially (RESTATED_MATERIALLY). fincommons.dataquality.check_catalogue('sec')
+      lists them all.
+    type: custom
+    engine: fincommons
+    implementation: fincommons.financialreport.sec.quality.update_silver_sec_quality
+    dimension: accuracy
+  properties:
+  - name: cik
+    businessName: CIK
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The central index key of the registrant, padded to the ten digits the company
+      files use. Neither the Commission nor GLEIF publishes a mapping from it to
+      the legal entity identifier the ESEF and entity master data tables are keyed
+      by; the LEI records that name EDGAR as their register are nearly all funds,
+      by series identifier, and this module invents nothing.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: sec.gov
+      vendor: fincommons
+  - name: filing
+    businessName: Accession number
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The accession number of the filing the fact came from. A company file is organised
+      by concept rather than by filing, so this is what a filing is reconstructed
+      by, and a figure a later filing restates appears again under that filing rather
+      than replacing the first.
+    synonyms:
+    - synonym: accn
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: accn
+      vendor: fincommons
+  - name: filed_year
+    businessName: Year filed
+    logicalType: integer
+    physicalType: int
+    required: true
+    semanticType: dimension
+    description: >-
+      The year of filed, which the table of facts is partitioned by. The year a
+      filing was made is monotonic; the fiscal year is not, since one filing states
+      several of them.
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: fact
+    businessName: Fact
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The identifier of a fact. A company file gives its facts none, so one is made
+      from what identifies a fact within its filing, which is what lets a file be
+      read again without the table growing.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: concept
+    businessName: Concept
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The concept a fact was tagged with, as taxonomy and name, for instance us-gaap:Revenues.
+      It is not resolved across frameworks: what a concept of one framework means
+      in the other is a judgement, and not one this table makes.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: sec.gov
+      vendor: fincommons
+  - name: prd_start
+    businessName: Start of the fact's period
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The first day of the period a fact is about. Empty for a fact reported at
+      an instant, which is how the two are told apart.
+    synonyms:
+    - synonym: start
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: start
+      vendor: fincommons
+  - name: prd_end
+    businessName: End of the fact's period
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The last day of the period a fact is about, or for a fact reported at an instant,
+      the day it stands for.
+    synonyms:
+    - synonym: end
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: end
+      vendor: fincommons
+  - name: unit
+    businessName: Unit
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The unit of the fact, such as USD, shares or pure, as the company file names
+      it.
+    synonyms:
+    - synonym: units
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: units
+      vendor: fincommons
+  - name: value
+    businessName: Value
+    logicalType: number
+    physicalType: double
+    semanticType: dimension
+    description: >-
+      The value of the fact. The company files carry the value and not the precision
+      the filing claimed for it, which is why there is no decimals column.
+    synonyms:
+    - synonym: val
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: amount
+      vendor: fincommons
+    - property: source
+      value: val
+      vendor: fincommons
+  - name: form
+    businessName: Form
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The form the filing was made on, such as 10-K, 10-Q or 20-F. An amendment
+      carries the form it amends with /A appended.
+    synonyms:
+    - synonym: form
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: form
+      vendor: fincommons
+  - name: filed
+    businessName: Filed
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: The day the filing was made with the Commission.
+    synonyms:
+    - synonym: filed
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: filed
+      vendor: fincommons
+  - name: frame
+    businessName: Frame
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The Commission's own label for a period it considers comparable across companies,
+      where it gave the fact one. It is carried as published and nothing here depends
+      on it.
+    synonyms:
+    - synonym: frame
+      source: data.sec.gov
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: frame
+      vendor: fincommons
