@@ -1,3 +1,11 @@
+"""FIRDS: the files of ESMA in the Bronze layer.
+
+Each full and delta file is read with the schema of its message definition and
+written as parquet, keeping the fields under the names the message gives them,
+and partitioned by ``DATADT``: the reference date of the file a record was read
+from, the publication date of the full or delta file. The Bronze layer has no
+data contract; the Silver tables have one each.
+"""
 
 from concurrent.futures import ThreadPoolExecutor
 import logging

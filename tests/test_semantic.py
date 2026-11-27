@@ -233,7 +233,7 @@ def test_a_table_addressed_by_path_cannot_be_served(tmp_path):
 
 def test_an_unknown_product_names_those_that_exist(named):
     with pytest.raises(KeyError, match="fincommons.exchangerate"):
-        semantic.databricks(named, "fincommons.marketpricedata")
+        semantic.databricks(named, "fincommons.nosuchmodule")
 
 
 def test_applying_runs_every_statement_and_returns_the_instructions(named):
@@ -264,3 +264,10 @@ def test_an_assistant_is_told_the_rules_the_product_and_its_contracts_state():
     assert "- Never sum value. Average it only within one value of base and quote." in text
     assert "- Do not invert a rate by swapping base and quote" in text
     assert "- What was the euro reference rate of the US dollar on 30 June 2025?" in text
+
+
+def test_a_factor_that_compounds_is_to_be_multiplied_not_averaged():
+    text = semantic.assistant_instructions(c.products()["fincommons.marketpricedata"])
+
+    assert "- Never sum factor. Multiply it, and only within one value of instr_id." in text
+    assert "- Never sum value. Average it only within one value of instr_id." in text

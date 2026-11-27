@@ -121,3 +121,21 @@ def test_the_store_is_a_delta_table(spark, config):
     metadata.initialise_metadata(spark, config, maxdate="2024-01-05")
 
     assert os.path.isdir(os.path.join(common.path_metadata(config), "_delta_log"))
+
+
+def test_the_declared_schema_is_the_schema_of_the_contract():
+    from fincommons.contracts import load_contract, spark_schema
+
+    assert spark_schema(load_contract("fincommons.firds.metadata.watermarks")) \
+        == metadata.METADATA_SCHEMA
+
+
+def test_the_watermarks_meet_their_contract(spark, config):
+    from fincommons.contracts import check_quality, load_contract
+
+    metadata.initialise_metadata(spark, config, "2024-01-05")
+    metadata.update_metadata_maxdate(spark, config, "MAIN", "2024-01-06")
+    frame = metadata.read_metadata(spark, config)
+
+    contract = load_contract("fincommons.firds.metadata.watermarks")
+    assert [r for r in check_quality(frame, contract) if r.passed is False] == []

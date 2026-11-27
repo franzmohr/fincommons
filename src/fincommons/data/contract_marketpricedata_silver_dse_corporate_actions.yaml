@@ -1,0 +1,223 @@
+# The data contract of the Silver table of the corporate actions of the
+# shares of the Dhaka Stock Exchange, in the Open Data Contract Standard. The
+# test suite holds it against the declared schema and against the table the
+# module writes. See fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.marketpricedata.silver.dse_corporate_actions
+name: dse_corporate_actions
+version: 1.0.0
+status: active
+domain: marketpricedata
+dataProduct: fincommons.marketpricedata
+description:
+  purpose: >-
+    The bonus issues, cash dividends and rights issues of the shares of the
+    Dhaka Stock Exchange, each with the factor that makes a close before its
+    ex-date comparable with one after it, so that the unadjusted closes of
+    the price table can be turned into a price history or a total return.
+  usage: >-
+    Multiply a close before an ex-date by the factors of the events of its
+    share on or after that date: the bonus and rights factors give a price
+    history, all three kinds a total return. fincommons.marketpricedata.connect_to_dse_corporate_actions(spark,
+    config) opens the table.
+  limitations: >-
+    The events are read from the exchange's news archive, so an event the
+    exchange announced in words the reading does not recognise is missing.
+    An event is listed only once its share has traded ex; one still pending
+    reaches the table in a later run. The table is rebuilt whole every run.
+authoritativeDefinitions:
+  - type: implementation
+    url: https://github.com/franzmohr/fincommons/blob/main/src/fincommons/marketpricedata/dse_events.py
+  - type: businessDefinition
+    url: https://www.dsebd.org/
+    description: The Dhaka Stock Exchange, whose news archive and day-end prices the events are read from.
+schema:
+  - name: dse_corporate_actions
+    physicalType: table
+    businessName: DSE corporate actions
+    description: >-
+      One row per share, ex-date and kind of event: what the event was, the
+      factor it adjusts the closes before it by, and the notice it was read from.
+    dataGranularityDescription: One event per share, ex-date and kind.
+    quality:
+      - name: one_event_per_share_day_and_kind
+        description: No share has two events of one kind on one ex-date.
+        type: library
+        metric: duplicateValues
+        arguments:
+          properties: [instr_id, ex_date, kind]
+        mustBe: 0
+        dimension: uniqueness
+        severity: error
+      - name: ex_date_after_record_date
+        description: >-
+          A share goes ex on the first day it trades after its record date,
+          so the ex-date lies after the record date.
+        type: sql
+        query: SELECT COUNT(*) FROM ${table} WHERE ex_date <= record_date
+        mustBe: 0
+        dimension: consistency
+        severity: error
+    properties:
+      - name: instr_id
+        businessName: Instrument
+        logicalType: string
+        physicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        semanticType: dimension
+        description: >-
+          The share as the price table names it: DSE- followed by its trading
+          code on the exchange (DSE-CITYBANK).
+        customProperties:
+          - {property: kind, value: identifier, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+        quality:
+          - name: a_dse_share
+            description: The identifier is DSE- followed by a trading code.
+            type: library
+            metric: invalidValues
+            arguments:
+              pattern: '^DSE-[A-Z0-9]+$'
+            mustBe: 0
+            dimension: conformity
+            severity: error
+      - name: ex_date
+        businessName: Ex-date
+        logicalType: date
+        physicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        semanticType: dimension
+        description: >-
+          The first day the share traded without the entitlement: the day
+          trading resumed after the record date, as the exchange's notice
+          states it or, without one, as the prices show it.
+        customProperties:
+          - {property: kind, value: date, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+      - name: kind
+        businessName: Kind of event
+        logicalType: string
+        physicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 3
+        semanticType: dimension
+        description: >-
+          bonus for a stock dividend, cash for a cash dividend, rights for a
+          rights issue. A declaration of both a cash and a stock dividend is
+          two rows.
+        customProperties:
+          - {property: kind, value: code, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+        quality:
+          - name: kind_is_known
+            description: The kind is bonus, cash or rights.
+            type: library
+            metric: invalidValues
+            arguments:
+              validValues: [bonus, cash, rights]
+            mustBe: 0
+            dimension: conformity
+            severity: error
+      - name: factor
+        businessName: Adjustment factor
+        logicalType: number
+        physicalType: double
+        required: true
+        semanticType: measure
+        transformLogic: EXP(SUM(LN(factor)))
+        description: >-
+          What a close before the ex-date is multiplied by to be comparable
+          with a close on or after it: 1 / (1 + b/100) for a bonus issue of b
+          percent, 1 - d / P for a cash dividend of d taka against the last
+          close P before it, and the theoretical ex-rights price over P for a
+          rights issue. The factors of several events are multiplied, not added.
+        customProperties:
+          - {property: kind, value: other, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+          - property: aggregation
+            value: nonAdditive
+            vendor: fincommons
+            description: >-
+              The factors of a share's events compound: over a period they are
+              multiplied, which the measure does, and the factors of different
+              shares are never combined.
+          - {property: aggregateWithin, value: [instr_id], vendor: fincommons}
+        quality:
+          - name: factor_lowers_the_earlier_closes
+            description: >-
+              Every factor lies between zero and one: each kind of event lowers
+              the value of a share, and a rights issue priced above the market,
+              which would not, is no event.
+            type: sql
+            query: SELECT COUNT(*) FROM ${table} WHERE NOT (${column} > 0 AND ${column} < 1)
+            mustBe: 0
+            dimension: accuracy
+            severity: error
+      - name: record_date
+        businessName: Record date
+        logicalType: date
+        physicalType: date
+        required: false
+        semanticType: dimension
+        description: >-
+          The record date the exchange's notice gives: who holds the share at
+          its end is entitled to the event.
+        customProperties:
+          - {property: kind, value: date, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+      - name: detail
+        businessName: Terms
+        logicalType: string
+        physicalType: string
+        required: false
+        semanticType: dimension
+        description: >-
+          The terms as read from the notice, e.g. '12.5% cash, 12.5% stock,
+          record date 2025-05-21' or '1R:17 at 10 taka, record date ...'.
+        customProperties:
+          - {property: kind, value: text, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+      - name: source
+        businessName: Notice
+        logicalType: string
+        physicalType: string
+        required: false
+        semanticType: dimension
+        description: >-
+          The identifier of the notice in the exchange's news archive the
+          terms were read from.
+        customProperties:
+          - {property: kind, value: identifier, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+      - name: ex_date_from
+        businessName: Ex-date read from
+        logicalType: string
+        physicalType: string
+        required: false
+        semanticType: dimension
+        description: >-
+          Where the ex-date was read: notice where the exchange announced the
+          resumption of trading, prices where it was read off the first day
+          the share traded after its record date.
+        customProperties:
+          - {property: kind, value: code, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+        quality:
+          - name: ex_date_from_is_known
+            description: The ex-date was read from a notice or from the prices.
+            type: library
+            metric: invalidValues
+            arguments:
+              validValues: [notice, prices]
+            mustBe: 0
+            dimension: conformity
+            severity: error

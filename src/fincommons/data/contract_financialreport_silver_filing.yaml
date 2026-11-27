@@ -1,0 +1,412 @@
+# The data contract of the table of filings of the Silver layer of
+# fincommons.financialreport.combined, in the Open Data Contract Standard. It
+# is the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does,
+# financialreport, rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.financialreport.silver.filing
+name: filing
+version: 1.0.0
+status: active
+domain: financialreport
+dataProduct: fincommons.financialreport
+description:
+  purpose: >-
+    The filings of the three tagging regimes, ESEF, the U.S. Securities and Exchange
+    Commission and Japan's EDINET, in one table of one shape: who filed, under which
+    framework, for which period, and how many facts each contributed.
+  usage: >-
+    Join to the table of facts on source and filing. A filing with no facts has
+    none in the facts either: its report was not collected or not converted. fincommons.financialreport.combined.connect_to_financialreport(spark,
+    config, 'filing') opens the table.
+  limitations: >-
+    Each regime fills what it states and leaves the rest empty rather than invented:
+    an ESEF filing names a country and no form, a filing with the Commission or
+    with EDINET a form and no country. Nothing is joined between the regimes: the
+    entity is an LEI, a central index key or an EDINET code, and no published mapping
+    joins them. The ESEF and EDINET indexes list every filing whether or not its
+    report was collected, the Commission's only filings that state facts.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/combined/silver.py
+schema:
+- name: filing
+  physicalType: table
+  businessName: Financial report filings
+  description: >-
+    One row per filing of the source modules esef, sec and edinet, reduced to the
+    columns they share: the filing and its entity, the framework, the country or
+    the form, the period it reports on and how many facts it contributed.
+  dataGranularityDescription: One row per filing of a source.
+  quality:
+  - name: one_row_per_filing
+    description: No filing of a source is listed twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - source
+      - filing
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: period_year_is_the_year_of_the_period
+    description: period_year is the year of period_end, and empty where it is.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE NOT (period_year <=> YEAR(period_end))
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: a_row_carries_the_identifiers_of_its_own_regime_only
+    description: >-
+      No row carries an identifier of another regime than its source's: no central
+      index key, EDINET code or corporate number on an ESEF row, no LEI, EDINET code
+      or corporate number on an SEC row, no LEI or central index key on an EDINET
+      row. None is derived from another.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE (source = 'esef' AND COALESCE(cik, edinet_code,
+      jcn) IS NOT NULL) OR (source = 'sec' AND COALESCE(lei, edinet_code, jcn) IS
+      NOT NULL) OR (source = 'edinet' AND COALESCE(lei, cik) IS NOT NULL)
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: each_regime_fills_what_it_states
+    description: >-
+      An ESEF filing names no form, and a filing with the Commission or with EDINET
+      no country; neither is invented where a regime states none.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE (source = 'esef' AND form IS NOT NULL) OR
+      (source IN ('sec', 'edinet') AND country IS NOT NULL)
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: lei_is_an_lei
+    description: >-
+      Every ESEF filing outside Ukraine names its issuer by a well-formed LEI: eighteen
+      letters or digits and two check digits. A Ukrainian filing names the code of
+      the Ukrainian register instead.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE lei IS NOT NULL AND COALESCE(country, '')
+      <> 'UA' AND NOT lei RLIKE '^[A-Z0-9]{18}[0-9]{2}$'
+    mustBe: 0
+    dimension: conformity
+    severity: warning
+  properties:
+  - name: source
+    businessName: Source
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: Which module the row came from, esef, sec or edinet.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: source_is_a_module
+      description: The source is one of the modules the table is built from.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - esef
+        - sec
+        - edinet
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: filing
+    businessName: Filing
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The filing, as its own regime identifies it: the identifier of filings.xbrl.org
+      for an ESEF report, the accession number for a filing with the Commission, the
+      document management number for a filing with EDINET. The three are not drawn
+      from one series and are unique only within a source.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: lei
+    businessName: Issuer LEI
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The legal entity identifier of the issuer, which ESEF prescribes and which is
+      the key of the entity master data as well; filled for every ESEF filing and
+      empty for the other two regimes. A filing of Ukraine carries the code of the
+      Ukrainian register (EDRPOU) here instead, eight digits, as the esef table does.
+      Neither the Commission nor GLEIF publishes a mapping from a central index key
+      to an LEI -- GLEIF's register pointer names EDGAR for some tens of thousands
+      of records, nearly all of them funds -- so no identifier column is derived
+      from another.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: esef
+      vendor: fincommons
+  - name: cik
+    businessName: CIK
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The central index key of the registrant, padded to ten digits, which a filing
+      with the Commission states; filled for every SEC filing and empty for the other
+      two regimes.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: sec
+      vendor: fincommons
+    quality:
+    - name: cik_is_ten_digits
+      description: The CIK is padded to the ten digits the company files use.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[0-9]{10}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: edinet_code
+    businessName: EDINET code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The filer as Japan's Financial Services Agency addresses it, the letter E and
+      five digits; filled for an EDINET filing and empty for the other two regimes,
+      and empty as well for a document the agency's index lists without its filer,
+      a withdrawn one among them. It is one of four identifier columns, one regime's
+      own in each, and a row has the columns of its source filled and the others
+      empty.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: edinet
+      vendor: fincommons
+    quality:
+    - name: edinet_code_is_an_edinet_code
+      description: The EDINET code is a letter E and five digits.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^E[0-9]{5}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: jcn
+    businessName: Corporate number
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The corporate number of Japan's National Tax Agency, thirteen digits, filled
+      for an EDINET filing where the agency states one. It is carried because it
+      is the one identifier in these tables that reaches an identifier another regime
+      uses: it is a check digit followed by the twelve-digit commercial register number,
+      and GLEIF records that register number against an LEI issued to a Japanese
+      company, so the two join by arithmetic rather than by a lookup table. The join
+      is not made here, needing GLEIF, which this module does not read.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: edinet
+      vendor: fincommons
+    quality:
+    - name: jcn_is_thirteen_digits
+      description: The corporate number is thirteen digits.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[0-9]{13}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: name
+    businessName: Issuer name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The name of the issuer, as its own publisher holds it; in Japanese for an EDINET
+      filer.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: framework
+    businessName: Accounting framework
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The accounting framework the filing was prepared under, IFRS, US-GAAP or JP-GAAP,
+      taken from what the filing reports under rather than from the regime it was
+      filed under, so a foreign private issuer reporting under IFRS to the Commission
+      is IFRS. For an ESEF filing it is IFRS where a fact of its report is tagged
+      against the IFRS taxonomy, and empty where the report was not collected; for
+      a filing with the Commission it is what that module reads off the taxonomies
+      the filing tagged against; for an EDINET filing it is the standard the filing
+      states, empty where none applies, as for a large-holding report or a fund's
+      report. JP-GAAP is not comparable with the other two line by line.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: framework_is_known
+      description: >-
+        A framework is IFRS, US-GAAP or JP-GAAP. A standard a Japanese filing states
+        that this module has no name for is kept as filed, and would show here.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - IFRS
+        - US-GAAP
+        - JP-GAAP
+      mustBe: 0
+      dimension: conformity
+      severity: warning
+  - name: country
+    businessName: Country
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The country whose mechanism an ESEF report was filed with, as filings.xbrl.org
+      codes it (ISO 3166-1 alpha-2). Empty for a filing with the Commission or with
+      EDINET, neither of which states one; the absence is what the regime states,
+      not a value that is missing.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: esef
+      vendor: fincommons
+  - name: form
+    businessName: Form
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The form a filing with the Commission was made on, such as 10-K or 20-F, an
+      amendment carrying /A; for an EDINET filing the document type as the agency
+      codes it, 120 the annual securities report and 160 the semi-annual report (fincommons.financialreport.edinet.common.REPORT_TYPES),
+      rather than an English name invented for it. Empty for an ESEF filing: the
+      regime has one kind of report and names no form.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: sec;edinet
+      vendor: fincommons
+  - name: period_end
+    businessName: Period end
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The last day of the period the filing reports on; the earlier periods a filing
+      states are its comparatives. For an EDINET filing it is the end of the period
+      the filing states for itself, and the index's only where it states none, since
+      the agency lists a semi-annual report under the financial year it belongs to.
+      Empty where the source states none, as for a Japanese document that reports
+      on no period, such as an extraordinary or a large-holding report.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: period_year
+    businessName: Year of the period
+    logicalType: integer
+    physicalType: int
+    semanticType: dimension
+    description: The calendar year period_end falls in, empty where it is.
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: facts
+    businessName: Number of facts
+    logicalType: integer
+    physicalType: int
+    required: true
+    semanticType: measure
+    transformLogic: SUM(facts)
+    description: >-
+      How many facts of the filing the table of facts of its source module holds.
+      For an ESEF or an EDINET filing it is counted from those facts, the index saying
+      nothing about it, and is 0 for a filing whose report was not collected or not
+      converted; for a filing with the Commission it is the count that module states.
+      An EDINET filing's count includes the facts that module placed in no period,
+      which the combined table of facts does not carry, so it may exceed the rows
+      of the filing there.
+    customProperties:
+    - property: kind
+      value: count
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    - property: aggregation
+      value: additive
+      vendor: fincommons
+      description: A count of the facts of one filing, which adds up over filings.

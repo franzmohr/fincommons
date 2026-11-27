@@ -31,7 +31,7 @@ The description of a check is data
 ---------------------------------
 
 Every check is a row of a catalogue shipped with the package, in the data
-directory beside the column catalogue and the measures of
+directory beside the data contracts and the measures of
 :mod:`fincommons.financialreport.combined`. The code a row defines is what the issue
 table stores; the row says what the check means, how severe it is, and what to
 do about a record it names. That is deliberate: a reader of an issue table has

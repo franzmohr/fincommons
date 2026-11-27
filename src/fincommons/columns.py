@@ -20,22 +20,32 @@ Every package shares the mechanism and ships its own catalogue. A package
 that builds on this one passes ``catalogues`` naming
 both, so that its own ``describe_column`` answers for the data sets of both.
 
-The descriptions are the catalogue shipped as ``data/column_catalogue.csv``:
-one row per data set and column, with the tables (the modules' Silver and
-Gold stages) that write it, the field of the report it is read from or
-"derived" where it is computed, a kind (identifier, code, amount, date, ...)
-and a description. A description that could not be established from the
-code and the reports alone ends in "(inferred)". :func:`defined_columns`
-reads the column names out of the modules' code, and the test suite checks
-the two against each other, so a column added to a module without a
-catalogue entry fails a test rather than going undocumented.
+The descriptions of the tables of this package are their data contracts (see
+:mod:`fincommons.contracts`): every Silver table, and the watermarks of
+FIRDS, has one, and :func:`column_catalogue` reads one row per data set and
+column out of them -- the tables (the modules' stages) that write it, the
+field of the report it is read from or "derived" where it is computed, a
+kind (identifier, code, amount, date, ...) and a description. The contract is
+the single source of truth for a column; the file of descriptions the package
+shipped before its tables had contracts is gone. A package that builds on
+this one may still ship such a file, ``data/column_catalogue.csv``, for the
+modules it has not given contracts yet, and its rows are read beside those of
+the contracts.
 
-A table that has a data contract is described by its contract instead, and
-its columns have no row in the file: the contract is the single source of
-truth for them, and :func:`column_catalogue` takes their rows from it, in the
-same shape (see :mod:`fincommons.contracts`). The exchange rates and the
-Silver tables of FIRDS, GLEIF, ESEF, SEC, EDINET, STS and the French Data
-Library are described this way.
+:func:`defined_columns` reads the column names out of the modules' code, and
+the test suite checks the two against each other, so a column added to a
+module without a description fails a test rather than going undocumented.
+Two kinds of name are not held to a contract. A Bronze table keeps the
+columns its publisher delivers, and the few the package adds there --
+``DATADT`` of FIRDS, ``REFDT`` of the entity registers, the columns of the
+Bronze copy of the French Data Library -- are written in upper case and
+described where the module writes them. And a column that is not in any
+table but in what a public function returns, such as ``measure_priority``,
+is described by that function's docstring; :data:`OUTPUT_COLUMNS` names them.
+
+The market price data has contracts for its two Silver tables, but the module
+is not catalogued: what matters in its table is the identifier in it, which
+``marketpricedata.describe_instrument`` explains.
 """
 
 from __future__ import annotations
@@ -52,8 +62,8 @@ from . import contracts as _contracts
 
 __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
            "defined_columns", "CATALOGUED_MODULES", "CATALOGUES",
-           "SNAKE_CASE_MODULES", "NOT_COLUMNS",
-           "MODULE_FOLDERS"]
+           "SNAKE_CASE_MODULES", "NOT_COLUMNS", "CONTRACTED_MODULES",
+           "OUTPUT_COLUMNS", "MODULE_FOLDERS"]
 
 #: The modules whose data sets the catalogue of this package covers.
 #: marketpricedata is not among them: its one table has three columns, and
@@ -79,6 +89,29 @@ NOT_COLUMNS = frozenset({"src", "tgt", "checksum"})
 SNAKE_CASE_MODULES = ("exchangerate", "entitymasterdata", "famafrenchdata",
                       "esef", "sec", "edinet", "financialreport", "firds",
                       "gleif", "sts")
+
+#: The modules whose tables are described by data contracts alone. In them a
+#: column counts only in snake_case: the upper-case names are those of the
+#: Bronze tables, which keep what the publisher delivers and have no contract.
+#: A package that builds on this one passes its own; see :func:`defined_columns`.
+CONTRACTED_MODULES = CATALOGUED_MODULES
+
+#: The columns that are in no table but in what a public function returns,
+#: with the function whose docstring describes them. They are not rows of the
+#: catalogue, which describes tables, and the test suite checks that each
+#: docstring names its column.
+OUTPUT_COLUMNS = {
+    ("firds", "operation"): "fincommons.firds.history.records_to_change",
+    ("financialreport", "measure_priority"):
+        "fincommons.financialreport.combined.mapping.with_measures",
+    ("entitymasterdata", "entities"):
+        "fincommons.entitymasterdata.silver.sector_counts_over_time",
+}
+
+#: The module-level lists of column names that declare the columns of a table,
+#: for the modules that write a table by selecting such a list rather than
+#: with a declared schema.
+COLUMN_LISTS = {"entitymasterdata": ("COLUMNS", "PUBLIC_COLUMNS")}
 
 #: The modules that declare their schemas with ``StructType().add`` rather
 #: than building their columns with ``withColumn``; see :func:`defined_columns`.
@@ -160,14 +193,20 @@ def column_catalogue(dataset=None, catalogues=None):
     catalogues = CATALOGUES if catalogues is None else catalogues
     parts = []
     for package in catalogues:
-        with resources.files(_root(package)).joinpath("data", "column_catalogue.csv") \
-                .open(encoding="utf-8") as handle:
-            parts.append(pd.read_csv(handle, dtype=str, keep_default_na=False))
+        # A package that builds on this one may still describe the tables it
+        # has not given contracts yet in a file; this package ships none.
+        shipped = resources.files(_root(package)).joinpath("data", "column_catalogue.csv")
+        if shipped.is_file():
+            with shipped.open(encoding="utf-8") as handle:
+                parts.append(pd.read_csv(handle, dtype=str, keep_default_na=False))
     # The tables that have a data contract are described by it and by nothing
-    # else. Their rows join those of the modules that have none yet, in the
-    # same shape.
+    # else, in the shape of a row of the file. A module the catalogue does not
+    # cover -- marketpricedata, whose contracts describe its tables --
+    # contributes no rows.
+    known = set(_modules(catalogues))
     parts.append(pd.DataFrame(
-        _contracts.catalogue_rows(tuple(catalogues)),
+        [row for row in _contracts.catalogue_rows(tuple(catalogues))
+         if row[0] in known],
         columns=["module", "column", "tables", "source", "kind", "description"]))
     # In the order of a single catalogue, whichever packages contributed.
     catalogue = pd.concat(parts, ignore_index=True) \
@@ -256,7 +295,8 @@ def _is_column(name, snake_case=False):
 
 
 def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES,
-                    snake_case=SNAKE_CASE_MODULES):
+                    snake_case=SNAKE_CASE_MODULES, contracted=CONTRACTED_MODULES,
+                    outputs=OUTPUT_COLUMNS):
     """The columns the catalogued modules' code defines, by module.
 
     Read from the source rather than from data: every ``withColumn``,
@@ -279,6 +319,18 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES,
     on this one passes its own, since how far its modules have been converted
     is its own business and not this package's.
 
+    ``contracted`` names the modules whose tables are described by data
+    contracts alone, :data:`CONTRACTED_MODULES` by default. In them only a
+    snake_case name counts: an upper-case one belongs to a Bronze table, which
+    keeps the names its publisher delivers and has no contract.
+
+    ``outputs`` names the columns that are in no table but in what a function
+    returns, :data:`OUTPUT_COLUMNS` by default; they are left out, since a
+    docstring rather than a contract describes them.
+
+    In those modules the module-level lists :data:`COLUMN_LISTS` names declare
+    columns as well.
+
     ``catalogues`` names the packages and modules to read, as for
     :func:`column_catalogue`; ``schema_declaring`` the modules whose
     ``StructType().add`` calls count as defining a column. Where a data set's
@@ -288,6 +340,7 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES,
     """
     catalogues = CATALOGUES if catalogues is None else catalogues
     snake_case = frozenset(snake_case or ())
+    contracted = frozenset(contracted or ())
     found = {}
     for owner, module in [(p, m) for p, ms in catalogues.items() for m in ms]:
         package = os.path.dirname(os.path.abspath(
@@ -303,6 +356,12 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES,
                 with open(path, encoding="utf-8") as handle:
                     tree = ast.parse(handle.read())
                 constants = _module_constants(tree)
+                if module in contracted:
+                    for name in _declared_column_lists(tree, COLUMN_LISTS.get(module, ())):
+                        if _is_column(name, module in snake_case):
+                            tables = found.setdefault((module, name), [])
+                            if table not in tables:
+                                tables.append(table)
                 for node in ast.walk(tree):
                     name = _named_column(node, module, schema_declaring,
                                          constants, snake_case)
@@ -311,8 +370,29 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES,
                         if table not in tables:
                             tables.append(table)
     return pd.DataFrame(
-        [(m, c, ";".join(t)) for (m, c), t in sorted(found.items())],
+        [(m, c, ";".join(t)) for (m, c), t in sorted(found.items())
+         if (m not in contracted or c == c.lower()) and (m, c) not in outputs],
         columns=["module", "column", "tables"])
+
+
+def _declared_column_lists(tree, names):
+    """The names in the module-level lists of columns ``names`` of a parsed file.
+
+    A module that writes its table by selecting a list -- ``COLUMNS`` of the
+    entity master data -- declares its columns there rather than with a
+    ``StructType``; see :data:`COLUMN_LISTS`.
+    """
+    found = []
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target, value = node.targets[0], node.value
+        if (isinstance(target, ast.Name) and target.id in names
+                and isinstance(value, (ast.List, ast.Tuple)) and value.elts
+                and all(isinstance(e, ast.Constant) and isinstance(e.value, str)
+                        for e in value.elts)):
+            found.extend(e.value for e in value.elts)
+    return found
 
 
 def _module_constants(tree):

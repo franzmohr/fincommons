@@ -348,3 +348,72 @@ def test_a_second_run_carries_on_from_the_first(spark, data_lake,
                if e == "data-archive/market-summary"]
     # The last download ended on the 26th, and a week of it is asked again.
     assert summary[0]["from"] == "2025-05-19"
+
+
+# The data contracts
+# --------------------------------------------------------------------------
+
+
+PRICES = "fincommons.marketpricedata.silver.marketpricedata"
+EVENTS = "fincommons.marketpricedata.silver.dse_corporate_actions"
+
+
+def test_the_declared_schemas_are_the_schemas_of_the_contracts():
+    """The proprietary file is read with the columns of the price table, and
+    the corporate actions are written with their declared schema, so both
+    must agree with the contracts a reader is told."""
+    from fincommons.contracts import load_contract, spark_schema
+    from fincommons.marketpricedata.silver_dse import dse_corporate_actions_schema
+
+    assert spark_schema(load_contract(PRICES)) == mp.internal_schema
+    assert spark_schema(load_contract(EVENTS)) == dse_corporate_actions_schema
+
+
+def _holds_its_contract(frame, identifier):
+    from pyspark.sql import functions as F
+
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+
+    contract = load_contract(identifier)
+    properties = contract["schema"][0]["properties"]
+    assert [(f.name, f.dataType) for f in frame.schema] == \
+        [(f.name, f.dataType) for f in spark_schema(contract)]
+    for prop in properties:
+        if prop.get("required"):
+            assert frame.where(F.col(prop["name"]).isNull()).count() == 0, prop["name"]
+    key = [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                     key=lambda p: p["primaryKeyPosition"])]
+    assert frame.groupBy(*key).count().where("count > 1").count() == 0
+    results = check_quality(frame, contract)
+    assert [r for r in results if r.passed is False] == []
+    return results
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, data_lake,
+                                                            citybank_service):
+    """Built from the exchange's answers, the price table and the table of
+    corporate actions are the ones their contracts describe and meet their
+    quality rules; a currency pair from the proprietary file is held to the
+    rules on exchange rates."""
+    import os
+
+    mp.update_bronze_dse(spark, data_lake, min_date="2025-04-30")
+    mp.update_silver_dse(spark, data_lake)
+    mp.update_silver_dse_corporate_actions(spark, data_lake)
+    from fincommons.marketpricedata.silver_internal import INTERNAL_FILE
+
+    folder = mp.path_bronze_internal_marketpricedata(data_lake)
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, INTERNAL_FILE), "w", encoding="utf-8") as handle:
+        handle.write("ref_date,instr_id,value\n2025-05-20,EUR/USD,1.12\n")
+    mp.update_silver_internal(spark, data_lake)
+
+    prices = mp.connect_to_marketpricedata(spark, data_lake)
+    assert prices.where("instr_id = 'EUR/USD'").count() == 1
+    ran = _holds_its_contract(prices, PRICES)
+    assert {r.rule for r in ran if r.passed} >= {
+        "a_currency_pair_names_two_currencies", "an_exchange_rate_is_positive"}
+
+    events = mp.connect_to_dse_corporate_actions(spark, data_lake)
+    assert events.count() == 2
+    _holds_its_contract(events, EVENTS)

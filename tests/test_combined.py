@@ -1364,3 +1364,87 @@ def test_a_fact_no_measure_names_is_left_unlabelled(spark, config):
 
     assert labelled["ifrs-full:Revenue"] == "revenue"
     assert labelled["ifrs-full:DescriptionOfAccountingPolicy"] is None
+
+
+# The contracts
+# --------------------------------------------------------------------------
+
+CONTRACTS = {
+    "fact": ("fincommons.financialreport.silver.fact", common.fact_schema),
+    "filing": ("fincommons.financialreport.silver.filing", common.filing_schema),
+}
+
+
+@pytest.mark.parametrize("table", sorted(CONTRACTS))
+def test_the_declared_schema_is_the_schema_of_the_contract(table):
+    """The code writes with the declared schema and a reader is told the
+    contract, so the two must agree in names, order, types and in which
+    columns may be empty."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    identifier, declared = CONTRACTS[table]
+
+    assert spark_schema(load_contract(identifier)) == declared
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, config):
+    """Built from all three regimes: the same columns in the same order and
+    of the same types -- the count of facts an integer however it was
+    counted, the partition columns of the facts where the schema puts them
+    -- no empty value where a column is required, one row per key, and no
+    quality rule failed, warnings included."""
+    from pyspark.sql import functions as F
+
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+
+    write_esef(spark, config)
+    write_sec(spark, config)
+    write_edinet(spark, config)
+    silver.update_silver_financialreport(spark, config)
+
+    for table, (identifier, _) in CONTRACTS.items():
+        frame = common.connect_to_financialreport(spark, config, table)
+        contract = load_contract(identifier)
+        properties = contract["schema"][0]["properties"]
+
+        assert [(f.name, f.dataType) for f in frame.schema] == \
+            [(f.name, f.dataType) for f in spark_schema(contract)], table
+        for prop in properties:
+            if prop.get("required"):
+                assert frame.where(F.col(prop["name"]).isNull()).count() == 0, \
+                    (table, prop["name"])
+        key = [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                         key=lambda p: p["primaryKeyPosition"])]
+        assert frame.groupBy(*key).count().where("count > 1").count() == 0, table
+        assert [r for r in check_quality(frame, contract) if r.passed is False] == [], table
+
+
+def test_the_contract_names_the_measures_that_are_written_down():
+    """A measure added to MATERIALISED_MEASURES is a change of the table, and
+    the contract that lists the measures a reader may find changes with it."""
+    from fincommons.contracts import load_contract
+
+    measure = next(p for p in load_contract(CONTRACTS["fact"][0])["schema"][0]["properties"]
+                   if p["name"] == "measure")
+    (rule,) = measure["quality"]
+
+    assert sorted(rule["arguments"]["validValues"]) == sorted(mapping.MATERIALISED_MEASURES)
+
+
+def test_a_row_with_another_regimes_identifier_fails_the_contract(spark):
+    """The rule holds what the code does: an identifier column is filled from
+    its own regime only, and none is derived from another."""
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+
+    contract = load_contract(CONTRACTS["filing"][0])
+    rows = [("esef", "a", LEI, None, None, None, "A", "IFRS", "DK", None,
+             date(2025, 12, 31), 2025, 1),
+            ("sec", "b", LEI, CIK, None, None, "B", "US-GAAP", None, "10-K",
+             date(2025, 12, 31), 2025, 1)]
+    frame = spark.createDataFrame(rows, spark_schema(contract))
+
+    (result,) = [r for r in check_quality(frame, contract)
+                 if r.rule == "a_row_carries_the_identifiers_of_its_own_regime_only"]
+
+    assert result.value == 1
+    assert result.passed is False

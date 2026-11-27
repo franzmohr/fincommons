@@ -239,7 +239,7 @@ One row per filing.
 
 `mapping` is the only module in the package that knows IFRS from US GAAP, and the only one that may. Whether `us-gaap:Revenues` and `ifrs-full:Revenue` are the same figure is a judgement about accounting rather than about storage, and it is made here so that it is made once, in one place, where it can be read and disagreed with.
 
-The judgement is data and not code: a CSV shipped in the data directory of the package, `financialreport_measures.csv`, beside the column catalogue and the FIRDS schemas. It currently defines **8 measures in 38 rows**, of which **29 carry a caveat**.
+The judgement is data and not code: a CSV shipped in the data directory of the package, `financialreport_measures.csv`, beside the data contracts and the FIRDS schemas. It currently defines **8 measures in 38 rows**, of which **29 carry a caveat**.
 
 **It reaches all three regimes.** The Japanese rows were added last and are the reason the `framework` and `taxonomy` columns are separate: a Japanese group that has adopted IFRS reports under IFRS and tags against `jpigp_cor`, Japan's own taxonomy for it, so its revenue resolves under `framework = 'IFRS'` beside `ifrs-full:Revenue` without being the same element. A filer under Japan GAAP tags `jppfs_cor` and carries `framework = 'JP-GAAP'`.
 

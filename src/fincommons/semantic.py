@@ -257,9 +257,20 @@ def _rules(contract):
         name = prop["name"]
         aggregation = _contracts.custom_property(prop, "aggregation")
         if aggregation == "nonAdditive":
-            within = _contracts.custom_property(prop, "aggregateWithin") or []
-            rules.append(f"Never sum {name}. Average it only within one value of "
-                         + " and ".join(within) + ".")
+            within = " and ".join(_contracts.custom_property(prop, "aggregateWithin") or [])
+            # Said as the measure aggregates: most are averaged, a factor
+            # that compounds is multiplied, as EXP(SUM(LN(x))) does.
+            logic = _text(prop.get("transformLogic", "")).upper()
+            if logic.startswith("AVG("):
+                rules.append(f"Never sum {name}. Average it only within one value of "
+                             f"{within}.")
+            elif logic.startswith("EXP(SUM(LN("):
+                rules.append(f"Never sum {name}. Multiply it, and only within one "
+                             f"value of {within}.")
+            else:
+                rules.append(f"Never sum {name}. Aggregate it as "
+                             f"{_text(prop['transformLogic'])}, and only within one "
+                             f"value of {within}.")
         elif aggregation == "semiAdditive":
             time = _contracts.custom_property(prop, "timeProperty")
             rules.append(f"Do not sum {name} over {time}: over a period, read it at "

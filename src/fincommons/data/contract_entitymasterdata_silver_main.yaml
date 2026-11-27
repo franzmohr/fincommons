@@ -1,0 +1,354 @@
+# The data contract of the main table of the Silver layer of
+# fincommons.entitymasterdata, the entity master data set itself, in the Open
+# Data Contract Standard. It is the single source of truth for what the
+# columns of the table mean: fincommons.columns reads its descriptions from
+# here, and the test suite holds it against the code and against the table the
+# module writes. See fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.entitymasterdata.silver.main
+name: main
+version: 1.0.0
+status: active
+domain: entitymasterdata
+dataProduct: fincommons.entitymasterdata
+description:
+  purpose: >-
+    The entity master data set: who the counterparties of a report are, so that
+    a code identifying an entity can be resolved into its name, country, sector,
+    ultimate parent and fund manager. It is the public table with an organisation's
+    own list in front of it, so that an entity the organisation describes itself
+    is described the way it does.
+  usage: >-
+    Join on lei, or on one of the internal identifiers for an entity the proprietary
+    list describes. fincommons.entitymasterdata.connect_to_entitymasterdata(spark,
+    config) opens the table. File an entity that could not be identified under
+    LEI_UNKNOWN, and what an aggregation does not show on its own under LEI_OTHER;
+    both are rows of the table.
+  limitations: >-
+    Where the proprietary list describes an LEI, its row replaces the public one
+    in full, and its columns hold what the organisation states rather than what
+    the registers do: the codes of sector and subsector are then not checked. The
+    id is assigned afresh on every rebuild, so a reference meant to outlast one
+    is kept by LEI. The table is rebuilt in full on every run.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/entitymasterdata/silver.py
+- type: businessDefinition
+  url: https://link.springer.com/chapter/10.1007/978-3-030-66891-4_6
+  description: >-
+    Lenoci and Letizia (2021), the approach of combining GLEIF with the sectoral
+    registers that the table follows.
+schema:
+- name: main
+  physicalType: table
+  businessName: Entity master data
+  description: >-
+    One row per entity: every LEI of the public table, each one the proprietary
+    list describes replaced by the list's row, the entities the list holds without
+    an LEI, and the two catch-all entities Other and Unknown. Numbered by id in
+    LEI order.
+  dataGranularityDescription: >-
+    One row per entity: one per LEI, and one per entity of the proprietary list
+    without an LEI.
+  quality:
+  - name: one_row_per_id
+    description: No id is given to two rows.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - id
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: ids_run_from_one_without_gaps
+    description: >-
+      The ids are the numbers from one to the number of rows, so that together
+      with their uniqueness each of them is taken once.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE id < 1 OR id > (SELECT COUNT(*) FROM ${table})
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: the_catch_all_entities_are_there
+    description: >-
+      The two catch-all entities, Other (XOTHERX0000000000064) and Unknown (XUNKNOWNX00000000025),
+      are rows of the table.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE lei IN ('XOTHERX0000000000064', 'XUNKNOWNX00000000025')
+    mustBe: 2
+    dimension: completeness
+    severity: error
+  properties:
+  - name: id
+    businessName: Entity number
+    logicalType: integer
+    physicalType: int
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      Running number over the entity master data table, assigned in LEI order at
+      each rebuild, the entities without an LEI last; dense but not stable across
+      rebuilds.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: lei
+    businessName: LEI
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Legal Entity Identifier (ISO 17442) of the entity, normalised the way GLEIF
+      writes it (blanks removed, upper case), from the public table or the proprietary
+      list; XOTHERX0000000000064 and XUNKNOWNX00000000025 for the catch-all entities
+      Other and Unknown. Empty for an entity the proprietary list holds without
+      one.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: one_row_per_lei
+      description: No LEI has more than one row; the rows without one aside.
+      type: library
+      metric: duplicateValues
+      mustBe: 0
+      dimension: uniqueness
+      severity: error
+  - name: internal_id_1
+    businessName: Internal identifier 1
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Identifier 1 the organisation knows the entity by, from the INTERNALID_1 column
+      of the proprietary list, kept as text with its leading zeros; empty for an
+      entity the list does not describe, and throughout where the list does not
+      use the column or there is no list.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: INTERNALID_1
+      vendor: fincommons
+  - name: internal_id_2
+    businessName: Internal identifier 2
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Identifier 2 the organisation knows the entity by, from the INTERNALID_2 column
+      of the proprietary list, kept as text with its leading zeros; empty for an
+      entity the list does not describe, and throughout where the list does not
+      use the column or there is no list.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: INTERNALID_2
+      vendor: fincommons
+  - name: internal_id_3
+    businessName: Internal identifier 3
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Identifier 3 the organisation knows the entity by, from the INTERNALID_3 column
+      of the proprietary list, kept as text with its leading zeros; empty for an
+      entity the list does not describe, and throughout where the list does not
+      use the column or there is no list.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: INTERNALID_3
+      vendor: fincommons
+  - name: internal_id_4
+    businessName: Internal identifier 4
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Identifier 4 the organisation knows the entity by, from the INTERNALID_4 column
+      of the proprietary list, kept as text with its leading zeros; empty for an
+      entity the list does not describe, and throughout where the list does not
+      use the column or there is no list.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: INTERNALID_4
+      vendor: fincommons
+  - name: name
+    businessName: Name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Name of the entity: the legal name GLEIF Level 1 gives it, as the public
+      table holds it, the NAME of the proprietary list for an entity the list
+      describes, and Other or Unknown for the catch-all entities.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalName
+      vendor: fincommons
+  - name: country
+    businessName: Country
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Country of the entity's legal address (ISO 3166-1 alpha-2) as GLEIF Level
+      1 gives it, or the CTRY of the proprietary list for an entity the list describes;
+      empty for the catch-all entities.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalAddress.Country
+      vendor: fincommons
+  - name: sector
+    businessName: Sector
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Sector of the entity, as the public table gives it -- CCP, INUN, ORPI, CB,
+      CDTI, OFI, MMF, MFI or IF, from the narrowest sectoral register the entity
+      appears in -- or the SECTOR of the proprietary list for an entity the list
+      describes. Empty for an entity neither describes.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: subsector
+    businessName: Subsector
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Refinement of sector offered by the register that set it -- the type of CCP
+      (EUCCP, T1CCP, T2CCP) for CCPs, or UCIT/AIFD/INVF by UCITS compliance for
+      funds whose sector comes from the ECB fund register -- or the SUBSECTOR of
+      the proprietary list for an entity the list describes.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: ultimate_parent_lei
+    businessName: Ultimate parent
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      LEI of the entity's ultimate accounting consolidating parent, from the active
+      IS_ULTIMATELY_CONSOLIDATED_BY relationship of GLEIF Level 2 as the public
+      table holds it, or the ULTPAR_LEI of the proprietary list for an entity the
+      list describes.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Relationship.EndNode.NodeID
+      vendor: fincommons
+  - name: amc
+    businessName: Asset management company
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      For a fund, the LEI of the company that manages it, from the active IS_FUND-MANAGED_BY
+      relationship of GLEIF Level 2 as the public table holds it, or the AMC of
+      the proprietary list for an entity the list describes.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Relationship.EndNode.NodeID
+      vendor: fincommons
+  - name: if_policy
+    businessName: Investment policy
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      For an investment fund, its investment policy as the ECB investment fund
+      register states it (e.g. Bonds, Equities, Mixed, Real estate), or the IF_POLICY
+      of the proprietary list for an entity the list describes.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: if_type
+    businessName: Type of investment fund
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      For an investment fund, its fund type as the public table gives it -- ETF,
+      PEF (private equity fund) or 'Neither ETF nor PEF' -- or the IF_TYPE of the
+      proprietary list for an entity the list describes.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: if_ucits_compl
+    businessName: UCITS compliance
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      For an investment fund, whether it is UCITS compliant as the public table
+      gives it -- UCITS, AIF, or another answer of the register as written -- or
+      the IF_UCITS_COMPL of the proprietary list for an entity the list describes.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

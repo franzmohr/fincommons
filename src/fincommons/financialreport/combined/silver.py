@@ -157,7 +157,7 @@ def filings_from_esef(spark, config_path):
         .withColumn("jcn", func.lit(None).cast("string"))
         .withColumn("form", func.lit(None).cast("string"))
         .withColumn("period_year", func.year("period_end"))
-        .withColumn("facts", func.coalesce("facts", func.lit(0)))
+        .withColumn("facts", func.coalesce("facts", func.lit(0)).cast("int"))
         .select(*filing_schema.names)
     )
 
@@ -369,7 +369,7 @@ def filings_from_edinet(spark, config_path):
         .withColumn("country", func.lit(None).cast("string"))
         .withColumn("form", func.col("doc_type"))
         .withColumn("period_year", func.year("period_end"))
-        .withColumn("facts", func.coalesce("facts", func.lit(0)))
+        .withColumn("facts", func.coalesce("facts", func.lit(0)).cast("int"))
         .select(*filing_schema.names)
     )
 

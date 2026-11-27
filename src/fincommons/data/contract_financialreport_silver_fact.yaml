@@ -1,0 +1,540 @@
+# The data contract of the table of facts of the Silver layer of
+# fincommons.financialreport.combined, in the Open Data Contract Standard. It
+# is the single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite
+# holds it against the declared schema and against the table the module
+# writes. See fincommons.contracts.
+#
+# The identifier names the data set as the configuration file does,
+# financialreport, rather than the package path of its module.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.financialreport.silver.fact
+name: fact
+version: 1.0.0
+status: active
+domain: financialreport
+dataProduct: fincommons.financialreport
+description:
+  purpose: >-
+    The facts of the financial reports of the three tagging regimes, ESEF, the U.S.
+    Securities and Exchange Commission and Japan's EDINET, in one table of one shape,
+    so that a question put to all three at once is put to one table, and a figure
+    the regimes state alike answers to one name.
+  usage: >-
+    Filter on source and period_year first, since the table is partitioned by both,
+    then on measure or concept. measure names the facts whose concept is the first
+    choice of a measure of the catalogue; fincommons.financialreport.combined.measure_values(facts,
+    measure) resolves a measure to one figure per filing and period, falling back
+    on the concepts the catalogue ranks below the first, and is what a comparison
+    of populations uses. fincommons.financialreport.combined.connect_to_financialreport(spark,
+    config, 'fact') opens the table.
+  limitations: >-
+    The table holds every figure of a report in one column: value is no measure,
+    since summing it adds revenue to assets and euros to shares. Nothing is joined
+    between the regimes: the entity is an LEI, a central index key or an EDINET
+    code, and no published mapping joins them. The Commission's company files carry
+    neither breakdowns nor text, so those are present for ESEF and EDINET only. A
+    Japanese report that consolidates states every figure twice, the group's and,
+    under NonConsolidatedMember, the parent company's own. The unit and the dimensions
+    are spelled as each source spells them. A report restating an earlier figure
+    states it again under its own filing. The figures are held to the checks of
+    each source module and to none of their own here.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/financialreport/combined/silver.py
+- type: businessDefinition
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/data/financialreport_measures.csv
+  description: >-
+    The catalogue of measures, which says which concept of each framework a measure
+    is taken to be, and with which caveat.
+schema:
+- name: fact
+  physicalType: table
+  businessName: Financial report facts
+  description: >-
+    One row per fact of a filing of the source modules esef, sec and edinet, reduced
+    to the columns they share: the filing and its entity, the framework, the concept
+    as filed and the measure it is the first choice for, the period, the unit, and
+    a number in value or anything else in text.
+  dataGranularityDescription: >-
+    One row per fact of a filing: a source, a filing and the identifier of the fact
+    within it.
+  quality:
+  - name: one_row_per_fact
+    description: No fact of a filing is carried twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - source
+      - filing
+      - fact
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: a_fact_is_not_both_a_number_and_a_text
+    description: >-
+      No fact has both a numeric value and a text; each source puts a fact in one
+      or the other.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE value IS NOT NULL AND text IS NOT NULL
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: a_number_has_a_unit
+    description: >-
+      A numeric fact states its unit, without which its value cannot be read.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE value IS NOT NULL AND unit IS NULL
+    mustBe: 0
+    dimension: completeness
+    severity: error
+  - name: the_partition_is_the_year_of_the_period
+    description: >-
+      period_year, which the table is partitioned by, is the year of period_end,
+      and empty where it is.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE NOT (period_year <=> YEAR(period_end))
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: a_row_carries_the_identifiers_of_its_own_regime_only
+    description: >-
+      No row carries an identifier of another regime than its source's: no central
+      index key, EDINET code or corporate number on an ESEF row, no LEI, EDINET code
+      or corporate number on an SEC row, no LEI or central index key on an EDINET
+      row. None is derived from another.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE (source = 'esef' AND COALESCE(cik, edinet_code,
+      jcn) IS NOT NULL) OR (source = 'sec' AND COALESCE(lei, edinet_code, jcn) IS
+      NOT NULL) OR (source = 'edinet' AND COALESCE(lei, cik) IS NOT NULL)
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: the_commission_states_no_text_and_no_breakdown
+    description: >-
+      Every row from the Commission has neither text nor dimensions, since its company
+      files carry neither.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE source = 'sec' AND (text IS NOT NULL OR
+      dimensions IS NOT NULL)
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  properties:
+  - name: source
+    businessName: Source
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      Which module the row came from: esef, sec or edinet. It is the first partition
+      column of the table of facts, so that a question scoped to one regime passes
+      over the others.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: source_is_a_module
+      description: The source is one of the modules the table is built from.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - esef
+        - sec
+        - edinet
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: filing
+    businessName: Filing
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The filing the row belongs to, as its own regime identifies it: the identifier
+      of filings.xbrl.org for an ESEF report, the accession number for a filing with
+      the Commission, the document management number for a filing with EDINET. The
+      three are not drawn from one series and are unique only within a source.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: fact
+    businessName: Fact
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 3
+    semanticType: dimension
+    description: >-
+      The identifier of the fact within its filing, as its source module made it.
+      It identifies a fact together with source and filing and not on its own.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: lei
+    businessName: Issuer LEI
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The legal entity identifier of the issuer, which ESEF prescribes and which is
+      the key of the entity master data as well; filled for every row from esef and
+      empty for the other two regimes. Neither the Commission nor GLEIF publishes
+      a mapping from a central index key to an LEI -- GLEIF's register pointer names
+      EDGAR for some tens of thousands of records, nearly all of them funds -- so
+      no identifier column is derived from another.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: esef
+      vendor: fincommons
+  - name: cik
+    businessName: CIK
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The central index key of the registrant, padded to ten digits, which a filing
+      with the Commission states; filled for every row from sec and empty for the
+      other two regimes.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: sec
+      vendor: fincommons
+  - name: edinet_code
+    businessName: EDINET code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The filer as Japan's Financial Services Agency addresses it, the letter E and
+      five digits; filled for a row from edinet and empty for the other two regimes.
+      It is one of four identifier columns, one regime's own in each, and a row has
+      the columns of its source filled and the others empty.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: edinet
+      vendor: fincommons
+  - name: jcn
+    businessName: Corporate number
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The corporate number of Japan's National Tax Agency, thirteen digits, filled
+      for a row from edinet where the agency states one. It is carried because it
+      is the one identifier in these tables that reaches an identifier another regime
+      uses: it is a check digit followed by the twelve-digit commercial register number,
+      and GLEIF records that register number against an LEI issued to a Japanese
+      company, so the two join by arithmetic rather than by a lookup table. The join
+      is not made here, needing GLEIF, which this module does not read.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: edinet
+      vendor: fincommons
+  - name: framework
+    businessName: Accounting framework
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The accounting framework the fact was prepared under, IFRS, US-GAAP or JP-GAAP,
+      taken from what was tagged rather than from the regime it was filed under. For
+      a row from esef or sec it is read off the prefix of the fact's own concept,
+      ifrs-full being IFRS and us-gaap US-GAAP, so a foreign private issuer reporting
+      under IFRS to the Commission is IFRS; a concept of another taxonomy, the cover
+      page's or one the issuer created, has none. For a row from edinet the taxonomy
+      settles it where it can, jpigp_cor being IFRS and jppfs_cor JP-GAAP, and the
+      standard the filing states settles the rest, so a Japanese IFRS filer's parent
+      company statements are JP-GAAP; empty where the filing states no standard,
+      as a large-holding report does not. JP-GAAP is not comparable with the other
+      two line by line.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: framework_is_known
+      description: >-
+        A framework is IFRS, US-GAAP or JP-GAAP. A standard a Japanese filing states
+        that this module has no name for is kept as filed, and would show here.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - IFRS
+        - US-GAAP
+        - JP-GAAP
+      mustBe: 0
+      dimension: conformity
+      severity: warning
+  - name: period_end
+    businessName: Period end
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The last day of the period the fact's filing reports on; the earlier periods
+      a filing states are its comparatives. For an EDINET filing it is the end of
+      the period the filing states for itself, and the index's only where it states
+      none, since the agency lists a semi-annual report under the financial year
+      it belongs to. Empty where the source states none, as for a Japanese document
+      that reports on no period.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: period_year
+    businessName: Year of the period
+    logicalType: integer
+    physicalType: int
+    semanticType: dimension
+    description: >-
+      The calendar year period_end falls in, empty where it is. The table of facts
+      is partitioned by it after source.
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: concept
+    businessName: Concept
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The concept the fact was tagged with, as the prefix the filing bound and the
+      element name. It is never altered and not resolved across frameworks: ifrs-full:Revenue,
+      us-gaap:Revenues and jppfs_cor:NetSales stand as they were filed, and what they
+      have in common is a judgement the catalogue of measures records, in measure,
+      rather than a fact this column asserts.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: measure
+    businessName: Measure
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The identifier of what a fact is, the same for every regime that states the
+      same figure, written beside the concept its filer tagged rather than in place
+      of it. Filled only for the concept each framework states a measure of mapping.MATERIALISED_MEASURES
+      as first -- today all eight the catalogue defines, each written down one at
+      a time and none materialised merely by being catalogued -- and empty for everything
+      else; the catalogue ranks the other concepts as approximations, and each says
+      in its own caveat that it is not the same figure. It is given by the concept
+      alone, so a fact that breaks the figure down carries it too: a component of
+      equity, a segment, or the parent company's own figure of a Japanese report
+      under NonConsolidatedMember; the figure of the entity as a whole is the one
+      without dimensions. A Japanese fact carrying it may have no value and a dash
+      in text, the figure not applying to the filer. A null means either that no
+      measure covers the concept tagged or that the filer tagged none of the concepts
+      a measure covers -- many filings with the Commission state no total liabilities
+      -- and never a zero. Nor does a null fall alike on every regime. The first concept
+      of equity and of profit or loss under US GAAP includes the non-controlling interests,
+      and a registrant tagging only us-gaap:StockholdersEquity or us-gaap:NetIncomeLoss
+      carries none, while a Japanese filer states 純資産 and 当期純利益 whether it
+      consolidates or not; profit_loss_attributable_to_parent inverts that skew rather
+      than removing it. Japan GAAP has no element for 自己資本, so no JP-GAAP fact
+      carries equity_attributable_to_parent. The same figure is not always in the
+      same statement: cash and cash equivalents is the closing balance of the cash
+      flow statement under Japan GAAP, whose balance sheet has no line that means
+      it. Filter on this column to ask a precise question of named facts; resolve
+      through measure_values, which picks the best concept each filing states, to
+      ask about a population. describe_measure prints what a measure means and what
+      differs between the frameworks.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: measure catalogue
+      vendor: fincommons
+    quality:
+    - name: measure_is_materialised
+      description: >-
+        A measure is one of those mapping.MATERIALISED_MEASURES writes down.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - assets
+        - cash_and_equivalents
+        - equity
+        - equity_attributable_to_parent
+        - liabilities
+        - profit_loss
+        - profit_loss_attributable_to_parent
+        - revenue
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: prd_start
+    businessName: Start of the fact's period
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The first day of the period the fact is about. Empty for a fact reported at
+      an instant, which is how the two are told apart. For an EDINET fact it is resolved
+      by that module from what the filing states about itself rather than reported.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: prd_end
+    businessName: End of the fact's period
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The last day of the period the fact is about, or for a fact reported at an instant,
+      the day it stands for. Never empty: an EDINET fact whose period that module
+      could not resolve can be compared with nothing and is not carried here; it
+      stays in the edinet table of facts, where the PERIOD_UNRESOLVED check counts
+      it.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: unit
+    businessName: Unit
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The unit of the fact, spelled as its source spells it, which differs between
+      them: iso4217:EUR, xbrli:shares and iso4217:EUR/xbrli:shares from ESEF; USD,
+      shares and USD/shares from the Commission; JPY, shares and JPYPerShares from
+      EDINET. Empty for a fact that is not numeric, except that an EDINET fact whose
+      figure does not apply keeps its unit beside a dash in text.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: value
+    businessName: Numeric value
+    logicalType: number
+    physicalType: double
+    semanticType: dimension
+    description: >-
+      The value of the fact where it is numeric, as reported, in its unit and without
+      scaling. The column holds every kind of figure, amounts beside share counts
+      and ratios, so it is read within one concept or measure and one unit, never
+      summed across them.
+    customProperties:
+    - property: kind
+      value: amount
+      vendor: fincommons
+    - property: source
+      value: esef;sec;edinet
+      vendor: fincommons
+  - name: text
+    businessName: Text value
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The value of the fact where it is not numeric. Empty for every row the Commission
+      contributes, and not because this module drops it: the company files carry
+      no narrative facts at all. The ESEF table leaves text blocks out and the EDINET
+      table carries them, with the dash the agency's conversion writes where a figure
+      does not apply.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: esef;edinet
+      vendor: fincommons
+  - name: dimensions
+    businessName: Dimensions
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The dimensions the fact was reported under, as its source table states them:
+      axis=member sorted and joined by ';' for ESEF, the members of the context, such
+      as NonConsolidatedMember, for EDINET. Empty for a fact without dimensions, which
+      is true of every row the Commission contributes, its company files carrying
+      no breakdowns at all; what is missing on that side is rows and not values (see
+      coverage()). In a Japanese report that consolidates, the empty one is the group's
+      figure and NonConsolidatedMember the parent company's own.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: esef;edinet
+      vendor: fincommons

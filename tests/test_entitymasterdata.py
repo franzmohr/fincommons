@@ -2638,3 +2638,90 @@ def test_gleif_is_read_from_its_history_where_it_has_been_built(spark, data_lake
     then, used = em.entities_as_of(spark, data_lake, datetime.date(2026, 11, 1))
     assert {r.lei: r.name for r in then.collect()}["LEI1"] == "One"
     assert used["gleif_1"] == datetime.date(2026, 11, 1)
+
+
+# The data contracts
+# --------------------------------------------------------------------------
+
+
+CONTRACTS = {"public": "fincommons.entitymasterdata.silver.public",
+             "main": "fincommons.entitymasterdata.silver.main"}
+
+
+def test_the_columns_the_module_writes_are_those_of_its_contracts():
+    """The module names the columns of its tables in PUBLIC_COLUMNS and
+    COLUMNS, and a reader is told the contracts, so the two must agree in
+    names and order."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    assert spark_schema(load_contract(CONTRACTS["public"])).names == em.PUBLIC_COLUMNS
+    assert spark_schema(load_contract(CONTRACTS["main"])).names == em.COLUMNS
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, data_lake):
+    """Built from every register and a proprietary list, each table is the one
+    its contract describes -- columns, types and order, no empty value where
+    one is required, one row per key -- and meets its quality rules."""
+    from pyspark.sql import functions as F
+
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+
+    write_gleif_level_1(data_lake, ["LEI1", "LEI2", "LEI3", "LEI4", "LEI5", "LEI6"],
+                        ["One", "Two", "Three", "Four", "Five", "Six"],
+                        ["AT", "DE", "FR", "IT", "ES", "NL"])
+    write_gleif_level_2(data_lake, [("LEI5", "LEI1", "IS_ULTIMATELY_CONSOLIDATED_BY"),
+                                    ("LEI5", "LEI6", "IS_FUND-MANAGED_BY")])
+    write_ccp(data_lake, [("LEI1", "CCP", "EUCCP")])
+    write_eiopa(data_lake, ["LEI2"])
+    write_iorp(data_lake, ["LEI3"])
+    write_ecb_mfi(data_lake, [("LEI4", "Credit Institution")])
+    write_ecb_investment_fund(data_lake, ["LEI4", "LEI5"])
+    em.update_from_landing_to_bronze(data_lake)
+    write_internal(data_lake, pandas.DataFrame(
+        {"LEI": ["LEI6", None], "INTERNALID_1": ["007", "008"], "NAME": ["Six", "Eight"]}))
+    em.update_silver_entitymasterdata_public(spark, data_lake)
+    em.update_silver_entitymasterdata(spark, data_lake)
+
+    for table, identifier in CONTRACTS.items():
+        frame = em.connect_to_entitymasterdata(spark, data_lake, table)
+        contract = load_contract(identifier)
+        properties = contract["schema"][0]["properties"]
+
+        assert [(f.name, f.dataType) for f in frame.schema] == \
+            [(f.name, f.dataType) for f in spark_schema(contract)], table
+        for prop in properties:
+            if prop.get("required"):
+                assert frame.where(F.col(prop["name"]).isNull()).count() == 0, prop["name"]
+        key = [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                         key=lambda p: p["primaryKeyPosition"])]
+        assert key == {"public": ["lei"], "main": ["id"]}[table]
+        assert frame.groupBy(*key).count().where("count > 1").count() == 0
+        assert [r for r in check_quality(frame, contract) if r.passed is False] == [], table
+
+
+def test_the_public_table_has_one_shape_whichever_way_gleif_is_read(spark, data_lake):
+    """Read from the history of fincommons.gleif, the public table has the
+    columns it has when read from a golden copy, and is dated by the latest
+    publication the history applied."""
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+
+    write_gleif_history(spark, data_lake, [
+        ("20261101-0000", "full", [("LEI1", "One", "AT", "2025-01-01T00:00:00Z")], []),
+        ("20261103-0000", "delta",
+         [("LEI1", "One Holding", "AT", "2026-11-02T09:00:00Z")], []),
+    ])
+    write_ccp(data_lake, [])
+    write_eiopa(data_lake, ["LEI1"])
+    write_iorp(data_lake, [])
+    write_ecb_mfi(data_lake, [])
+    write_ecb_investment_fund(data_lake, [])
+    em.update_from_landing_to_bronze(data_lake)
+    em.update_silver_entitymasterdata_public(spark, data_lake)
+
+    frame = em.connect_to_entitymasterdata(spark, data_lake, "public")
+    contract = load_contract(CONTRACTS["public"])
+
+    assert [(f.name, f.dataType) for f in frame.schema] == \
+        [(f.name, f.dataType) for f in spark_schema(contract)]
+    assert [r.ref_date for r in frame.collect()] == [datetime.date(2026, 11, 3)]
+    assert [r for r in check_quality(frame, contract) if r.passed is False] == []

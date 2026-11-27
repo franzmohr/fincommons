@@ -10,8 +10,9 @@ from __future__ import annotations
 import pytest
 
 import fincommons
-from fincommons.columns import (CATALOGUED_MODULES, column_catalogue,
-                                 defined_columns, describe_column)
+from fincommons.columns import (CATALOGUED_MODULES, OUTPUT_COLUMNS,
+                                 column_catalogue, defined_columns,
+                                 describe_column)
 from fincommons.contracts import catalogue_rows
 
 KINDS = {"identifier", "code", "text", "date", "datetime", "amount", "currency",
@@ -48,7 +49,8 @@ def test_a_contract_names_the_stage_that_writes_its_columns():
     # and with them the names of the version columns, in firds.history, and
     # GLEIF those and the columns it reads in gleif.history and gleif.common.
     # ESEF, SEC, EDINET, STS and Fama/French declare the schemas of their tables in their common
-    # modules and, for their issues, in their quality modules.
+    # modules and, for their issues, in their quality modules; the combined
+    # financial reports declare theirs in financialreport.combined.common.
     applied_by = {"firds.silver": {"firds.silver", "firds.history"},
                   "gleif.silver": {"gleif.silver", "gleif.history", "gleif.common"},
                   "esef.silver": {"financialreport.esef.common",
@@ -58,9 +60,13 @@ def test_a_contract_names_the_stage_that_writes_its_columns():
                   "edinet.silver": {"financialreport.edinet.common",
                                     "financialreport.edinet.quality"},
                   "sts.silver": {"sts.common"},
-                  "famafrenchdata.silver": {"famafrenchdata.common"}}
+                  "famafrenchdata.silver": {"famafrenchdata.common"},
+                  "financialreport.silver": {"financialreport.combined.common",
+                                             "financialreport.combined.silver"}}
     defined = defined_columns().set_index(["module", "column"])["tables"]
     for module, column, stage, *_ in catalogue_rows():
+        if module not in CATALOGUED_MODULES:
+            continue  # marketpricedata: contracted, not catalogued
         writers = applied_by.get(stage, {stage})
         assert writers & set(defined[(module, column)].split(";")), (module, column)
 
@@ -111,3 +117,29 @@ def test_an_unknown_column_is_an_error_that_suggests_close_names():
 
 def test_the_catalogue_covers_the_catalogued_modules():
     assert set(column_catalogue()["module"]) == set(CATALOGUED_MODULES)
+
+
+def test_a_column_a_function_returns_is_described_by_the_function():
+    import importlib
+
+    every = defined_columns(outputs={})
+    defined = set(zip(every["module"], every["column"]))
+    for (module, column), function in OUTPUT_COLUMNS.items():
+        assert (module, column) in defined, (module, column)
+        path, name = function.rsplit(".", 1)
+        doc = getattr(importlib.import_module(path), name).__doc__
+        assert f"``{column}``" in doc, function
+
+
+def test_the_package_ships_no_file_of_descriptions():
+    from importlib import resources
+
+    assert not resources.files("fincommons").joinpath(
+        "data", "column_catalogue.csv").is_file()
+
+
+def test_a_bronze_column_in_upper_case_is_not_held_to_a_contract():
+    defined = defined_columns()
+    assert not defined[defined["module"] == "firds"]["column"].eq("DATADT").any()
+    everything = defined_columns(contracted=())
+    assert everything[everything["module"] == "firds"]["column"].eq("DATADT").any()

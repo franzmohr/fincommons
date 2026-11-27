@@ -1,0 +1,57 @@
+# The data product of fincommons.financialreport.combined, in the Open Data
+# Product Standard. Its output ports name the contracts of the two Silver
+# tables by identifier and version; the test suite checks that the contracts
+# are shipped in those versions. The order of the ports is the order in which
+# the column catalogue takes a column named in several tables: from the
+# first, the filings, whose period and identifiers each fact carries.
+#
+# Its input ports name the tables of the three regimes the combined tables
+# are built from, in the version this module was written against; a later
+# minor or patch version of the same major version serves them as well.
+# Which of them a run reads is decided by which the lake holds. See
+# fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.financialreport
+name: financialreport
+version: 1.0.0
+status: active
+type: aggregate
+domain: financialreport
+description:
+  purpose: >-
+    The filings and facts of the three tagging regimes, ESEF, the U.S.
+    Securities and Exchange Commission and Japan's EDINET, reduced to one
+    shape and put one after the other, with the measures of the catalogue
+    written beside the concepts as filed: one row per filing and one row per
+    fact.
+inputPorts:
+  - name: esef_filings
+    contractId: fincommons.esef.silver.filings
+    version: 1.0.0
+  - name: esef_facts
+    contractId: fincommons.esef.silver.facts
+    version: 1.0.0
+  - name: sec_filings
+    contractId: fincommons.sec.silver.filings
+    version: 1.0.0
+  - name: sec_facts
+    contractId: fincommons.sec.silver.facts
+    version: 1.0.0
+  - name: edinet_filings
+    contractId: fincommons.edinet.silver.filings
+    version: 1.0.0
+  - name: edinet_facts
+    contractId: fincommons.edinet.silver.facts
+    version: 1.0.0
+outputPorts:
+  - name: silver_filing
+    type: table
+    description: One row per filing of the regimes the lake holds.
+    contractId: fincommons.financialreport.silver.filing
+    version: 1.0.0
+  - name: silver_fact
+    type: table
+    description: One row per fact of a filing of the regimes the lake holds.
+    contractId: fincommons.financialreport.silver.fact
+    version: 1.0.0

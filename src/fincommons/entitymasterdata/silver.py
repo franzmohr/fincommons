@@ -43,6 +43,16 @@ COLUMNS = ["id", "lei",
            "name", "country", "sector", "subsector", "ultimate_parent_lei", "amc",
            "if_policy", "if_type", "if_ucits_compl"]
 
+#: The columns of the public entity master data, in the order they are stored
+#: in: those of :data:`COLUMNS` that the public sources state, followed by the
+#: reference date of the GLEIF data the table was built from. The table is
+#: written in this shape whether GLEIF is read from a golden copy of the
+#: Bronze layer or from the history of :mod:`fincommons.gleif`, so that its
+#: contract describes one table rather than two.
+PUBLIC_COLUMNS = ["lei", "name", "country", "sector", "subsector",
+                  "ultimate_parent_lei", "amc",
+                  "if_policy", "if_type", "if_ucits_compl", "ref_date"]
+
 #: What a column of a Bronze register, or of the proprietary list, is called
 #: in the Silver table. A Bronze table records what a publisher sent and keeps
 #: the names it sent, so the Silver names are taken on where Bronze is read;
@@ -756,7 +766,14 @@ def combine_registers(gleif_1, relationships, ccp, inun, orpi, mfi, invfund):
 
     # And with the ultimate parent and the asset management company GLEIF
     # Level 2 reports for it.
-    return result.join(relationships, on = "lei", how = "leftouter")
+    result = result.join(relationships, on = "lei", how = "leftouter")
+
+    # In the shape of the public table, whichever way GLEIF was read: the
+    # order of the columns would otherwise follow the joins, and the
+    # reference date is text in the Bronze layer and a date in the Silver.
+    return result \
+        .withColumn("ref_date", func.col("ref_date").cast("date")) \
+        .select(*PUBLIC_COLUMNS)
 
 
 # The registers as they stood on a day
@@ -856,17 +873,23 @@ def gleif_from_history(spark, config_path, day=None):
         :func:`normalise_gleif_level_2` read -- the entities under the Silver
         names, the relationships under GLEIF's -- and the day the history was
         read as of, which is the day it was begun where ``day`` is before it.
+        The entities carry that day as ``ref_date``, as a golden copy carries
+        its own; where ``day`` is left out it is the day of the latest
+        publication the history has applied.
     """
     from datetime import datetime
 
     from ..gleif import common as gleif_common
     from ..gleif import history as gleif_history
 
-    frames, read_as_of = [], None
+    frames, read_as_of, dated = [], None, None
     for level in ("level_1", "level_2"):
         versions = gleif_common.connect_to_gleif(spark, config_path, level)
         if day is None:
             current = versions.where(func.col(gleif_history.VALID_TO).isNull())
+            if level == "level_1":
+                latest = versions.agg(func.max(gleif_history.PUBLICATION)).first()[0]
+                dated = datetime.strptime(latest, "%Y%m%d-%H%M").date() if latest else None
         else:
             begun = versions.agg(func.min(gleif_history.PUBLICATION)).first()[0]
             begun = datetime.strptime(begun, "%Y%m%d-%H%M").date()
@@ -890,6 +913,7 @@ def gleif_from_history(spark, config_path, day=None):
         "lei",
         func.col("legal_name").alias("name"),
         func.col("legal_address_country").alias("country"),
+        func.lit(dated if day is None else read_as_of).cast("date").alias("ref_date"),
     )
     relationships = relationships.select(
         func.col("start_lei").alias("Relationship.StartNode.NodeID"),
@@ -1304,6 +1328,7 @@ __all__ = [
     "LEI_UNKNOWN",
     "MFI_SECTORS",
     "MFI_SECTOR_OTHER",
+    "PUBLIC_COLUMNS",
     "active_relationship",
     "check_internal_list",
     "combine_registers",

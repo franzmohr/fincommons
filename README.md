@@ -194,19 +194,23 @@ fincommons.column_catalogue("exchangerate")            # all columns of a data s
 print(mp.describe_instrument("EUR/VND"))               # one series of the price table
 ```
 
-`describe_column` reads `data/column_catalogue.csv`: one row per data set and
-column (some two hundred, across the modules `firds`, `entitymasterdata`,
-`exchangerate`, `famafrenchdata`, `esef`, `sec`, `edinet` and
-`financialreport`), with the tables that write it, the
-report field it is read from or "derived", a kind and a description. A test
-reads the column names out of the modules' code and fails if the two drift
-apart, so a column added to a module needs a catalogue row. The descriptions
-are taken from the code, the XML paths and the module READMEs; where they
-name a field of a regulatory reporting standard (an RTS field, an ESMA
-template field) that is a pointer to the standard rather than a quotation of
-it, and a description that could not be fully established ends in
-"(inferred)". A package that builds on fincommons can ship a catalogue of its
-own and read both through the `catalogues` argument.
+`describe_column` reads the data contracts of the Silver tables, shipped in
+`data/` as `contract_<module>_<layer>_<table>.yaml` in the Open Data Contract
+Standard: one row per data set and column, with the tables that write it, the
+report field it is read from or "derived", a kind and a description. Every
+module whose columns are catalogued -- `firds`, `entitymasterdata`,
+`exchangerate`, `famafrenchdata`, `esef`, `sec`, `edinet`, `financialreport`,
+`gleif` and `sts` -- has a contract for each of its Silver tables, and the
+contracts are the only place a column is described. A test reads the column
+names out of the modules' code and fails if a column has no description. The
+Bronze layers keep the columns their publishers deliver and have no
+contracts, and the few columns a public function returns beside those of a
+table are described by its docstring. Where a description names a field of a
+regulatory reporting standard (an RTS field, an ESMA template field) that is
+a pointer to the standard rather than a quotation of it. A package that
+builds on fincommons ships contracts of its own, or still a
+`data/column_catalogue.csv` for tables it has not given one, and reads both
+through the `catalogues` argument.
 
 ## Modules
 

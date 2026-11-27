@@ -315,10 +315,14 @@ def connect_to_financialreport(spark, config_path, table="fact"):
     table: str
         Name of the table, ``'fact'`` or ``'filing'``.
     """
+    # Parquet puts the partition columns of the table of facts last; the
+    # columns are returned in the declared order whatever the format.
     if table == "fact":
-        return read_silver(spark, ref_silver_fact(config_path))
+        return read_silver(spark, ref_silver_fact(config_path)) \
+            .select(*fact_schema.names)
     if table == "filing":
-        return read_silver(spark, ref_silver_filing(config_path))
+        return read_silver(spark, ref_silver_filing(config_path)) \
+            .select(*filing_schema.names)
     raise ValueError(f"Table {table!r} not recognised. Use 'fact' or 'filing'.")
 
 

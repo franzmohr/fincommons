@@ -457,7 +457,9 @@ def records_to_change(planned: DataFrame, columns) -> DataFrame:
     """Return the changes to the versions in force, tagged with the operation.
 
     The rows of :func:`records_to_close` and :func:`records_to_replace` in one
-    frame, carrying every column of ``columns`` and :data:`OPERATION`. For a
+    frame, carrying every column of ``columns`` and ``operation``
+    (:data:`OPERATION`), which names what the row does to the version in
+    force: ``CLOSE_AND_INSERT`` or ``REPLACE``. For a
     row that closes a version, ``valid_to`` already holds the day the version is
     closed on, so a caller applies either operation by reading the columns the
     tag names.

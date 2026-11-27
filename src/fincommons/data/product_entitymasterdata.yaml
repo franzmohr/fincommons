@@ -1,0 +1,31 @@
+# The data product of fincommons.entitymasterdata, in the Open Data Product
+# Standard. Its output ports name the contracts of the two Silver tables by
+# identifier and version; the test suite checks that the contracts are shipped
+# in those versions. The order of the ports is the order in which the column
+# catalogue takes a column named in both tables: from the first, the public
+# table the main one is built from. See fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.entitymasterdata
+name: entitymasterdata
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: entitymasterdata
+description:
+  purpose: >-
+    Who the counterparties of a report are: one row per legal entity with its
+    name, country, sector, ultimate parent and fund manager, combined from
+    GLEIF and the registers of the ECB, EIOPA and ESMA, with an organisation's
+    own list in front of them where it keeps one.
+outputPorts:
+  - name: silver_public
+    type: table
+    description: The entity master data from public sources alone, one row per LEI.
+    contractId: fincommons.entitymasterdata.silver.public
+    version: 1.0.0
+  - name: silver_main
+    type: table
+    description: The entity master data set, the proprietary list in front of the public data.
+    contractId: fincommons.entitymasterdata.silver.main
+    version: 1.0.0

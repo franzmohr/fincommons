@@ -1,0 +1,54 @@
+# The data product of fincommons.marketpricedata, in the Open Data Product
+# Standard. Its output ports name the contracts of the two Silver tables by
+# identifier and version; the test suite checks that the contracts are shipped
+# in those versions. Its context is what an assistant is told about the
+# tables, which fincommons.semantic passes on. See fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.marketpricedata
+name: marketpricedata
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: marketpricedata
+description:
+  purpose: >-
+    The market prices and rates a supervisory data set is measured against,
+    collected from public sources and an optional proprietary file into one
+    table, with the corporate actions of the Dhaka shares beside it.
+context:
+  instructions: >-
+    Each row of the price table is the value of one instrument on one day,
+    and the identifier says what the value is: a currency pair BASE/QUOTE is
+    an exchange rate, ON-ESTR, ON-SOFR and ON-SONA are overnight rates in
+    percent, YLD- and IBOR- are yields and interbank rates in percent, and a
+    twelve-character code is the ISIN of a share, fund or index. A series
+    whose identifier ends in -M is monthly and dated to the last day of its
+    month. A day without an observation has no row, so the latest value on
+    or before a date is the last row of the instrument up to that date.
+  constraints:
+    - constraint: >-
+        Do not combine the values of different instruments in one figure; the
+        metric view returns an empty value where a group holds more than one
+        instrument, and that empty value is the answer, not an error to work
+        around.
+    - constraint: >-
+        The prices are not adjusted for corporate actions; do not compute a
+        return of a Dhaka share across an ex-date without the factors of the
+        table of corporate actions.
+  verifiedStatements:
+    - question: What was the €STR on 30 June 2025?
+    - question: What was the average EUR/USD rate in the first quarter of 2025?
+    - question: What was the euro area 10-year government benchmark yield at the end of 2024?
+    - question: Which Dhaka shares paid a cash dividend in 2025?
+outputPorts:
+  - name: silver_marketpricedata
+    type: table
+    description: One value per reference date and instrument.
+    contractId: fincommons.marketpricedata.silver.marketpricedata
+    version: 1.0.0
+  - name: silver_dse_corporate_actions
+    type: table
+    description: One corporate action per DSE share, ex-date and kind.
+    contractId: fincommons.marketpricedata.silver.dse_corporate_actions
+    version: 1.0.0

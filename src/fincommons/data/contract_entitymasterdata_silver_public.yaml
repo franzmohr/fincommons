@@ -1,0 +1,309 @@
+# The data contract of the public table of the Silver layer of
+# fincommons.entitymasterdata, in the Open Data Contract Standard. It is the
+# single source of truth for what the columns of the table mean:
+# fincommons.columns reads its descriptions from here, and the test suite holds
+# it against the code and against the table the module writes. See
+# fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.entitymasterdata.silver.public
+name: public
+version: 1.0.0
+status: active
+domain: entitymasterdata
+dataProduct: fincommons.entitymasterdata
+description:
+  purpose: >-
+    Who a legal entity is and what it does, from public sources alone: GLEIF says
+    who the entity is and who its ultimate parent and fund manager are, and the
+    registers of the ECB, EIOPA and ESMA say which sector it belongs to, in the
+    manner of Lenoci and Letizia (2021).
+  usage: >-
+    Join on lei. The table is what the entity master data set, the main table,
+    puts a proprietary list in front of; read that one where an organisation keeps
+    a list of its own. fincommons.entitymasterdata.connect_to_entitymasterdata(spark,
+    config, "public") opens the table.
+  limitations: >-
+    The table holds every LEI GLEIF has issued, lapsed and retired ones included,
+    as the latest golden copy or the history of fincommons.gleif describes it; an
+    entity a register names that GLEIF does not know is left out. Each sectoral
+    register is read from its latest snapshot in the Bronze layer, so the table
+    is as current as the registers last imported. It is rebuilt in full on every
+    run.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/entitymasterdata/silver.py
+- type: businessDefinition
+  url: https://link.springer.com/chapter/10.1007/978-3-030-66891-4_6
+  description: >-
+    Lenoci and Letizia (2021), the approach of combining GLEIF with the sectoral
+    registers that the table follows.
+schema:
+- name: public
+  physicalType: table
+  businessName: Public entity master data
+  description: >-
+    One row per LEI of GLEIF Level 1: the entity's name and country, the sector
+    the narrowest sectoral register gives it, what the ECB's register of investment
+    funds says about a fund, and the ultimate parent and fund manager of GLEIF
+    Level 2.
+  dataGranularityDescription: One row per LEI.
+  quality:
+  - name: one_row_per_lei
+    description: No LEI has more than one row.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - lei
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: one_reference_date
+    description: >-
+      Every row carries the reference date of the one GLEIF state the table was
+      built from.
+    type: sql
+    query: SELECT COUNT(DISTINCT ref_date) FROM ${table}
+    mustBe: 1
+    dimension: consistency
+    severity: error
+  - name: a_subsector_refines_a_ccp_or_a_fund
+    description: >-
+      Only the list of CCPs and the register of investment funds offer a subsector,
+      so a row of any other sector has none.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE subsector IS NOT NULL AND (sector IS NULL
+      OR sector NOT IN ('CCP', 'IF'))
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  properties:
+  - name: lei
+    businessName: LEI
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      Legal Entity Identifier (ISO 17442) of the entity, normalised the way GLEIF
+      writes it (blanks removed, upper case); in the GLEIF Level 2 relationship
+      data it is read from the start node of the relationship.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: name
+    businessName: Name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Legal name of the entity, from GLEIF Level 1: the golden copy of the Bronze
+      layer, or the history of fincommons.gleif where that has been built.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalName
+      vendor: fincommons
+  - name: country
+    businessName: Country
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Country of the entity's legal address (ISO 3166-1 alpha-2), from GLEIF Level
+      1: the golden copy of the Bronze layer, or the history of fincommons.gleif
+      where that has been built.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalAddress.Country
+      vendor: fincommons
+  - name: sector
+    businessName: Sector
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Sector of the entity, taken from the narrowest sectoral register it appears
+      in: CCP (ESMA CCP list), INUN (EIOPA insurance undertaking), ORPI (EIOPA IORP),
+      CB/CDTI/OFI/MMF or MFI (ECB MFI list, by category), or IF (ECB investment
+      fund register). Empty for an entity no register names.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: sector_is_known
+      description: The sector is one a register gives.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - CCP
+        - INUN
+        - ORPI
+        - CB
+        - CDTI
+        - OFI
+        - MMF
+        - MFI
+        - IF
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: subsector
+    businessName: Subsector
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Refinement of sector offered by the register that set it: the type of CCP
+      (EUCCP, T1CCP, T2CCP) for CCPs, or UCIT/AIFD/INVF by UCITS compliance for
+      funds whose sector comes from the ECB fund register.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: subsector_is_known
+      description: The subsector is one the list of CCPs or the fund register gives.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - EUCCP
+        - T1CCP
+        - T2CCP
+        - UCIT
+        - AIFD
+        - INVF
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: ultimate_parent_lei
+    businessName: Ultimate parent
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      LEI of the entity's ultimate accounting consolidating parent, from the
+      IS_ULTIMATELY_CONSOLIDATED_BY relationship of GLEIF Level 2 that is still
+      active, normalised as lei is; empty where no current relationship of that
+      kind is reported.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Relationship.EndNode.NodeID
+      vendor: fincommons
+  - name: amc
+    businessName: Asset management company
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      For a fund, the LEI of the company that manages it, from the IS_FUND-MANAGED_BY
+      relationship of GLEIF Level 2 that is still active, normalised as lei is;
+      empty where no current relationship of that kind is reported.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Relationship.EndNode.NodeID
+      vendor: fincommons
+  - name: if_policy
+    businessName: Investment policy
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      For an investment fund on the ECB investment fund register, its investment
+      policy as stated in the register (e.g. Bonds, Equities, Mixed, Real estate,
+      Hedge, Other), whichever register sets the sector.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: if_type
+    businessName: Type of investment fund
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      For an investment fund on the ECB register, its fund type: ETF, PEF (private
+      equity fund) or 'Neither ETF nor PEF' (renamed from 'Type of investment fund'
+      and abbreviated); a type the register spells otherwise is kept as written.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: if_ucits_compl
+    businessName: UCITS compliance
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      For an investment fund on the ECB register, whether it is UCITS compliant:
+      UCITS, or AIF for a non-UCITS alternative investment fund (renamed from 'UCITS
+      compliance' and abbreviated); any other answer of the register, such as 'Non-UCITS
+      compliant, other than AIF', is kept as written.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: ref_date
+    businessName: Reference date
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      Reference date of the GLEIF data the table was built from, the same on every
+      row: the day of the golden copy of the Bronze layer, or of the latest publication
+      the history of fincommons.gleif has applied. It dates the names, countries
+      and relationships; each sectoral register is read from its own latest snapshot.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

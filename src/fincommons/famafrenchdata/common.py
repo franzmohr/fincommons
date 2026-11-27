@@ -54,6 +54,17 @@ bronze_schema = StructType() \
     .add("COLLECTDT", DateType(), False)
 """The shape of the Bronze layer: one row per line of a file.
 
+``DATASET`` is the name of the file of the library the line comes from, as
+the library's page links it without the ``_CSV.zip`` suffix
+(``F-F_Research_Data_Factors``); ``LINENO`` the number of the line within the
+file, from 1, which puts the lines back in order; ``LINE`` the line as
+published, without its line end -- preamble, notes, titles, headers, data rows
+and the copyright line alike; ``LASTMODIFIED`` the time, in UTC, the server of
+the library states the file was last modified (HTTP ``Last-Modified``), empty
+where it states none; and ``COLLECTDT`` the day the file was collected, the
+day its text last changed in the Bronze layer. The Bronze layer keeps these
+names in upper case and has no data contract; the Silver table has one.
+
 ``DATASET`` is the partition column and is written as the name of the
 partition directory rather than into the files. The schema is given to the
 reader rather than inferred, because Spark infers the type of a partition

@@ -15,7 +15,7 @@ against :mod:`fincommons.financialreport.esef` directly, without building a comb
 and without that module depending on this one.
 
 The judgement is therefore data and not code. It is a catalogue shipped with
-the package, in the data directory beside the column catalogue and the FIRDS
+the package, in the data directory beside the data contracts and the FIRDS
 schemas, and every row carries who decided, on what basis, and what the
 caveat is. A row whose caveat is empty is a row whose author thought the two
 frameworks agree; a row with one is a row where somebody should look before

@@ -1,0 +1,190 @@
+# The data contract of the combined Silver table of fincommons.marketpricedata,
+# in the Open Data Contract Standard. It states what the three columns of the
+# table hold and what a reader may rely on; the test suite holds it against
+# the table the module writes. See fincommons.contracts.
+#
+# The module is not among the data sets of the column catalogue: what matters
+# in its table is the identifier in it, which describe_instrument explains,
+# rather than its columns. The contract describes the columns all the same.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.marketpricedata.silver.marketpricedata
+name: marketpricedata
+version: 1.0.0
+status: active
+domain: marketpricedata
+dataProduct: fincommons.marketpricedata
+description:
+  purpose: >-
+    The market data a supervisory data set is measured against -- prices of
+    securities, stock and volatility indices, commodities, electricity,
+    exchange rates, overnight, policy and interbank rates and bond yields --
+    from public sources and an optional proprietary file, reduced to one
+    shape: a reference date, an instrument and a value.
+  usage: >-
+    Filter on instr_id before anything else: the identifier says what the
+    value is, and fincommons.marketpricedata.describe_instrument(instr_id)
+    says so in words -- the kind of instrument, its unit, its currency, its
+    source and its frequency. fincommons.marketpricedata.connect_to_marketpricedata(spark,
+    config) opens the table, and fincommons.marketpricedata.curves derives
+    zero curves and discount factors from its rates.
+  limitations: >-
+    The prices are as the sources publish them, and are not adjusted for
+    corporate actions; the events of the Dhaka shares are a table of their
+    own. A day an instrument did not trade or was not published has no row,
+    rather than the last value carried. Where two sources deliver the same
+    instrument and day, the source run later wins, the proprietary file last
+    of all. The value of a monthly series is dated to the end of its month.
+authoritativeDefinitions:
+  - type: implementation
+    url: https://github.com/franzmohr/fincommons/blob/main/src/fincommons/marketpricedata/common.py
+  - type: implementation
+    url: https://github.com/franzmohr/fincommons/blob/main/src/fincommons/marketpricedata/describe.py
+    description: What each identifier of the table stands for.
+schema:
+  - name: marketpricedata
+    physicalType: table
+    businessName: Market prices and rates
+    description: >-
+      One row per reference date and instrument: the closing price, rate,
+      yield or index level a source published for the instrument on that day.
+    dataGranularityDescription: One value per reference date and instrument.
+    quality:
+      - name: one_value_per_day_and_instrument
+        description: >-
+          No instrument has two values on one day; a source that delivers a
+          day again replaces the value it delivered before.
+        type: library
+        metric: duplicateValues
+        arguments:
+          properties: [ref_date, instr_id]
+        mustBe: 0
+        dimension: uniqueness
+        severity: error
+      - name: not_empty
+        description: The table holds values.
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+      - name: a_currency_pair_names_two_currencies
+        description: >-
+          An exchange rate, named BASE/QUOTE, quotes one currency in another
+          and never a currency in itself.
+        type: sql
+        query: >-
+          SELECT COUNT(*) FROM ${table} WHERE instr_id RLIKE '^[A-Z]{3}/[A-Z]{3}$'
+          AND SUBSTR(instr_id, 1, 3) = SUBSTR(instr_id, 5, 3)
+        mustBe: 0
+        dimension: consistency
+        severity: error
+      - name: an_exchange_rate_is_positive
+        description: >-
+          An exchange rate is the price of one currency in another and is
+          greater than zero. Other values need not be: an interest rate, a
+          spread and an electricity price can fall below zero.
+        type: sql
+        query: >-
+          SELECT COUNT(*) FROM ${table} WHERE instr_id RLIKE '^[A-Z]{3}/[A-Z]{3}$'
+          AND value <= 0
+        mustBe: 0
+        dimension: accuracy
+        severity: error
+    properties:
+      - name: ref_date
+        businessName: Reference date
+        logicalType: date
+        physicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        semanticType: dimension
+        description: >-
+          The day the value was published for: the trading day of a close,
+          the day of an overnight or policy rate, the delivery day of an
+          electricity price in the market's own time zone, and the last day
+          of the month for a monthly series, whose identifier ends in -M.
+        synonyms:
+          - synonym: REFDT
+            source: legacy-name
+            description: The name of the column before the columns of the package were put into snake case, which a proprietary file may still carry.
+        customProperties:
+          - {property: kind, value: date, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+      - name: instr_id
+        businessName: Instrument
+        logicalType: string
+        physicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        semanticType: dimension
+        description: >-
+          The instrument the value belongs to, which is what tells the
+          sources apart: an ISIN where the source names one (a share, a fund,
+          an index named by its index ISIN), a currency pair BASE/QUOTE for an
+          exchange rate (EUR/USD), and otherwise a name with a prefix for its
+          kind -- ON- an overnight rate (ON-ESTR), KR- an ECB key rate, IBOR-
+          an interbank rate, YLD- a bond yield, SPR- a spread, EQ- a euro
+          area equity index, IX- a stock index, VOL- a volatility index, CO-
+          a commodity, EL- an electricity price zone, DSE- a share of the
+          Dhaka Stock Exchange by its trading code -- with -M closing the name
+          of a monthly series. A proprietary file may use identifiers of its
+          own. fincommons.marketpricedata.describe_instrument says what an
+          identifier of a public source stands for.
+        synonyms:
+          - synonym: INSTRID
+            source: legacy-name
+          - synonym: instrument
+            source: fincommons
+          - synonym: ticker
+            source: fincommons
+        customProperties:
+          - {property: kind, value: identifier, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+      - name: value
+        businessName: Market price or rate
+        logicalType: number
+        physicalType: double
+        required: true
+        semanticType: measure
+        transformLogic: AVG(value)
+        description: >-
+          The value as the source publishes it, in the unit of the
+          instrument: a price in the currency it is quoted in, an exchange
+          rate in units of the quoted currency per unit of the base, an
+          interest rate, yield or spread in percent, an index in points.
+          describe_instrument states the unit and currency of each identifier.
+          A day without an observation has no row rather than an empty value.
+        synonyms:
+          - synonym: VALUE
+            source: legacy-name
+          - synonym: price
+            source: fincommons
+          - synonym: close
+            source: fincommons
+        customProperties:
+          - {property: kind, value: other, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+          - property: aggregation
+            value: nonAdditive
+            vendor: fincommons
+            description: >-
+              A price or a rate is never summed, and its average is only
+              meaningful for one instrument: the column holds prices, rates
+              and index levels in their own units side by side.
+          - {property: aggregateWithin, value: [instr_id], vendor: fincommons}
+        quality:
+          - name: value_is_a_number
+            description: >-
+              Every value is a number; a source that publishes no observation
+              for a day has no row for it rather than a row that is not a number.
+            type: sql
+            query: SELECT COUNT(*) FROM ${table} WHERE ISNAN(${column})
+            mustBe: 0
+            dimension: completeness
+            severity: error

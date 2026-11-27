@@ -8,6 +8,35 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- Data contracts for the last Silver tables: `entitymasterdata`'s `public`
+  and `main`, the combined `financialreport` layer's `fact` and `filing`
+  (with products `product_entitymasterdata.yaml` and
+  `product_financialreport.yaml`, the latter naming the six regime contracts
+  as input ports), and the FIRDS watermarks,
+  `contract_firds_metadata_watermarks.yaml`. Every Silver table now has a
+  contract. Checked against the lake: 3.5 million entities in each
+  entity table and 4,311,721 facts in 54,348 filings, every rule passing.
+- `columns.CONTRACTED_MODULES`, `OUTPUT_COLUMNS` and `COLUMN_LISTS`:
+  `defined_columns` counts only snake_case names in a contracted module,
+  since an upper-case one belongs to a Bronze table, which has no contract;
+  leaves out the columns a public function returns, which its docstring
+  describes; and reads the column lists the entity master data writes its
+  tables with.
+
+- `marketpricedata`: data contracts for the two Silver tables -- the
+  combined price table and the corporate actions of the DSE shares -- and a
+  product, `product_marketpricedata.yaml`. `value` is a measure averaged only
+  within one instrument, and the factor of a corporate action one that is
+  multiplied, within one share. Quality rules: one value per day and
+  instrument, a currency pair of two currencies with a positive rate, no
+  value that is not a number; one event per share, ex-date and kind, a known
+  kind, a factor between zero and one, the ex-date after the record date.
+  They hold on the public ECB, New York Fed and Bank of England series,
+  55,272 values of 32 instruments. The module stays out of the column
+  catalogue, whose rows now come only from catalogued modules.
+- `semantic`: the instructions for an assistant say how a measure that is
+  not summed is aggregated: averaged, or multiplied where it compounds.
+
 - Reports: every report template renders to a tagged PDF/UA-1 document,
   which Typst refuses to produce without a document title and alt text on
   every chart. The templates state the language of their text, set a title
@@ -384,6 +413,23 @@ release may change the public API, which `tests/test_public_api.py` lists.
   regime, and its note now says that a Japanese row is in yen.
 
 ### Changed
+
+- The column catalogue of fincommons is read from the data contracts alone:
+  `data/column_catalogue.csv` is removed. `column_catalogue` and
+  `describe_column` answer as before for the Silver columns; a package that
+  builds on fincommons may still ship its own CSV, which is read beside its
+  contracts. The upper-case columns the package adds to a Bronze table
+  (`DATADT`, `REFDT`, the Bronze columns of the French Data Library) are
+  described in their modules' docstrings, and `measure_priority`, `entities`
+  and FIRDS's `operation` in the docstrings of the functions that return them.
+- `entitymasterdata`: the public table has one shape whichever way GLEIF is
+  read, `PUBLIC_COLUMNS`, ending in `ref_date`, which is now a date rather
+  than text; read from the `gleif` history it is the date of the latest
+  publication, or the day it was read as of.
+- `financialreport.combined`: `connect_to_financialreport` returns the columns
+  in the order of the declared schema, and `facts` of the filing table is an
+  integer, as declared, rather than a long. A table built before has to be
+  rebuilt for the second.
 
 - `famafrenchdata`: the intermediate column of a file's lines in the
   Silver build is `_lines`, since it is dropped before the table is written,

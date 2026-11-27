@@ -1,0 +1,100 @@
+# The data contract of the watermark table of fincommons.firds, in the Open
+# Data Contract Standard. The table is the pipeline's own bookkeeping, not an
+# output of the product, and the product lists no port for it; its contract
+# says what its columns hold all the same. The test suite holds it against the
+# declared schema. See fincommons.contracts and fincommons.firds.metadata.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.firds.metadata.watermarks
+name: watermarks
+version: 1.0.0
+status: active
+domain: firds
+dataProduct: fincommons.firds
+description:
+  purpose: >-
+    How far the historical FIRDS database has been built, so that an update
+    applies every delta file newer than that point and none that is older:
+    applying a delta file twice would give the versions the wrong periods of
+    validity.
+  usage: >-
+    Read and written by the pipeline through fincommons.firds.get_metadata_maxdate
+    and update_metadata_maxdate; fincommons.firds.read_metadata(spark, config)
+    opens it.
+  limitations: >-
+    The table is always Delta, since it is updated in place. Editing it by
+    hand makes the next update skip delta files or apply them again.
+authoritativeDefinitions:
+  - type: implementation
+    url: https://github.com/franzmohr/fincommons/blob/main/src/fincommons/firds/metadata.py
+schema:
+  - name: watermarks
+    physicalType: table
+    businessName: FIRDS watermarks
+    description: >-
+      One row per table of the Silver layer of FIRDS: the reference date of
+      the newest file applied to it, and when that happened.
+    dataGranularityDescription: One row per table of the Silver layer.
+    quality:
+      - name: one_watermark_per_table
+        description: No table has two watermarks.
+        type: library
+        metric: duplicateValues
+        arguments:
+          properties: [name]
+        mustBe: 0
+        dimension: uniqueness
+        severity: error
+    properties:
+      - name: name
+        businessName: Table
+        logicalType: string
+        physicalType: string
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        semanticType: dimension
+        description: >-
+          The table of the Silver layer the row records the watermark of, e.g.
+          MAIN.
+        customProperties:
+          - {property: kind, value: code, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+      - name: max_date
+        businessName: Newest file applied
+        logicalType: string
+        physicalType: string
+        required: true
+        semanticType: dimension
+        description: >-
+          The reference date of the newest file applied to the table, written
+          as text, YYYY-MM-DD, the way fincommons.firds.silver.format_reference_date
+          spells it. The update applies every delta file newer than it and
+          none that is older.
+        customProperties:
+          - {property: kind, value: date, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}
+        quality:
+          - name: max_date_is_a_day
+            description: The date is written YYYY-MM-DD.
+            type: library
+            metric: invalidValues
+            arguments:
+              pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+            mustBe: 0
+            dimension: conformity
+            severity: error
+      - name: updated
+        businessName: Applied at
+        logicalType: timestamp
+        physicalType: timestamp
+        required: false
+        semanticType: dimension
+        description: >-
+          When the newest file (max_date) was last applied to the table.
+        customProperties:
+          - {property: kind, value: datetime, vendor: fincommons}
+          - {property: source, value: derived, vendor: fincommons}

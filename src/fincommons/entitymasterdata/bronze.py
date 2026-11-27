@@ -5,7 +5,11 @@ stands between: the GLEIF golden copies as zipped csv files, the ECB and EIOPA
 registers as Excel workbooks, the list of CCPs as a plain csv file. This module
 rewrites each of them as parquet, one file per reference date, without changing
 what the register says. The reference date is read off the name of the file,
-which is why the landing zone insists on those names.
+which is why the landing zone insists on those names, and is written beside
+the columns of the register as ``REFDT``: the day the publication the record
+came from is dated. The Silver layer carries it on as ``ref_date``. Beside it
+the Bronze files keep the columns as each register names them, and have no
+data contract; the Silver tables have one.
 
 A file is removed from the landing zone only after it has been written to the
 Bronze layer. Where a file cannot be read the error is raised rather than

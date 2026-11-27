@@ -233,7 +233,7 @@ def test_a_draft_contract_is_not_in_the_catalogue(monkeypatch):
 
 def test_an_unknown_contract_names_those_that_exist():
     with pytest.raises(KeyError, match=EXCHANGERATE):
-        c.load_contract("fincommons.marketpricedata.silver.prices")
+        c.load_contract("fincommons.nosuchmodule.silver.table")
 
 
 def test_the_contract_describes_the_columns_of_its_table():
