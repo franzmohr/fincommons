@@ -1,69 +1,207 @@
 # ESEF filings
 
-## Introduction
+Module `esef` brings the annual financial reports of listed European issuers into the data lake, fact by fact, from [filings.xbrl.org](https://filings.xbrl.org). Use it to read what an issuer reported -- its revenue, assets or cash flows over the years -- to compare issuers of one country or sector, or to check how sound the tagged figures are.
 
-Module `esef` brings the annual financial reports of listed issuers into the data lake, fact by fact. Issuers whose securities are admitted to trading on a regulated market in the European Union file their annual financial reports in the [European Single Electronic Format](https://www.esma.europa.eu/issuer-disclosure/electronic-reporting) (ESEF): an XHTML document whose figures -- and, from 2022 on, the notes -- are tagged in Inline XBRL against the ESEF taxonomy, which is the IFRS taxonomy with ESMA's additions.
+At a glance:
 
-The reports are filed with the officially appointed mechanism of each member state, each with its own site. [filings.xbrl.org](https://filings.xbrl.org), run by XBRL International, collects them in one place, together with the reports of the United Kingdom (UKSEF) and of Ukraine filed the same way, validates them, and publishes for each filing the report package as filed, the report in a viewer and the tagged facts as xBRL-JSON. The module keeps the indexes of the repository and the reports of the countries asked for, and reads them into two tables: one row per filing, and one row per fact.
+- **Source:** filings.xbrl.org, run by XBRL International, which collects the reports filed in the [European Single Electronic Format](https://www.esma.europa.eu/issuer-disclosure/electronic-reporting) (ESEF) together with those of the United Kingdom (UKSEF) and Ukraine.
+- **Update frequency:** whenever you run it; each run collects only what is new or reprocessed. The unit of a run is a country.
+- **Tables written:** `filings` (one row per filing), `facts` (one row per fact, partitioned by `country`) and, if you run the checks, `issues`.
+- **Key:** the LEI (legal entity identifier) of the issuer, which joins with [`fincommons.entitymasterdata`](../../entitymasterdata/README.md).
+- **Needs:** network access to filings.xbrl.org, no credentials, and a Spark session.
 
-### Source and terms
+ESEF is the format in which issuers whose securities are admitted to trading on a regulated market in the European Union file their annual financial reports: an XHTML document whose figures -- and, from 2022 on, the notes -- are tagged in Inline XBRL against the ESEF taxonomy, which is the IFRS taxonomy with ESMA's additions. The reports are filed with the officially appointed mechanism of each member state, each with its own site. filings.xbrl.org collects them in one place, validates them, and publishes for each filing the report package as filed, the report in a viewer and the tagged facts as xBRL-JSON. The module keeps the indexes of the repository and the reports of the countries asked for, and reads them into the tables.
 
-The indexes and the reports are downloaded from filings.xbrl.org when the pipeline runs. **No filing is shipped with fincommons**: the package holds the code that collects them and a few made-up documents in its tests. The reports are the issuers' own publications, which the Transparency Directive requires them to make public. The repository states no licence for its copies; it provides its API free of charge and reserves the right to alter it, rate-limit it or withdraw it, and asks a client that uses it routinely to name a contact in its user agent, which the `contact` argument does.
+The sibling modules [`sec`](../sec/README.md) and [`edinet`](../edinet/README.md) do the same for the United States and Japan, and [`combined`](../combined/README.md) puts all three in one table.
 
-The repository is not complete. A filing with technical errors may have no xBRL-JSON, which leaves it in the table of filings without facts, and a filing whose LEI or date the repository cannot determine is missing altogether.
+## Quick start
 
-## Setting up
+1. Add an `esef` section to `paths.yaml`, with a Bronze layer (the files as downloaded) and a Silver layer (the cleaned tables analyses read):
 
-The paths of the data lake are read from the configuration file, which needs an `esef` section with the keys `bronze` and `silver`:
+   ```yaml
+   esef:
+       bronze: /data/esef/bronze
+       silver: /data/esef/silver
+   ```
 
-```yaml
-esef:
-    bronze: /data/esef/bronze
-    silver: /data/esef/silver
-```
+2. Start Spark with the Delta extensions, collect one country, and read the result. `update_esef` creates the directories itself:
 
-The Silver layer may name a schema in a catalogue instead of a directory, which puts the tables within reach of Unity Catalog's grants and lineage. It then needs a `path` beside the `table`, because the marks that record which reports each country was built from are files:
+   ```python
+   from delta import configure_spark_with_delta_pip
+   from pyspark.sql import SparkSession, functions as F
 
-```yaml
-esef:
-    bronze: /Volumes/fincommons/esef/lake/bronze
-    silver:
-        table: fincommons.financialreport.esef
-        path: /Volumes/fincommons/esef/lake/silver
-```
+   from fincommons.financialreport import esef
 
-The tables are then `fincommons.financialreport.esef.filings` and `fincommons.financialreport.esef.facts`, always Delta.
+   builder = (SparkSession.builder.master("local[4]")
+              .config("spark.driver.memory", "4g")
+              .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+              .config("spark.sql.catalog.spark_catalog",
+                      "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
+   spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
-## The module in five minutes
+   # Collect the indexes and the reports of Austria, and read them into the tables.
+   outcome = esef.update_esef(spark, "paths.yaml", ["AT"], contact="me@example.org")
+
+   filings = esef.connect_to_esef_filings(spark, "paths.yaml")
+   facts = esef.connect_to_esef(spark, "paths.yaml")
+
+   # The revenue each Austrian issuer reported for its last financial year, in
+   # the currency of its report: the total, without dimensions, for a period
+   # that ends on the period end of the filing.
+   revenue = (facts
+       .filter((F.col("country") == "AT")
+               & (F.col("concept") == "ifrs-full:Revenue")
+               & F.col("dimensions").isNull()
+               & (F.col("prd_end") == F.col("period_end")))
+       .join(filings.select("filing", "name"), "filing")
+       .select("lei", "name", "period_end", "unit", "value"))
+   revenue.show(5)
+   ```
+
+How much a first run downloads: every index is collected (a few tens of megabytes together), and then each report of the country asked for, between a few hundred kilobytes and some tens of megabytes each, most of it the notes as text blocks. A year of the repository is a few thousand filings. For a production script, see [Running it on a schedule](#running-it-on-a-schedule).
+
+## What you get
+
+What the columns of each table hold, and what a reader may rely on, is stated by its data contract in the Open Data Contract Standard (see [Reference](#reference)). `fincommons.describe_column("prd_end", dataset="esef")` reads its answer from there.
+
+### `filings`
+
+One row per filing of the indexes, every country and year, whether its report was collected or not. It is rebuilt in full on every run. Key: `filing`.
+
+| Column | Meaning |
+|--------|---------|
+| `filing` | the identifier of the filing at the repository, e.g. `529900...-2025-12-31-ESEF-AT-0` |
+| `lei`, `name` | the issuer |
+| `country` | the country, as the repository codes it |
+| `system` | the filing system: `ESEF` (which the repository uses for the United Kingdom too) or `UAIFRS` |
+| `period_end` | the last day of the period the filing reports on |
+| `lang` | the language of the report, where the name of its file says |
+| `published`, `added`, `processed` | when the source published the filing, when the repository added it and when it last processed it |
+| `errors`, `warnings`, `inconsistencies` | what the repository's validation found |
+| `package_url`, `report_url`, `viewer_url`, `json_url` | where the files are, relative to `https://filings.xbrl.org`; no `json_url` means no facts |
+| `package_sha256` | the SHA-256 of the report package |
+
+### `facts`
+
+One row per fact of a report collected, partitioned by `country` -- filter on `country` first. Key: `filing` and `fact`.
+
+| Column | Meaning |
+|--------|---------|
+| `country`, `filing`, `lei`, `period_end` | the filing the fact is reported in |
+| `fact` | the identifier of the fact within its report |
+| `concept` | the concept, e.g. `ifrs-full:Revenue`, or an extension concept of the issuer |
+| `prd_start`, `prd_end` | the first and the last day of the period, both included; an instant, such as a balance, has no `prd_start` |
+| `unit` | the unit of a number, e.g. `iso4217:EUR` |
+| `dimensions` | the axes and members, as `axis=member;...`; empty for the total |
+| `value` | a number, as reported and in full units |
+| `text` | any other value |
+| `decimals` | the accuracy the issuer states for a number |
+| `lang` | the language of a text |
+
+Three things to know before reading it:
+
+- **An issuer may file the same report more than once** -- in two languages, or corrected -- and each filing is a row of `filings` with facts of its own. Pick one filing per issuer and year before you sum anything.
+- **Text blocks and nil facts are left out.** The notes, tagged whole as text blocks, stay in the Bronze layer only; see [How the table of facts is built](#how-the-table-of-facts-is-built).
+- **`value` is no measure.** It holds revenue, assets and share counts in one column, as the contract of the facts says; the measures of a financial report, comparable across regimes, are those of [`fincommons.financialreport.combined`](../combined/README.md).
+
+### `issues`
+
+Written by `update_silver_esef_quality`, beside the two tables the pipeline builds; partitioned by `country`, as the facts are. One row per issue a check found; a filing with nothing wrong with it has no row at all.
+
+| Column | Meaning |
+|--------|---------|
+| `country`, `lei`, `filing` | the filing the issue is about |
+| `fact`, `concept` | the fact at fault, where the issue is about one figure; empty where it is about the report as a whole |
+| `issue` | the code of the check, which `fincommons.dataquality.describe_check` turns into a sentence |
+| `checked` | the day the run was made, not the day the problem arose: the issues of a country are replaced whole when it is checked again |
+
+### How the tables join
+
+- `lei` joins with the entity master data of [`fincommons.entitymasterdata`](../../entitymasterdata/README.md).
+- `filing` joins `facts` (and `issues`) to `filings`.
+- An amount is converted into another currency with [`fincommons.exchangerate`](../../exchangerate/README.md); the currency is the part of `unit` after `iso4217:`.
+- `concept` joins with the catalogue of measures of [`combined`](../combined/README.md), which works on this table directly.
+
+## Common tasks
+
+All recipes assume `from pyspark.sql import functions as F` and `from fincommons.financialreport import esef`.
+
+**The revenue of one issuer across the years.** The totals its own filings report for their own financial year. Where an issuer filed a year twice, you get one row per filing; keep the one you want by `filing` or `lang`.
 
 ```python
-from fincommons.financialreport import esef
-
-# Start Spark, with the Delta extensions where delta-spark is installed, as
-# for the other modules; then collect the indexes and the reports of Austria
-# and read them into the tables.
-outcome = esef.update_esef(spark, "paths.yaml", ["AT"], contact="me@example.org")
-
-filings = esef.connect_to_esef_filings(spark, "paths.yaml")
+lei = "529900ARBU9SBJFNX419"          # PORR AG, Austria
 facts = esef.connect_to_esef(spark, "paths.yaml")
 
-# The revenue each Austrian issuer reported for its last financial year, in
-# the currency of its report: the total, without dimensions, for a period
-# that ends on the period end of the filing.
-from pyspark.sql import functions as F
-
-revenue = (facts
-    .filter((F.col("country") == "AT")
+(facts
+    .filter((F.col("country") == "AT") & (F.col("lei") == lei)
             & (F.col("concept") == "ifrs-full:Revenue")
             & F.col("dimensions").isNull()
             & (F.col("prd_end") == F.col("period_end")))
-    .join(filings.select("filing", "name"), "filing")
-    .select("lei", "name", "period_end", "unit", "value"))
+    .select("period_end", "filing", "unit", "value")
+    .orderBy("period_end")
+    .show())
 ```
 
-An issuer may file the same report more than once -- in two languages, or corrected -- and each filing is a row of `filings` with facts of its own. The facts are keyed by `lei`, which joins them with the entity master data of `fincommons.entitymasterdata`, and an amount is converted into another currency with `fincommons.exchangerate`.
+**Every fact of one filing.** Find the filing in `filings`, then read its facts. A filing without `json_url` has none.
 
-## Keeping the tables up to date
+```python
+filings = esef.connect_to_esef_filings(spark, "paths.yaml")
+filings.filter(F.col("lei") == lei) \
+    .select("filing", "period_end", "lang", "errors", "json_url").show(truncate=False)
+
+filing = "..."                         # one identifier from the list above
+esef.connect_to_esef(spark, "paths.yaml") \
+    .filter((F.col("country") == "AT") & (F.col("filing") == filing)) \
+    .select("concept", "prd_start", "prd_end", "dimensions", "unit", "value", "text") \
+    .show(50, truncate=False)
+```
+
+**A measure by the best concept each filing states.** The catalogue of measures of `combined` joins on `concept`, so it works on this table without building the combined one:
+
+```python
+from fincommons.financialreport.combined import measure_values
+
+measure_values(esef.connect_to_esef(spark, "paths.yaml"), "assets")
+```
+
+**Amounts in euro.** `convert2ccy` of `fincommons.exchangerate` adds `value_FXRATE` and `value_EUR`; an amount whose currency the rate table does not quote gets neither.
+
+```python
+from fincommons.exchangerate import convert2ccy
+
+eur = convert2ccy(
+    facts.filter(F.col("unit").startswith("iso4217:"))
+         .withColumn("currency", F.regexp_replace("unit", "^iso4217:", "")),
+    "paths.yaml", date="prd_end", amount="value", currency="currency", target="EUR")
+```
+
+**What the data quality checks found.**
+
+```python
+from fincommons.dataquality import describe_check, issue_counts
+
+esef.update_silver_esef_quality(spark, "paths.yaml", countries=["AT"])
+
+issues = esef.connect_to_esef_issues(spark, "paths.yaml")
+issue_counts(issues, by=["country"], dataset="esef").show()
+print(describe_check("HIGH_EXTENSION_SHARE"))
+```
+
+**One issuer's reports as a spreadsheet.** Writes an OpenDocument file with the sheets `about`, `figures`, `filings` and `facts`; see [One issuer's reports as a spreadsheet](#one-issuers-reports-as-a-spreadsheet).
+
+```python
+esef.export_esef_reports(spark, "paths.yaml", "529900ARBU9SBJFNX419",
+                         "porr.ods", years=5)
+```
+
+**A PDF report.** Six Quarto templates in `templates/` read the Silver tables; see [The report templates](#the-report-templates).
+
+```bash
+FINCOMMONS_ISSUER=529900ARBU9SBJFNX419 \
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
+```
+
+## Running it on a schedule
 
 `update_esef` is the call a job scheduler makes:
 
@@ -72,7 +210,28 @@ outcome = esef.update_esef(spark, "paths.yaml", ["AT", "DE"],
                            contact="me@example.org")
 ```
 
-It takes no argument saying what changed: that is read from the repository and from what the lake already holds, so the same call is right on the first day, when it collects every report of the countries, and on every day after it. `years` restricts the reports collected to filings whose period ends in those years, `packages=True` collects the report packages as well, and `full=True` rebuilds every country of the table of facts, which is how the table follows a new version of the reader. A report that fails, in either layer, is set aside with its traceback and the run carries on, and the outcome counts it in `failed`.
+**It takes no argument saying what changed.** That is read from the repository and from what the lake already holds, so the same call is right on the first day, when it collects every report of the countries, and on every day after it. In order, it:
+
+1. sets up the directory tree;
+2. brings every index of the repository up to date in the Bronze layer;
+3. collects the report of every filing of the countries asked for that the lake does not hold yet, or that the repository has processed anew;
+4. rebuilds the table of filings;
+5. rebuilds the partitions of the table of facts whose country now has other reports.
+
+The arguments:
+
+| Argument | What it does |
+|----------|--------------|
+| `countries` | the countries whose reports are collected and read, `["AT"]`; the table of filings lists every country whatever is asked for |
+| `years` | collect only the reports of filings whose period ends in these years |
+| `full=True` | rebuild every country of the table of facts, which is how the table follows a new version of the reader |
+| `packages=True` | collect the report packages into the Bronze layer as well |
+| `file_format` | `'parquet'` or `'delta'`; left out, the configuration file and the tables on disk decide |
+| `contact` | a contact (an e-mail address or a web page) the user agent names, as the repository asks of a client that uses it routinely |
+
+**A report that fails is set aside, and the run carries on.** In either layer, it is logged with its traceback; the outcome counts it in `failed` and names it in `failed_sources` (as `layer/<name>`), and a closing `WARNING` says so. The function returns rather than raises. A failed report is tried again on the next run, so the fix for a transient failure is to run again.
+
+The data quality checks are a separate call, `update_silver_esef_quality`, to run after `update_esef`.
 
 No module of the package opens a Spark session, so a job scheduler runs a script around that call rather than the module itself. The session belongs to whoever starts the run -- a cluster has one already, a workstation has to say how much of itself to give it -- and a pipeline that opened its own would be deciding that for every caller:
 
@@ -120,11 +279,19 @@ finally:
 sys.exit(1 if outcome["failed"] else 0)
 ```
 
-A report is read whole before its facts are handed back and some are tens of megabytes of JSON, so the cores and the heap are chosen together: in local mode the executors live in the driver, and the unified pool is divided among the tasks running at once. `spark.local.dir` is named because Spark's own default is `/tmp`, which on a good many Linux installations is a tmpfs sized at half the machine's memory rather than a directory on a disk: a shuffle that outgrows it ends the run in `No space left on device` while the disk the lake sits on is all but empty. The handbook says more about both, in the Infrastructure chapter.
+Why the settings are what they are:
 
-A country is the unit a run collects because the reports are large: between a few hundred kilobytes and some tens of megabytes each, most of it the notes as text blocks. A year of the repository is a few thousand filings.
+- **`local[4]` and `spark.driver.memory` are chosen together.** A report is read whole before its facts are handed back and some are tens of megabytes of JSON. In local mode the executors live in the driver, and the unified pool is divided among the tasks running at once.
+- **`spark.local.dir` is named** because Spark's own default is `/tmp`, which on a good many Linux installations is a tmpfs sized at half the machine's memory rather than a directory on a disk. A shuffle that outgrows it ends the run in `No space left on device` while the disk the lake sits on is all but empty.
+- [Setting up a Spark session](../../../../docs/spark-session.md) says how to size both for your machine and how to check that the session got them; the handbook's Infrastructure chapter gives the reasons.
 
-## The Bronze layer
+**A country is the unit a run collects** because the reports are large: between a few hundred kilobytes and some tens of megabytes each, most of it the notes as text blocks. A year of the repository is a few thousand filings.
+
+## How it works
+
+### The Bronze layer
+
+**The Bronze layer holds the indexes, the reports and (if asked) the packages exactly as published, plus a record of each collection.**
 
 | Folder | Holds |
 |--------|-------|
@@ -133,97 +300,71 @@ A country is the unit a run collects because the reports are large: between a fe
 | `packages/COUNTRY=<country>/<filing>.zip` | the report package as filed, where `packages` asks for it (`.xbri` for the newer packages) |
 | `collections/indexes/<year>.json`, `collections/reports/<filing>.json` | when each was collected, and what the server said about it |
 
-The repository publishes one index file per year of the period end and asks a client that keeps a copy of the index to read these rather than every page of its API, and to send the `Last-Modified` of the last answer as `If-Modified-Since`. An index that has not changed comes back as `304 Not Modified` without a byte. Every index is collected, since all of them together are a few tens of megabytes.
+**Indexes are collected politely, and every one of them.** The repository publishes one index file per year of the period end and asks a client that keeps a copy of the index to read these rather than every page of its API, and to send the `Last-Modified` of the last answer as `If-Modified-Since`. An index that has not changed comes back as `304 Not Modified` without a byte. Every index is collected, since all of them together are a few tens of megabytes.
 
-A report is downloaded when the Bronze layer does not hold it, or holds it from before the repository last processed the filing, as `processed` in the index says. A package is downloaded when the layer does not hold one with the SHA-256 the index gives, and is refused where the download does not have it. Every file is written under a temporary name and put in place once complete, and an answer that is not an index or a report -- an error page sent with status 200 -- is refused before it replaces what the layer holds.
+**A report or package is downloaded only when the lake lacks the current one.**
 
-## The Silver tables
+- A report is downloaded when the Bronze layer does not hold it, or holds it from before the repository last processed the filing, as `processed` in the index says.
+- A package is downloaded when the layer does not hold one with the SHA-256 the index gives, and is refused where the download does not have it.
+- Every file is written under a temporary name and put in place once complete.
+- An answer that is not an index or a report -- an error page sent with status 200 -- is refused before it replaces what the layer holds.
 
-What the columns of each table hold, and what a reader may rely on, is stated by its data contract in the Open Data Contract Standard: `data/contract_esef_silver_filings.yaml`, `data/contract_esef_silver_facts.yaml` and `data/contract_esef_silver_issues.yaml`, which `data/product_esef.yaml` names as the output ports of the module. They are the one place the columns are described -- `fincommons.describe_column("prd_end", dataset="esef")` reads its answer from there -- and the declared schemas of the module are held to them by the tests. A contract states the key of its table (the filing; the filing and the fact) and rules the table is held to: one row per filing and per fact, an LEI outside Ukraine, a fact that is not both a number and a text, a number with a unit. `fincommons.contracts.check_quality` runs them; the checks that name each figure at fault are those of [Data quality](#data-quality), which the contract of the facts points at. The contract of the facts says, too, that `value` is no measure: it holds revenue, assets and share counts in one column, and the measures of a financial report are those of `fincommons.financialreport.combined`.
+### How the table of facts is built
 
-### `filings`
-
-One row per filing of the indexes, every country and year, whether its report was collected or not. It is rebuilt in full on every run.
-
-| Column | Meaning |
-|--------|---------|
-| `filing` | the identifier of the filing at the repository, e.g. `529900...-2025-12-31-ESEF-AT-0` |
-| `lei`, `name` | the issuer |
-| `country` | the country, as the repository codes it |
-| `system` | the filing system: `ESEF` (which the repository uses for the United Kingdom too) or `UAIFRS` |
-| `period_end` | the last day of the period the filing reports on |
-| `lang` | the language of the report, where the name of its file says |
-| `published`, `added`, `processed` | when the source published the filing, when the repository added it and when it last processed it |
-| `errors`, `warnings`, `inconsistencies` | what the repository's validation found |
-| `package_url`, `report_url`, `viewer_url`, `json_url` | where the files are, relative to `https://filings.xbrl.org`; no `json_url` means no facts |
-| `package_sha256` | the SHA-256 of the report package |
-
-### `facts`
-
-One row per fact of a report collected, partitioned by `country`.
-
-| Column | Meaning |
-|--------|---------|
-| `country`, `filing`, `lei`, `period_end` | the filing the fact is reported in |
-| `fact` | the identifier of the fact within its report |
-| `concept` | the concept, e.g. `ifrs-full:Revenue`, or an extension concept of the issuer |
-| `prd_start`, `prd_end` | the first and the last day of the period, both included; an instant, such as a balance, has no `prd_start` |
-| `unit` | the unit of a number, e.g. `iso4217:EUR` |
-| `dimensions` | the axes and members, as `axis=member;...`; empty for the total |
-| `value` | a number, as reported and in full units |
-| `text` | any other value |
-| `decimals` | the accuracy the issuer states for a number |
-| `lang` | the language of a text |
-
-xBRL-JSON writes the end of a period as the start of the following day, so that a financial year to 31 March 2026 ends at `2026-04-01T00:00:00`; `prd_end` is the day it stands for, 31 March. A fact reported as nil is left out.
+**Periods are stored as the days they stand for.** xBRL-JSON writes the end of a period as the start of the following day, so that a financial year to 31 March 2026 ends at `2026-04-01T00:00:00`; `prd_end` is the day it stands for, 31 March. A fact reported as nil is left out.
 
 **Text blocks are left out.** Most of a report, by size, is its notes, tagged whole as text blocks: the note on intangible assets of one report is half a megabyte of HTML, tagged again for goodwill and for intangible assets and goodwill together. The concept does not say that it is a text block -- that is a type of the taxonomy, which the report does not carry -- but the value does, and a text with markup in it is the note as the report presents it rather than a value to compare. The Bronze layer keeps the whole report.
 
-The table is rebuilt country by country, and only for the countries whose reports changed. A country is one partition, and one whose Bronze layer holds a report its partition was not built from is read again and replaces its partition, leaving the others as they were. A report that cannot be read is logged and counted; its country is written without it and left unmarked, so that the next run tries it again.
+**The table is rebuilt country by country, and only for the countries whose reports changed.**
 
-## Data quality
+- A country is one partition.
+- A country whose Bronze layer holds a report its partition was not built from is read again and replaces its partition, leaving the others as they were.
+- A report that cannot be read is logged and counted; its country is written without it and left unmarked, so that the next run tries it again.
 
-`quality` holds the checks the figures are held to, and `update_silver_esef_quality` writes what they found into a third Silver table, `issues`, beside the two the pipeline builds. The machinery is shared with the SEC module in [`fincommons.dataquality`](../../dataquality.py); what lives here are the nineteen checks themselves, read from the concepts of the IFRS taxonomy.
+### Data quality
 
-```python
-from fincommons.financialreport import esef
-from fincommons.dataquality import describe_check, issue_counts
-
-esef.update_silver_esef_quality(spark, "paths.yaml", countries=["AT"])
-
-issues = esef.connect_to_esef_issues(spark, "paths.yaml")
-issue_counts(issues, by=["country"], dataset="esef").show()
-print(describe_check("HIGH_EXTENSION_SHARE"))
-```
+**Nineteen checks, read from the concepts of the IFRS taxonomy, write what they find to `issues`; nothing is dropped and nothing is corrected.** `quality` holds the checks; the machinery is shared with the SEC module in [`fincommons.dataquality`](../../dataquality.py). A check writes a row and leaves the figure where it is. A filing with nothing wrong with it has no row at all.
 
 A run told to check part of the population replaces those countries and carries the rest forward, which is how the pipeline collects: one country at a time.
 
-**Nothing is dropped and nothing is corrected.** A check writes a row and leaves the figure where it is. A filing with nothing wrong with it has no row at all.
+The data contracts state rules the tables are held to -- one row per filing and per fact, an LEI outside Ukraine, a fact that is not both a number and a text, a number with a unit -- and `fincommons.contracts.check_quality` runs them. The checks that name each figure at fault are the ones below, which the contract of the facts points at.
 
-The valuable checks are the arithmetic ones, and they are the relations a statement states on both sides: total assets against the current and the non-current assets and again against the equity and the liabilities, revenue against the cost of sales and the gross profit, the result before tax against the tax and the result, the three cash flows against the movement in cash. They are run over the undimensioned facts only -- a figure broken down by segment is a part of a total and not a total.
+**The valuable checks are the arithmetic ones.** They are the relations a statement states on both sides:
 
-Two checks have no counterpart in the SEC module, because the repository publishes something the Commission does not: it validates every filing and publishes the counts, which `VALIDATION_ERRORS` carries into the table rather than leaving on its site, and it lists filings whose xBRL-JSON it could not produce, which `NO_FACTS` counts. Both read the table of filings, which covers the whole index rather than the reports a lake has collected, so their rows name filings whose facts are not in the lake -- which is right, since both questions are answered by the index and a filing nobody downloaded is not thereby sound. On one index of 24,180 filings, 983 carry validation errors and 192 have no facts to publish. Against that, the restatement check of the SEC module has no counterpart here: the repository publishes each filing on its own.
+- total assets against the current and the non-current assets, and again against the equity and the liabilities;
+- revenue against the cost of sales and the gross profit;
+- the result before tax against the tax and the result;
+- the three cash flows against the movement in cash.
 
-`HIGH_EXTENSION_SHARE` is the one check that says nothing is wrong. A report that tags more than half its figures with concepts of the issuer's own making is not faulty, it is hard to compare, and the code says so where the coverage report says it at the level of the market.
+They are run over the undimensioned facts only -- a figure broken down by segment is a part of a total and not a total.
 
-What each code means, how severe it is and what to do about it are rows of `data/dataquality_checks.csv` rather than branches in the code. Nothing in it is authoritative; `describe_check` prints a row, and a deployment that keeps checks of its own ships a catalogue of the same shape and names it.
+**Two checks have no counterpart in the SEC module**, because the repository publishes something the Commission does not:
 
-The checks were run over six real voestalpine reports, for the financial years to March 2021 through 2026, and they found nothing in the figures: the balance sheets balance, the income statements reconcile and the cash flows sum. Getting there corrected one check. The identity of the result before tax, the tax and the result does not hold without the discontinued operations, which fall between those lines; voestalpine tags them, and its reports for 2021/22 and 2022/23 were reported as faulty by exactly the discontinued result -- 257.9 and 93.4 million -- until the check read it.
+- it validates every filing and publishes the counts, which `VALIDATION_ERRORS` carries into the table rather than leaving on its site;
+- it lists filings whose xBRL-JSON it could not produce, which `NO_FACTS` counts.
 
-Two more corrections came from the Austrian and Dutch reports of the lake. The three cash flows sum to the movement in cash before the effect of exchange rates on the cash held, which IAS 7 presents on a line of its own, and the check had read the movement after it: 59 of the 72 reports it found faulty were out by nothing but their exchange differences. It now reads the movement before the effect, and accepts the movement as tagged as well, because some reports put the movement before the effect under the concept for the one after it and their figures agree. The asset split takes a gap as explained where it is the assets held for sale, which some issuers present below the current assets rather than among them -- TenneT's German business in 2023, 27.6 billion of 41.7 -- under either of the two concepts the taxonomy has for that line; that was 9 of 12. The three left are Österreichische Post's, which presents the assets of bank99 as a third block beside the current and the non-current ones: the figures agree, and the check is right that the two subtotals are not the whole. And the identity of the result before tax, the tax and the result takes a gap as explained where it is the share of the profit of associates, which ASML presents below the tax line: its reports for 2023 to 2025 were out by exactly its share of Carl Zeiss SMT, as was the one other report the check had found.
+Both read the table of filings, which covers the whole index rather than the reports a lake has collected, so their rows name filings whose facts are not in the lake -- which is right, since both questions are answered by the index and a filing nobody downloaded is not thereby sound. On one index of 24,180 filings, 983 carry validation errors and 192 have no facts to publish. Against that, the restatement check of the SEC module has no counterpart here: the repository publishes each filing on its own.
 
-A report filed twice for one period in one language is two things. Where the copies state different facts it is a correction, and `DUPL_FILING_PERIOD` warns that a reader taking either is taking one of two. Where every copy states the same facts it is one report the repository received twice -- on the Austrian reports most such pairs were added within minutes of each other -- and `DUPL_FILING_COPY` notes it without faulting it. The facts are compared by a fingerprint over their concepts, periods, dimensions, units, values and texts, leaving out the identifiers a report gives its facts, which differ between two uploads of one file. Of the 77 filings the warning had named in the Austrian and Dutch reports, 42 were copies.
+**`HIGH_EXTENSION_SHARE` is the one check that says nothing is wrong.** A report that tags more than half its figures with concepts of the issuer's own making is not faulty, it is hard to compare, and the code says so where the coverage report says it at the level of the market.
 
-## One issuer's reports as a spreadsheet
+**What each code means is data, not code.** What each code means, how severe it is and what to do about it are rows of `data/dataquality_checks.csv` rather than branches in the code. Nothing in it is authoritative; `describe_check` prints a row, and a deployment that keeps checks of its own ships a catalogue of the same shape and names it.
 
-The tables are the shape to compute over, and the wrong shape to read. `export_esef_reports` writes the reports of one issuer to an [OpenDocument](https://docs.oasis-open.org/office/OpenDocument/v1.3/) spreadsheet -- `.ods`, the OASIS standard published as ISO/IEC 26300, which LibreOffice, Gnumeric, Excel and Google Sheets all read -- with four sheets:
+**The checks were tested on real reports, and the reports corrected the checks.**
 
-```python
-from fincommons.financialreport import esef
+- *voestalpine.* The checks were run over six real voestalpine reports, for the financial years to March 2021 through 2026, and found nothing in the figures: the balance sheets balance, the income statements reconcile and the cash flows sum. Getting there corrected one check. The identity of the result before tax, the tax and the result does not hold without the discontinued operations, which fall between those lines; voestalpine tags them, and its reports for 2021/22 and 2022/23 were reported as faulty by exactly the discontinued result -- 257.9 and 93.4 million -- until the check read it.
+- *Cash flows (Austrian and Dutch reports).* The three cash flows sum to the movement in cash before the effect of exchange rates on the cash held, which IAS 7 presents on a line of its own, and the check had read the movement after it: 59 of the 72 reports it found faulty were out by nothing but their exchange differences. It now reads the movement before the effect, and accepts the movement as tagged as well, because some reports put the movement before the effect under the concept for the one after it and their figures agree.
+- *Asset split.* The check takes a gap as explained where it is the assets held for sale, which some issuers present below the current assets rather than among them -- TenneT's German business in 2023, 27.6 billion of 41.7 -- under either of the two concepts the taxonomy has for that line; that was 9 of 12. The three left are Österreichische Post's, which presents the assets of bank99 as a third block beside the current and the non-current ones: the figures agree, and the check is right that the two subtotals are not the whole.
+- *Associates.* The identity of the result before tax, the tax and the result takes a gap as explained where it is the share of the profit of associates, which ASML presents below the tax line: its reports for 2023 to 2025 were out by exactly its share of Carl Zeiss SMT, as was the one other report the check had found.
 
-esef.export_esef_reports(spark, "paths.yaml", "529900ARBU9SBJFNX419",
-                         "porr.ods", years=5)
-```
+**A report filed twice for one period in one language is either a correction or a copy, and the checks tell them apart.**
+
+- Where the copies state different facts it is a correction, and `DUPL_FILING_PERIOD` warns that a reader taking either is taking one of two.
+- Where every copy states the same facts it is one report the repository received twice -- on the Austrian reports most such pairs were added within minutes of each other -- and `DUPL_FILING_COPY` notes it without faulting it.
+- The facts are compared by a fingerprint over their concepts, periods, dimensions, units, values and texts, leaving out the identifiers a report gives its facts, which differ between two uploads of one file. Of the 77 filings the warning had named in the Austrian and Dutch reports, 42 were copies.
+
+### One issuer's reports as a spreadsheet
+
+**The tables are the shape to compute over, and the wrong shape to read; `export_esef_reports` writes one issuer's reports in the shape to read.** The file is an [OpenDocument](https://docs.oasis-open.org/office/OpenDocument/v1.3/) spreadsheet -- `.ods`, the OASIS standard published as ISO/IEC 26300, which LibreOffice, Gnumeric, Excel and Google Sheets all read -- with four sheets:
 
 | Sheet | Holds |
 |-------|-------|
@@ -232,17 +373,41 @@ esef.export_esef_reports(spark, "paths.yaml", "529900ARBU9SBJFNX419",
 | `filings` | one row per filing covered: the column of `figures` it stands under, how many facts it contributed, what the validation found and where its files are |
 | `facts` | every fact of those filings as the table holds it, with the axes of the figures that are broken down, and the texts |
 
-**`figures` is the sheet the export exists for.** A row is one concept over one period as every filing that states it states it, and a column is one filing. So a row is read across to compare the same field between reports -- the later report's comparative figure beside the earlier report's own -- and a column is read down as one report. `filings` counts how many filings state the figure and `differs` marks a row whose values are not all the same, which is a restatement, a re-presentation or a tagging fault. Only the totals are in it: a fact with dimensions is a part of a total, and the parts are in `facts` with the axes they are broken down by. The concepts of the taxonomy come first and the issuer's own after them, marked `extension` in `concept_source`, because an extension's name can change from one report to the next and two rows may be one figure under two names.
+The arguments: `lei` (blanks are removed and letters put in upper case), `path` (`.ods` is appended where the name does not end in it, and a directory is written into under the LEI), `years` (how many financial years, the latest first; every filing by default), `lang` (the language of the reports, where an issuer files in more than one; every language by default, which puts one column per filing in `figures`) and `created` (the moment the file states it was written). It returns the path written to.
 
-Nothing is converted and nothing is corrected. A figure is the number the issuer tagged, in the unit it tagged it in, which is why `unit` is a column of the sheet rather than an assumption: an issuer that changed its reporting currency has two units in one row, and summing across them is the reader's mistake to avoid rather than the export's to make silently. Where one filing tags a figure twice for one period, in the statements and again in the notes, the smaller value is taken, as `annual_figures` takes it for the checks.
+**`figures` is the sheet the export exists for.**
 
-A filing whose report was not collected -- or whose xBRL-JSON the repository could not produce -- is a row of `filings` with nothing under its column, which is the honest answer to what the lake holds about it. The country of the issuer has to have been collected by the pipeline; an issuer with no filing at all in the table is refused rather than written as an empty workbook, since the indexes cover every country and an issuer that is not in them has filed no ESEF report.
+- A row is one concept over one period as every filing that states it states it, and a column is one filing. So a row is read across to compare the same field between reports -- the later report's comparative figure beside the earlier report's own -- and a column is read down as one report.
+- `filings` counts how many filings state the figure and `differs` marks a row whose values are not all the same, which is a restatement, a re-presentation or a tagging fault.
+- Only the totals are in it: a fact with dimensions is a part of a total, and the parts are in `facts` with the axes they are broken down by.
+- The concepts of the taxonomy come first and the issuer's own after them, marked `extension` in `concept_source`, because an extension's name can change from one report to the next and two rows may be one figure under two names.
 
-What the sheet is for shows on the seven filings PORR AG has in the lake. They make 953 rows, of which 182 differ between the filings that state them. Nearly all of that is one thing: the two filings for 2024 -- the same report, re-received thirteen days later -- state 173 figures in common, and 167 of them differ by exactly a factor of a thousand, the additional paid-in capital as 358,833 against 358,833,000. That is the fault the arithmetic checks exist to find, since the scale of a number is an attribute of its tag and invisible on the page, and `DUPL_FILING_PERIOD` warns about the pair as a correction rather than a copy. The seventeen rows left are figures one report restated or presented differently from the next.
+**Nothing is converted and nothing is corrected.** A figure is the number the issuer tagged, in the unit it tagged it in, which is why `unit` is a column of the sheet rather than an assumption: an issuer that changed its reporting currency has two units in one row, and summing across them is the reader's mistake to avoid rather than the export's to make silently. Where one filing tags a figure twice for one period, in the statements and again in the notes, the smaller value is taken, as `annual_figures` takes it for the checks.
 
-The writer is [`fincommons.spreadsheet`](../../spreadsheet.py), which writes the format from the standard library alone: a figure arrives as a figure and a date as a date, the header is bold, repeated on every printed page and frozen on screen, and a column is as wide as what stands in it. A text that begins with `=` stays a text -- a formula in OpenDocument is an attribute of its own and nothing a cell's content can turn into, so the injection a CSV export has to think about does not arise.
+**A filing whose report was not collected** -- or whose xBRL-JSON the repository could not produce -- is a row of `filings` with nothing under its column, which is the honest answer to what the lake holds about it. The country of the issuer has to have been collected by the pipeline. An issuer with no filing at all in the table (or none in the language asked for) is refused with a `ValueError` rather than written as an empty workbook, since the indexes cover every country and an issuer that is not in them has filed no ESEF report.
 
-## A factsheet on one issuer
+**What the sheet is for shows on the seven filings PORR AG has in the lake.** They make 953 rows, of which 182 differ between the filings that state them. Nearly all of that is one thing: the two filings for 2024 -- the same report, re-received thirteen days later -- state 173 figures in common, and 167 of them differ by exactly a factor of a thousand, the additional paid-in capital as 358,833 against 358,833,000. That is the fault the arithmetic checks exist to find, since the scale of a number is an attribute of its tag and invisible on the page, and `DUPL_FILING_PERIOD` warns about the pair as a correction rather than a copy. The seventeen rows left are figures one report restated or presented differently from the next.
+
+**The writer is [`fincommons.spreadsheet`](../../spreadsheet.py)**, which writes the format from the standard library alone: a figure arrives as a figure and a date as a date, the header is bold, repeated on every printed page and frozen on screen, and a column is as wide as what stands in it. A text that begins with `=` stays a text -- a formula in OpenDocument is an attribute of its own and nothing a cell's content can turn into, so the injection a CSV export has to think about does not arise.
+
+### The report templates
+
+Six Quarto templates in `templates/` read the Silver tables as parquet and render to PDF. All take the configuration file from `FINCOMMONS_CONFIG`.
+
+| Template | What it is | Further settings |
+|----------|-----------|------------------|
+| `esef-analyst-factsheet.qmd` | a factsheet on one issuer, some twenty pages | `FINCOMMONS_ISSUER` |
+| `esef-sector-factsheet.qmd` | several issuers at once, against their market | `FINCOMMONS_PANEL`, `FINCOMMONS_FINANCIAL` |
+| `esef-quality-report.qmd` | what the checks found, over the whole record, some sixteen pages | first chunk |
+| `esef-coverage-report.qmd` | what the repository lists and what the issuers tagged, some sixteen pages | first chunk |
+| `esef-country-quality-factsheet.qmd` | whose figures in one country to check first, four or five pages | `FINCOMMONS_COUNTRY` |
+| `esef-country-economic-factsheet.qmd` | what one country's listed companies reported, four or five pages | `FINCOMMONS_COUNTRY` |
+
+**Every template refuses a Delta Silver layer.** The table of facts replaces a country's partition whenever its reports change, and a Delta table keeps the files it replaced until it is vacuumed, which a reader of the files alone would count again.
+
+**The corporate design is shared.** It is in `r-corporate-design-functions-ggplot2.R`, one file for the whole package in `src/fincommons/templates`, three levels up from a template, which every template of every module sources so that a change to the design is made once. A copy of it beside a template wins over the shared one, which is what lets a template taken out of the package carry a design of its own. The charts use its categorical palette, the ten colours of Tableau, so that eight lines of a balance sheet in one chart can still be told apart.
+
+#### A factsheet on one issuer
 
 `templates/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto to a PDF of some twenty pages, with voestalpine AG as its example. It reads the two Silver tables as parquet and sets, from the facts of the issuer's own reports and from nothing else:
 
@@ -263,80 +428,93 @@ The writer is [`fincommons.spreadsheet`](../../spreadsheet.py), which writes the
 
 It shows numbers and their development; the prose on the page is the text of the filing itself, a note on how the figures are put together and the definitions of the indicators, and what the reader of the template needs to know about a figure is in the comments of its chunk.
 
-```
+```bash
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
 ```
 
 The issuer is set by its LEI, either in the first chunk together with the number of years and the language, or in `FINCOMMONS_ISSUER`, which wins where it is set so that a run rendering one issuer after another needs no edit of the template:
 
-```
+```bash
 FINCOMMONS_ISSUER=529900ARBU9SBJFNX419 \
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
 ```
 
-The country of the issuer has to have been collected by the pipeline. The figures of a year are the totals its own filing reports for it, from the filing in the language of the factsheet where an issuer files in two; the comparative figures of the previous year that every filing carries as well are left aside, so that a figure in the column of a year is the one that year was reported with. One year more than the factsheet shows is read behind it, because a return puts the result of a year against the average of the capital at its start and its end, and because the screening indicators compare a year with the one before it.
+**Which figures it reads.** The country of the issuer has to have been collected by the pipeline. The figures of a year are the totals its own filing reports for it, from the filing in the language of the factsheet where an issuer files in two; the comparative figures of the previous year that every filing carries as well are left aside, so that a figure in the column of a year is the one that year was reported with. One year more than the factsheet shows is read behind it, because a return puts the result of a year against the average of the capital at its start and its end, and because the screening indicators compare a year with the one before it.
 
-Concepts of the IFRS taxonomy come first, because an issuer's extension concepts change their names from one year to the next, and a key may list several concepts in order of preference for a line whose tag changed: voestalpine tags its property, plant and equipment under two names in six years. The lines the taxonomy has no concept for -- voestalpine's capital expenditure and the movement in its working capital, both of which it presents in its cash flow statement -- are kept in a list of the issuer's own concepts beside it. A figure read from one of those carries a dagger wherever it is shown, and the page on the coverage of the tags names every one of them with the number of years it was found in, so that a reader can tell a figure of the taxonomy from a figure of the issuer's own making.
+**Concepts of the IFRS taxonomy come first**, because an issuer's extension concepts change their names from one year to the next, and a key may list several concepts in order of preference for a line whose tag changed: voestalpine tags its property, plant and equipment under two names in six years. The lines the taxonomy has no concept for -- voestalpine's capital expenditure and the movement in its working capital, both of which it presents in its cash flow statement -- are kept in a list of the issuer's own concepts beside it. A figure read from one of those carries a dagger wherever it is shown, and the page on the coverage of the tags names every one of them with the number of years it was found in, so that a reader can tell a figure of the taxonomy from a figure of the issuer's own making.
 
-The figures are those of an industrial issuer that presents its income statement by function -- revenue, cost of sales, gross profit, EBIT -- and the figures it does not tag, such as its net debt, its capital employed or the number of its shares, are derived from those it does. The derivation follows voestalpine's presentation and is the part to adapt for another issuer; a bank needs other figures altogether. **No EBITDA is derived**: depreciation and amortisation are not a line of the primary statements under a concept of the taxonomy, and an issuer that tags them nowhere else leaves every indicator that would rest on EBITDA out of reach, so the leverage and the cover ratios stand against the operating result and the operating cash flow instead. A financial year that does not end in December is labelled by the two years it spans, as 2025/26.
+**The derivation is the part to adapt for another issuer.** The figures are those of an industrial issuer that presents its income statement by function -- revenue, cost of sales, gross profit, EBIT -- and the figures it does not tag, such as its net debt, its capital employed or the number of its shares, are derived from those it does. The derivation follows voestalpine's presentation; a bank needs other figures altogether.
 
-The corporate design is in `r-corporate-design-functions-ggplot2.R`, one file for the whole package in `src/fincommons/templates`, three levels up from a template, which every template of every module sources so that a change to the design is made once; a copy of it beside a template wins over the shared one, which is what lets a template taken out of the package carry a design of its own. The charts use its categorical palette, the ten colours of Tableau, so that eight lines of a balance sheet in one chart can still be told apart.
+**No EBITDA is derived.** Depreciation and amortisation are not a line of the primary statements under a concept of the taxonomy, and an issuer that tags them nowhere else leaves every indicator that would rest on EBITDA out of reach, so the leverage and the cover ratios stand against the operating result and the operating cash flow instead. A financial year that does not end in December is labelled by the two years it spans, as 2025/26.
 
-The last page is a disclaimer, and the cover says in its first line and in its small print what the page states in full: the document is produced by a template and the issuer is an example, no warranty is given for the correctness or the completeness of a figure, nobody who made it is associated with the issuer or with any other body named on the pages, nothing in it is advice, and liability is disclaimed as far as the law allows, in the terms of Articles 7 and 8 of the EUPL the project is licensed under. Whoever renders the factsheet for a purpose of their own is responsible for what they publish: the disclaimer is written for a template published as an example, and the paragraph on the example, the line on the cover and the reference to the licence are to be replaced by terms that fit the use.
+**The disclaimer is to be replaced for your own use.** The last page is a disclaimer, and the cover says in its first line and in its small print what the page states in full: the document is produced by a template and the issuer is an example, no warranty is given for the correctness or the completeness of a figure, nobody who made it is associated with the issuer or with any other body named on the pages, nothing in it is advice, and liability is disclaimed as far as the law allows, in the terms of Articles 7 and 8 of the EUPL the project is licensed under. Whoever renders the factsheet for a purpose of their own is responsible for what they publish: the disclaimer is written for a template published as an example, and the paragraph on the example, the line on the cover and the reference to the licence are to be replaced by terms that fit the use.
 
-A Delta Silver layer is refused rather than read: the table of facts replaces a country's partition whenever its reports change, and a Delta table keeps the files it replaced until it is vacuumed, which a reader of the files alone would count again.
+#### A factsheet on a sector
 
-## A factsheet on a sector
+`templates/esef-sector-factsheet.qmd` is the counterpart of the factsheet on one issuer: several issuers at once, each year's figures beside the years around them and beside the market they were filed in. It reads the two Silver tables of this module as parquet and, where the lake holds them, the combined tables of [`fincommons.financialreport.combined`](../combined/README.md) and the exchange rates of `fincommons.exchangerate`, and renders with Quarto to a PDF.
 
-`templates/esef-sector-factsheet.qmd` is the counterpart of the factsheet on one issuer: several issuers at once, each year's figures beside the years around them and beside the market they were filed in. It reads the two Silver tables of this module as parquet and, where the lake holds them, the combined tables of `fincommons.financialreport.combined` and the exchange rates of `fincommons.exchangerate`, and renders with Quarto to a PDF.
-
-```
+```bash
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-sector-factsheet.qmd
 ```
 
 Two examples ship with it. The template's own first chunk holds the Austrian construction sector, nine issuers, which is small enough to read in the template and is what the page renders with no further setting. `templates/esef-sector-panel-europe.csv` holds the same sector read across Europe -- 145 issuers in seventeen countries -- and is used instead by naming it:
 
-```
+```bash
 FINCOMMONS_PANEL=.../esef-sector-panel-europe.csv \
 FINCOMMONS_FINANCIAL=.../financial-leis.txt \
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-sector-factsheet.qmd
 ```
 
-### The panel is a stated list
+##### The panel is a stated list
 
 **This is the one thing about the template to understand before using it.** An ESEF report carries no sector code: a filing states the issuer's legal entity identifier and nothing about what the issuer does, and the sector classification this package does hold -- `sector` in `fincommons.entitymasterdata` -- is filled from the registers of the ECB, EIOPA and ESMA and covers financial entities only. So whoever writes the panel decides what the sector is. A different panel gives different totals and different medians, which is why the panel is printed in full at the front of the rendered document and why the disclaimer on the last page says in as many words that the page is about the issuers named and about no population wider than them.
 
-A panel of nine fits in the template. A panel of a hundred and forty-five does not, so the panel may instead be read from a csv named in `FINCOMMONS_PANEL`, with `SHORT` and `GROUP` required and an `LEI`, a `CIK` or an `EDINET_CODE` on every row, and `NACE`, `COUNTRY`, `ACTIVITY_EN`, `ACTIVITY_DE` and `NAME` used where the file has them. The headers are upper case, as they are in the two files shipped beside the template: a panel is a list kept by hand and keeps the names it has always had, while the Silver columns it is joined to are snake_case since 0.5.0, which is why every join between the two names both sides. `NAME` is for whoever maintains the file; the page names an issuer as its own report names it.
+**The panel file.** A panel of nine fits in the template. A panel of a hundred and forty-five does not, so the panel may instead be read from a csv named in `FINCOMMONS_PANEL`:
 
-Each row carries a group, and the groups are the reason the template exists in this shape rather than as one list of issuers. A contractor turns its balance sheet several times a year on advance payments, a developer holds a project for years and reports the result when it sells, a materials maker runs plant and carries inventory, a merchant holds stock and no projects at all. A median over all of them hides the thing a reader came for, so every table and chart is shown by group as well as for the panel as a whole, and the colour of a line is its group. The European panel uses five: contractors, developers, building materials, building technology, and merchants and distribution.
+- required: `SHORT` and `GROUP`, and an `LEI`, a `CIK` or an `EDINET_CODE` on every row;
+- used where the file has them: `NACE`, `COUNTRY`, `ACTIVITY_EN`, `ACTIVITY_DE` and `NAME`.
 
-What the repository holds limits any such panel, and the limit is worth stating because it is invisible in the output. **filings.xbrl.org holds no German and no Irish filings at all.** Hochtief, Bilfinger and Heidelberg Materials are not in it, and the Irish issuers that are -- Kingspan, Cairn Homes, Glenveagh -- are there under `GB`, filed in London. A European panel built from this repository is therefore European minus Germany, and says so.
+The headers are upper case, as they are in the two files shipped beside the template: a panel is a list kept by hand and keeps the names it has always had, while the Silver columns it is joined to are snake_case since 0.5.0, which is why every join between the two names both sides. `NAME` is for whoever maintains the file; the page names an issuer as its own report names it.
 
-### Why the European panel stops at Ukraine
+**Each row carries a group, and the groups are the reason the template exists in this shape** rather than as one list of issuers. A contractor turns its balance sheet several times a year on advance payments, a developer holds a project for years and reports the result when it sells, a materials maker runs plant and carries inventory, a merchant holds stock and no projects at all. A median over all of them hides the thing a reader came for, so every table and chart is shown by group as well as for the panel as a whole, and the colour of a line is its group. The European panel uses five: contractors, developers, building materials, building technology, and merchants and distribution.
 
-The repository holds the reports of Ukraine as well, filed the same way under the system it codes `UAIFRS`, and they are a third of everything in it: 9,871 filings of 3,164 issuers against 17,797 of 4,136 for the rest of Europe together. Among them are real construction companies -- Івано-Франківськцемент, Миколаївцемент, Київметробуд, Трест Житлобуд-1 -- so leaving them out of a European panel is a decision and not an oversight. Three things decide it, and the first two are properties of the data rather than judgements:
+**filings.xbrl.org holds no German and no Irish filings at all.** What the repository holds limits any such panel, and the limit is worth stating because it is invisible in the output. Hochtief, Bilfinger and Heidelberg Materials are not in it, and the Irish issuers that are -- Kingspan, Cairn Homes, Glenveagh -- are there under `GB`, filed in London. A European panel built from this repository is therefore European minus Germany, and says so.
+
+##### Why the European panel stops at Ukraine
+
+**Leaving Ukraine out is a decision, not an oversight.** The repository holds the reports of Ukraine as well, filed the same way under the system it codes `UAIFRS`, and they are a third of everything in it: 9,871 filings of 3,164 issuers against 17,797 of 4,136 for the rest of Europe together. Among them are real construction companies -- Івано-Франківськцемент, Миколаївцемент, Київметробуд, Трест Житлобуд-1. Three things decide it, and the first two are properties of the data rather than judgements:
 
 * **They are not keyed by an LEI.** A Ukrainian filing is identified as `EDRPOU-01432552-2023-12-31-UAIFRS-UA-0`: the code of the Ukrainian register, not a legal entity identifier. Nothing in this package that joins on an LEI reaches them -- not the sectoral registers that find the banks, not `fincommons.entitymasterdata`. The test that reads a filer's own statements still does, which is the one place this costs nothing.
-* **The hryvnia is not quoted.** The exchange rate table of `fincommons.exchangerate` carries 41 currencies against the euro and the hryvnia is not among them, the ECB publishing no reference rate for it. Every Ukrainian amount would therefore stay unconverted by the rule above -- correctly, and uselessly: the issuers would appear in every table with every amount missing.
+* **The hryvnia is not quoted.** The exchange rate table of `fincommons.exchangerate` carries 41 currencies against the euro and the hryvnia is not among them, the ECB publishing no reference rate for it. Every Ukrainian amount would therefore stay unconverted by the rule below -- correctly, and uselessly: the issuers would appear in every table with every amount missing.
 * **They would carry the population.** A benchmark is a median over the filings in scope, and three thousand Ukrainian issuers reporting under a different regime, in a currency that cannot be converted, through a war, would be most of that median while saying little about what a European contractor's balance sheet looks like.
 
 A lake that wants them collects `UA` like any other country and the tables hold them; what this template's example panel and benchmark leave out is a choice made in one line of configuration, and this is the reasoning behind it.
 
-### Amounts in more than one currency
+##### Amounts in more than one currency
 
-A European panel reports in a dozen currencies, and a sum over them is arithmetic on different units. The template converts, and it converts by the convention of the supervisory pipelines that build on this package, which is worth stating because the column names carry it: **an amount keeps the figure and the currency the issuer filed, and the conversion only ever adds two columns beside it.** `<key>_FXRATE` is the rate that was applied and is 1 where the amount was filed in the target currency already; `<key>_DOMESTIC` is the filed amount divided by that rate. The name says `DOMESTIC` rather than `EUR` so that nothing downstream has to be renamed when the target changes.
+**An amount keeps the figure and the currency the issuer filed, and the conversion only ever adds two columns beside it.** A European panel reports in a dozen currencies, and a sum over them is arithmetic on different units. The template converts, and it converts by the convention of the supervisory pipelines that build on this package, which is worth stating because the column names carry it:
 
-An amount whose currency the rate table does not quote stays unconverted. `_DOMESTIC` is missing, the sums pass over it, the count beside the sum is smaller by one, and the page names the issuer-years it happened to. It is never the filed figure carried over as though it were already in the target currency, and never a nought. A lake whose rate table holds nothing quoted against the target is refused outright rather than converted into a page of blanks -- the same check the EMIR and SFTR pipelines make, and for the same reason: a null layer reads afterwards as a quiet market rather than as a table that could not be built.
+- `<key>_FXRATE` is the rate that was applied, and is 1 where the amount was filed in the target currency already;
+- `<key>_DOMESTIC` is the filed amount divided by that rate. The name says `DOMESTIC` rather than `EUR` so that nothing downstream has to be renamed when the target changes.
 
-Which rate is applied follows IAS 21 rather than one rate per filing: a balance at the closing rate of the reporting date, an income or expense at the average of the daily rates over the financial year. **A ratio is not converted at all.** A margin, an equity ratio and a return are each a quotient of two amounts of one filing in one currency, so the currency cancels and they are computed from the figures as filed -- which is also why an issuer whose currency the table does not reach still stands in the benchmark while its amounts are missing from the sums.
+**An amount whose currency the rate table does not quote stays unconverted.** `_DOMESTIC` is missing, the sums pass over it, the count beside the sum is smaller by one, and the page names the issuer-years it happened to. It is never the filed figure carried over as though it were already in the target currency, and never a nought. A lake whose rate table holds nothing quoted against the target is refused outright rather than converted into a page of blanks -- the same check the EMIR and SFTR pipelines make, and for the same reason: a null layer reads afterwards as a quiet market rather than as a table that could not be built.
+
+**Which rate is applied follows IAS 21** rather than one rate per filing: a balance at the closing rate of the reporting date, an income or expense at the average of the daily rates over the financial year.
+
+**A ratio is not converted at all.** A margin, an equity ratio and a return are each a quotient of two amounts of one filing in one currency, so the currency cancels and they are computed from the figures as filed -- which is also why an issuer whose currency the table does not reach still stands in the benchmark while its amounts are missing from the sums.
 
 A panel in one currency needs none of this, reads no rate table, and needs no `exchangerate` section in the configuration file.
 
-### A panel that reaches past one regime
+##### A panel that reaches past one regime
 
-A panel row is keyed by the identifier its regime uses: an `LEI` for a filing under ESEF, a `CIK` for one with the Commission, an `EDINET_CODE` for one with the Financial Services Agency of Japan. No body publishes a mapping between them -- which is why the combined table carries all three columns and fills one of them in every row -- so the template does the same, and a row needs one of them. An EDINET code is the letter E and five digits (`E00058` is Kajima); the securities code (`18120`) is not it, and the template refuses a panel that gives one. Japanese annual securities reports (document types `120` and `130`) count as annual reports in the benchmark, and the cross-regime table adds each regime's amounts up in its own currency, so a Japanese row is in yen. `templates/esef-sector-panel-crossregime.csv` is the example: the 145 European issuers of the panel above together with 86 American ones, 231 in all.
+**A panel row is keyed by the identifier its regime uses:** an `LEI` for a filing under ESEF, a `CIK` for one with the Commission, an `EDINET_CODE` for one with the Financial Services Agency of Japan. No body publishes a mapping between them -- which is why the combined table carries all three columns and fills one of them in every row -- so the template does the same, and a row needs one of them.
 
-What crosses the frameworks is **the eight measures of the catalogue and nothing else**. Everything the template reads from the ESEF concepts -- the operating result, the cash flow, the inventories, the net debt -- reaches the European members alone, because no pair of concepts for an operating result is in the catalogue: `describe_measure("ebit")` returns nothing. Pairing `ifrs-full:ProfitLossFromOperatingActivities` with `us-gaap:OperatingIncomeLoss` would be this template inventing a mapping the `combined` module declines to make, so it does not. The cross-regime tables are built from the measures and the per-issuer tables keep saying what each regime's filer tagged.
+- An EDINET code is the letter E and five digits (`E00058` is Kajima); the securities code (`18120`) is not it, and the template refuses a panel that gives one.
+- Japanese annual securities reports (document types `120` and `130`) count as annual reports in the benchmark.
+- The cross-regime table adds each regime's amounts up in its own currency, so a Japanese row is in yen.
+- `templates/esef-sector-panel-crossregime.csv` is the example: the 145 European issuers of the panel above together with 86 American ones, 231 in all.
+
+**What crosses the frameworks is the eight measures of the catalogue and nothing else.** Everything the template reads from the ESEF concepts -- the operating result, the cash flow, the inventories, the net debt -- reaches the European members alone, because no pair of concepts for an operating result is in the catalogue: `describe_measure("ebit")` raises a `KeyError`, since no catalogue defines it. Pairing `ifrs-full:ProfitLossFromOperatingActivities` with `us-gaap:OperatingIncomeLoss` would be this template inventing a mapping the `combined` module declines to make, so it does not. The cross-regime tables are built from the measures and the per-issuer tables keep saying what each regime's filer tagged.
 
 Three things the Commission's filings force, none of which an ESEF-only lake shows:
 
@@ -344,22 +522,30 @@ Three things the Commission's filings force, none of which an ESEF-only lake sho
 * **A filing with the Commission carries no country.** The combined table has the column and `sec` leaves it empty, so the country filter keeps a row whose country is missing. Without that, naming countries -- or letting them default to the panel's own -- would quietly empty the American half of a pooled benchmark and leave a page that looked complete.
 * **An issuer is not keyed by its LEI.** Grouping the benchmark on one would collapse every American registrant into a single issuer, since they all have none. The key is the identifier of the regime, with the other side empty.
 
-The result and the equity a pooled question wants are the total where the filer states it and the parent's share where it does not. The regimes lean opposite ways -- most ESEF filers state the total, most American registrants only the parent's share -- so neither alone reaches both, and the page carries a table of **what each pooled figure is made of**: how many filings of each source contributed a total and how many a parent's share. A pooled median is not wrong, and it is not one population either.
+**A pooled figure is not one population.** The result and the equity a pooled question wants are the total where the filer states it and the parent's share where it does not. The regimes lean opposite ways -- most ESEF filers state the total, most American registrants only the parent's share -- so neither alone reaches both, and the page carries a table of **what each pooled figure is made of**: how many filings of each source contributed a total and how many a parent's share. A pooled median is not wrong, and it is not one population either.
 
-### The benchmark, and what counts as a bank
+##### The benchmark, and what counts as a bank
 
-The benchmark is read from the combined table through the materialised `measure` column rather than by resolving a measure per filing. That is the division of labour the combined README argues for, and it has a cost the page states: only the first concept of each framework carries a measure, so a filing that stated revenue as IFRS 15 revenue alone is in the tables of the panel and not in the quartiles, and every count beside a benchmark figure is a count of filings that stated **and named** the figure rather than a population. Which filings are in scope is three lines -- source, country, framework -- so a lake that has run `sec` or `edinet` widens the same page to those regimes, with the warning that module makes about measures that are not skewed alike between them. Left out, the countries are the ones the panel itself filed in, which is the right default rather than a convenient one -- the market a panel is held against is the market it was filed in -- and which also removes a trap: the panel can be replaced by a file without touching that list, and a country written out there would quietly measure a European panel against one national market.
+**The benchmark is read from the combined table through the materialised `measure` column** rather than by resolving a measure per filing. That is the division of labour the [combined README](../combined/README.md) argues for, and it has a cost the page states: only the first concept of each framework carries a measure, so a filing that stated revenue as IFRS 15 revenue alone is in the tables of the panel and not in the quartiles, and every count beside a benchmark figure is a count of filings that stated **and named** the figure rather than a population.
 
-Banks and insurers are shown apart rather than dropped, because an equity ratio of ten per cent in the same column as one of forty says something worth seeing about what the ratio means. Two tests identify them, and the second exists because the first has a hole in it:
+**Which filings are in scope is three lines** -- source, country, framework -- so a lake that has run `sec` or `edinet` widens the same page to those regimes, with the warning that module makes about measures that are not skewed alike between them. Left out, the countries are the ones the panel itself filed in, which is the right default rather than a convenient one -- the market a panel is held against is the market it was filed in -- and which also removes a trap: the panel can be replaced by a file without touching that list, and a country written out there would quietly measure a European panel against one national market.
+
+**Banks and insurers are shown apart rather than dropped**, because an equity ratio of ten per cent in the same column as one of forty says something worth seeing about what the ratio means. Two tests identify them, and the second exists because the first has a hole in it:
 
 * the **sectoral registers** -- the ECB's register of monetary financial institutions, EIOPA's of insurance undertakings and of institutions for occupational retirement provision, and ESMA's list of central counterparties, which is where `sector` of `fincommons.entitymasterdata` gets its answer. The LEIs are read from a file named in `FINCOMMONS_FINANCIAL`, one per line, which `entitymasterdata.download_ecb_mfi` and its siblings are enough to produce; GLEIF is not needed for this one question;
 * the **filings themselves**, for a filer whose primary statements carry a line only a financial undertaking has: interest revenue computed with the effective interest method, or one of the IFRS 17 insurance lines. A Japanese bank, insurer or securities firm is found by the industry elements of the financial statements taxonomy it tags, whose names end in `BNK`, `INS` and `SEC`. The concepts are named in the first chunk.
 
-Three rules apply to the Japanese filings of the benchmark, as they do in the reports of the combined module, and each was found on a lake. **An investment fund is not a company**: it files its annual report under document type 120 as a company does, and its report, which tags the fund taxonomies `jpsps*` or elements ending in `FND`, is left out. **A filer without subsidiaries states its accounts under `NonConsolidatedMember`**, and is read from them, as `measure_values` of the combined module reads it; where a report states both, the group's figure is taken. Without this every Japanese company that prepares no consolidated statements was missing from the benchmark. **A measure counts under the framework of the filing**, since a Japanese group reporting under IFRS states its parent company's own accounts under Japan GAAP in the same report. On the lake of November 2026 the three rules took the Japanese other filers of 2025 from 33 to 38 and set two of them apart as banks.
-
 The hole is twofold and is what the second test closes. A register lists the authorised entity, and what files an annual financial report is usually the group above it -- BAWAG P.S.K. is on the register and BAWAG Group AG, which files, is not. And the registers are European, so a British bank has not been on them since 2020, which for a lake holding the United Kingdom would leave the largest banks in the population unflagged. Over the Austrian filings the registers alone reach 22 of the 27 the two tests together find; the five they miss are holding companies, and their own statements name them.
 
-### How a figure is picked
+**Three rules apply to the Japanese filings of the benchmark**, as they do in the reports of the combined module, and each was found on a lake:
+
+- **An investment fund is not a company.** It files its annual report under document type 120 as a company does, and its report, which tags the fund taxonomies `jpsps*` or elements ending in `FND`, is left out.
+- **A filer without subsidiaries states its accounts under `NonConsolidatedMember`**, and is read from them, as `measure_values` of the combined module reads it; where a report states both, the group's figure is taken. Without this every Japanese company that prepares no consolidated statements was missing from the benchmark.
+- **A measure counts under the framework of the filing**, since a Japanese group reporting under IFRS states its parent company's own accounts under Japan GAAP in the same report.
+
+On the lake of November 2026 the three rules took the Japanese other filers of 2025 from 33 to 38 and set two of them apart as banks.
+
+##### How a figure is picked
 
 | What it sets out | From |
 |---|---|
@@ -372,13 +558,13 @@ The hole is twofold and is what the second test closes. A register lists the aut
 | the equity ratio of every issuer against the interquartile range of the market, year by year | both |
 | which lines each issuer tagged, in how many years | `facts` |
 
-One filing per issuer and financial year is chosen, by the rule of the single-issuer factsheet: the report in the language of the page, then the one with fewer validation errors, then the one the repository processed last. That last tie-break is not cosmetic. PORR filed its report for 2024 twice, both in German and both validating without error, and the two differ by a factor of a thousand -- one states revenue of 6,190,521 with the unit `iso4217:EUR` and the other 6,190,521,000 -- so the filing the repository processed last is the one that is right.
+**One filing per issuer and financial year is chosen**, by the rule of the single-issuer factsheet: the report in the language of the page, then the one with fewer validation errors, then the one the repository processed last. That last tie-break is not cosmetic. PORR filed its report for 2024 twice, both in German and both validating without error, and the two differ by a factor of a thousand -- one states revenue of 6,190,521 with the unit `iso4217:EUR` and the other 6,190,521,000 -- so the filing the repository processed last is the one that is right.
 
-A financial year is placed in the year its period end falls in, a year ending before July counting into the year before, so that Zumtobel's year to 30 April 2026 is the sector's 2025 and is still labelled 2025/26 wherever it stands alone. **No EBITDA is derived**, for the reason it is not derived in the factsheet on one issuer. A Delta Silver layer is refused in either module, for the reason given above.
+**A financial year is placed in the year its period end falls in**, a year ending before July counting into the year before, so that Zumtobel's year to 30 April 2026 is the sector's 2025 and is still labelled 2025/26 wherever it stands alone. **No EBITDA is derived**, for the reason it is not derived in the factsheet on one issuer. A Delta Silver layer is refused in either module, for the reason given above.
 
-## A data quality report on the findings
+#### A data quality report on the findings
 
-`templates/esef-quality-report.qmd` is the third template of the module and the counterpart of the table of issues: what the checks found, read over the whole record rather than filing by filing. It reads the three Silver tables as parquet and renders with Quarto to a PDF of some sixteen pages. **No number in it is an amount out of a report**; every figure is a count of filings, findings or checks.
+`templates/esef-quality-report.qmd` is the counterpart of the table of issues: what the checks found, read over the whole record rather than filing by filing. It reads the three Silver tables as parquet and renders with Quarto to a PDF of some sixteen pages. **No number in it is an amount out of a report**; every figure is a count of filings, findings or checks.
 
 | Section | Holds |
 |---------|-------|
@@ -389,7 +575,7 @@ A financial year is placed in the year its period end falls in, a year ending be
 | the checks in full | every entry of the catalogue -- what it finds, what a finding means, what to do about it -- with the count it found in this record |
 | the run | what was read, how to run the checks again, the sources and a disclaimer |
 
-```
+```bash
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-quality-report.qmd
 ```
 
@@ -397,13 +583,13 @@ The countries and the financial years are set in the first chunk and default to 
 
 Two things decide what the report says, and it states both rather than leaving them to be inferred.
 
-**The population.** A share is only readable against the right denominator. A check that reads the figures of a report could only fire on a filing the *table of facts* holds facts for, which is what the pipeline collected and not what the repository could have given it; `VALIDATION_ERRORS` and `NO_FACTS` read the index and could fire on every filing listed. Since the one population sits inside the other, the filings with facts are the only population every check was asked of, and every rate in the report -- the share free of errors, the shares by country and by year, the bands of findings per filing -- is taken over those. Over the whole index instead, a record of which a part has been collected would read as sound because nothing had looked at the rest of it. The per-check table keeps each check's own denominator and names it.
+**The population: every rate is taken over the filings with facts.** A share is only readable against the right denominator. A check that reads the figures of a report could only fire on a filing the *table of facts* holds facts for, which is what the pipeline collected and not what the repository could have given it; `VALIDATION_ERRORS` and `NO_FACTS` read the index and could fire on every filing listed. Since the one population sits inside the other, the filings with facts are the only population every check was asked of, and every rate in the report -- the share free of errors, the shares by country and by year, the bands of findings per filing -- is taken over those. Over the whole index instead, a record of which a part has been collected would read as sound because nothing had looked at the rest of it. The per-check table keeps each check's own denominator and names it.
 
-**Findings against filings.** A check names the records that failed it: the filing, where the fault is a fault of the report as a whole, and the fact, where one figure is at fault. A filing therefore has as many rows as it has bad facts, and the two counts are different things. The report names them apart throughout -- findings are rows, filings are the distinct filings those rows name -- and no table adds one to the other. The loudest one per cent of the filings carrying a third of the findings is the ordinary case, which is why the share of filings free of errors and not the count of findings is the report's headline.
+**Findings are not filings.** A check names the records that failed it: the filing, where the fault is a fault of the report as a whole, and the fact, where one figure is at fault. A filing therefore has as many rows as it has bad facts, and the two counts are different things. The report names them apart throughout -- findings are rows, filings are the distinct filings those rows name -- and no table adds one to the other. The loudest one per cent of the filings carrying a third of the findings is the ordinary case, which is why the share of filings free of errors and not the count of findings is the report's headline.
 
-A country with no row in the table of issues is either a country every check passed or one the checks have never run over, and nothing in the tables tells the two apart. The report names those countries rather than counting them as sound. A Delta Silver layer is refused for the same reason as in the other two templates.
+A country with no row in the table of issues is either a country every check passed or one the checks have never run over, and nothing in the tables tells the two apart. The report names those countries rather than counting them as sound. A Delta Silver layer is refused for the same reason as in the other templates.
 
-## A coverage report on the record
+#### A coverage report on the record
 
 `templates/esef-coverage-report.qmd` is the counterpart of the factsheet: one issuer in depth against the whole record at a glance. It reads the same two Silver tables as parquet and renders with Quarto to a PDF of some sixteen pages, which counts what the repository lists and what the issuers tagged, and nothing else. **No number in it is an amount out of a report**: every figure is a count of filings, facts, concepts or issuers.
 
@@ -415,23 +601,28 @@ A country with no row in the table of issues is either a country every check pas
 | what this report cannot say | the four things the facts do not carry, and what each puts out of reach |
 | the record read | the run, the lines looked for with the concepts of each, the sources and a disclaimer |
 
-```
+```bash
 FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-coverage-report.qmd
 ```
 
 The countries and the financial years are set in the first chunk and default to every country the lake holds and the last five years in it; `report_countries <- "AT"` and `report_years <- 2025L` narrow it to one country and one year, which renders in seconds. A country named there that the table of filings does not list is refused rather than shown as an empty column.
 
-An issuer that filed its report twice -- in two languages, or again with corrections -- is counted once per financial year, since a cross-section counts issuers: the report kept is the one with facts, then the one with fewer validation errors, then the one the repository processed last. The language is not part of that choice, as it is in the factsheet, because the two filings of a year state the same figures and this report reads no texts. A line counts as tagged in the year it was reported for, so the facts counted are those without dimensions whose period ends on the period end of the filing; the comparative figures of the year before, which every report carries as well, are left aside.
+**An issuer is counted once per financial year.** An issuer that filed its report twice -- in two languages, or again with corrections -- is counted once, since a cross-section counts issuers: the report kept is the one with facts, then the one with fewer validation errors, then the one the repository processed last. The language is not part of that choice, as it is in the factsheet, because the two filings of a year state the same figures and this report reads no texts. A line counts as tagged in the year it was reported for, so the facts counted are those without dimensions whose period ends on the period end of the filing; the comparative figures of the year before, which every report carries as well, are left aside.
 
-The lines looked for are the lines the factsheet reads, which is what makes the two templates one pair: **the coverage of a line is the answer to how many issuers the factsheet could be built for**, and the share for an indicator is the size of the panel a cross-sectional analysis of that indicator could rest on. A fact under `ifrs-full`, `ifrs-smes`, `esef_cor`, `esef_all`, `ifrs` or `esma` counts as the taxonomy and anything else as a concept the issuer created for its own report; the list is `taxonomy_prefixes` in the first chunk, and a lake holding reports tagged against a taxonomy it does not name would count them as extensions.
+**The coverage of a line is the answer to how many issuers the factsheet could be built for.** The lines looked for are the lines the factsheet reads, which is what makes the two templates one pair, and the share for an indicator is the size of the panel a cross-sectional analysis of that indicator could rest on. A fact under `ifrs-full`, `ifrs-smes`, `esef_cor`, `esef_all`, `ifrs` or `esma` counts as the taxonomy and anything else as a concept the issuer created for its own report; the list is `taxonomy_prefixes` in the first chunk, and a lake holding reports tagged against a taxonomy it does not name would count them as extensions.
 
-The comparison with FIRDS needs the `firds` module's Silver layer in the same configuration file and is left out with a note where there is none. It is counted over the whole record the lake holds rather than over the countries and years of the report, so that a report narrowed to one country does not read as though the rest of the market had never filed. Two things qualify it, and the page says both: the compact table of FIRDS carries no flag for admission to a regulated market at the issuer's request, so the count is of every issuer of a share FIRDS still holds a record for, which is the wider population; and FIRDS is a register of the Union, while the repository also collects the United Kingdom and Ukraine.
+**The comparison with FIRDS** (ESMA's Financial Instruments Reference Data System) needs the `firds` module's Silver layer in the same configuration file and is left out with a note where there is none. It is counted over the whole record the lake holds rather than over the countries and years of the report, so that a report narrowed to one country does not read as though the rest of the market had never filed. Two things qualify it, and the page says both: the compact table of FIRDS carries no flag for admission to a regulated market at the issuer's request, so the count is of every issuer of a share FIRDS still holds a record for, which is the wider population; and FIRDS is a register of the Union, while the repository also collects the United Kingdom and Ukraine.
 
-Four absences of the Silver tables decide what the report is, and it states them on a page of its own rather than in a footnote. A fact in xBRL-JSON carries no **presentation role**, so the statements the report groups its lines into are its own grouping and not the issuers' presentation. **Anchoring and the calculation relationships** live in the extension taxonomy of the report package, which the module collects only when asked and never reads, so the report counts extensions without saying what they were anchored to, and makes no check that a statement adds up. A **label** is in that taxonomy too, so two issuers count as having invented the same thing only where they spelt the local name the same way. And the **text blocks** of the notes are not in the table at all, so nothing here measures the tagging of the notes.
+**Four absences of the Silver tables decide what the report is**, and it states them on a page of its own rather than in a footnote:
+
+- A fact in xBRL-JSON carries no **presentation role**, so the statements the report groups its lines into are its own grouping and not the issuers' presentation.
+- **Anchoring and the calculation relationships** live in the extension taxonomy of the report package, which the module collects only when asked and never reads, so the report counts extensions without saying what they were anchored to, and makes no check that a statement adds up.
+- A **label** is in that taxonomy too, so two issuers count as having invented the same thing only where they spelt the local name the same way.
+- The **text blocks** of the notes are not in the table at all, so nothing here measures the tagging of the notes.
 
 The template reads the facts through four queries that arrow answers over the parquet files, each returning a result of the size of the market rather than of the size of the lake; the table of facts is never collected. A Delta Silver layer is refused for the same reason as in the factsheet, and the more sharply: this report counts facts, and a Delta table keeps the files it has replaced until it is vacuumed.
 
-## Two factsheets on one country
+#### Two factsheets on one country
 
 Two short templates take a country and nothing else, and do the rest from the lake: the years shown are those the country has reports with facts for, and every issuer of it is in. Both read the Silver tables as parquet and render with Quarto to a PDF of four or five pages; the country is set in `FINCOMMONS_COUNTRY`, so one copy of a template renders every country the pipeline has collected:
 
@@ -442,13 +633,18 @@ FINCOMMONS_CONFIG=/path/to/paths.yaml FINCOMMONS_COUNTRY=NL quarto render esef-c
 
 Both stop rather than render where the country has no facts, and both refuse a session that is not in a UTF-8 locale, which would print the names of issuers as `<U+00D6>` escapes.
 
-### Data quality
+##### Data quality
 
-`templates/esef-country-quality-factsheet.qmd` answers one question: whose figures to check before using them. Where the quality report reads the record as a whole, this ranks issuers. Each check of the module scores once per issuer and financial year, however many facts or reports it names -- a report filed again for the same year repeats the findings of the first, and counting them per report would rank an issuer by how often it re-filed. An error scores 3, a warning 1 and a note nothing; the weights are `points` in the first chunk. `MISS_REVENUE` and `IMBAL_ASSETS` are not counted for a bank or an insurer: its revenue is interest or premium income and tagged as such, and its assets are presented by liquidity or, in a group with a bank, with the bank's assets as a block beside the current and the non-current ones. A bank or an insurer is an issuer that presents one of their lines: interest revenue under the effective interest method, an IFRS 17 line, or a bank's loans to other banks or deposits of its customers. The balance sheet lines are there for a bank that tags its interest income under another concept, as Oesterreichische Kontrollbank does; without them it was ranked for three missing revenue lines.
+**`templates/esef-country-quality-factsheet.qmd` answers one question: whose figures to check before using them.** Where the quality report reads the record as a whole, this ranks issuers.
 
-Where an arithmetic check fired, the detail page says by how much: the two sides, the gap, and the gap as a share of the figure the check measures it against. A gap of a tenth of a percent and one of half the balance sheet are different things to look for. On the Austrian reports it shows what kind of mistake each is: Österreichische Post's three cash flows miss the movement in cash by a fifth of a percent of its assets, a line left out, while Raiffeisenlandesbank Niederösterreich-Wien's three cash flows of 972 million stand against a movement in cash of 31 thousand, which is another line tagged with the concept of the movement.
+- Each check of the module scores once per issuer and financial year, however many facts or reports it names -- a report filed again for the same year repeats the findings of the first, and counting them per report would rank an issuer by how often it re-filed.
+- An error scores 3, a warning 1 and a note nothing; the weights are `points` in the first chunk.
+- `MISS_REVENUE` and `IMBAL_ASSETS` are not counted for a bank or an insurer: its revenue is interest or premium income and tagged as such, and its assets are presented by liquidity or, in a group with a bank, with the bank's assets as a block beside the current and the non-current ones.
+- A bank or an insurer is an issuer that presents one of their lines: interest revenue under the effective interest method, an IFRS 17 line, or a bank's loans to other banks or deposits of its customers. The balance sheet lines are there for a bank that tags its interest income under another concept, as Oesterreichische Kontrollbank does; without them it was ranked for three missing revenue lines.
 
-The checks look at one report at a time, and some of the telling mistakes only show when an issuer's reports are set side by side. So the template adds six screens over six headline figures:
+**Where an arithmetic check fired, the detail page says by how much**: the two sides, the gap, and the gap as a share of the figure the check measures it against. A gap of a tenth of a percent and one of half the balance sheet are different things to look for. On the Austrian reports it shows what kind of mistake each is: Österreichische Post's three cash flows miss the movement in cash by a fifth of a percent of its assets, a line left out, while Raiffeisenlandesbank Niederösterreich-Wien's three cash flows of 972 million stand against a movement in cash of 31 thousand, which is another line tagged with the concept of the movement.
+
+**Six screens compare an issuer's reports side by side**, because the checks look at one report at a time and some of the telling mistakes only show across reports. They run over six headline figures:
 
 | Screen | What it finds |
 | --- | --- |
@@ -459,9 +655,11 @@ The checks look at one report at a time, and some of the telling mistakes only s
 | currency | a report in a currency the issuer uses in no other year |
 | identity | a report that names another entity than the one of the LEI it is filed under, where no other report under the LEI matches either |
 
-The identity screen exists because of two Austrian filings found on the lake. One is a filing agent's test report, "Mustermandant AG" of "12345 Musterstadt", filed under the agent's own LEI with a revenue of 17.6 billion. The other is EVN's annual report filed under the LEI of the data vendor that submitted it. A renamed company passes, since its newer reports state the name the LEI carries. These reports, and reports in a stray currency, are listed on the first page whatever their rank, under *Reports to set aside*. The pages then give the ranking, a map of which check fired for which issuer, the country against the rest of the lake, the trend by year, and every finding of the ten issuers ranked highest.
+The identity screen exists because of two Austrian filings found on the lake. One is a filing agent's test report, "Mustermandant AG" of "12345 Musterstadt", filed under the agent's own LEI with a revenue of 17.6 billion. The other is EVN's annual report filed under the LEI of the data vendor that submitted it. A renamed company passes, since its newer reports state the name the LEI carries. These reports, and reports in a stray currency, are listed on the first page whatever their rank, under *Reports to set aside*.
 
-### Economic facts and trends
+The pages then give the ranking, a map of which check fired for which issuer, the country against the rest of the lake, the trend by year, and every finding of the ten issuers ranked highest.
+
+##### Economic facts and trends
 
 `templates/esef-country-economic-factsheet.qmd` describes what a country's listed companies reported: revenue, operating profit and result, margins, returns, equity ratios, cash flow, dividends and staff costs. It shows the largest companies, the movers, the largest losses and the spread across companies. Banks and insurers are shown on their own page and kept out of every corporate figure.
 
@@ -477,3 +675,79 @@ What makes the figures readable is how they are taken:
 - **A report the identity screen of the quality factsheet catches is left out.** Its figures are either not real or already counted under the right LEI.
 
 The page covers listed companies and issuers of listed bonds, the population ESEF reaches. It says so, since the sums are not the economy as a whole.
+
+## Reference
+
+### Configuration
+
+The `esef` section of `paths.yaml`:
+
+| Key | Holds | May be a catalogue name? |
+|-----|-------|--------------------------|
+| `bronze` | the directory of the Bronze layer: indexes, reports, packages, collection records | no |
+| `silver` | the directory of the Silver layer (`filings`, `facts`, `issues`) | yes, as `table` and `path` |
+
+The Silver layer may name a schema in a catalogue instead of a directory, which puts the tables within reach of Unity Catalog's grants and lineage. It then needs a `path` beside the `table`, because the marks that record which reports each country was built from are files:
+
+```yaml
+esef:
+    bronze: /Volumes/fincommons/esef/lake/bronze
+    silver:
+        table: fincommons.financialreport.esef
+        path: /Volumes/fincommons/esef/lake/silver
+```
+
+The tables are then `fincommons.financialreport.esef.filings` and `fincommons.financialreport.esef.facts` (and `.issues`), always Delta.
+
+### Functions
+
+All are importable from `fincommons.financialreport.esef`.
+
+| Function | What it does |
+|----------|--------------|
+| **Update** | |
+| `update_esef(spark, config_path, countries, years=None, full=False, file_format=None, packages=False, contact=None)` | the whole pipeline in one call: Bronze and Silver; returns the outcome with `failed` and `failed_sources` |
+| `update_bronze_esef(config_path, countries, years=None, packages=False, contact=None)` | collect the indexes and the reports of some countries into the Bronze layer |
+| `update_silver_esef(spark, config_path, full=False, file_format=None, countries=None)` | rebuild the table of filings, and the countries of the facts whose reports changed |
+| `update_silver_esef_quality(spark, config_path, countries=None, file_format=None)` | run the checks and rebuild the table of issues, replacing the countries named |
+| `create_directory_tree(config_path)` | create the directories of a local lake; `update_esef` calls it |
+| **Read** | |
+| `connect_to_esef_filings(spark, config_path)` | the table of filings |
+| `connect_to_esef(spark, config_path)` | the table of facts |
+| `connect_to_esef_issues(spark, config_path)` | the table of data quality issues |
+| `export_esef_reports(spark, config_path, lei, path, years=None, lang=None, created=None)` | one issuer's reports as an OpenDocument spreadsheet; returns the path |
+| **Checks** | |
+| `find_issues(spark, config_path, countries=None)` | run every check and return the issues without writing them |
+| `annual_figures(facts, filings)` | one row per filing, one column per figure the checks need: the undimensioned figures of the filing's own period |
+| `is_extension(concept)` | whether a concept was created by the issuer (its prefix is not in `TAXONOMY_PREFIXES`), as a Spark expression |
+| **Lower level** | |
+| `collect_index`, `collect_report`, `collect_package`, `read_filings`, `fetch`, `file_url`, `user_agent` | the steps of the Bronze layer |
+| `filings_from_index`, `facts_from_report`, `is_text_block`, `parse_period`, `language_of`, `is_country`, `is_filing` | reading an index and a report in plain Python |
+| `build_filings`, `pending_countries`, `signature` | the steps of the Silver layer |
+| `path_bronze_*`, `path_silver_*`, `path_index_record`, `path_report_record`, `read_json`, `read_report_records` | the layout of the lake |
+
+Constants: `CHECKS` (the nineteen checks, by code), `EXTENSION_SHARE` (0.5), `TOLERANCE`, `MIN_DAYS`/`MAX_DAYS`, `FIRST_YEAR` (2018), `BASE_URL`, `INDEX_URL`, the schemas `filings_schema`, `facts_schema` and `issues_schema`.
+
+### Data contracts and catalogues
+
+- `data/contract_esef_silver_filings.yaml`, `data/contract_esef_silver_facts.yaml` and `data/contract_esef_silver_issues.yaml` -- the data contracts, in the Open Data Contract Standard, which `data/product_esef.yaml` names as the output ports of the module. They are the one place the columns are described, and the declared schemas of the module are held to them by the tests. A contract states the key of its table (the filing; the filing and the fact) and the rules the table is held to, which `fincommons.contracts.check_quality` runs.
+- `data/dataquality_checks.csv` -- what each check code means, how severe it is and what to do about it.
+
+### Source and terms
+
+The indexes and the reports are downloaded from filings.xbrl.org when the pipeline runs. **No filing is shipped with fincommons**: the package holds the code that collects them and a few made-up documents in its tests. The reports are the issuers' own publications, which the Transparency Directive requires them to make public. The repository states no licence for its copies; it provides its API free of charge and reserves the right to alter it, rate-limit it or withdraw it, and asks a client that uses it routinely to name a contact in its user agent, which the `contact` argument does.
+
+The repository is not complete. A filing with technical errors may have no xBRL-JSON, which leaves it in the table of filings without facts, and a filing whose LEI or date the repository cannot determine is missing altogether.
+
+## Troubleshooting
+
+- **A filing is in `filings` but has no facts** → the repository could not produce its xBRL-JSON (no `json_url`), or its country was not in `countries` → nothing to fix for the first (`NO_FACTS` counts them); for the second, add the country.
+- **An issuer or country is missing altogether** → the repository could not determine its LEI or date, or does not hold the country: it has no German and no Irish filings at all (Irish issuers filed in London are under `GB`).
+- **`outcome["failed"]` is above nought** → reports were set aside with their tracebacks in the log → run again; a failed report is retried on the next run.
+- **`No space left on device` while the lake's disk is nearly empty** → Spark's `spark.local.dir` defaults to `/tmp`, often a small tmpfs → set `spark.local.dir` to a directory on a disk.
+- **Python workers run the wrong interpreter** → Spark launches them with whatever `python3` is on the PATH → set `PYSPARK_PYTHON` and `PYSPARK_DRIVER_PYTHON` before building the session, as the scheduled script does.
+- **Sums over revenue look doubled, or off by a thousand** → the issuer filed the year twice (two languages, a correction or a copy) → pick one filing per issuer and year; `DUPL_FILING_PERIOD` and `DUPL_FILING_COPY` name them.
+- **`export_esef_reports` raises `ValueError`** → the table of filings holds no filing of that LEI (or none in the language asked for) → check the LEI and `lang`, and that the issuer's country has been collected.
+- **A template refuses the Silver layer** → it is Delta → write the Silver tables as parquet for the templates (`file_format="parquet"`).
+- **A template stops or prints `<U+00D6>`** → the session is not in a UTF-8 locale, or the country has no facts → render in a UTF-8 locale; collect the country first.
+- **A country has no rows in `issues`** → either every check passed or the checks never ran over it; the tables cannot tell the two apart → run `update_silver_esef_quality` with that country.
