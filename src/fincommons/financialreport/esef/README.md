@@ -212,6 +212,34 @@ Two more corrections came from the Austrian and Dutch reports of the lake. The t
 
 A report filed twice for one period in one language is two things. Where the copies state different facts it is a correction, and `DUPL_FILING_PERIOD` warns that a reader taking either is taking one of two. Where every copy states the same facts it is one report the repository received twice -- on the Austrian reports most such pairs were added within minutes of each other -- and `DUPL_FILING_COPY` notes it without faulting it. The facts are compared by a fingerprint over their concepts, periods, dimensions, units, values and texts, leaving out the identifiers a report gives its facts, which differ between two uploads of one file. Of the 77 filings the warning had named in the Austrian and Dutch reports, 42 were copies.
 
+## One issuer's reports as a spreadsheet
+
+The tables are the shape to compute over, and the wrong shape to read. `export_esef_reports` writes the reports of one issuer to an [OpenDocument](https://docs.oasis-open.org/office/OpenDocument/v1.3/) spreadsheet -- `.ods`, the OASIS standard published as ISO/IEC 26300, which LibreOffice, Gnumeric, Excel and Google Sheets all read -- with four sheets:
+
+```python
+from fincommons.financialreport import esef
+
+esef.export_esef_reports(spark, "paths.yaml", "529900ARBU9SBJFNX419",
+                         "porr.ods", years=5)
+```
+
+| Sheet | Holds |
+|-------|-------|
+| `about` | what the file is, which filings it covers, where the figures come from and what is not to be read into them |
+| `figures` | one row per figure and period, one column per filing |
+| `filings` | one row per filing covered: the column of `figures` it stands under, how many facts it contributed, what the validation found and where its files are |
+| `facts` | every fact of those filings as the table holds it, with the axes of the figures that are broken down, and the texts |
+
+**`figures` is the sheet the export exists for.** A row is one concept over one period as every filing that states it states it, and a column is one filing. So a row is read across to compare the same field between reports -- the later report's comparative figure beside the earlier report's own -- and a column is read down as one report. `filings` counts how many filings state the figure and `differs` marks a row whose values are not all the same, which is a restatement, a re-presentation or a tagging fault. Only the totals are in it: a fact with dimensions is a part of a total, and the parts are in `facts` with the axes they are broken down by. The concepts of the taxonomy come first and the issuer's own after them, marked `extension` in `concept_source`, because an extension's name can change from one report to the next and two rows may be one figure under two names.
+
+Nothing is converted and nothing is corrected. A figure is the number the issuer tagged, in the unit it tagged it in, which is why `unit` is a column of the sheet rather than an assumption: an issuer that changed its reporting currency has two units in one row, and summing across them is the reader's mistake to avoid rather than the export's to make silently. Where one filing tags a figure twice for one period, in the statements and again in the notes, the smaller value is taken, as `annual_figures` takes it for the checks.
+
+A filing whose report was not collected -- or whose xBRL-JSON the repository could not produce -- is a row of `filings` with nothing under its column, which is the honest answer to what the lake holds about it. The country of the issuer has to have been collected by the pipeline; an issuer with no filing at all in the table is refused rather than written as an empty workbook, since the indexes cover every country and an issuer that is not in them has filed no ESEF report.
+
+What the sheet is for shows on the seven filings PORR AG has in the lake. They make 953 rows, of which 182 differ between the filings that state them. Nearly all of that is one thing: the two filings for 2024 -- the same report, re-received thirteen days later -- state 173 figures in common, and 167 of them differ by exactly a factor of a thousand, the additional paid-in capital as 358,833 against 358,833,000. That is the fault the arithmetic checks exist to find, since the scale of a number is an attribute of its tag and invisible on the page, and `DUPL_FILING_PERIOD` warns about the pair as a correction rather than a copy. The seventeen rows left are figures one report restated or presented differently from the next.
+
+The writer is [`fincommons.spreadsheet`](../../spreadsheet.py), which writes the format from the standard library alone: a figure arrives as a figure and a date as a date, the header is bold, repeated on every printed page and frozen on screen, and a column is as wide as what stands in it. A text that begins with `=` stays a text -- a formula in OpenDocument is an attribute of its own and nothing a cell's content can turn into, so the injection a CSV export has to think about does not arise.
+
 ## A factsheet on one issuer
 
 `templates/esef-analyst-factsheet.qmd` is a template for a factsheet on one issuer, written in R and rendered with Quarto to a PDF of some twenty pages, with voestalpine AG as its example. It reads the two Silver tables as parquet and sets, from the facts of the issuer's own reports and from nothing else:
