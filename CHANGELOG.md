@@ -8,6 +8,20 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `sts`: data contracts for the six Silver tables -- `notification`,
+  `assertion`, `tranche`, `party`, `event` and `synthetic` -- and a product,
+  `product_sts.yaml`. STS joins the catalogued modules: its 49 columns are
+  described in the contracts, and the column test holds its code to them.
+  The contracts equal the declared schemas, which a test holds them to, and
+  state quality rules: one row per notification, per assertion of a
+  requirement and per synthetic notification number; one snapshot per
+  build; identifier schemes, type and class codes, templates, roles and
+  events among those the module knows; and LEIs, ISINs and party country
+  codes in their forms. They hold on the register as collected on 27
+  November 2026. The docstring of `assertion_schema` now says what the data
+  shows: the flag codes include `U`, and for a few requirements that are not
+  assertions the register puts text in the flag.
+
 - `financialreport.edinet`: data contracts for the four Silver tables,
   `filings`, `facts`, `filers` and `issues`, and a product,
   `product_edinet.yaml`, in the shape of those of ESEF and SEC. They equal

@@ -341,8 +341,12 @@ assertions is spelled ``requirementsOnTrasparency`` -- because a name invented
 here would not be findable in what ESMA publishes.
 
 ``flag`` is the code as published. The register documents no domain for it;
-the values seen are ``C``, ``N``, ``E``, ``A`` and ``Y``. It is therefore
-carried and not interpreted.
+the values seen are ``C``, ``N``, ``Y``, ``E``, ``A`` and ``U``, ``C`` and
+``N`` by far the most often. It is therefore carried and not interpreted. A
+few requirements are not assertions at all -- where the data on historical
+defaults is published, the name of the entity retaining the risk, whether the
+originator is a credit institution -- and for those the register puts text in
+the field: 1,816 of the 33,771 rows of the snapshot of 27 November 2026.
 """
 
 tranche_schema = StructType() \

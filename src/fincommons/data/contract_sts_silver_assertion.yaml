@@ -1,0 +1,200 @@
+# The data contract of the table of assertions of the Silver layer of
+# fincommons.sts, in the Open Data Contract Standard. It is the single source
+# of truth for what the columns of the table mean: fincommons.columns reads
+# its descriptions from here, and the test suite holds it against the
+# declared schema and against the table the module writes. See
+# fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sts.silver.assertion
+name: assertion
+version: 1.0.0
+status: active
+domain: sts
+dataProduct: fincommons.sts
+description:
+  purpose: >-
+    What each public notification asserts about each STS criterion it is held to,
+    and how it explains it.
+  usage: >-
+    Join to the notifications on id; filter on requirement. fincommons.sts.connect_to_sts(spark,
+    config, 'assertion') opens the table.
+  limitations: >-
+    The register documents no domain for the flag, so it is carried rather than
+    interpreted. Private notifications make no assertions.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/sts/silver.py
+- type: businessDefinition
+  url: https://eur-lex.europa.eu/eli/reg/2017/2402/oj
+  description: >-
+    Regulation (EU) 2017/2402, the Securitisation Regulation, whose Articles 18
+    to 28 define STS securitisation and its notification.
+- type: businessDefinition
+  url: https://registers.esma.europa.eu/solr/esma_registers_stsre/select
+  description: 'The source of the table: the register.'
+schema:
+- name: assertion
+  physicalType: table
+  businessName: STS assertions
+  description: >-
+    One row per assertion a public notification makes against the STS criteria:
+    the requirement, the flag and the explanation beside it. The template is held
+    long rather than wide, so that a revision of it is new rows rather than new
+    columns.
+  dataGranularityDescription: One row per notification, template and requirement.
+  quality:
+  - name: one_row_per_assertion
+    description: A notification makes one assertion per requirement of its template.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - id
+      - template
+      - requirement
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  properties:
+  - name: id
+    businessName: Document
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The register's own identifier of the notification document, and the key of
+      the notification and of every table that hangs off it. Neither identifier
+      the register publishes is unique, which is why this one is the key.
+    synonyms:
+    - synonym: id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: id
+      vendor: fincommons
+  - name: securitisation_identifier
+    businessName: Securitisation identifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The securitisation the notification is about, carried so that an assertion
+      can be read without joining the notification.
+    synonyms:
+    - synonym: stsre_sec_id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_id
+      vendor: fincommons
+  - name: template
+    businessName: Template
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: 'The set of STS criteria the assertion belongs to: non_abcp or
+      abcp.'
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: template_is_known
+      description: The template is non_abcp or abcp.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - non_abcp
+        - abcp
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: requirement
+    businessName: Requirement
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 3
+    semanticType: dimension
+    description: >-
+      The register's own name of the template field, with the template prefix and
+      the _flag or _comment ending removed, so that the flag and the comment of
+      one requirement meet in one row. The register's spelling is kept, typographical
+      errors included, so that a name can be found in what ESMA publishes.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: flag
+    businessName: Assertion
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The assertion as published. For a criterion it is a code the register does
+      not define -- C, N, Y, E, A and U occur, C and N by far the most often --
+      and it is carried rather than interpreted. A few requirements are not flags
+      at all, such as where the loss data is published or who retains the risk,
+      and for those the register puts text here.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: comment
+    businessName: Explanation
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The explanatory comment the notification gives beside the assertion.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: snapshot
+    businessName: Snapshot
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The day of the snapshot of the register the row was read from. The register
+      is current state, so the dated snapshots of the Bronze layer are the only
+      history of it.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

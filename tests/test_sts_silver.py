@@ -265,3 +265,68 @@ def test_a_field_the_register_adds_is_warned_about(spark, config, caplog):
     named = [record for record in caplog.records
              if getattr(record, "ctx", {}).get("fields") == "stsre_brand_new"]
     assert len(named) == 1
+
+
+# The data contracts
+# --------------------------------------------------------------------------
+
+
+SCHEMAS = {"notification": common.notification_schema,
+           "assertion": common.assertion_schema,
+           "tranche": common.tranche_schema, "party": common.party_schema,
+           "event": common.event_schema, "synthetic": common.synthetic_schema}
+
+
+@pytest.mark.parametrize("table", common.SILVER_TABLES)
+def test_the_declared_schema_is_the_schema_of_the_contract(table):
+    """The code writes with the declared schema and a reader is told the
+    contract, so the two must agree in names, order, types and in which
+    columns may be empty."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    assert spark_schema(load_contract(f"fincommons.sts.silver.{table}")) == SCHEMAS[table]
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, config):
+    """The six tables built from a snapshot, a list of cancellations and a
+    list of synthetic securitisations are those their contracts describe --
+    columns, types and order, no empty value where one is required, one row
+    per key -- and meet their quality rules, warnings included."""
+    from pyspark.sql import functions as F
+
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+
+    write_snapshot(config, "2026-11-20", [a_notification()], children_of())
+    write_sheet(config, "2026-11-20", "cancelled", [
+        ["Cancellation date to ESMA", "Unique Securitisation Identifier",
+         "Reasons for cancellation"],
+        [datetime.datetime(2022, 4, 6), "Private_2020_08_21_01", "Teminated STS Transaction"],
+    ])
+    write_sheet(config, "2026-11-20", "synthetic", [
+        ["Notification number", "Notification date to ESMA",
+         "Securitisation Unique Identifier", "Private or Public", "Underlying assets"],
+        [1, datetime.datetime(2026, 10, 13), "SYSEC_Private_2026_10_13_01",
+         "private", "Large corporates loans"],
+    ])
+    silver.update_silver_sts(spark, config)
+
+    keys = {"notification": ["id"], "assertion": ["id", "template", "requirement"],
+            "tranche": [], "party": [], "event": [],
+            "synthetic": ["securitisation_identifier", "notification_number"]}
+    for table in common.SILVER_TABLES:
+        frame = common.connect_to_sts(spark, config, table)
+        contract = load_contract(f"fincommons.sts.silver.{table}")
+        properties = contract["schema"][0]["properties"]
+
+        assert frame.count() > 0, table
+        assert [(f.name, f.dataType) for f in frame.schema] == \
+            [(f.name, f.dataType) for f in spark_schema(contract)], table
+        for prop in properties:
+            if prop.get("required"):
+                assert frame.where(F.col(prop["name"]).isNull()).count() == 0, (table, prop["name"])
+        key = keys[table]
+        assert [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                          key=lambda p: p["primaryKeyPosition"])] == key
+        if key:
+            assert frame.groupBy(*key).count().where("count > 1").count() == 0, table
+        assert [r for r in check_quality(frame, contract) if r.passed is False] == [], table

@@ -1,0 +1,205 @@
+# The data contract of the table of events of the Silver layer of
+# fincommons.sts, in the Open Data Contract Standard. It is the single source
+# of truth for what the columns of the table mean: fincommons.columns reads
+# its descriptions from here, and the test suite holds it against the
+# declared schema and against the table the module writes. See
+# fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sts.silver.event
+name: event
+version: 1.0.0
+status: active
+domain: sts
+dataProduct: fincommons.sts
+description:
+  purpose: >-
+    The history of each securitisation's STS status, which no single source states:
+    the register gives the current state, two frozen spreadsheets give notifications
+    and cancellations with ESMA's reasons, and two snapshots give a departure.
+  usage: >-
+    Fold the events of a securitisation in order of event_date to read its status
+    on a day. fincommons.sts.connect_to_sts(spark, config, 'event') opens the table.
+  limitations: >-
+    Contradictions between the sources are kept rather than resolved. A departure
+    from the register carries no reason and no date beyond the snapshots between
+    which it happened.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/sts/silver.py
+- type: businessDefinition
+  url: https://eur-lex.europa.eu/eli/reg/2017/2402/oj
+  description: >-
+    Regulation (EU) 2017/2402, the Securitisation Regulation, whose Articles 18
+    to 28 define STS securitisation and its notification.
+- type: businessDefinition
+  url: https://registers.esma.europa.eu/solr/esma_registers_stsre/select
+  description: >-
+    The source of the table: the register, its snapshots and ESMA's lists ESMA33-128-760
+    and ESMA33-128-761.
+schema:
+- name: event
+  physicalType: table
+  businessName: STS events
+  description: >-
+    One row per thing known to have happened to a securitisation: notified, updated,
+    marked non-compliant, cancelled, or gone from the register between two snapshots,
+    with the source that says so and the day that source speaks for.
+  dataGranularityDescription: >-
+    One row per event of a securitisation and its source. Two notifications that
+    share a securitisation identifier can give the same event twice, so the table
+    has no key.
+  properties:
+  - name: securitisation_identifier
+    businessName: Securitisation identifier
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The securitisation the event happened to. The event table is keyed by it rather
+      than by the notification, so where two notifications share an identifier their
+      events can appear twice.
+    synonyms:
+    - synonym: stsre_sec_id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_id
+      vendor: fincommons
+  - name: identifier_scheme
+    businessName: Identifier scheme
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      Which scheme securitisation_identifier follows: lei for an identifier of the
+      disclosure templates, which alone joins to anything outside the register,
+      private or synthetic for a placeholder, missing for an empty one, other for
+      anything else.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: identifier_scheme_is_known
+      description: >-
+        The scheme is one of those fincommons.sts.common.identifier_scheme tells
+        apart.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - lei
+        - private
+        - synthetic
+        - missing
+        - other
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: event
+    businessName: Event
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      What happened to the securitisation: notified, updated (the notification date
+      differs from the first), non_compliant (the register marks it so on the day
+      of the snapshot), cancelled (the cancellation list records it), or left_register
+      (it was in one snapshot and not in the next, the only record of a removal
+      after May 2022).
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: event_is_known
+      description: >-
+        The event is one of notified, updated, non_compliant, cancelled and left_register.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - notified
+        - updated
+        - non_compliant
+        - cancelled
+        - left_register
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: event_date
+    businessName: Day of the event
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: The day the event happened, where its source states one.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: reason
+    businessName: Reason
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Why the event happened, where its source says: ESMA's reason for a cancellation.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: source
+    businessName: Source
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      Where the row came from: register for the register, or the ESMA reference
+      of the spreadsheet (ESMA33-128-760 for the list of notifications, ESMA33-128-761
+      for the list of cancellations).
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: source_as_of
+    businessName: Source as of
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The day the source speaks for: the snapshot for the register, the day a spreadsheet
+      was last updated for one of them, three of which are frozen.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

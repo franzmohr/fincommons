@@ -1,0 +1,654 @@
+# The data contract of the table of notifications of the Silver layer of
+# fincommons.sts, in the Open Data Contract Standard. It is the single source
+# of truth for what the columns of the table mean: fincommons.columns reads
+# its descriptions from here, and the test suite holds it against the
+# declared schema and against the table the module writes. See
+# fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sts.silver.notification
+name: notification
+version: 1.0.0
+status: active
+domain: sts
+dataProduct: fincommons.sts
+description:
+  purpose: >-
+    Which securitisations are notified to ESMA as simple, transparent and standardised
+    under Article 18 of the Securitisation Regulation, and what the notification
+    says about them.
+  usage: >-
+    Join the assertions, tranches and parties on id. securitisation_identifier joins
+    to reported securitisation data only where identifier_scheme is lei. fincommons.sts.connect_to_sts(spark,
+    config, 'notification') opens the table.
+  limitations: >-
+    The register is current state: a cancelled notification leaves it, so the snapshots
+    of the Bronze layer are the only record of what it once held. Neither identifier
+    the register publishes is unique. A private notification carries some 18 fields
+    and no tranches or parties.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/sts/silver.py
+- type: businessDefinition
+  url: https://eur-lex.europa.eu/eli/reg/2017/2402/oj
+  description: >-
+    Regulation (EU) 2017/2402, the Securitisation Regulation, whose Articles 18
+    to 28 define STS securitisation and its notification.
+- type: businessDefinition
+  url: https://registers.esma.europa.eu/solr/esma_registers_stsre/select
+  description: 'The source of the table: the register.'
+schema:
+- name: notification
+  physicalType: table
+  businessName: STS notifications
+  description: >-
+    One row per notification the ESMA register of simple, transparent and standardised
+    securitisations holds on the day of the snapshot: the securitisation, its type
+    and class, its compliance, the entity that notified it, its verifier and its
+    prospectus.
+  dataGranularityDescription: One row per notification document of one snapshot.
+  quality:
+  - name: one_row_per_notification
+    description: No notification document is listed twice.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - id
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: one_snapshot
+    description: The table is built from one snapshot of the register.
+    type: sql
+    query: SELECT GREATEST(COUNT(DISTINCT snapshot) - 1, 0) FROM ${table}
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: first_notified_first
+    description: >-
+      No notification was first notified after the notification the register holds.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE first_notified > notified
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: a_notification_carries_fields
+    description: Every notification carries at least one field.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE fields < 1
+    mustBe: 0
+    dimension: completeness
+    severity: error
+  properties:
+  - name: id
+    businessName: Document
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The register's own identifier of the notification document, and the key of
+      the notification and of every table that hangs off it. Neither identifier
+      the register publishes is unique, which is why this one is the key.
+    synonyms:
+    - synonym: id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: id
+      vendor: fincommons
+  - name: securitisation_identifier
+    businessName: Securitisation identifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The identifier of the securitisation as the register publishes it. For a public
+      notification it is the identifier of the disclosure templates -- the reporting
+      entity's LEI, a letter for the class and the period -- and joins to reported
+      securitisation data; a private one carries a placeholder such as Private_2020_12_18_01.
+      It is not unique: a securitisation notified again keeps it.
+    synonyms:
+    - synonym: stsre_sec_id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_id
+      vendor: fincommons
+  - name: notification_identifier
+    businessName: Notification identifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The identifier of the notification as the register publishes it. It is not
+      unique either.
+    synonyms:
+    - synonym: stsre_notif_id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: stsre_notif_id
+      vendor: fincommons
+  - name: identifier_scheme
+    businessName: Identifier scheme
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      Which scheme securitisation_identifier follows: lei for an identifier of the
+      disclosure templates, which alone joins to anything outside the register,
+      private or synthetic for a placeholder, missing for an empty one, other for
+      anything else.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: identifier_scheme_is_known
+      description: >-
+        The scheme is one of those fincommons.sts.common.identifier_scheme tells
+        apart.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - lei
+        - private
+        - synthetic
+        - missing
+        - other
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: securitisation_name
+    businessName: Securitisation
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The name of the securitisation.
+    synonyms:
+    - synonym: stsre_sec_name
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_name
+      vendor: fincommons
+  - name: securitisation_type
+    businessName: Type of securitisation
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the securitisation is public or private, in the register's words.
+    synonyms:
+    - synonym: stsre_sectype_desc
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: stsre_sectype_desc
+      vendor: fincommons
+  - name: securitisation_class
+    businessName: Class of securitisation
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the securitisation is an ABCP transaction or programme or not, in
+      the register's words.
+    synonyms:
+    - synonym: stsre_secclass_desc
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: stsre_secclass_desc
+      vendor: fincommons
+  - name: type_code
+    businessName: Type code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: 'The type of the securitisation as a code: PUBLIC or PRIVATE.'
+    synonyms:
+    - synonym: stsre_sectype_code
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: stsre_sectype_code
+      vendor: fincommons
+    quality:
+    - name: type_code_is_known
+      description: The type is PUBLIC or PRIVATE.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - PUBLIC
+        - PRIVATE
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: class_code
+    businessName: Class code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The class of the securitisation as a code: NON_ABCP, ABCP or ABCP_PROGRAMME.
+    synonyms:
+    - synonym: stsre_secclass_code
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: stsre_secclass_code
+      vendor: fincommons
+    quality:
+    - name: class_code_is_known
+      description: The class is NON_ABCP, ABCP or ABCP_PROGRAMME.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - NON_ABCP
+        - ABCP
+        - ABCP_PROGRAMME
+      mustBe: 0
+      dimension: conformity
+      severity: warning
+  - name: compliance_status
+    businessName: Compliance status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the register marks the securitisation as compliant with the STS criteria
+      on the day of the snapshot: Compliant or Non - Compliant, as written.
+    synonyms:
+    - synonym: stsre_compl_stat_desc
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: stsre_compl_stat_desc
+      vendor: fincommons
+  - name: sanction_status
+    businessName: Sanction status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether a competent authority has imposed a sanction in relation to the securitisation,
+      in the register's words.
+    synonyms:
+    - synonym: stsre_sanc_status
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: stsre_sanc_status
+      vendor: fincommons
+  - name: underlying_exposure
+    businessName: Underlying exposures
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The type of the exposures underlying the securitisation, such as residential
+      mortgages or auto loans, in the register's words.
+    synonyms:
+    - synonym: stsre_undrlexp_desc
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: stsre_undrlexp_desc
+      vendor: fincommons
+  - name: first_notified
+    businessName: First notified
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: The day the securitisation was first notified to ESMA.
+    synonyms:
+    - synonym: stsre_init_notif_dt
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: stsre_init_notif_dt
+      vendor: fincommons
+  - name: notified
+    businessName: Notified
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The day of the notification the register holds, which differs from first_notified
+      where the notification was updated.
+    synonyms:
+    - synonym: stsre_notif_dt
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: stsre_notif_dt
+      vendor: fincommons
+  - name: repository
+    businessName: Securitisation repository
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The securitisation repository the securitisation reports to, where it names
+      one.
+    synonyms:
+    - synonym: stsre_sec_repository
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_repository
+      vendor: fincommons
+  - name: reporting_entity_name
+    businessName: Reporting entity
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The name of the entity that made the notification, as it filed it. It is the
+      sole originator on most notifications, but on some the special purpose entity
+      or a group entity reporting on another's behalf, so it is carried as the entity
+      that reported; the originators are in the table of parties.
+    synonyms:
+    - synonym: de_name
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: de_name
+      vendor: fincommons
+  - name: reporting_entity_lei
+    businessName: Reporting entity LEI
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The LEI of the entity that made the notification.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    synonyms:
+    - synonym: de_lei_priv
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: de_lei_priv
+      vendor: fincommons
+    quality:
+    - name: reporting_entity_lei_is_an_lei
+      description: The reporting entity is named by a well-formed LEI.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[A-Z0-9]{18}[0-9]{2}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: reporting_entity_legal_name
+    businessName: Reporting entity, legal name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The legal name of the reporting entity as its LEI record states it, which
+      can differ from the name the notification was filed under.
+    synonyms:
+    - synonym: de_lei_name
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: de_lei_name
+      vendor: fincommons
+  - name: verifier_name
+    businessName: Verifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The authorised third party of Article 28 of the Securitisation Regulation
+      that verified compliance, where one did. The name is not normalised in the
+      register: one verifier appears under many spellings, so a count by verifier
+      is a count of spellings.
+    synonyms:
+    - synonym: authorised_third_party_name
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: authorised_third_party_name
+      vendor: fincommons
+  - name: verifier_country
+    businessName: Country of the verifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The country of the verifier, as a name in capitals (FRANCE), not a code.
+    synonyms:
+    - synonym: authorised_third_party_country
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: authorised_third_party_country
+      vendor: fincommons
+  - name: verifier_authority
+    businessName: Authority of the verifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The competent authority that authorised the verifier.
+    synonyms:
+    - synonym: authorised_third_party_competent_authority
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: authorised_third_party_competent_authority
+      vendor: fincommons
+  - name: verifier_statement
+    businessName: Statement of the verifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: What the verifier said when it verified compliance.
+    synonyms:
+    - synonym: authorised_third_party_statement
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: authorised_third_party_statement
+      vendor: fincommons
+  - name: prospectus_country
+    businessName: Country of the prospectus
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The country whose authority approved the prospectus, as a name in capitals,
+      not a code.
+    synonyms:
+    - synonym: prospectus_country_name
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: prospectus_country_name
+      vendor: fincommons
+  - name: prospectus_identifier
+    businessName: Prospectus identifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The identifier of the prospectus, where the securitisation has
+      one.
+    synonyms:
+    - synonym: prospectus_identifier
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: prospectus_identifier
+      vendor: fincommons
+  - name: prospectus_issue_date
+    businessName: Prospectus issued
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: The day the prospectus was issued.
+    synonyms:
+    - synonym: prospectus_issue_date
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: prospectus_issue_date
+      vendor: fincommons
+  - name: notified_again
+    businessName: Notified again
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the securitisation was notified more than once, Y or N, as written.
+    synonyms:
+    - synonym: multiple_notif_flag
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: multiple_notif_flag
+      vendor: fincommons
+  - name: notified_again_reason
+    businessName: Reason for notifying again
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: Why the securitisation was notified again, in the register's words.
+    synonyms:
+    - synonym: multiple_notif_reason_desc
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: multiple_notif_reason_desc
+      vendor: fincommons
+  - name: fields
+    businessName: Fields carried
+    logicalType: integer
+    physicalType: int
+    required: true
+    semanticType: dimension
+    description: >-
+      How many fields the notification document carried, which separates the two
+      populations at a glance: a public notification carries some 150, a private
+      one fewer than 20.
+    customProperties:
+    - property: kind
+      value: count
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: snapshot
+    businessName: Snapshot
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The day of the snapshot of the register the row was read from. The register
+      is current state, so the dated snapshots of the Bronze layer are the only
+      history of it.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

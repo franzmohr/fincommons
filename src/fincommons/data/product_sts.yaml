@@ -1,0 +1,52 @@
+# The data product of fincommons.sts, in the Open Data Product Standard. Its
+# output ports name the contracts of the six Silver tables by identifier and
+# version; the test suite checks that the contracts are shipped in those
+# versions. The order of the ports is the order in which the column catalogue
+# takes a column named in several tables: from the first. See
+# fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.sts
+name: sts
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: sts
+description:
+  purpose: >-
+    The public register of simple, transparent and standardised
+    securitisations that ESMA keeps, and the lists it publishes beside it:
+    the notifications, what they assert, their tranches and parties, what
+    has happened to each securitisation, and the synthetic securitisations
+    that appear in no register.
+outputPorts:
+  - name: silver_notification
+    type: table
+    description: One row per notification the register holds on the day of the snapshot.
+    contractId: fincommons.sts.silver.notification
+    version: 1.0.0
+  - name: silver_assertion
+    type: table
+    description: One row per assertion a public notification makes against the STS criteria.
+    contractId: fincommons.sts.silver.assertion
+    version: 1.0.0
+  - name: silver_tranche
+    type: table
+    description: One row per tranche of a public notification.
+    contractId: fincommons.sts.silver.tranche
+    version: 1.0.0
+  - name: silver_party
+    type: table
+    description: One row per party to a public notification.
+    contractId: fincommons.sts.silver.party
+    version: 1.0.0
+  - name: silver_event
+    type: table
+    description: One row per thing known to have happened to a securitisation.
+    contractId: fincommons.sts.silver.event
+    version: 1.0.0
+  - name: silver_synthetic
+    type: table
+    description: One row per synthetic securitisation notified as STS.
+    contractId: fincommons.sts.silver.synthetic
+    version: 1.0.0

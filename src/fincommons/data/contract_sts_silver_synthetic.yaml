@@ -1,0 +1,247 @@
+# The data contract of the table of synthetic securitisations of the Silver layer of
+# fincommons.sts, in the Open Data Contract Standard. It is the single source
+# of truth for what the columns of the table mean: fincommons.columns reads
+# its descriptions from here, and the test suite holds it against the
+# declared schema and against the table the module writes. See
+# fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sts.silver.synthetic
+name: synthetic
+version: 1.0.0
+status: active
+domain: sts
+dataProduct: fincommons.sts
+description:
+  purpose: >-
+    Which on-balance-sheet synthetic securitisations are STS under Regulation (EU)
+    2021/557, and how their credit protection is provided.
+  usage: >-
+    fincommons.sts.connect_to_sts(spark, config, 'synthetic') opens the table. Its
+    identifiers overlap with nothing in the register.
+  limitations: >-
+    Every row is private: none has an ISIN or a name, and the list carries almost
+    nothing the register does. Its free text is ESMA's, misspellings included.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/sts/silver.py
+- type: businessDefinition
+  url: https://eur-lex.europa.eu/eli/reg/2017/2402/oj
+  description: >-
+    Regulation (EU) 2017/2402, the Securitisation Regulation, whose Articles 18
+    to 28 define STS securitisation and its notification.
+- type: businessDefinition
+  url: >-
+    https://www.esma.europa.eu/sites/default/files/esma82-402-39_synthetic_securitisations_designated_as_sts_as_from_09_04_2021_regulation_2021_557.xlsx
+  description: >-
+    The source of the table: the list ESMA82-402-39 of synthetic securitisations.
+schema:
+- name: synthetic
+  physicalType: table
+  businessName: STS synthetic securitisations
+  description: >-
+    One row per synthetic securitisation notified as STS, from the list ESMA publishes
+    as a spreadsheet, since such a securitisation is notified by electronic mail
+    and appears in no register.
+  dataGranularityDescription: One row per synthetic securitisation and notification
+    number.
+  quality:
+  - name: one_row_per_synthetic_notification
+    description: A synthetic securitisation is listed once per notification number.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - securitisation_identifier
+      - notification_number
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  properties:
+  - name: securitisation_identifier
+    businessName: Securitisation identifier
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The identifier ESMA gives the synthetic securitisation, a scheme of its own
+      (SYSEC_Private_2026_10_13_01) that overlaps with nothing in the register.
+      A securitisation notified twice appears twice, under two notification numbers.
+    synonyms:
+    - synonym: stsre_sec_id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_id
+      vendor: fincommons
+  - name: notification_number
+    businessName: Notification number
+    logicalType: integer
+    physicalType: int
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The number ESMA gives the notification in its list of synthetic securitisations.
+    customProperties:
+    - property: kind
+      value: count
+      vendor: fincommons
+    - property: source
+      value: ESMA82-402-39
+      vendor: fincommons
+  - name: notified
+    businessName: Notified
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      The day the synthetic securitisation was notified to ESMA, as its list states
+      it.
+    synonyms:
+    - synonym: stsre_notif_dt
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: stsre_notif_dt
+      vendor: fincommons
+  - name: securitisation_type
+    businessName: Type of securitisation
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The type of the synthetic securitisation, in ESMA's words.
+    synonyms:
+    - synonym: stsre_sectype_desc
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: stsre_sectype_desc
+      vendor: fincommons
+  - name: protection
+    businessName: Credit protection
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the credit protection is funded or unfunded, in ESMA's words, misspellings
+      included.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: ESMA82-402-39
+      vendor: fincommons
+  - name: instrument
+    businessName: Protection instrument
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The instrument of the credit protection, such as a credit derivative or a
+      financial guarantee, in ESMA's words.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: ESMA82-402-39
+      vendor: fincommons
+  - name: underlying_exposure
+    businessName: Underlying exposures
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The type of the exposures underlying the synthetic securitisation, in ESMA's
+      words.
+    synonyms:
+    - synonym: stsre_undrlexp_desc
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: stsre_undrlexp_desc
+      vendor: fincommons
+  - name: securitisation_name
+    businessName: Securitisation
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The name of the synthetic securitisation, which ESMA's list leaves empty for
+      every private one.
+    synonyms:
+    - synonym: stsre_sec_name
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_name
+      vendor: fincommons
+  - name: originator_country
+    businessName: Country of the originator
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The country of the originator, as ESMA's list states it.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: ESMA82-402-39
+      vendor: fincommons
+  - name: sanction_status
+    businessName: Sanction status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether a sanction has been imposed in relation to the synthetic securitisation,
+      in ESMA's words.
+    synonyms:
+    - synonym: stsre_sanc_status
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: stsre_sanc_status
+      vendor: fincommons
+  - name: source_as_of
+    businessName: Source as of
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: The day ESMA's list of synthetic securitisations speaks for.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

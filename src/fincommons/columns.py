@@ -34,7 +34,8 @@ A table that has a data contract is described by its contract instead, and
 its columns have no row in the file: the contract is the single source of
 truth for them, and :func:`column_catalogue` takes their rows from it, in the
 same shape (see :mod:`fincommons.contracts`). The exchange rates and the
-Silver tables of FIRDS and GLEIF are described this way.
+Silver tables of FIRDS, GLEIF, ESEF, SEC, EDINET and STS are described this
+way.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ __all__ = ["ColumnDescription", "describe_column", "column_catalogue",
 #: ``marketpricedata.describe_instrument``.
 CATALOGUED_MODULES = ("firds", "entitymasterdata", "exchangerate",
                       "famafrenchdata", "esef", "sec", "edinet",
-                      "financialreport", "gleif")
+                      "financialreport", "gleif", "sts")
 
 #: Lower-case names a module aliases that are not columns of any table, and
 #: that the leading underscore cannot be used to mark. ``src`` and ``tgt`` are
@@ -77,13 +78,13 @@ NOT_COLUMNS = frozenset({"src", "tgt", "checksum"})
 #: since upper case no longer does it.
 SNAKE_CASE_MODULES = ("exchangerate", "entitymasterdata", "famafrenchdata",
                       "esef", "sec", "edinet", "financialreport", "firds",
-                      "gleif")
+                      "gleif", "sts")
 
 #: The modules that declare their schemas with ``StructType().add`` rather
 #: than building their columns with ``withColumn``; see :func:`defined_columns`.
 SCHEMA_DECLARING_MODULES = ("exchangerate", "entitymasterdata",
                             "famafrenchdata", "esef", "sec", "edinet",
-                            "financialreport", "gleif")
+                            "financialreport", "gleif", "sts")
 
 #: Where a catalogued data set's code lives, for the data sets whose folder
 #: is not simply their name. The regimes that require a financial report

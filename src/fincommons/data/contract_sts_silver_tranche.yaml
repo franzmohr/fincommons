@@ -1,0 +1,143 @@
+# The data contract of the table of tranches of the Silver layer of
+# fincommons.sts, in the Open Data Contract Standard. It is the single source
+# of truth for what the columns of the table mean: fincommons.columns reads
+# its descriptions from here, and the test suite holds it against the
+# declared schema and against the table the module writes. See
+# fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sts.silver.tranche
+name: tranche
+version: 1.0.0
+status: active
+domain: sts
+dataProduct: fincommons.sts
+description:
+  purpose: >-
+    Which instruments make up each notified securitisation, so that it can be joined
+    to the reference data of FIRDS.
+  usage: >-
+    Join to FIRDS on isin and to the notifications on id. fincommons.sts.connect_to_sts(spark,
+    config, 'tranche') opens the table.
+  limitations: >-
+    Only public notifications have tranches. A few tranche documents carry no ISIN,
+    and many no instrument name.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/sts/silver.py
+- type: businessDefinition
+  url: https://eur-lex.europa.eu/eli/reg/2017/2402/oj
+  description: >-
+    Regulation (EU) 2017/2402, the Securitisation Regulation, whose Articles 18
+    to 28 define STS securitisation and its notification.
+- type: businessDefinition
+  url: https://registers.esma.europa.eu/solr/esma_registers_stsre/select
+  description: 'The source of the table: the register.'
+schema:
+- name: tranche
+  physicalType: table
+  businessName: STS tranches
+  description: One row per tranche document of a public notification, by its ISIN.
+  dataGranularityDescription: >-
+    One row per tranche document; a notification can carry a tranche document with
+    neither ISIN nor name more than once, so the table has no key.
+  properties:
+  - name: id
+    businessName: Document
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The register's own identifier of the notification document, and the key of
+      the notification and of every table that hangs off it. Neither identifier
+      the register publishes is unique, which is why this one is the key.
+    synonyms:
+    - synonym: id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: id
+      vendor: fincommons
+  - name: securitisation_identifier
+    businessName: Securitisation identifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The securitisation the tranche belongs to, carried so that a join to FIRDS
+      need not go through the notification.
+    synonyms:
+    - synonym: stsre_sec_id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_id
+      vendor: fincommons
+  - name: isin
+    businessName: ISIN
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The ISIN of the tranche, which joins to the instruments of fincommons.firds.
+      A few tranche documents carry none.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: issins
+      vendor: fincommons
+    quality:
+    - name: isin_is_an_isin
+      description: The ISIN is two letters, nine letters or digits, and a check
+        digit.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[A-Z]{2}[A-Z0-9]{9}[0-9]$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: instrument_name
+    businessName: Instrument
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The name of the tranche's instrument, where the register gives
+      one.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: issins
+      vendor: fincommons
+  - name: snapshot
+    businessName: Snapshot
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The day of the snapshot of the register the row was read from. The register
+      is current state, so the dated snapshots of the Bronze layer are the only
+      history of it.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

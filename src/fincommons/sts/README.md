@@ -231,6 +231,12 @@ the frozen list of 2019 to 2022 gives `notified`; the cancellation list gives
 `left_register`, which is the only record of a removal there is for anything
 after May 2022. Each row names its source and the day that source speaks for.
 
+### The data contracts
+
+What the columns of each table hold, and what a reader may rely on, is stated by its data contract in the Open Data Contract Standard, one per table -- `data/contract_sts_silver_notification.yaml` and so on -- which `data/product_sts.yaml` names as the output ports of the module. They are the one place the columns are described -- `fincommons.describe_column("identifier_scheme", dataset="sts")` reads its answer from there -- and the declared schemas of the module are held to them by the tests. A contract states the key of its table where it has one (the document; the document, template and requirement; a synthetic securitisation and its notification number) and the rules the table is held to: one row per key, one snapshot per build, the identifier schemes, types, classes, templates, roles and events among those the module knows, and the LEIs, ISINs and country codes in their forms. `fincommons.contracts.check_quality` runs them; on the register as collected on 27 November 2026 -- 1,151 notifications, 33,771 assertions, 2,292 tranches, 2,346 parties, 2,399 events, 229 synthetic securitisations -- every one held.
+
+Three tables have no key, and their contracts say why. A notification can carry a tranche document with neither ISIN nor name more than once. A party is a child document with nothing that identifies it within its notification. And the events are kept by securitisation rather than by notification, so two notifications that share a securitisation identifier give the same event twice: 52 of the 2,399 events of that collection repeat another.
+
 ### What joins to what
 
 | From | On | To |

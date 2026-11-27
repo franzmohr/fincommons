@@ -1,0 +1,215 @@
+# The data contract of the table of parties of the Silver layer of
+# fincommons.sts, in the Open Data Contract Standard. It is the single source
+# of truth for what the columns of the table mean: fincommons.columns reads
+# its descriptions from here, and the test suite holds it against the
+# declared schema and against the table the module writes. See
+# fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.sts.silver.party
+name: party
+version: 1.0.0
+status: active
+domain: sts
+dataProduct: fincommons.sts
+description:
+  purpose: >-
+    Who originated, lent, sponsored and issued each notified securitisation, so
+    that it can be joined to the entity master data by LEI.
+  usage: >-
+    Join to the notifications on id and to the entity master data or GLEIF on lei.
+    fincommons.sts.connect_to_sts(spark, config, 'party') opens the table.
+  limitations: >-
+    The special purpose entity has neither an LEI nor a name in the register, only
+    a country. Private notifications have no parties.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/sts/silver.py
+- type: businessDefinition
+  url: https://eur-lex.europa.eu/eli/reg/2017/2402/oj
+  description: >-
+    Regulation (EU) 2017/2402, the Securitisation Regulation, whose Articles 18
+    to 28 define STS securitisation and its notification.
+- type: businessDefinition
+  url: https://registers.esma.europa.eu/solr/esma_registers_stsre/select
+  description: 'The source of the table: the register.'
+schema:
+- name: party
+  physicalType: table
+  businessName: STS parties
+  description: >-
+    One row per party to a public notification, whatever its role: originator, original
+    lender, sponsor or special purpose entity.
+  dataGranularityDescription: One row per party document of a notification.
+  properties:
+  - name: id
+    businessName: Document
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The register's own identifier of the notification document, and the key of
+      the notification and of every table that hangs off it. Neither identifier
+      the register publishes is unique, which is why this one is the key.
+    synonyms:
+    - synonym: id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: id
+      vendor: fincommons
+  - name: securitisation_identifier
+    businessName: Securitisation identifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The securitisation the party is a party to, carried so that a join to the
+      entity master data need not go through the notification.
+    synonyms:
+    - synonym: stsre_sec_id
+      source: ESMA STS register
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: stsre_sec_id
+      vendor: fincommons
+  - name: role
+    businessName: Role
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      The role of the party: originator, lender for the original lender, sponsor,
+      or sspe for the securitisation special purpose entity. The register carries
+      each role as a child document of its own; they are one table with this column.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: role_is_known
+      description: The role is originator, lender, sponsor or sspe.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - originator
+        - lender
+        - sponsor
+        - sspe
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: lei
+    businessName: Party LEI
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The LEI of the party, which joins to fincommons.entitymasterdata and fincommons.gleif.
+      The special purpose entity has none in the register, which is a gap in the
+      register.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: register
+      vendor: fincommons
+    quality:
+    - name: party_lei_is_an_lei
+      description: A party is named by a well-formed LEI where it has one.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[A-Z0-9]{18}[0-9]{2}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: name
+    businessName: Party
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The name of the party. The special purpose entity has none in the register.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: register
+      vendor: fincommons
+  - name: country
+    businessName: Country of the party
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The country of the party as a two-letter code.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: register
+      vendor: fincommons
+    quality:
+    - name: country_is_a_code
+      description: The country of a party is a two-letter code.
+      type: library
+      metric: invalidValues
+      arguments:
+        pattern: ^[A-Z]{2}$
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: country_name
+    businessName: Country of the party, name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The country of the party by name.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: register
+      vendor: fincommons
+  - name: snapshot
+    businessName: Snapshot
+    logicalType: date
+    physicalType: date
+    required: true
+    semanticType: dimension
+    description: >-
+      The day of the snapshot of the register the row was read from. The register
+      is current state, so the dated snapshots of the Bronze layer are the only
+      history of it.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
