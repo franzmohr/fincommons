@@ -1,0 +1,501 @@
+# The data contract of the relationships table of the Silver layer of fincommons.gleif,
+# in the Open Data Contract Standard. It is the single source of truth for
+# what the columns of the table mean: fincommons.columns reads its
+# descriptions from here, and the test suite holds it against the code and
+# against the table the module writes. See fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.gleif.silver.relationships
+name: relationships
+version: 1.0.0
+status: active
+domain: gleif
+dataProduct: fincommons.gleif
+description:
+  purpose: >-
+    Who every legal entity is directly or ultimately consolidated by, which fund
+    is managed by which company, and since when, as it stood on any day since the
+    history was begun.
+  usage: >-
+    Read what held on a day with fincommons.gleif.relationships_as_of(spark, config,
+    day). Join start_lei and end_lei to the entities on lei. Every column GLEIF
+    writes is kept as text, dates included.
+  limitations: >-
+    A relationship GLEIF drops can leave the delta files without a deletion; the
+    weekly full copy closes it, the day before that copy rather than the day it
+    happened. Of the up to five periods and quantifiers of a record, the period
+    typed RELATIONSHIP_PERIOD, the one typed ACCOUNTING_PERIOD and the first quantifier
+    are kept. The day of the last update and the deletion do not open a version.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/gleif/silver.py
+- type: businessDefinition
+  url: https://goldencopy.gleif.org/api/v2/golden-copies/publishes
+  description: >-
+    The list of the publications of the golden copy and its delta files, from which
+    the history is read.
+schema:
+- name: relationships
+  physicalType: table
+  businessName: Relationship history
+  description: >-
+    Every version of the Level 2 relationship records -- who is consolidated by
+    or managed by whom -- since the history was begun. A version holds from valid_from
+    to valid_to, both inclusive.
+  dataGranularityDescription: >-
+    One version of a relationship: one row per child, parent, kind of relationship
+    and first day of validity.
+  properties:
+  - name: start_lei
+    businessName: Child
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      The LEI of the entity the relationship is reported for -- the child, the fund,
+      the branch.
+    authoritativeDefinitions:
+    - &id001
+      type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    synonyms:
+    - synonym: Relationship.StartNode.NodeID
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Relationship.StartNode.NodeID
+      vendor: fincommons
+  - name: end_lei
+    businessName: Parent
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The LEI of the entity the relationship points at -- the parent, the manager,
+      the head office.
+    authoritativeDefinitions:
+    - *id001
+    synonyms:
+    - synonym: Relationship.EndNode.NodeID
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Relationship.EndNode.NodeID
+      vendor: fincommons
+  - name: relationship_type
+    businessName: Kind of relationship
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 3
+    semanticType: dimension
+    description: >-
+      The kind of relationship, e.g. IS_DIRECTLY_CONSOLIDATED_BY, IS_ULTIMATELY_CONSOLIDATED_BY,
+      IS_FUND-MANAGED_BY. With the two LEIs it identifies a relationship.
+    synonyms:
+    - synonym: Relationship.RelationshipType
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Relationship.RelationshipType
+      vendor: fincommons
+  - name: relationship_status
+    businessName: Relationship status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: ACTIVE or INACTIVE, as the relationship record states it.
+    synonyms:
+    - synonym: Relationship.RelationshipStatus
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Relationship.RelationshipStatus
+      vendor: fincommons
+  - name: start_node_id_type
+    businessName: Kind of child identifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The kind of identifier of the start node, LEI for every relationship of the
+      golden copy.
+    synonyms:
+    - synonym: Relationship.StartNode.NodeIDType
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Relationship.StartNode.NodeIDType
+      vendor: fincommons
+  - name: end_node_id_type
+    businessName: Kind of parent identifier
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The kind of identifier of the end node, LEI for every relationship of the
+      golden copy.
+    synonyms:
+    - synonym: Relationship.EndNode.NodeIDType
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Relationship.EndNode.NodeIDType
+      vendor: fincommons
+  - name: relationship_start
+    businessName: Relationship from
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The first day of the relationship, from whichever numbered period is typed
+      RELATIONSHIP_PERIOD; ISO 8601 text.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: Relationship.Period.n.startDate
+      vendor: fincommons
+  - name: relationship_end
+    businessName: Relationship to
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The last day of the relationship where it has ended, from the period typed
+      RELATIONSHIP_PERIOD; ISO 8601 text.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: Relationship.Period.n.endDate
+      vendor: fincommons
+  - name: accounting_period_start
+    businessName: Accounting period from
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The start of the accounting period the consolidation was established for,
+      from the period typed ACCOUNTING_PERIOD.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: Relationship.Period.n.startDate
+      vendor: fincommons
+  - name: accounting_period_end
+    businessName: Accounting period to
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The end of that accounting period.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: Relationship.Period.n.endDate
+      vendor: fincommons
+  - name: measurement_method
+    businessName: Measurement method
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      How the first quantifier of the relationship was measured, e.g. ACCOUNTING_CONSOLIDATION.
+    synonyms:
+    - synonym: Relationship.Quantifiers.1.MeasurementMethod
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Relationship.Quantifiers.1.MeasurementMethod
+      vendor: fincommons
+  - name: quantifier_amount
+    businessName: Share
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The amount of the first quantifier, typically the share held, as
+      text.
+    synonyms:
+    - synonym: Relationship.Quantifiers.1.QuantifierAmount
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Relationship.Quantifiers.1.QuantifierAmount
+      vendor: fincommons
+  - name: quantifier_units
+    businessName: Unit of the share
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The unit of the first quantifier, e.g. PERCENTAGE.
+    synonyms:
+    - synonym: Relationship.Quantifiers.1.QuantifierUnits
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Relationship.Quantifiers.1.QuantifierUnits
+      vendor: fincommons
+  - name: initial_registration_date
+    businessName: First registered
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      When the LEI (Level 1) or the relationship record (Level 2) was first registered;
+      ISO 8601 text.
+    synonyms:
+    - synonym: Registration.InitialRegistrationDate
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: Registration.InitialRegistrationDate
+      vendor: fincommons
+  - name: last_update_date
+    businessName: Last updated
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      When the record was last updated by the managing local operating unit; ISO
+      8601 text. The day a version begins is taken from it. Not part of the record's
+      hash.
+    synonyms:
+    - synonym: Registration.LastUpdateDate
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: Registration.LastUpdateDate
+      vendor: fincommons
+  - name: registration_status
+    businessName: Registration status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The status of the registration: ISSUED, LAPSED, RETIRED, MERGED, ANNULLED,
+      DUPLICATE and others on Level 1; PUBLISHED, LAPSED and others on Level 2.
+    synonyms:
+    - synonym: Registration.RegistrationStatus
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Registration.RegistrationStatus
+      vendor: fincommons
+  - name: next_renewal_date
+    businessName: Next renewal
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: When the registration is next due to be renewed; ISO 8601 text.
+    synonyms:
+    - synonym: Registration.NextRenewalDate
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: Registration.NextRenewalDate
+      vendor: fincommons
+  - name: managing_lou
+    businessName: Managing LOU
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The LEI of the local operating unit that manages the record.
+    synonyms:
+    - synonym: Registration.ManagingLOU
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Registration.ManagingLOU
+      vendor: fincommons
+  - name: validation_sources
+    businessName: Validation
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      How far the record was validated: FULLY_CORROBORATED, PARTIALLY_CORROBORATED,
+      ENTITY_SUPPLIED_ONLY, PENDING.
+    synonyms:
+    - synonym: Registration.ValidationSources
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Registration.ValidationSources
+      vendor: fincommons
+  - name: validation_documents
+    businessName: Validation document
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The kind of document the relationship was validated against, e.g. ACCOUNTS_FILING.
+    synonyms:
+    - synonym: Registration.ValidationDocuments
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Registration.ValidationDocuments
+      vendor: fincommons
+  - name: deleted_at
+    businessName: Deleted
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      When GLEIF reported the relationship deleted, read from a delta file; a deleted
+      relationship has its version closed the day before. Not part of the record's
+      hash.
+    synonyms:
+    - synonym: DeletedAt
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: DeletedAt
+      vendor: fincommons
+  - name: record_hash
+    businessName: Record hash
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      SHA-256 of the columns the version states, other than the day of the last
+      update and the deletion; a new version begins where it changes.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: valid_from
+    businessName: Valid from
+    logicalType: date
+    physicalType: date
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 4
+    semanticType: dimension
+    description: >-
+      The first day the version held: the day of the record's last update, or the
+      day of the publication it was read in where GLEIF changed it without an update.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: publication
+    businessName: Publication
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: The GLEIF publication the version was read from, YYYYMMDD-HHMM.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: valid_to
+    businessName: Valid to
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: The last day the version held; empty while it still does.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: latest_record
+    businessName: Latest record
+    logicalType: boolean
+    physicalType: boolean
+    required: true
+    semanticType: dimension
+    description: >-
+      Whether the version is the most recent one known for its key, including a
+      record that has ended.
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

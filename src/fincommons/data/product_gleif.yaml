@@ -1,0 +1,29 @@
+# The data product of fincommons.gleif, in the Open Data Product Standard.
+# Its output ports name the contracts of the two Silver tables by identifier
+# and version; the test suite checks that the contracts are shipped in those
+# versions. The order of the ports is the order in which the column catalogue
+# takes a column named in both tables: from the first. See fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.gleif
+name: gleif
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: gleif
+description:
+  purpose: >-
+    The reference data of every legal entity identifier that GLEIF publishes,
+    who an entity is and who owns or manages whom, as it stood on any day
+    since the history was begun.
+outputPorts:
+  - name: silver_entities
+    type: table
+    description: Every version of the Level 1 reference data of every LEI.
+    contractId: fincommons.gleif.silver.entities
+    version: 1.0.0
+  - name: silver_relationships
+    type: table
+    description: Every version of the Level 2 relationship records.
+    contractId: fincommons.gleif.silver.relationships
+    version: 1.0.0

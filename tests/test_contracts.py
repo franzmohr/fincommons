@@ -188,7 +188,7 @@ def test_a_product_names_contracts_that_are_shipped_in_that_version():
 
 def test_an_unknown_contract_names_those_that_exist():
     with pytest.raises(KeyError, match=EXCHANGERATE):
-        c.load_contract("fincommons.firds.silver.main")
+        c.load_contract("fincommons.sec.silver.facts")
 
 
 def test_the_contract_describes_the_columns_of_its_table():

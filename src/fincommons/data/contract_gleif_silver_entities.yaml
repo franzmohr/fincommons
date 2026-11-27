@@ -1,0 +1,788 @@
+# The data contract of the entities table of the Silver layer of fincommons.gleif,
+# in the Open Data Contract Standard. It is the single source of truth for
+# what the columns of the table mean: fincommons.columns reads its
+# descriptions from here, and the test suite holds it against the code and
+# against the table the module writes. See fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.gleif.silver.entities
+name: entities
+version: 1.0.0
+status: active
+domain: gleif
+dataProduct: fincommons.gleif
+description:
+  purpose: >-
+    Who every legal entity identifier belongs to, as it stood on any day since the
+    history was begun: the legal name, the addresses, the legal form, the jurisdiction,
+    and the status of the entity and of its registration.
+  usage: >-
+    Read what held on a day with fincommons.gleif.entities_as_of(spark, config,
+    day), and the latest state with fincommons.gleif.latest_entities(spark, config).
+    Every column GLEIF writes is kept as text, dates included, as the ISO 8601 text
+    of the file; parse it where a date is wanted.
+  limitations: >-
+    39 of the some 340 columns of the golden copy are kept: every further other
+    name and address line is left out. A history begun on a day holds each record
+    as it was then, from its last update before that; what it was before that is
+    not known. A version begins on the day of the record's last update, and a history
+    fed by monthly full copies loses the intermediate states of a record that changed
+    more than once within the month. The day of the last update and the conformity
+    flag do not open a version.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/gleif/silver.py
+- type: businessDefinition
+  url: https://goldencopy.gleif.org/api/v2/golden-copies/publishes
+  description: >-
+    The list of the publications of the golden copy and its delta files, from which
+    the history is read.
+schema:
+- name: entities
+  physicalType: table
+  businessName: LEI reference data history
+  description: >-
+    Every version of the Level 1 reference data of every LEI -- who an entity is
+    -- since the history was begun. A version holds from valid_from to valid_to,
+    both inclusive.
+  dataGranularityDescription: >-
+    One version of the reference data of an LEI: one row per LEI and first day of
+    validity.
+  properties:
+  - name: lei
+    businessName: LEI
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: The legal entity identifier (ISO 17442).
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    synonyms:
+    - synonym: LEI
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: LEI
+      vendor: fincommons
+  - name: legal_name
+    businessName: Legal name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The legal name of the entity.
+    synonyms:
+    - synonym: Entity.LegalName
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalName
+      vendor: fincommons
+  - name: legal_name_language
+    businessName: Language of the legal name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The language of the legal name (xml:lang).
+    synonyms:
+    - synonym: Entity.LegalName.xmllang
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalName.xmllang
+      vendor: fincommons
+  - name: other_name
+    businessName: Other name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The first other name of the entity, such as a trading name or a previous legal
+      name.
+    synonyms:
+    - synonym: Entity.OtherEntityNames.OtherEntityName.1
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.OtherEntityNames.OtherEntityName.1
+      vendor: fincommons
+  - name: other_name_type
+    businessName: Kind of other name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      What the first other name is, e.g. TRADING_OR_OPERATING_NAME, PREVIOUS_LEGAL_NAME.
+    synonyms:
+    - synonym: Entity.OtherEntityNames.OtherEntityName.1.type
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.OtherEntityNames.OtherEntityName.1.type
+      vendor: fincommons
+  - name: transliterated_name
+    businessName: Transliterated name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The first transliterated name, the legal name in Latin script where it is
+      written in another.
+    synonyms:
+    - synonym: Entity.TransliteratedOtherEntityNames.TransliteratedOtherEntityName.1
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.TransliteratedOtherEntityNames.TransliteratedOtherEntityName.1
+      vendor: fincommons
+  - name: legal_address_line
+    businessName: Legal address
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The first line of the legal address.
+    synonyms:
+    - synonym: Entity.LegalAddress.FirstAddressLine
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalAddress.FirstAddressLine
+      vendor: fincommons
+  - name: legal_address_city
+    businessName: City of the legal address
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The city of the legal address.
+    synonyms:
+    - synonym: Entity.LegalAddress.City
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalAddress.City
+      vendor: fincommons
+  - name: legal_address_region
+    businessName: Region of the legal address
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The region of the legal address (ISO 3166-2).
+    synonyms:
+    - synonym: Entity.LegalAddress.Region
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalAddress.Region
+      vendor: fincommons
+  - name: legal_address_country
+    businessName: Country of the legal address
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The country of the legal address (ISO 3166-1 alpha-2).
+    synonyms:
+    - synonym: Entity.LegalAddress.Country
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalAddress.Country
+      vendor: fincommons
+  - name: legal_address_postal_code
+    businessName: Postal code of the legal address
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The postal code of the legal address.
+    synonyms:
+    - synonym: Entity.LegalAddress.PostalCode
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalAddress.PostalCode
+      vendor: fincommons
+  - name: hq_address_line
+    businessName: Headquarters address
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The first line of the headquarters address.
+    synonyms:
+    - synonym: Entity.HeadquartersAddress.FirstAddressLine
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.HeadquartersAddress.FirstAddressLine
+      vendor: fincommons
+  - name: hq_address_city
+    businessName: City of the headquarters
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The city of the headquarters address.
+    synonyms:
+    - synonym: Entity.HeadquartersAddress.City
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.HeadquartersAddress.City
+      vendor: fincommons
+  - name: hq_address_region
+    businessName: Region of the headquarters
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The region of the headquarters address (ISO 3166-2).
+    synonyms:
+    - synonym: Entity.HeadquartersAddress.Region
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.HeadquartersAddress.Region
+      vendor: fincommons
+  - name: hq_address_country
+    businessName: Country of the headquarters
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The country of the headquarters address (ISO 3166-1 alpha-2).
+    synonyms:
+    - synonym: Entity.HeadquartersAddress.Country
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.HeadquartersAddress.Country
+      vendor: fincommons
+  - name: hq_address_postal_code
+    businessName: Postal code of the headquarters
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The postal code of the headquarters address.
+    synonyms:
+    - synonym: Entity.HeadquartersAddress.PostalCode
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.HeadquartersAddress.PostalCode
+      vendor: fincommons
+  - name: registration_authority_id
+    businessName: Registration authority
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The register the entity is entered in, as GLEIF's code list of registration
+      authorities names it (RA000000).
+    synonyms:
+    - synonym: Entity.RegistrationAuthority.RegistrationAuthorityID
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.RegistrationAuthority.RegistrationAuthorityID
+      vendor: fincommons
+  - name: registration_authority_entity_id
+    businessName: Number in the register
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The entity's number in that register.
+    synonyms:
+    - synonym: Entity.RegistrationAuthority.RegistrationAuthorityEntityID
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Entity.RegistrationAuthority.RegistrationAuthorityEntityID
+      vendor: fincommons
+  - name: legal_jurisdiction
+    businessName: Legal jurisdiction
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The jurisdiction of the entity's legal formation (ISO 3166).
+    synonyms:
+    - synonym: Entity.LegalJurisdiction
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalJurisdiction
+      vendor: fincommons
+  - name: entity_category
+    businessName: Entity category
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      GENERAL, FUND, BRANCH, SOLE_PROPRIETOR, RESIDENT_GOVERNMENT_ENTITY or INTERNATIONAL_ORGANIZATION.
+    synonyms:
+    - synonym: Entity.EntityCategory
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.EntityCategory
+      vendor: fincommons
+  - name: entity_sub_category
+    businessName: Entity sub-category
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The sub-category of a government entity or an international organisation.
+    synonyms:
+    - synonym: Entity.EntitySubCategory
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.EntitySubCategory
+      vendor: fincommons
+  - name: legal_form_code
+    businessName: Legal form (ISO 20275)
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The legal form, as an ISO 20275 entity legal form code; 8888 or 9999 where
+      none applies.
+    synonyms:
+    - synonym: Entity.LegalForm.EntityLegalFormCode
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalForm.EntityLegalFormCode
+      vendor: fincommons
+  - name: legal_form_other
+    businessName: Legal form in words
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The legal form in words, where no ISO 20275 code applies.
+    synonyms:
+    - synonym: Entity.LegalForm.OtherLegalForm
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: Entity.LegalForm.OtherLegalForm
+      vendor: fincommons
+  - name: associated_lei
+    businessName: Associated entity
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: For a fund or a branch, the LEI of the entity it is associated
+      with.
+    synonyms:
+    - synonym: Entity.AssociatedEntity.AssociatedLEI
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Entity.AssociatedEntity.AssociatedLEI
+      vendor: fincommons
+  - name: associated_entity_type
+    businessName: Kind of association
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The kind of association, e.g. FUND_FAMILY.
+    synonyms:
+    - synonym: Entity.AssociatedEntity.type
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.AssociatedEntity.type
+      vendor: fincommons
+  - name: entity_status
+    businessName: Entity status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      ACTIVE, INACTIVE or NULL: whether the entity is legally registered and operating.
+    synonyms:
+    - synonym: Entity.EntityStatus
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.EntityStatus
+      vendor: fincommons
+  - name: entity_creation_date
+    businessName: Created
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: When the entity was legally created; ISO 8601 text.
+    synonyms:
+    - synonym: Entity.EntityCreationDate
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: Entity.EntityCreationDate
+      vendor: fincommons
+  - name: entity_expiration_date
+    businessName: Ceased
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: When the entity ceased to operate, where it has; ISO 8601 text.
+    synonyms:
+    - synonym: Entity.EntityExpirationDate
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: Entity.EntityExpirationDate
+      vendor: fincommons
+  - name: entity_expiration_reason
+    businessName: Reason it ceased
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: Why it ceased, e.g. DISSOLVED, CORPORATE_ACTION.
+    synonyms:
+    - synonym: Entity.EntityExpirationReason
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Entity.EntityExpirationReason
+      vendor: fincommons
+  - name: successor_lei
+    businessName: Successor
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The LEI of the first successor entity, after a merger or a corporate action.
+    synonyms:
+    - synonym: Entity.SuccessorEntity.1.SuccessorLEI
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Entity.SuccessorEntity.1.SuccessorLEI
+      vendor: fincommons
+  - name: initial_registration_date
+    businessName: First registered
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      When the LEI (Level 1) or the relationship record (Level 2) was first registered;
+      ISO 8601 text.
+    synonyms:
+    - synonym: Registration.InitialRegistrationDate
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: Registration.InitialRegistrationDate
+      vendor: fincommons
+  - name: last_update_date
+    businessName: Last updated
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      When the record was last updated by the managing local operating unit; ISO
+      8601 text. The day a version begins is taken from it. Not part of the record's
+      hash.
+    synonyms:
+    - synonym: Registration.LastUpdateDate
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: Registration.LastUpdateDate
+      vendor: fincommons
+  - name: registration_status
+    businessName: Registration status
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      The status of the registration: ISSUED, LAPSED, RETIRED, MERGED, ANNULLED,
+      DUPLICATE and others on Level 1; PUBLISHED, LAPSED and others on Level 2.
+    synonyms:
+    - synonym: Registration.RegistrationStatus
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Registration.RegistrationStatus
+      vendor: fincommons
+  - name: next_renewal_date
+    businessName: Next renewal
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: When the registration is next due to be renewed; ISO 8601 text.
+    synonyms:
+    - synonym: Registration.NextRenewalDate
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: datetime
+      vendor: fincommons
+    - property: source
+      value: Registration.NextRenewalDate
+      vendor: fincommons
+  - name: managing_lou
+    businessName: Managing LOU
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The LEI of the local operating unit that manages the record.
+    synonyms:
+    - synonym: Registration.ManagingLOU
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Registration.ManagingLOU
+      vendor: fincommons
+  - name: validation_sources
+    businessName: Validation
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      How far the record was validated: FULLY_CORROBORATED, PARTIALLY_CORROBORATED,
+      ENTITY_SUPPLIED_ONLY, PENDING.
+    synonyms:
+    - synonym: Registration.ValidationSources
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Registration.ValidationSources
+      vendor: fincommons
+  - name: validation_authority_id
+    businessName: Validation authority
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The register the record was validated against.
+    synonyms:
+    - synonym: Registration.ValidationAuthority.ValidationAuthorityID
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: Registration.ValidationAuthority.ValidationAuthorityID
+      vendor: fincommons
+  - name: validation_authority_entity_id
+    businessName: Number with the validation authority
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: The entity's number in that register.
+    synonyms:
+    - synonym: Registration.ValidationAuthority.ValidationAuthorityEntityID
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Registration.ValidationAuthority.ValidationAuthorityEntityID
+      vendor: fincommons
+  - name: conformity_flag
+    businessName: Conformity
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Whether the record conforms to GLEIF's data quality rules: CONFORMING, NON_CONFORMING.
+    synonyms:
+    - synonym: ConformityFlag
+      source: GLEIF golden copy
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: ConformityFlag
+      vendor: fincommons
+  - name: record_hash
+    businessName: Record hash
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      SHA-256 of the columns the version states, other than the day of the last
+      update and the deletion; a new version begins where it changes.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: valid_from
+    businessName: Valid from
+    logicalType: date
+    physicalType: date
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      The first day the version held: the day of the record's last update, or the
+      day of the publication it was read in where GLEIF changed it without an update.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: publication
+    businessName: Publication
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: The GLEIF publication the version was read from, YYYYMMDD-HHMM.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: valid_to
+    businessName: Valid to
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: The last day the version held; empty while it still does.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: latest_record
+    businessName: Latest record
+    logicalType: boolean
+    physicalType: boolean
+    required: true
+    semanticType: dimension
+    description: >-
+      Whether the version is the most recent one known for its key, including a
+      record that has ended.
+    customProperties:
+    - property: kind
+      value: flag
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons

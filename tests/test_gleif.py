@@ -490,3 +490,70 @@ def test_a_download_is_decoded_and_must_be_a_zip(lake):
                                      session=Session(gzip.compress(b"junk")))
     assert not [n for n in os.listdir(common.path_landing(lake, "level_1"))
                 if n.startswith("20261127")]
+
+
+# The data contracts
+# --------------------------------------------------------------------------
+
+
+def assert_meets_contract(table, identifier):
+    """The table is the table its contract describes: the same columns in
+    the same order and of the same types, no empty value where the contract
+    says a column is required, and one row per value of the primary key."""
+    from pyspark.sql import functions as F
+    from fincommons.contracts import load_contract, spark_schema
+
+    contract = load_contract(identifier)
+    properties = contract["schema"][0]["properties"]
+
+    assert [(f.name, f.dataType) for f in table.schema] == \
+        [(f.name, f.dataType) for f in spark_schema(contract)]
+    for prop in properties:
+        if prop.get("required"):
+            assert table.where(F.col(prop["name"]).isNull()).count() == 0, prop["name"]
+    key = [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                     key=lambda p: p["primaryKeyPosition"])]
+    assert table.groupBy(*key).count().where("count > 1").count() == 0
+    return key
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, lake):
+    """Both levels carried through a full copy, a delta that changes, adds
+    and deletes, and a full copy that drops, so that each table holds closed
+    and open versions."""
+    from fincommons.gleif import silver
+
+    for label, kind, rows in [
+        ("20261101-0000", common.FULL, START[2]),
+        ("20261103-0000", common.DELTA, [
+            ("A", "Alpha Holding AG", "AT", "2026-11-02T09:00:00Z"),
+            ("C", "Gamma NV", "NL", "2026-11-02T09:00:00Z")]),
+        ("20261201-0000", common.FULL, [
+            ("A", "Alpha Holding AG", "AT", "2026-11-02T09:00:00Z")]),
+    ]:
+        path = level_1_bronze(spark, lake, label, kind, rows)
+        silver.apply_publication(spark, lake, "level_1", label, kind, path)
+
+    period = ("RELATIONSHIP_PERIOD", "2019-06-01", None, None)
+    for label, kind, rows in [
+        ("20261101-0000", common.FULL, [
+            ("A", "P", "ACTIVE", *period, "2026-10-01T00:00:00Z", None),
+            ("B", "P", "ACTIVE", *period, "2026-10-01T00:00:00Z", None)]),
+        ("20261103-0000", common.DELTA, [
+            ("A", "P", "INACTIVE", *period, "2026-11-02T00:00:00Z", None),
+            ("B", "P", "ACTIVE", *period, "2026-11-02T00:00:00Z", "2026-11-02T08:00:00Z")]),
+        ("20261201-0000", common.FULL, [
+            ("A", "P", "INACTIVE", *period, "2026-11-02T00:00:00Z", None)]),
+    ]:
+        path = os.path.join(common.path_bronze(lake, "level_2"), f"{label}-{kind}.parquet")
+        relationship_bronze(spark, rows).write.parquet(path)
+        silver.apply_publication(spark, lake, "level_2", label, kind, path)
+
+    entities = common.connect_to_gleif(spark, lake, "level_1")
+    relationships = common.connect_to_gleif(spark, lake, "level_2")
+    assert entities.where("valid_to IS NOT NULL").count() > 0
+    assert relationships.where("valid_to IS NOT NULL").count() > 0
+    assert assert_meets_contract(entities, "fincommons.gleif.silver.entities") == \
+        list(history.KEYS["level_1"]) + [history.VALID_FROM]
+    assert assert_meets_contract(relationships, "fincommons.gleif.silver.relationships") == \
+        list(history.KEYS["level_2"]) + [history.VALID_FROM]

@@ -2577,3 +2577,55 @@ def test_a_batch_size_that_names_nothing_is_refused(spark, config, size):
         silver.update_from_bronze_to_silver_main(spark, config, batch=size)
 
     assert common.get_metadata_maxdate(spark, config, "MAIN") == "2000-01-01"
+
+
+# The data contracts
+# --------------------------------------------------------------------------
+
+
+def assert_meets_contract(table, identifier):
+    """The table is the table its contract describes: the same columns in
+    the same order and of the same types, no empty value where the contract
+    says a column is required, and one row per value of the primary key."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    contract = load_contract(identifier)
+    promised = spark_schema(contract)
+    properties = contract["schema"][0]["properties"]
+
+    assert [(f.name, f.dataType) for f in table.schema] == \
+        [(f.name, f.dataType) for f in promised]
+    for prop in properties:
+        if prop.get("required"):
+            assert table.filter(func.col(prop["name"]).isNull()).count() == 0, prop["name"]
+    key = [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                     key=lambda p: p["primaryKeyPosition"])]
+    assert table.groupBy(*key).count().filter("count > 1").count() == 0
+    return key
+
+
+def test_the_tables_are_the_tables_their_contracts_describe(spark, config):
+    """Built from a full file and a delta file that modifies, adds and
+    cancels, so that the history holds closed and open versions, records of
+    every kind, and an instrument on two venues for the compact table."""
+    common.create_directory_tree(config)
+    write_full_bronze(spark, config, date(2016, 9, 2))
+    finished(config, "FULINS_E_20160902_01of01.zip")
+    silver.update_from_bronze_to_silver_main(spark, config)
+    day = date(2016, 9, 4)
+    write_bronze(spark, config, [(day, [
+        ("ISIN1", "MIC1", "Company X", day, "ModfdRcrd"),
+        ("ISIN1", "MIC2", "Company X", day, "NewRcrd"),
+        ("ISIN2", "MIC1", "Company Y", day, "NewRcrd"),
+        ("ISIN3", "MIC1", "Company Z", day, silver.CANCELLATION),
+    ])])
+    finished(config, "DLTINS_20160904_01of01.zip")
+    silver.update_from_bronze_to_silver_main(spark, config)
+    silver.update_from_silver_main_to_silver_compact(spark, config)
+
+    main = common.connect_to_firds(spark, config, "main")
+    assert main.filter("valid_to IS NOT NULL").count() > 0
+    assert assert_meets_contract(main, "fincommons.firds.silver.main") == \
+        list(history.KEY_COLUMNS) + [history.VALID_FROM]
+    assert assert_meets_contract(common.connect_to_firds(spark, config, "compact"),
+                                 "fincommons.firds.silver.compact") == ["isin"]

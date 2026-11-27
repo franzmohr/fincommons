@@ -1,0 +1,29 @@
+# The data product of fincommons.firds, in the Open Data Product Standard.
+# Its output ports name the contracts of the two Silver tables by identifier
+# and version; the test suite checks that the contracts are shipped in those
+# versions. The order of the ports is the order in which the column catalogue
+# takes a column named in both tables: from the first. See fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.firds
+name: firds
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: firds
+description:
+  purpose: >-
+    The reference data ESMA publishes in FIRDS for every financial instrument
+    admitted to trading on an EU trading venue: its full history per venue,
+    and its latest state per ISIN.
+outputPorts:
+  - name: silver_main
+    type: table
+    description: Every version of the reference data of every instrument on every trading venue.
+    contractId: fincommons.firds.silver.main
+    version: 1.0.0
+  - name: silver_compact
+    type: table
+    description: The latest reference data of every instrument, one row per ISIN.
+    contractId: fincommons.firds.silver.compact
+    version: 1.0.0

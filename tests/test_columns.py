@@ -43,10 +43,16 @@ def test_a_contract_names_the_stage_that_writes_its_columns():
     # A contract describes a table, not the files of the code, so it names
     # the one stage that writes the table rather than every file that names
     # the column -- the schema of the proprietary file declares the columns of
-    # the exchange rates as well. That stage has to be among the files.
+    # the exchange rates as well. That stage has to be among the files, or a
+    # file of rules the stage applies: FIRDS keeps the rules of its history,
+    # and with them the names of the version columns, in firds.history, and
+    # GLEIF those and the columns it reads in gleif.history and gleif.common.
+    applied_by = {"firds.silver": {"firds.silver", "firds.history"},
+                  "gleif.silver": {"gleif.silver", "gleif.history", "gleif.common"}}
     defined = defined_columns().set_index(["module", "column"])["tables"]
     for module, column, stage, *_ in catalogue_rows():
-        assert stage in defined[(module, column)].split(";"), (module, column)
+        writers = applied_by.get(stage, {stage})
+        assert writers & set(defined[(module, column)].split(";")), (module, column)
 
 
 def test_every_entry_is_described_with_a_known_kind():

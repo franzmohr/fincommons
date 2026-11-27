@@ -1,0 +1,311 @@
+# The data contract of the compact table of the Silver layer of
+# fincommons.firds, in the Open Data Contract Standard. It is the single
+# source of truth for what the columns of the table mean: fincommons.columns
+# reads its descriptions from here, and the test suite holds it against the
+# code and against the table the module writes. See fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.firds.silver.compact
+name: compact
+version: 1.0.0
+status: active
+domain: firds
+dataProduct: fincommons.firds
+description:
+  purpose: >-
+    The reference data of every financial instrument in its latest state, one row
+    per ISIN, for joining to data that names an instrument but not a venue.
+  usage: >-
+    Join on isin. Where a column holds the venues' values joined with '+', test
+    for one value with a split rather than equality. fincommons.firds.connect_to_firds(spark,
+    config, 'compact') opens the table.
+  limitations: >-
+    The table is rebuilt in full from the main table and holds the latest state
+    only; for the state on a day read the main table. A column whose venues disagree
+    is empty or holds every value joined with '+', so it states only what the venues
+    agree on.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/firds/silver.py
+- type: businessDefinition
+  url: https://eur-lex.europa.eu/eli/reg_del/2017/585/oj
+  description: >-
+    Commission Delegated Regulation (EU) 2017/585 (RTS 23), whose annex defines
+    the fields of the reference data.
+schema:
+- name: compact
+  physicalType: table
+  businessName: FIRDS reference data per ISIN
+  description: >-
+    One row per ISIN, from the latest version of every venue's record of it in the
+    main table, cancelled records left out.
+  dataGranularityDescription: One row per ISIN.
+  properties:
+  - name: isin
+    businessName: ISIN
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      Instrument identification code: the ISIN of the financial instrument (RTS
+      23 field 1).
+    synonyms:
+    - synonym: FinInstrmGnlAttrbts.Id
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: FinInstrmGnlAttrbts.Id
+      vendor: fincommons
+  - name: cfi
+    businessName: CFI code
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Classification of the instrument as an ISO 10962 cfi code (RTS 23 field 3).
+      In this table, the distinct codes the venues report for the ISIN, sorted and
+      joined with '+'.
+    synonyms:
+    - synonym: FinInstrmGnlAttrbts.ClssfctnTp
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: FinInstrmGnlAttrbts.ClssfctnTp
+      vendor: fincommons
+  - name: issuer
+    businessName: Issuer LEI
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      LEI of the issuer, or of the trading venue operator where the instrument has
+      no issuer (RTS 23 field 5). In this table, the distinct values the venues
+      report for the ISIN, sorted and joined with '+'.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: >-
+        https://www.gleif.org/en/about-lei/introducing-the-legal-entity-identifier-lei
+      description: ISO 17442, the Legal Entity Identifier.
+    synonyms:
+    - synonym: Issr
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: Issr
+      vendor: fincommons
+  - name: trading_venue
+    businessName: Trading venue
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Trading venue: the MIC of the venue the instrument is admitted to or traded
+      on (RTS 23 field 6). In this table, the distinct venues of the ISIN, sorted
+      and joined with '+'.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: https://www.iso20022.org/market-identifier-codes
+      description: ISO 10383, the Market Identifier Code.
+    synonyms:
+    - synonym: TradgVnRltdAttrbts.Id
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: TradgVnRltdAttrbts.Id
+      vendor: fincommons
+  - name: short_name
+    businessName: Short name (FISN)
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Short name of the instrument, the ISO 18774 FISN (RTS 23 field 7). In this
+      table, the distinct names the venues report for the ISIN, sorted and joined
+      with '+'.
+    synonyms:
+    - synonym: FinInstrmGnlAttrbts.ShrtNm
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: FinInstrmGnlAttrbts.ShrtNm
+      vendor: fincommons
+  - name: maturity_date
+    businessName: Maturity date
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      Maturity date of a debt instrument (RTS 23 field 15). In this table, the value
+      the venues agree on, empty where they disagree.
+    synonyms:
+    - synonym: DebtInstrmAttrbts.MtrtyDt
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: DebtInstrmAttrbts.MtrtyDt
+      vendor: fincommons
+  - name: expiry_date
+    businessName: Expiry date
+    logicalType: date
+    physicalType: date
+    semanticType: dimension
+    description: >-
+      Expiry date of a derivative (RTS 23 field 24). In this table, the value the
+      venues agree on, empty where they disagree.
+    synonyms:
+    - synonym: DerivInstrmAttrbts.XpryDt
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: DerivInstrmAttrbts.XpryDt
+      vendor: fincommons
+  - name: price_multiplier
+    businessName: Price multiplier
+    logicalType: number
+    physicalType: decimal(35,17)
+    semanticType: measure
+    transformLogic: AVG(price_multiplier)
+    description: >-
+      Price multiplier of a derivative: the number of units of the underlying represented
+      by one contract (RTS 23 field 25). In this table, the value the venues agree
+      on, empty where they disagree.
+    synonyms:
+    - synonym: DerivInstrmAttrbts.PricMltplr
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: quantity
+      vendor: fincommons
+    - property: source
+      value: DerivInstrmAttrbts.PricMltplr
+      vendor: fincommons
+    - property: aggregation
+      value: nonAdditive
+      vendor: fincommons
+      description: A multiplier of the contract, which is never summed.
+    - property: aggregateWithin
+      value:
+      - isin
+      vendor: fincommons
+  - name: full_name
+    businessName: Full name
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Full name of the financial instrument (RTS 23 field 2). In this table, the
+      value the venues agree on, empty where they disagree.
+    synonyms:
+    - synonym: FinInstrmGnlAttrbts.FullNm
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: FinInstrmGnlAttrbts.FullNm
+      vendor: fincommons
+  - name: notional_currency
+    businessName: Notional currency
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Notional currency of the instrument (RTS 23 field 13, notional currency 1),
+      ISO 4217. In this table, the value the venues agree on, empty where they disagree.
+    authoritativeDefinitions:
+    - type: businessDefinition
+      url: https://www.iso.org/iso-4217-currency-codes.html
+    synonyms:
+    - synonym: FinInstrmGnlAttrbts.NtnlCcy
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: currency
+      vendor: fincommons
+    - property: source
+      value: FinInstrmGnlAttrbts.NtnlCcy
+      vendor: fincommons
+  - name: option_type
+    businessName: Option type
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Option type (RTS 23 field 30): CALL, PUTO or OTHR. In this table, the value
+      the venues agree on, empty where they disagree.
+    synonyms:
+    - synonym: DerivInstrmAttrbts.OptnTp
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: DerivInstrmAttrbts.OptnTp
+      vendor: fincommons
+  - name: option_exercise_style
+    businessName: Option exercise style
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Option exercise style (RTS 23 field 33): EURO, AMER, ASIA, BERM or OTHR. In
+      this table, the value the venues agree on, empty where they disagree.
+    synonyms:
+    - synonym: DerivInstrmAttrbts.OptnExrcStyle
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: DerivInstrmAttrbts.OptnExrcStyle
+      vendor: fincommons
+  - name: delivery_type
+    businessName: Delivery type
+    logicalType: string
+    physicalType: string
+    semanticType: dimension
+    description: >-
+      Delivery type of a derivative (RTS 23 field 34): PHYS physical, CASH cash
+      or OPTL optional. In this table, the value the venues agree on, empty where
+      they disagree.
+    synonyms:
+    - synonym: DerivInstrmAttrbts.DlvryTp
+      source: ESMA FIRDS
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: DerivInstrmAttrbts.DlvryTp
+      vendor: fincommons

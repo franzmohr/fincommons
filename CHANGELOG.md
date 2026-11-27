@@ -45,6 +45,22 @@ release may change the public API, which `tests/test_public_api.py` lists.
   applied in one Delta merge whose commit names it. `entitymasterdata` reads the entities and their parents from the history
   where the configuration has a `gleif` section and the history is built.
 
+- `firds` and `gleif`: data contracts for their Silver tables, and a product
+  for each module. `firds`: the tables `main` and `compact`, in
+  `product_firds.yaml`. The contracts state the key of
+  each table -- the ISIN, the trading venue and `valid_from` for the history,
+  the ISIN for the compact table -- and which columns are measures: the
+  amounts, the rates and the price multiplier, none of which may be summed
+  over the rows of a table that repeats an instrument per venue and version.
+  Their columns left `column_catalogue.csv`. A column of both tables takes its
+  catalogue row from `main`, the first output port of the product;
+  `contracts.catalogue_rows` takes a column a module writes into several
+  tables from the table its product lists first. `gleif`: the tables
+  `entities` and `relationships`, in `product_gleif.yaml`, keyed by the LEI,
+  or the two LEIs and the type of the relationship, and `valid_from`; their
+  columns are dimensions, kept as the text GLEIF writes, and their 59 rows
+  left `column_catalogue.csv` as well.
+
 - `financialreport.esef`: `export_esef_reports` writes one issuer's reports
   to an OpenDocument spreadsheet, with a sheet that sets the filings side by
   side -- one row per figure and period, one column per filing -- so that the

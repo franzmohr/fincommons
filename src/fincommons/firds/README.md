@@ -317,6 +317,23 @@ firds_compact = firds.connect_to_firds(spark, config_path, "compact")
 `main` carries deletion vectors, so a reader outside Spark needs support for
 them; `compact` is the table meant for such readers.
 
+What the columns of each table hold, and what a reader may rely on, is
+stated by its data contract in the Open Data Contract Standard:
+`data/contract_firds_silver_main.yaml` and
+`data/contract_firds_silver_compact.yaml`, which `data/product_firds.yaml`
+names as the module's output ports. They are the one place the columns are
+described, and `fincommons.describe_column("cfi", dataset="firds")` reads its
+answer from there. A contract states the key of its table -- the ISIN, the
+trading venue and `valid_from` for `main`, the ISIN for `compact` -- and
+which columns are measures and how they may be combined: an amount or a rate
+is repeated for every venue and every version of an instrument, so it is
+never summed over the rows of `main`.
+
+```python
+from fincommons.contracts import load_contract, spark_schema
+spark_schema(load_contract("fincommons.firds.silver.main"))
+```
+
 ## Tests
 
 ```

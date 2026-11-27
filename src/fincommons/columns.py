@@ -33,8 +33,8 @@ catalogue entry fails a test rather than going undocumented.
 A table that has a data contract is described by its contract instead, and
 its columns have no row in the file: the contract is the single source of
 truth for them, and :func:`column_catalogue` takes their rows from it, in the
-same shape (see :mod:`fincommons.contracts`). The exchange rates are the first
-data set described this way.
+same shape (see :mod:`fincommons.contracts`). The exchange rates and the
+Silver tables of FIRDS and GLEIF are described this way.
 """
 
 from __future__ import annotations

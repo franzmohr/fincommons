@@ -122,48 +122,10 @@ financialreport,text,financialreport.combined.common;financialreport.combined.si
 financialreport,unit,financialreport.combined.common,esef;sec,code,"The unit of the fact, such as EUR, USD or shares. Empty for a fact that is not numeric."
 financialreport,value,financialreport.combined.common,esef;sec,amount,The value of the fact where it is numeric.
 firds,DATADT,firds.bronze;firds.silver,derived,date,"Bronze: Reference date of the FIRDS file (Bronze partition) a record was read from, i.e. the publication date of the full or delta file."
-firds,action_type,firds.history;firds.silver,derived,code,"Action type: the delta-file element a record was reported in, NewRcrd (new), ModfdRcrd (modified), TermntdRcrd (terminated) or CancRcrd (cancelled); it determines how the record changes the instrument history."
-firds,admission_approval_date_by_issuer,firds.silver,TradgVnRltdAttrbts.AdmssnApprvlDtByIssr,datetime,"Date and time the issuer approved the admission to trading or trading of its instrument on the venue (RTS 23 field 9, date of approval of the admission to trading)."
-firds,cfi,firds.silver,FinInstrmGnlAttrbts.ClssfctnTp,code,"Classification of the instrument as an ISO 10962 cfi code (RTS 23 field 3). In the compact table, the distinct codes reported by the venues for an ISIN joined with '+'."
-firds,commodity_derivative_indicator,firds.silver,FinInstrmGnlAttrbts.CmmdtyDerivInd,flag,Commodity derivative indicator: whether the instrument is a commodity derivative (RTS 23 field 4).
-firds,debt_seniority,firds.silver,DebtInstrmAttrbts.DebtSnrty,code,"Seniority of a debt instrument (RTS 23 field 23): SNDB senior, MZZD mezzanine, SBOD subordinated or JUND junior."
-firds,delivery_type,firds.silver,DerivInstrmAttrbts.DlvryTp,code,"Delivery type of a derivative (RTS 23 field 34): PHYS physical, CASH cash or OPTL optional."
-firds,expiry_date,firds.silver,DerivInstrmAttrbts.XpryDt,date,"Expiry date of a derivative (RTS 23 field 24). In the compact table, the value the venues agree on, empty where they disagree."
-firds,first_trade_date,firds.silver,TradgVnRltdAttrbts.FrstTradDt,datetime,Date and time of admission to trading or of the first trade on the venue (RTS 23 field 11).
-firds,full_name,firds.silver,FinInstrmGnlAttrbts.FullNm,text,Full name of the financial instrument (RTS 23 field 2).
-firds,interest_rate_fixed,firds.silver,DebtInstrmAttrbts.IntrstRate.Fxd,rate,"Fixed interest (coupon) rate of a debt instrument, in percent (RTS 23 field 18)."
-firds,interest_rate_floating_id,firds.silver,DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.ISIN | DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Indx | DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Nm,identifier,"Identifier of the reference rate (index or benchmark) of a floating rate debt instrument: its ISIN, index code or name, according to interest_rate_floating_id_type (RTS 23 fields 19 and 20)."
-firds,interest_rate_floating_id_type,firds.silver,DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.ISIN | DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Indx | DebtInstrmAttrbts.IntrstRate.Fltg.RefRate.Nm,code,"How the reference rate of a floating rate debt instrument is identified in interest_rate_floating_id: ISIN, Index (index code) or Name; derived from which of the three elements is filled."
-firds,interest_rate_floating_spread,firds.silver,DebtInstrmAttrbts.IntrstRate.Fltg.BsisPtSprd,rate,Spread in basis points over the reference rate of a floating rate debt instrument (RTS 23 field 22).
-firds,interest_rate_floating_term_unit,firds.silver,DebtInstrmAttrbts.IntrstRate.Fltg.Term.Unit,code,"Unit of the term of the floating reference rate (RTS 23 field 21): DAYS, WEEK, MNTH or YEAR."
-firds,interest_rate_floating_term_value,firds.silver,DebtInstrmAttrbts.IntrstRate.Fltg.Term.Val,quantity,"Number of units of the term of the floating reference rate (RTS 23 field 21), e.g. 3 for a three-month rate."
-firds,isin,firds.silver,FinInstrmGnlAttrbts.Id,identifier,Instrument identification code: the ISIN of the financial instrument (RTS 23 field 1).
-firds,issuer,firds.silver,Issr,identifier,"LEI of the issuer, or of the trading venue operator where the instrument has no issuer (RTS 23 field 5). In the compact table, the distinct values across venues joined with '+'."
-firds,issuer_request,firds.silver,TradgVnRltdAttrbts.IssrReq,flag,Whether the admission to trading or trading on the venue was requested or approved by the issuer (RTS 23 field 8).
-firds,latest_record,firds.history,derived,flag,"Whether the version is the most recent one received for its instrument, i.e. the latest_record flag of section 4.2 of ESMA65-8-5014. One version of an instrument carries it at a time, which is what the first query of section 4.3 selects on."
-firds,maturity_date,firds.silver,DebtInstrmAttrbts.MtrtyDt,date,"Maturity date of a debt instrument (RTS 23 field 15). In the compact table, the value the venues agree on, empty where they disagree."
 firds,max_date,firds.metadata,derived,date,"In the FIRDS watermark (metadata) table, the reference date of the newest file applied to the named table. The update applies every delta file newer than it and none that is older."
 firds,name,firds.metadata,derived,code,"In the FIRDS watermark (metadata) table, the table of the Silver layer the row records the watermark of, e.g. MAIN. The table holds one row per such table."
-firds,nominal_value_per_unit_amount,firds.silver,DebtInstrmAttrbts.NmnlValPerUnit._VALUE,amount,"Nominal value per unit, or minimum traded value, of a debt instrument (RTS 23 field 17)."
-firds,nominal_value_per_unit_currency,firds.silver,DebtInstrmAttrbts.NmnlValPerUnit._Ccy,currency,Currency of the nominal value per unit of a debt instrument (ISO 4217).
-firds,notional_currency,firds.silver,FinInstrmGnlAttrbts.NtnlCcy,currency,"Notional currency of the instrument (RTS 23 field 13, notional currency 1), ISO 4217."
 firds,operation,firds.history,derived,code,"Tag naming what an incoming record does to the version in force, CLOSE_AND_INSERT or REPLACE. It is attached to the plan a delta file implies, which the merge of the Silver layer reads and no table stores."
-firds,option_exercise_style,firds.silver,DerivInstrmAttrbts.OptnExrcStyle,code,"Option exercise style (RTS 23 field 33): EURO, AMER, ASIA, BERM or OTHR."
-firds,option_type,firds.silver,DerivInstrmAttrbts.OptnTp,code,"Option type (RTS 23 field 30): CALL, PUTO or OTHR."
-firds,price_multiplier,firds.silver,DerivInstrmAttrbts.PricMltplr,quantity,"Price multiplier of a derivative: the number of units of the underlying represented by one contract (RTS 23 field 25). In the compact table, the value the venues agree on, empty where they disagree."
-firds,request_for_admission_date,firds.silver,TradgVnRltdAttrbts.ReqForAdmssnDt,datetime,Date and time of the request for admission to trading on the venue (RTS 23 field 10).
-firds,short_name,firds.silver,FinInstrmGnlAttrbts.ShrtNm,text,"Short name of the instrument, the ISO 18774 FISN (RTS 23 field 7). In the compact table, the distinct names across venues joined with '+'."
-firds,tech_publication_period_from_date,firds.silver,TechAttrbts.PblctnPrd.FrDt | TechAttrbts.PblctnPrd.FrDtToDt.FrDt | TechAttrbts.PblctnPrd.Dt,date,"Technical attribute: start of the record's publication period in FIRDS, from whichever branch of the period is stated (FrDt, FrDtToDt.FrDt or Dt), falling back to the file's reference date for terminations and cancellations that state no period."
-firds,tech_publication_period_to_date,firds.silver,TechAttrbts.PblctnPrd.ToDt | TechAttrbts.PblctnPrd.FrDtToDt.ToDt | TechAttrbts.PblctnPrd.Dt,date,"Technical attribute: end of the record's publication period in FIRDS, stated for records whose publication has ended (terminations)."
-firds,tech_relevant_competent_authority,firds.silver,TechAttrbts.RlvntCmptntAuthrty,code,"Technical attribute: the relevant competent authority for the instrument, as a two-letter country code."
-firds,tech_relevant_trading_venue,firds.silver,TechAttrbts.RlvntTradgVn,code,"Technical attribute: MIC of the relevant trading venue, the most relevant market in terms of liquidity for the instrument."
-firds,termination_date,firds.silver,TradgVnRltdAttrbts.TermntnDt,datetime,Termination date: date and time the instrument ceases to be traded or admitted to trading on the venue (RTS 23 field 12).
-firds,total_issued_nominal_amount,firds.silver,DebtInstrmAttrbts.TtlIssdNmnlAmt._VALUE,amount,Total issued nominal amount of a debt instrument (RTS 23 field 14).
-firds,total_issued_nominal_currency,firds.silver,DebtInstrmAttrbts.TtlIssdNmnlAmt._Ccy,currency,"Currency of the total issued nominal amount of a debt instrument (ISO 4217; RTS 23 field 16, currency of nominal value)."
-firds,trading_venue,firds.silver,TradgVnRltdAttrbts.Id,code,"Trading venue: the MIC of the venue the instrument is admitted to or traded on (RTS 23 field 6). In the compact table, the distinct venues of an ISIN joined with '+'."
 firds,updated,firds.metadata,derived,datetime,"In the FIRDS watermark (metadata) table, the timestamp at which the newest file (max_date) was last applied to the named table."
-firds,valid_from,firds.history,derived,date,"First day the version of the instrument is valid on, taken from the start of the publication period as section 4.2 of ESMA65-8-5014 prescribes."
-firds,valid_to,firds.history,derived,date,"Last day the version of the instrument is valid on, empty while the version is the one in force. A superseded version is closed on the day before the version that replaced it begins."
 sec,checked,financialreport.sec.quality,derived,date,"Issues: the day the run that wrote the row was made. The issues of a partition are replaced as a whole when it is checked again, so this says when the rows that are there were found rather than when the problem arose."
 sec,cik,financialreport.sec.common;financialreport.sec.quality,sec.gov,identifier,"The central index key of the registrant, padded to the ten digits the company files use. Neither the Commission nor GLEIF publishes a mapping from it to the legal entity identifier the ESEF and entity master data tables are keyed by; the LEI records that name EDGAR as their register are nearly all funds, by series identifier, and this module invents nothing."
 sec,concept,financialreport.sec.common;financialreport.sec.quality,sec.gov,identifier,"The concept a fact was tagged with, as taxonomy and name, for instance us-gaap:Revenues. It is not resolved across frameworks: what a concept of one framework means in the other is a judgement, and not one this table makes."
@@ -185,64 +147,5 @@ sec,prd_start,financialreport.sec.common,start,date,"The first day of the period
 sec,taxonomies,financialreport.sec.common,derived,code,"The taxonomies the filing tagged against, separated by semicolons, for instance dei;us-gaap. framework is derived from them."
 sec,unit,financialreport.sec.common,units,code,"The unit of the fact, such as USD, shares or pure, as the company file names it."
 sec,value,financialreport.sec.common;financialreport.sec.quality,val,amount,"The value of the fact. The company files carry the value and not the precision the filing claimed for it, which is why there is no decimals column."
-gleif,accounting_period_end,gleif.history,Relationship.Period.n.endDate,date,Level 2: the end of that accounting period.
-gleif,accounting_period_start,gleif.history,Relationship.Period.n.startDate,date,"Level 2: the start of the accounting period the consolidation was established for, from the period typed ACCOUNTING_PERIOD."
-gleif,associated_entity_type,gleif.common,Entity.AssociatedEntity.type,code,"Level 1: the kind of association, e.g. FUND_FAMILY."
-gleif,associated_lei,gleif.common,Entity.AssociatedEntity.AssociatedLEI,identifier,"Level 1: for a fund or a branch, the LEI of the entity it is associated with."
-gleif,conformity_flag,gleif.common,ConformityFlag,code,"Level 1: whether the record conforms to GLEIF's data quality rules: CONFORMING, NON_CONFORMING."
-gleif,deleted_at,gleif.history,DeletedAt,datetime,"Level 2: when GLEIF reported the relationship deleted, read from a delta file; a deleted relationship has its version closed the day before. Not part of the record's hash."
-gleif,end_lei,gleif.history,Relationship.EndNode.NodeID,identifier,"Level 2: the LEI of the entity the relationship points at -- the parent, the manager, the head office."
-gleif,end_node_id_type,gleif.history,Relationship.EndNode.NodeIDType,code,"Level 2: the kind of identifier of the end node, LEI for every relationship of the golden copy."
-gleif,entity_category,gleif.common,Entity.EntityCategory,code,"Level 1: GENERAL, FUND, BRANCH, SOLE_PROPRIETOR, RESIDENT_GOVERNMENT_ENTITY or INTERNATIONAL_ORGANIZATION."
-gleif,entity_creation_date,gleif.common,Entity.EntityCreationDate,datetime,Level 1: when the entity was legally created; ISO 8601 text.
-gleif,entity_expiration_date,gleif.common,Entity.EntityExpirationDate,datetime,"Level 1: when the entity ceased to operate, where it has; ISO 8601 text."
-gleif,entity_expiration_reason,gleif.common,Entity.EntityExpirationReason,code,"Level 1: why it ceased, e.g. DISSOLVED, CORPORATE_ACTION."
-gleif,entity_status,gleif.common,Entity.EntityStatus,code,"Level 1: ACTIVE, INACTIVE or NULL: whether the entity is legally registered and operating."
-gleif,entity_sub_category,gleif.common,Entity.EntitySubCategory,code,Level 1: the sub-category of a government entity or an international organisation.
-gleif,hq_address_city,gleif.common,Entity.HeadquartersAddress.City,text,Level 1: the city of the headquarters address.
-gleif,hq_address_country,gleif.common,Entity.HeadquartersAddress.Country,code,Level 1: the country of the headquarters address (ISO 3166-1 alpha-2).
-gleif,hq_address_line,gleif.common,Entity.HeadquartersAddress.FirstAddressLine,text,Level 1: the first line of the headquarters address.
-gleif,hq_address_postal_code,gleif.common,Entity.HeadquartersAddress.PostalCode,text,Level 1: the postal code of the headquarters address.
-gleif,hq_address_region,gleif.common,Entity.HeadquartersAddress.Region,code,Level 1: the region of the headquarters address (ISO 3166-2).
-gleif,initial_registration_date,gleif.common;gleif.history,Registration.InitialRegistrationDate,datetime,When the LEI (Level 1) or the relationship record (Level 2) was first registered; ISO 8601 text.
-gleif,last_update_date,gleif.common;gleif.history,Registration.LastUpdateDate,datetime,Level 1 and 2: when the record was last updated by the managing local operating unit; ISO 8601 text. The day a version begins is taken from it. Not part of the record's hash.
-gleif,latest_record,gleif.history,derived,flag,"Whether the version is the most recent one known for its key, including a record that has ended."
-gleif,legal_address_city,gleif.common,Entity.LegalAddress.City,text,Level 1: the city of the legal address.
-gleif,legal_address_country,gleif.common,Entity.LegalAddress.Country,code,Level 1: the country of the legal address (ISO 3166-1 alpha-2).
-gleif,legal_address_line,gleif.common,Entity.LegalAddress.FirstAddressLine,text,Level 1: the first line of the legal address.
-gleif,legal_address_postal_code,gleif.common,Entity.LegalAddress.PostalCode,text,Level 1: the postal code of the legal address.
-gleif,legal_address_region,gleif.common,Entity.LegalAddress.Region,code,Level 1: the region of the legal address (ISO 3166-2).
-gleif,legal_form_code,gleif.common,Entity.LegalForm.EntityLegalFormCode,code,"Level 1: the legal form, as an ISO 20275 entity legal form code; 8888 or 9999 where none applies."
-gleif,legal_form_other,gleif.common,Entity.LegalForm.OtherLegalForm,text,"Level 1: the legal form in words, where no ISO 20275 code applies."
-gleif,legal_jurisdiction,gleif.common,Entity.LegalJurisdiction,code,Level 1: the jurisdiction of the entity's legal formation (ISO 3166).
-gleif,legal_name,gleif.common,Entity.LegalName,text,Level 1: the legal name of the entity.
-gleif,legal_name_language,gleif.common,Entity.LegalName.xmllang,code,Level 1: the language of the legal name (xml:lang).
-gleif,lei,gleif.common,LEI,identifier,Level 1: the legal entity identifier (ISO 17442).
-gleif,managing_lou,gleif.common;gleif.history,Registration.ManagingLOU,identifier,Level 1 and 2: the LEI of the local operating unit that manages the record.
-gleif,measurement_method,gleif.history,Relationship.Quantifiers.1.MeasurementMethod,code,"Level 2: how the first quantifier of the relationship was measured, e.g. ACCOUNTING_CONSOLIDATION."
-gleif,next_renewal_date,gleif.common;gleif.history,Registration.NextRenewalDate,datetime,Level 1 and 2: when the registration is next due to be renewed; ISO 8601 text.
-gleif,other_name,gleif.common,Entity.OtherEntityNames.OtherEntityName.1,text,"Level 1: the first other name of the entity, such as a trading name or a previous legal name."
-gleif,other_name_type,gleif.common,Entity.OtherEntityNames.OtherEntityName.1.type,code,"Level 1: what the first other name is, e.g. TRADING_OR_OPERATING_NAME, PREVIOUS_LEGAL_NAME."
-gleif,publication,gleif.history,derived,identifier,"The GLEIF publication the version was read from, YYYYMMDD-HHMM."
-gleif,quantifier_amount,gleif.history,Relationship.Quantifiers.1.QuantifierAmount,text,"Level 2: the amount of the first quantifier, typically the share held, as text."
-gleif,quantifier_units,gleif.history,Relationship.Quantifiers.1.QuantifierUnits,code,"Level 2: the unit of the first quantifier, e.g. PERCENTAGE."
-gleif,record_hash,gleif.history,derived,identifier,"SHA-256 of the columns the version states, other than the day of the last update and the deletion; a new version begins where it changes."
-gleif,registration_authority_entity_id,gleif.common,Entity.RegistrationAuthority.RegistrationAuthorityEntityID,identifier,Level 1: the entity's number in that register.
-gleif,registration_authority_id,gleif.common,Entity.RegistrationAuthority.RegistrationAuthorityID,code,"Level 1: the register the entity is entered in, as GLEIF's code list of registration authorities names it (RA000000)."
-gleif,registration_status,gleif.common;gleif.history,Registration.RegistrationStatus,code,"The status of the registration: ISSUED, LAPSED, RETIRED, MERGED, ANNULLED, DUPLICATE and others on Level 1; PUBLISHED, LAPSED and others on Level 2."
-gleif,relationship_end,gleif.history,Relationship.Period.n.endDate,date,"Level 2: the last day of the relationship where it has ended, from the period typed RELATIONSHIP_PERIOD; ISO 8601 text."
-gleif,relationship_start,gleif.history,Relationship.Period.n.startDate,date,"Level 2: the first day of the relationship, from whichever numbered period is typed RELATIONSHIP_PERIOD; ISO 8601 text."
-gleif,relationship_status,gleif.history,Relationship.RelationshipStatus,code,"Level 2: ACTIVE or INACTIVE, as the relationship record states it."
-gleif,relationship_type,gleif.history,Relationship.RelationshipType,code,"Level 2: the kind of relationship, e.g. IS_DIRECTLY_CONSOLIDATED_BY, IS_ULTIMATELY_CONSOLIDATED_BY, IS_FUND-MANAGED_BY. With the two LEIs it identifies a relationship."
-gleif,start_lei,gleif.history,Relationship.StartNode.NodeID,identifier,"Level 2: the LEI of the entity the relationship is reported for -- the child, the fund, the branch."
-gleif,start_node_id_type,gleif.history,Relationship.StartNode.NodeIDType,code,"Level 2: the kind of identifier of the start node, LEI for every relationship of the golden copy."
-gleif,successor_lei,gleif.common,Entity.SuccessorEntity.1.SuccessorLEI,identifier,"Level 1: the LEI of the first successor entity, after a merger or a corporate action."
-gleif,transliterated_name,gleif.common,Entity.TransliteratedOtherEntityNames.TransliteratedOtherEntityName.1,text,"Level 1: the first transliterated name, the legal name in Latin script where it is written in another."
-gleif,valid_from,gleif.history,derived,date,"The first day the version held: the day of the record's last update, or the day of the publication it was read in where GLEIF changed it without an update."
-gleif,valid_to,gleif.history,derived,date,The last day the version held; empty while it still does.
-gleif,validation_authority_entity_id,gleif.common,Registration.ValidationAuthority.ValidationAuthorityEntityID,identifier,Level 1: the entity's number in that register.
-gleif,validation_authority_id,gleif.common,Registration.ValidationAuthority.ValidationAuthorityID,code,Level 1: the register the record was validated against.
-gleif,validation_documents,gleif.history,Registration.ValidationDocuments,code,"Level 2: the kind of document the relationship was validated against, e.g. ACCOUNTS_FILING."
-gleif,validation_sources,gleif.common;gleif.history,Registration.ValidationSources,code,"Level 1 and 2: how far the record was validated: FULLY_CORROBORATED, PARTIALLY_CORROBORATED, ENTITY_SUPPLIED_ONLY, PENDING."
 entitymasterdata,name,entitymasterdata.silver,Entity.LegalName,text,"Legal name of the entity, from GLEIF Level 1: the golden copy of the Bronze layer, or the history of fincommons.gleif where that has been built."
 entitymasterdata,country,entitymasterdata.silver,Entity.LegalAddress.Country,code,"Country of the entity's legal address (ISO 3166-1 alpha-2), from GLEIF Level 1: the golden copy of the Bronze layer, or the history of fincommons.gleif where that has been built."

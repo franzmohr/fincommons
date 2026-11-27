@@ -69,7 +69,12 @@ The version columns are `valid_from`, `valid_to` (empty while the version holds)
 
 **Level 2** keeps the two LEIs, the type and the status of the relationship, its own period and the accounting period it rests on -- each found among the up to five numbered periods by its type, since they come in no fixed order -- the first quantifier (usually the share held), and the registration of the relationship record. `deleted_at` is set on a relationship a delta file reports as deleted; it is not part of the record's hash.
 
-The column catalogue describes every column: `fincommons.describe_column("relationship_start")`.
+What the columns of each table hold is stated by its data contract in the Open Data Contract Standard, `data/contract_gleif_silver_entities.yaml` and `data/contract_gleif_silver_relationships.yaml`, which `data/product_gleif.yaml` names as the module's output ports. They are the one place the columns are described, and the column catalogue reads them from there: `fincommons.describe_column("relationship_start")`. A contract states the key of its table -- the LEI, or the two LEIs and the type of the relationship, and `valid_from` -- and which columns a version always has.
+
+```python
+from fincommons.contracts import load_contract, spark_schema
+spark_schema(load_contract("fincommons.gleif.silver.relationships"))
+```
 
 ## 5 How the history is stored
 

@@ -368,16 +368,31 @@ def catalogue_rows(packages=("fincommons",)):
     ``kind``, ``description``, in the order of the catalogue. ``tables``
     names the stage that writes the table, ``<module>.<layer>``, as the rows
     of the catalogue do.
+
+    The catalogue has one row per column of a module, and a module may write
+    a column into more than one table -- the ISIN is a column of both tables
+    of FIRDS. Such a column takes its row from the table its product lists
+    first among its output ports, the table the others are derived from, so
+    that the catalogue describes the column where it originates. The contract
+    of each table still describes the column as that table holds it.
     """
-    rows = []
-    for identifier, contract in contracts(packages).items():
+    shipped = contracts(packages)
+    port_order = {}
+    for product in products(packages).values():
+        for position, port in enumerate(product.get("outputPorts") or []):
+            port_order.setdefault(port.get("contractId"), position)
+    rows, seen = [], set()
+    for identifier in sorted(shipped, key=lambda i: (port_order.get(i, len(port_order)), i)):
         parts = _identifier_parts(identifier)
         if parts is None:
             raise ContractError(f"id {identifier!r} is not "
                                 "<package>.<module>.<layer>.<table>")
         _, module, layer, _ = parts
-        for table in contract.get("schema") or []:
+        for table in shipped[identifier].get("schema") or []:
             for prop in table.get("properties") or []:
+                if (module, prop["name"]) in seen:
+                    continue
+                seen.add((module, prop["name"]))
                 rows.append((module, prop["name"], f"{module}.{layer}",
                              custom_property(prop, "source", ""),
                              custom_property(prop, "kind", ""),
