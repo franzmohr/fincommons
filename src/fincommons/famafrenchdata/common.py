@@ -265,7 +265,11 @@ def connect_to_famafrenchdata(spark, config_path):
     config_path: str
         Path to the configuration file, where paths are specified. This must be a yaml-file.
     """
-    return read_silver(spark, ref_silver_famafrenchdata(config_path))
+    # In the order of the declared schema, which is the order of the
+    # contract: a Parquet table puts its partition column last when it is
+    # read and a Delta table keeps it where it was written, and the order a
+    # reader sees should not depend on which of the two the table is.
+    return read_silver(spark, ref_silver_famafrenchdata(config_path)).select(*silver_schema.names)
 
 
 def create_directory_tree(config_path):

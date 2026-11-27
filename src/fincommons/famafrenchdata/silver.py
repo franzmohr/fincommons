@@ -125,7 +125,7 @@ def _parse_files(frames, chunk_rows=CHUNK_ROWS):
     Each row holds one file: its name and its lines, already in order.
     """
     for frame in frames:
-        for dataset, lines in zip(frame["dataset"], frame["lines"]):
+        for dataset, lines in zip(frame["dataset"], frame["_lines"]):
             yield from _parse_file(dataset, lines, chunk_rows)
 
 
@@ -251,7 +251,7 @@ def _update_batch(spark, config_path, batch, pending, file_format, outcome):
         func.transform(
             func.sort_array(func.collect_list(func.struct("LINENO", "LINE"))),
             lambda line: line["LINE"],
-        ).alias("lines")
+        ).alias("_lines")
     ).repartition(len(batch), "dataset")
 
     # The chunk size is bound here, on the driver, because the executors

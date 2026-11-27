@@ -8,6 +8,16 @@ release may change the public API, which `tests/test_public_api.py` lists.
 
 ### Added
 
+- `famafrenchdata`: a data contract for the Silver table and a product,
+  `product_famafrenchdata.yaml`. The contract equals the declared schema,
+  which a test holds it to; its key is the file, table, frequency, series
+  and reference date, and `value` is declared no measure, since it holds
+  returns, counts, sizes and ratios in one column. Quality rules: one value
+  per key, month ends and 31 December for monthly and annual rows, a known
+  frequency, and the missing-value codes left out. They hold on the whole
+  library, 297 files and 86,029,613 values. The seven Silver rows of
+  `famafrenchdata` left `column_catalogue.csv`; the Bronze rows stay.
+
 - `sts`: data contracts for the six Silver tables -- `notification`,
   `assertion`, `tranche`, `party`, `event` and `synthetic` -- and a product,
   `product_sts.yaml`. STS joins the catalogued modules: its 49 columns are
@@ -345,6 +355,12 @@ release may change the public API, which `tests/test_public_api.py` lists.
   regime, and its note now says that a Japanese row is in yen.
 
 ### Changed
+
+- `famafrenchdata`: the intermediate column of a file's lines in the
+  Silver build is `_lines`, since it is dropped before the table is written,
+  and is no longer catalogued; `connect_to_famafrenchdata` returns the
+  columns in the order of the declared schema whether the table is Parquet
+  or Delta.
 
 - `financialreport.edinet.connect_to_edinet` returns each table in the
   order of its declared schema whether the table is Parquet or Delta, and the

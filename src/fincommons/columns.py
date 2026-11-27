@@ -34,8 +34,8 @@ A table that has a data contract is described by its contract instead, and
 its columns have no row in the file: the contract is the single source of
 truth for them, and :func:`column_catalogue` takes their rows from it, in the
 same shape (see :mod:`fincommons.contracts`). The exchange rates and the
-Silver tables of FIRDS, GLEIF, ESEF, SEC, EDINET and STS are described this
-way.
+Silver tables of FIRDS, GLEIF, ESEF, SEC, EDINET, STS and the French Data
+Library are described this way.
 """
 
 from __future__ import annotations

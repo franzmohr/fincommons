@@ -1,0 +1,23 @@
+# The data product of fincommons.famafrenchdata, in the Open Data Product
+# Standard. Its output port names the contract of the Silver table by
+# identifier and version; the test suite checks that the contract is shipped
+# in that version. See fincommons.contracts.
+apiVersion: v1.1.0
+kind: DataProduct
+id: fincommons.famafrenchdata
+name: famafrenchdata
+version: 1.0.0
+status: active
+type: sourceAligned
+domain: famafrenchdata
+description:
+  purpose: >-
+    Every value of Kenneth French's Data Library -- the Fama/French factors,
+    the portfolio returns they are built from and the characteristics of
+    those portfolios -- in one table, kept up to date with the library.
+outputPorts:
+  - name: silver_famafrenchdata
+    type: table
+    description: One value per file, table, frequency, series and reference date.
+    contractId: fincommons.famafrenchdata.silver.famafrenchdata
+    version: 1.0.0

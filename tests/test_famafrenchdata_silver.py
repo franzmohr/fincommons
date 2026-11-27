@@ -433,3 +433,45 @@ def test_a_batch_is_bounded_by_its_lines_as_well_as_its_files():
         ["a", "b"], ["c"], ["d", "e", "f"]]
     assert list(silver.batches(pending, size=2, lines=1000)) == [
         ["a", "b"], ["c", "d"], ["e", "f"]]
+
+
+# The data contract
+# --------------------------------------------------------------------------
+
+
+CONTRACT = "fincommons.famafrenchdata.silver.famafrenchdata"
+
+
+def test_the_declared_schema_is_the_schema_of_the_contract():
+    """The code writes with the declared schema and a reader is told the
+    contract, so the two must agree in names, order, types and in which
+    columns may be empty."""
+    from fincommons.contracts import load_contract, spark_schema
+
+    assert spark_schema(load_contract(CONTRACT)) == ffd.silver_schema
+
+
+def test_the_table_is_the_table_its_contract_describes(spark, data_lake):
+    """Built from every file of the fixtures, the table is the one its
+    contract describes -- columns, types and order, no empty value where one
+    is required, one row per key -- and meets its quality rules."""
+    from pyspark.sql import functions as F
+
+    from fincommons.contracts import check_quality, load_contract, spark_schema
+
+    for name in NAMES:
+        collect(data_lake, name)
+    ffd.update_silver_famafrenchdata(spark, data_lake)
+    frame = ffd.connect_to_famafrenchdata(spark, data_lake)
+    contract = load_contract(CONTRACT)
+    properties = contract["schema"][0]["properties"]
+
+    assert [(f.name, f.dataType) for f in frame.schema] == \
+        [(f.name, f.dataType) for f in spark_schema(contract)]
+    for prop in properties:
+        if prop.get("required"):
+            assert frame.where(F.col(prop["name"]).isNull()).count() == 0, prop["name"]
+    assert [p["name"] for p in sorted((p for p in properties if p.get("primaryKey")),
+                                      key=lambda p: p["primaryKeyPosition"])] == KEY
+    assert frame.groupBy(*KEY).count().where("count > 1").count() == 0
+    assert [r for r in check_quality(frame, contract) if r.passed is False] == []

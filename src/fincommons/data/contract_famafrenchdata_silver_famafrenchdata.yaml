@@ -1,0 +1,242 @@
+# The data contract of the Silver table of fincommons.famafrenchdata, in the
+# Open Data Contract Standard. It is the single source of truth for what the
+# columns of the table mean: fincommons.columns reads its descriptions from
+# here, and the test suite holds it against the declared schema and against
+# the table the module writes. See fincommons.contracts.
+#
+# A shipped contract is a template: it states nothing that belongs to a
+# deployment. Where the table lives is stated by the configuration file.
+apiVersion: v3.2.0
+kind: DataContract
+id: fincommons.famafrenchdata.silver.famafrenchdata
+name: famafrenchdata
+version: 1.0.0
+status: active
+domain: famafrenchdata
+dataProduct: fincommons.famafrenchdata
+description:
+  purpose: >-
+    Every value of every file of Kenneth French's Data Library -- the Fama/French
+    factors, the returns of the portfolios they are built from, and the characteristics
+    of those portfolios -- in one table of one shape, rather than one parser per
+    file.
+  usage: >-
+    Filter on dataset first, since the table is partitioned by it, then on table,
+    frequency and series. fincommons.famafrenchdata.series(df, dataset, table, frequency)
+    brings one table of one file back in the wide shape it was published in. fincommons.famafrenchdata.connect_to_famafrenchdata(spark,
+    config) opens the table.
+  limitations: >-
+    The library is rebuilt by its author each month as CRSP is updated, so a value
+    can change between editions; the table holds the edition last collected. The
+    values are as published, in the units each table states, and the table holds
+    every kind of them in one column.
+authoritativeDefinitions:
+- type: implementation
+  url: >-
+    https://github.com/franzmohr/fincommons/blob/main/src/fincommons/famafrenchdata/silver.py
+- type: businessDefinition
+  url: >-
+    https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html
+  description: >-
+    The Data Library of Kenneth R. French, the source of every file of the table.
+schema:
+- name: famafrenchdata
+  physicalType: table
+  businessName: French Data Library
+  description: >-
+    One row per file, table, frequency, series and reference date of Kenneth French's
+    Data Library: the value as published, with the title of the table it stands
+    in.
+  dataGranularityDescription: One value per file, table, frequency, series and reference
+    date.
+  quality:
+  - name: one_value_per_key
+    description: No file states two values for one table, frequency, series and
+      date.
+    type: library
+    metric: duplicateValues
+    arguments:
+      properties:
+      - dataset
+      - table
+      - frequency
+      - series
+      - ref_date
+    mustBe: 0
+    dimension: uniqueness
+    severity: error
+  - name: a_month_is_dated_by_its_last_day
+    description: A monthly row is dated by the last day of its month.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE frequency = 'M' AND ref_date <> LAST_DAY(ref_date)
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: a_year_is_dated_31_december
+    description: An annual row is dated 31 December of its year.
+    type: sql
+    query: >-
+      SELECT COUNT(*) FROM ${table} WHERE frequency = 'A' AND (MONTH(ref_date) <>
+      12 OR DAY(ref_date) <> 31)
+    mustBe: 0
+    dimension: consistency
+    severity: error
+  - name: missing_values_are_left_out
+    description: >-
+      The library's codes for a missing value, -99.99 and -999, are left out rather
+      than written as values.
+    type: sql
+    query: SELECT COUNT(*) FROM ${table} WHERE value IN (-99.99, -999)
+    mustBe: 0
+    dimension: accuracy
+    severity: error
+  properties:
+  - name: ref_date
+    businessName: Reference date
+    logicalType: date
+    physicalType: date
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 5
+    semanticType: dimension
+    description: >-
+      Reference date of the value: the day given for daily and weekly rows (for
+      weekly rows the last trading day of the week), the last day of the month for
+      monthly rows and 31 December for annual rows. An annual row of the characteristics
+      of portfolios formed in a year -- book-to-market, earnings-to-price, breakpoints
+      and the like -- is keyed by the year of formation, so the year in progress
+      already has one, dated 31 December, after the last return of its file.
+    customProperties:
+    - property: kind
+      value: date
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: dataset
+    businessName: File
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 1
+    semanticType: dimension
+    description: >-
+      Name of the file of the French Data Library the row comes from, as the library's
+      page links it without the _CSV.zip suffix (e.g. F-F_Research_Data_Factors,
+      6_Portfolios_2x3); the partition column of the table.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: table
+    businessName: Table
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 2
+    semanticType: dimension
+    description: >-
+      Code of the kind of table within the file, mapped from its title (e.g. FACTORS,
+      RET_VW, RET_EW, NFIRMS, AVG_SIZE, BEME_VW, BREAKPOINTS); a title no rule maps
+      keeps a code made from the title. See famafrenchdata.parse.TABLE_CODES.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: frequency
+    businessName: Frequency
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 3
+    semanticType: dimension
+    description: >-
+      Frequency of the row: D (daily), W (weekly), M (monthly) or A (annual), read
+      off the length of the period key (YYYYMMDD, YYYYMM, YYYY); weekly files key
+      their rows by the last day of the week and are told apart by their name.
+    customProperties:
+    - property: kind
+      value: code
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+    quality:
+    - name: frequency_is_known
+      description: The frequency is D, W, M or A.
+      type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - D
+        - W
+        - M
+        - A
+      mustBe: 0
+      dimension: conformity
+      severity: error
+  - name: series
+    businessName: Series
+    logicalType: string
+    physicalType: string
+    required: true
+    primaryKey: true
+    primaryKeyPosition: 4
+    semanticType: dimension
+    description: >-
+      The column of the table the value is in, as the file's header names it, trimmed
+      (e.g. Mkt-RF, SMALL LoBM, NoDur); for breakpoints the counts as the header
+      names them or N where it names none, followed by the percentiles P05 to P100.
+    customProperties:
+    - property: kind
+      value: identifier
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: value
+    businessName: Value
+    logicalType: number
+    physicalType: double
+    required: true
+    semanticType: dimension
+    description: >-
+      The value as published: returns and factors in percent, counts of firms, average
+      size in millions of dollars, ratios as stated by the table; the missing values
+      -99.99 and -999 are left out rather than written. The column holds every kind
+      of figure of the library, so it is no measure: it is read per table, which
+      says what it holds.
+    customProperties:
+    - property: kind
+      value: other
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
+  - name: title
+    businessName: Title
+    logicalType: string
+    physicalType: string
+    required: true
+    semanticType: dimension
+    description: >-
+      Title of the table as the file publishes it, whitespace collapsed (e.g. 'Average
+      Value Weighted Returns -- Monthly'); an empty string, not null, for the untitled
+      first table of a factor file and for breakpoints.
+    customProperties:
+    - property: kind
+      value: text
+      vendor: fincommons
+    - property: source
+      value: derived
+      vendor: fincommons
