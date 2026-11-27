@@ -20,17 +20,21 @@ import pytest
 
 PUBLIC_API = {
     "fincommons.addressing": [
-        "TableRef", "load_paths", "rename_files", "rename_folders_to_snake_case",
-        "resolve",
+        "TableRef", "delta_table_exists", "load_paths", "read_delta", "rename_files",
+        "rename_folders_to_snake_case", "resolve", "write_delta",
     ],
     "fincommons.columns": [
         "CATALOGUED_MODULES", "ColumnDescription", "SCHEMA_DECLARING_MODULES",
-        "column_catalogue", "defined_columns", "describe_column",
+        "SNAKE_CASE_MODULES", "column_catalogue", "defined_columns", "describe_column",
     ],
+    # finsupverse.contracts offers the whole module, extended to its own
+    # contracts, so every name of it is taken.
     "fincommons.contracts": [
-        "DRAFT_STATUSES", "catalogue_rows", "check_quality", "contracts",
-        "custom_property", "load_contract", "products", "spark_schema",
-        "validate_contract", "validate_product",
+        "AGGREGATIONS", "CUSTOM_PROPERTIES", "ContractError", "DEPLOYMENT_SECTIONS",
+        "DRAFT_STATUSES", "ODCS_VERSION", "ODPS_VERSION", "QUALITY_SEVERITIES",
+        "QualityResult", "VENDOR", "catalogue_rows", "check_quality", "contracts",
+        "custom_property", "load_contract", "products", "quality_failures",
+        "spark_schema", "validate_contract", "validate_product",
     ],
     "fincommons.entitymasterdata": [
         "LEI_OTHER", "connect_to_entitymasterdata",
@@ -45,7 +49,7 @@ PUBLIC_API = {
         "connect_to_famafrenchdata", "series", "update_famafrenchdata",
     ],
     "fincommons.firds": ["connect_to_firds", "get_metadata_maxdate"],
-    "fincommons.firds.common": ["path_silver_compact"],
+    "fincommons.firds.common": ["path_silver_compact", "update_metadata_maxdate"],
     "fincommons.firds.history": ["records_as_of"],
     "fincommons.layout": ["rebalanced"],
     "fincommons.log": [
@@ -63,6 +67,7 @@ PUBLIC_API = {
     ],
     "fincommons.schemas": ["load_pyspark_schema", "load_replacement_table"],
     "fincommons.storage": ["check_local_path"],
+    "fincommons.testing": ["spark"],
 }
 
 
