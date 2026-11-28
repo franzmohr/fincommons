@@ -396,7 +396,7 @@ Six Quarto templates in `templates/` read the Silver tables as parquet and rende
 
 | Template | What it is | Further settings |
 |----------|-----------|------------------|
-| `esef-analyst-factsheet.qmd` | a factsheet on one issuer, some twenty pages | `FINCOMMONS_ISSUER` |
+| `esef-analyst-factsheet.qmd` | a factsheet on one issuer, some twenty pages | `FINCOMMONS_ISSUER`, `FINCOMMONS_PEER_COUNTRIES`, `FINCOMMONS_FINANCIAL` |
 | `esef-sector-factsheet.qmd` | several issuers at once, against their market | `FINCOMMONS_PANEL`, `FINCOMMONS_FINANCIAL` |
 | `esef-quality-report.qmd` | what the checks found, over the whole record, some sixteen pages | first chunk |
 | `esef-coverage-report.qmd` | what the repository lists and what the issuers tagged, some sixteen pages | first chunk |
@@ -423,6 +423,7 @@ Six Quarto templates in `templates/` read the Silver tables as parquet and rende
 | equity | the comprehensive income and the equity by component, which is the one place the factsheet reads the dimensions of the taxonomy |
 | per share | the earnings, the dividend and the book value per share, the number of shares behind them, and what was distributed |
 | screening | Piotroski's F-score, test by test, and Altman's Z''-score, term by term |
+| the market | the latest year beside a panel of the other issuers of its market: for each indicator the median, the middle half, the quartile the issuer falls in and the number of issuers, with a strip of the panel's values and the issuer marked on it |
 | the tags | how much of each report could be read, the lines read from the issuer's own concepts, the lines looked for and not tagged, and checks that the statements add up |
 | the filings | every filing of the years shown, what a figure rests on, and the source |
 
@@ -446,6 +447,13 @@ FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
 **The derivation is the part to adapt for another issuer.** The figures are those of an industrial issuer that presents its income statement by function -- revenue, cost of sales, gross profit, EBIT -- and the figures it does not tag, such as its net debt, its capital employed or the number of its shares, are derived from those it does. The derivation follows voestalpine's presentation; a bank needs other figures altogether.
 
 **No EBITDA is derived.** Depreciation and amortisation are not a line of the primary statements under a concept of the taxonomy, and an issuer that tags them nowhere else leaves every indicator that would rest on EBITDA out of reach, so the leverage and the cover ratios stand against the operating result and the operating cash flow instead. A financial year that does not end in December is labelled by the two years it spans, as 2025/26.
+
+**The page on the market puts the issuer beside a panel.** The panel is every other issuer of the issuer's country -- or of the countries in `FINCOMMONS_PEER_COUNTRIES`, a comma-separated list such as `AT,DE` -- with a financial year ending in the twelve months up to the issuer's period end, so that a year ending in March is held against the years ending since the April before it rather than against the December after it. It is a market and not an industry: ESEF carries no sector code, and the page says so. Banks and insurers are set apart from industrial issuers, found by the lines of their statements only a bank or an insurer presents and, where `FINCOMMONS_FINANCIAL` names a file of LEIs from the sectoral registers, by those as well; a bank is set beside the banks and insurers. Every issuer's figures, the issuer's own included, are derived by the steps of the pages before from concepts of the IFRS taxonomy alone, so a figure read from an extension concept is left out of the comparison rather than compared. The indicators are ratios, growth rates and scores, and hold across currencies; the per-share amounts themselves, the gross margin and anything resting on EBITDA are left out, for reasons the page gives. An indicator fewer than ten issuers of the panel could be computed for -- `peer_min` in the first chunk -- shows no median. Counted in a lake holding Austria, voestalpine's 2025/26 stands beside 49 industrial issuers, 24 banks and insurers set apart.
+
+```bash
+FINCOMMONS_PEER_COUNTRIES=AT,DE \
+FINCOMMONS_CONFIG=/path/to/paths.yaml quarto render esef-analyst-factsheet.qmd
+```
 
 **The disclaimer is to be replaced for your own use.** The last page is a disclaimer, and the cover says in its first line and in its small print what the page states in full: the document is produced by a template and the issuer is an example, no warranty is given for the correctness or the completeness of a figure, nobody who made it is associated with the issuer or with any other body named on the pages, nothing in it is advice, and liability is disclaimed as far as the law allows, in the terms of Articles 7 and 8 of the EUPL the project is licensed under. Whoever renders the factsheet for a purpose of their own is responsible for what they publish: the disclaimer is written for a template published as an example, and the paragraph on the example, the line on the cover and the reference to the licence are to be replaced by terms that fit the use.
 

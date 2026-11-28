@@ -4,6 +4,32 @@ The notable changes of each release. The project follows
 [semantic versioning](https://semver.org/); while the version is 0.x, a minor
 release may change the public API, which `tests/test_public_api.py` lists.
 
+## Unreleased
+
+### Added
+
+- `esef`: the analyst factsheet puts the issuer beside its market (#3). A
+  page after the screening indicators sets the latest year beside a panel of
+  the other issuers of the issuer's country, or of the countries named in
+  `FINCOMMONS_PEER_COUNTRIES`: for each indicator the median of the panel,
+  its middle half, the quartile the issuer falls in and the number of
+  issuers, with a strip of the panel's values and the issuer marked on it.
+  The panel takes each issuer's financial year ending in the twelve months
+  up to the issuer's period end, sets banks and insurers apart from
+  industrial issuers as the sector factsheet finds them, and states its
+  countries, its window and its size. An indicator fewer than ten issuers
+  could be computed for shows no median. The indicators are the margins,
+  the four returns, the equity ratio, the cash flow against the operating
+  result and the profit, the growth of the earnings per share and the
+  dividend against them, the F-score and the Z''-score; the per-share
+  amounts themselves, the gross margin and EBITDA are left out, and the page
+  says why. The steps from the facts to the indicators are now functions of
+  the facts of any number of issuers, so that the issuer and the panel are
+  derived alike, and a figure read from an issuer's own extension concept
+  stays out of the comparison. The factsheet's other pages are unchanged:
+  rendered against the same lake, their text is identical before and after
+  but for the page numbers in the contents and one more definition.
+
 ## 0.6.0
 
 Every Silver table now has a data contract in the Open Data Contract
