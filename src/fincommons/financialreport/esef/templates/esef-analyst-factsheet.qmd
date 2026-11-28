@@ -108,6 +108,31 @@ report_lang <- "en"
 invisible(Sys.setlocale("LC_TIME", if (report_lang == "de") "German" else "C"))
 
 # --------------------------------------------------------------------------
+# What to set for the panel the issuer is put beside
+# --------------------------------------------------------------------------
+
+# The countries whose issuers make up the panel, as the table of filings
+# codes them. Left empty, the panel is the issuer's own country: a market
+# panel, the issuers listed where it is listed. ESEF carries no sector code,
+# so a panel is a market and never an industry, whichever countries are
+# named; more countries make a larger market, not a sector. A run that
+# renders the factsheet for one issuer after another sets the environment
+# variable FINCOMMONS_PEER_COUNTRIES, a comma-separated list such as
+# "AT,DE".
+peer_countries <- Sys.getenv("FINCOMMONS_PEER_COUNTRIES", "")
+
+# The fewest issuers of the panel an indicator is compared over. Below it
+# the page shows no median and no quartile for the indicator rather than a
+# median of four.
+peer_min <- 10
+
+# A file listing the LEIs of the banks and insurers on the sectoral
+# registers, one per line, as the sector factsheet reads it. The panel of an
+# industrial issuer leaves them out, and the panel of a bank or an insurer
+# keeps only them; the page on the market says how they were found.
+financial_file <- Sys.getenv("FINCOMMONS_FINANCIAL", "")
+
+# --------------------------------------------------------------------------
 # The concepts the factsheet is built from
 # --------------------------------------------------------------------------
 
@@ -337,19 +362,28 @@ filings_with_facts <- open_dataset(file.path(path_silver, "facts")) %>%
   distinct() %>%
   collect()
 
-filings <- filings_all %>%
-  mutate(has_facts = filing %in% filings_with_facts$filing) %>%
-  arrange(period_end,
-          !has_facts,
-          coalesce(lang, "") != report_lang,
-          coalesce(errors, 0L),
-          desc(processed)) %>%
-  group_by(period_end) %>%
-  slice(1) %>%
-  ungroup() %>%
-  filter(has_facts) %>%
-  select(-has_facts) %>%
-  arrange(period_end) %>%
+#
+# The choice is a function of the filings of any number of issuers, because
+# the issuers the page on the market puts this one beside have their filings
+# chosen by the same rule.
+choose_filings <- function(filings, with_facts) {
+  filings %>%
+    mutate(has_facts = filing %in% with_facts) %>%
+    arrange(lei,
+            period_end,
+            !has_facts,
+            coalesce(lang, "") != report_lang,
+            coalesce(errors, 0L),
+            desc(processed)) %>%
+    group_by(lei, period_end) %>%
+    slice(1) %>%
+    ungroup() %>%
+    filter(has_facts) %>%
+    select(-has_facts) %>%
+    arrange(lei, period_end)
+}
+
+filings <- choose_filings(filings_all, filings_with_facts$filing) %>%
   slice_tail(n = n_years + 1)
 
 if (nrow(filings) == 0) {
@@ -375,14 +409,24 @@ facts <- open_dataset(file.path(path_silver, "facts")) %>%
 # aside, so that a restated figure does not stand beside the one first
 # reported without saying so. The same fact may be tagged more than once in
 # a report, in the statements and again in the notes, with the same value.
-figures <- facts %>%
-  filter(is.na(dimensions), !is.na(value), prd_end == period_end,
-         is.na(prd_start) | prd_start == period_end - 364 |
-           prd_start == period_end - 365) %>%
-  distinct(period_end, concept, unit, value) %>%
-  group_by(period_end, concept) %>%
-  slice(1) %>%
-  ungroup()
+#
+# The steps from the facts to the indicators are functions of the facts of
+# any number of issuers, kept apart by their LEI, because the page that puts
+# the issuer beside the other issuers of its market derives their figures by
+# exactly these steps: a margin is compared with a margin only where both
+# were computed the same way.
+figures_of <- function(facts) {
+  facts %>%
+    filter(is.na(dimensions), !is.na(value), prd_end == period_end,
+           is.na(prd_start) | prd_start == period_end - 364 |
+             prd_start == period_end - 365) %>%
+    distinct(lei, period_end, concept, unit, value) %>%
+    group_by(lei, period_end, concept) %>%
+    slice(1) %>%
+    ungroup()
+}
+
+figures <- figures_of(facts)
 
 currency <- figures %>%
   filter(concept == concepts[["assets"]]) %>%
@@ -405,19 +449,26 @@ lookup <- bind_rows(
          preference = length(concepts) + seq_along(extension_concepts),
          extension = TRUE))
 
-tagged <- figures %>%
-  inner_join(lookup, by = "concept") %>%
-  group_by(period_end, key) %>%
-  slice_min(preference, n = 1, with_ties = FALSE) %>%
-  ungroup()
-
-wide <- tagged %>%
-  select(period_end, key, value) %>%
-  pivot_wider(names_from = "key", values_from = "value") %>%
-  arrange(period_end)
-for (key in setdiff(unique(keys_all), names(wide))) {
-  wide[[key]] <- NA_real_
+tag_figures <- function(figures, lookup) {
+  figures %>%
+    inner_join(lookup, by = "concept") %>%
+    group_by(lei, period_end, key) %>%
+    slice_min(preference, n = 1, with_ties = FALSE) %>%
+    ungroup()
 }
+
+wide_of <- function(tagged) {
+  wide <- tagged %>%
+    select(lei, period_end, key, value) %>%
+    pivot_wider(names_from = "key", values_from = "value") %>%
+    arrange(lei, period_end)
+  for (key in setdiff(unique(keys_all), names(wide))) {
+    wide[[key]] <- NA_real_
+  }
+  wide
+}
+
+tagged <- tag_figures(figures, lookup)
 
 # Which keys were read from a concept of the issuer's own taxonomy, and in
 # how many of the years shown. The tables mark a line that rests on one, and
@@ -451,196 +502,209 @@ is_extension <- function(key) key %in% extension_used$key
 # tag them anywhere in its reports, so every indicator that would rest on
 # EBITDA -- the margin, net debt to EBITDA, cash conversion -- is shown
 # against EBIT or against the operating cash flow instead.
-wide <- wide %>%
-  mutate(
-    year = fy_label(period_end),
-    days = as.numeric(period_end - lag(period_end)),
+#
+# The derivation runs within each issuer, in the order of its years, so that
+# the year before an issuer's year is its own and never another issuer's.
+derive <- function(wide) {
+  wide <- wide %>%
+    group_by(lei) %>%
+    arrange(period_end, .by_group = TRUE)
 
-    # Income statement
-    other_operating_net = gross_profit - coalesce(distribution_costs, 0) -
-      coalesce(admin_expense, 0) + coalesce(other_income, 0) -
-      coalesce(other_expense, 0) + coalesce(associates_result, 0) - ebit,
-    opex_and_other = gross_profit - ebit,
-    net_finance_result = coalesce(finance_income, 0) - coalesce(finance_costs, 0),
+  wide <- wide %>%
+    mutate(
+      year = fy_label(period_end),
+      days = as.numeric(period_end - lag(period_end)),
 
-    # Balance sheet
-    # Two residuals per side of the statement: the wider one is what is left
-    # of a total once the lines a chart shows are taken off it, and the
-    # narrower one what is left once the further lines of a table are taken
-    # off as well. Each table and each chart uses the residual of the lines
-    # it shows, so that nothing is counted twice.
-    assets_rest_noncurrent = noncurrent_assets - coalesce(ppe, 0) -
-      coalesce(goodwill, 0) - coalesce(intangibles, 0) -
-      coalesce(equity_method, 0),
-    assets_other_noncurrent = assets_rest_noncurrent -
-      coalesce(financial_assets_noncurrent, 0) -
-      coalesce(deferred_tax_assets, 0),
-    assets_rest_current = current_assets - coalesce(inventories, 0) -
-      coalesce(receivables, 0) - coalesce(cash, 0),
-    assets_other_current = assets_rest_current -
-      coalesce(financial_assets_current, 0),
-    liabilities = assets - equity,
-    financial_liabilities = coalesce(financial_liabilities_noncurrent, 0) +
-      coalesce(financial_liabilities_current, 0),
-    liabilities_rest_noncurrent = noncurrent_liabilities -
-      coalesce(financial_liabilities_noncurrent, 0),
-    liabilities_other_noncurrent = liabilities_rest_noncurrent -
-      coalesce(employee_provisions, 0) -
-      coalesce(deferred_tax_liabilities, 0),
-    liabilities_rest_current = current_liabilities -
-      coalesce(financial_liabilities_current, 0),
-    liabilities_other_current = liabilities_rest_current -
-      coalesce(payables, 0) - coalesce(current_provisions, 0) -
-      coalesce(current_tax_liabilities, 0),
-    net_debt = financial_liabilities - cash,
-    net_debt_wide = financial_liabilities - coalesce(cash, 0) -
-      coalesce(financial_assets_current, 0),
-    capital_employed = assets - current_liabilities,
-    invested_capital = equity + net_debt,
-    working_capital = coalesce(inventories, 0) + coalesce(receivables, 0) -
-      coalesce(payables, 0),
-    net_current_assets = current_assets - current_liabilities,
-    goodwill_and_intangibles = coalesce(goodwill, 0) + coalesce(intangibles, 0),
+      # Income statement
+      other_operating_net = gross_profit - coalesce(distribution_costs, 0) -
+        coalesce(admin_expense, 0) + coalesce(other_income, 0) -
+        coalesce(other_expense, 0) + coalesce(associates_result, 0) - ebit,
+      opex_and_other = gross_profit - ebit,
+      net_finance_result = coalesce(finance_income, 0) - coalesce(finance_costs, 0),
 
-    # Cash flow
-    free_cash_flow = operating_cash_flow + investing_cash_flow,
-    free_cash_flow_after_capex = operating_cash_flow - capex,
-    cash_tax_paid = taxes_paid,
+      # Balance sheet
+      # Two residuals per side of the statement: the wider one is what is left
+      # of a total once the lines a chart shows are taken off it, and the
+      # narrower one what is left once the further lines of a table are taken
+      # off as well. Each table and each chart uses the residual of the lines
+      # it shows, so that nothing is counted twice.
+      assets_rest_noncurrent = noncurrent_assets - coalesce(ppe, 0) -
+        coalesce(goodwill, 0) - coalesce(intangibles, 0) -
+        coalesce(equity_method, 0),
+      assets_other_noncurrent = assets_rest_noncurrent -
+        coalesce(financial_assets_noncurrent, 0) -
+        coalesce(deferred_tax_assets, 0),
+      assets_rest_current = current_assets - coalesce(inventories, 0) -
+        coalesce(receivables, 0) - coalesce(cash, 0),
+      assets_other_current = assets_rest_current -
+        coalesce(financial_assets_current, 0),
+      liabilities = assets - equity,
+      financial_liabilities = coalesce(financial_liabilities_noncurrent, 0) +
+        coalesce(financial_liabilities_current, 0),
+      liabilities_rest_noncurrent = noncurrent_liabilities -
+        coalesce(financial_liabilities_noncurrent, 0),
+      liabilities_other_noncurrent = liabilities_rest_noncurrent -
+        coalesce(employee_provisions, 0) -
+        coalesce(deferred_tax_liabilities, 0),
+      liabilities_rest_current = current_liabilities -
+        coalesce(financial_liabilities_current, 0),
+      liabilities_other_current = liabilities_rest_current -
+        coalesce(payables, 0) - coalesce(current_provisions, 0) -
+        coalesce(current_tax_liabilities, 0),
+      net_debt = financial_liabilities - cash,
+      net_debt_wide = financial_liabilities - coalesce(cash, 0) -
+        coalesce(financial_assets_current, 0),
+      capital_employed = assets - current_liabilities,
+      invested_capital = equity + net_debt,
+      working_capital = coalesce(inventories, 0) + coalesce(receivables, 0) -
+        coalesce(payables, 0),
+      net_current_assets = current_assets - current_liabilities,
+      goodwill_and_intangibles = coalesce(goodwill, 0) + coalesce(intangibles, 0),
 
-    # Tax
-    tax_rate = income_tax / profit_before_tax * 100,
-    cash_tax_rate = taxes_paid / profit_before_tax * 100)
+      # Cash flow
+      free_cash_flow = operating_cash_flow + investing_cash_flow,
+      free_cash_flow_after_capex = operating_cash_flow - capex,
+      cash_tax_paid = taxes_paid,
 
-# The indicators. Those that put a flow of a year against a balance use the
-# average of the balance at the start and at the end of the year, which the
-# first year of the window takes from the year read behind it; that year is
-# dropped afterwards. A ratio of two figures of which one is missing is
-# missing, which leaves a gap in the tables rather than a wrong number.
-avg <- function(x) (x + lag(x)) / 2
+      # Tax
+      tax_rate = income_tax / profit_before_tax * 100,
+      cash_tax_rate = taxes_paid / profit_before_tax * 100)
 
-wide <- wide %>%
-  mutate(
-    # Growth
-    revenue_growth = revenue / lag(revenue) * 100 - 100,
-    gross_profit_growth = gross_profit / lag(gross_profit) * 100 - 100,
-    ebit_growth = ebit / lag(ebit) * 100 - 100,
-    profit_growth = profit_owners / lag(profit_owners) * 100 - 100,
-    eps_growth = eps / lag(eps) * 100 - 100,
-    assets_growth = assets / lag(assets) * 100 - 100,
-    equity_growth = equity_owners / lag(equity_owners) * 100 - 100,
+  # The indicators. Those that put a flow of a year against a balance use the
+  # average of the balance at the start and at the end of the year, which the
+  # first year of the window takes from the year read behind it; that year is
+  # dropped afterwards. A ratio of two figures of which one is missing is
+  # missing, which leaves a gap in the tables rather than a wrong number.
+  avg <- function(x) (x + lag(x)) / 2
 
-    # Margins
-    gross_margin = gross_profit / revenue * 100,
-    ebit_margin = ebit / revenue * 100,
-    pretax_margin = profit_before_tax / revenue * 100,
-    net_margin = profit / revenue * 100,
-    net_margin_owners = profit_owners / revenue * 100,
-    ocf_margin = operating_cash_flow / revenue * 100,
-    fcf_margin = free_cash_flow / revenue * 100,
+  wide <- wide %>%
+    mutate(
+      # Growth
+      revenue_growth = revenue / lag(revenue) * 100 - 100,
+      gross_profit_growth = gross_profit / lag(gross_profit) * 100 - 100,
+      ebit_growth = ebit / lag(ebit) * 100 - 100,
+      profit_growth = profit_owners / lag(profit_owners) * 100 - 100,
+      eps_growth = eps / lag(eps) * 100 - 100,
+      assets_growth = assets / lag(assets) * 100 - 100,
+      equity_growth = equity_owners / lag(equity_owners) * 100 - 100,
 
-    # Cost structure, as a share of revenue
-    cost_of_sales_ratio = cost_of_sales / revenue * 100,
-    distribution_ratio = distribution_costs / revenue * 100,
-    admin_ratio = admin_expense / revenue * 100,
+      # Margins
+      gross_margin = gross_profit / revenue * 100,
+      ebit_margin = ebit / revenue * 100,
+      pretax_margin = profit_before_tax / revenue * 100,
+      net_margin = profit / revenue * 100,
+      net_margin_owners = profit_owners / revenue * 100,
+      ocf_margin = operating_cash_flow / revenue * 100,
+      fcf_margin = free_cash_flow / revenue * 100,
 
-    # Returns
-    nopat = ebit * (1 - pmin(pmax(coalesce(tax_rate, NA) / 100, 0), 1)),
-    roe = profit_owners / avg(equity_owners) * 100,
-    roa = profit / avg(assets) * 100,
-    roce = ebit / avg(capital_employed) * 100,
-    roic = nopat / avg(invested_capital) * 100,
-    rogic = ebit / avg(goodwill_and_intangibles + ppe + working_capital) * 100,
+      # Cost structure, as a share of revenue
+      cost_of_sales_ratio = cost_of_sales / revenue * 100,
+      distribution_ratio = distribution_costs / revenue * 100,
+      admin_ratio = admin_expense / revenue * 100,
 
-    # DuPont, on the result and the equity attributable to the owners
-    asset_turnover = revenue / avg(assets),
-    equity_multiplier = avg(assets) / avg(equity_owners),
-    owners_share = profit_owners / profit,
+      # Returns
+      nopat = ebit * (1 - pmin(pmax(coalesce(tax_rate, NA) / 100, 0), 1)),
+      roe = profit_owners / avg(equity_owners) * 100,
+      roa = profit / avg(assets) * 100,
+      roce = ebit / avg(capital_employed) * 100,
+      roic = nopat / avg(invested_capital) * 100,
+      rogic = ebit / avg(goodwill_and_intangibles + ppe + working_capital) * 100,
 
-    # Capital structure
-    equity_ratio = equity / assets * 100,
-    gearing = net_debt / equity * 100,
-    debt_to_capital = net_debt / (net_debt + equity) * 100,
-    liabilities_to_equity = liabilities / equity * 100,
-    goodwill_to_equity = goodwill_and_intangibles / equity * 100,
-    noncurrent_funding = (equity + noncurrent_liabilities) /
-      noncurrent_assets * 100,
+      # DuPont, on the result and the equity attributable to the owners
+      asset_turnover = revenue / avg(assets),
+      equity_multiplier = avg(assets) / avg(equity_owners),
+      owners_share = profit_owners / profit,
 
-    # Debt service and liquidity
-    interest_cover = ebit / finance_costs,
-    net_interest_cover = ebit / (finance_costs - coalesce(finance_income, 0)),
-    cash_interest_cover = operating_cash_flow / interest_paid,
-    net_debt_to_ocf = net_debt / operating_cash_flow,
-    net_debt_to_fcf = net_debt / free_cash_flow,
-    current_ratio = current_assets / current_liabilities,
-    quick_ratio = (current_assets - inventories) / current_liabilities,
-    cash_ratio = cash / current_liabilities,
+      # Capital structure
+      equity_ratio = equity / assets * 100,
+      gearing = net_debt / equity * 100,
+      debt_to_capital = net_debt / (net_debt + equity) * 100,
+      liabilities_to_equity = liabilities / equity * 100,
+      goodwill_to_equity = goodwill_and_intangibles / equity * 100,
+      noncurrent_funding = (equity + noncurrent_liabilities) /
+        noncurrent_assets * 100,
 
-    # Working capital
-    days_inventory = avg(inventories) / cost_of_sales * 365,
-    days_receivables = avg(receivables) / revenue * 365,
-    days_payables = avg(payables) / cost_of_sales * 365,
-    cash_conversion_cycle = days_inventory + days_receivables - days_payables,
-    working_capital_ratio = working_capital / revenue * 100,
+      # Debt service and liquidity
+      interest_cover = ebit / finance_costs,
+      net_interest_cover = ebit / (finance_costs - coalesce(finance_income, 0)),
+      cash_interest_cover = operating_cash_flow / interest_paid,
+      net_debt_to_ocf = net_debt / operating_cash_flow,
+      net_debt_to_fcf = net_debt / free_cash_flow,
+      current_ratio = current_assets / current_liabilities,
+      quick_ratio = (current_assets - inventories) / current_liabilities,
+      cash_ratio = cash / current_liabilities,
 
-    # Cash flow quality and capital expenditure
-    ocf_to_ebit = operating_cash_flow / ebit * 100,
-    fcf_to_profit = free_cash_flow / profit * 100,
-    accruals = (profit - operating_cash_flow - investing_cash_flow) /
-      avg(assets) * 100,
-    capex_ratio = capex / revenue * 100,
-    capex_to_ppe = capex / lag(ppe) * 100,
-    capex_cover = operating_cash_flow / capex,
+      # Working capital
+      days_inventory = avg(inventories) / cost_of_sales * 365,
+      days_receivables = avg(receivables) / revenue * 365,
+      days_payables = avg(payables) / cost_of_sales * 365,
+      cash_conversion_cycle = days_inventory + days_receivables - days_payables,
+      working_capital_ratio = working_capital / revenue * 100,
 
-    # Per share. No issuer tags the number of its shares under a concept of
-    # the taxonomy, so it is the result attributable to the owners over the
-    # earnings per share: the weighted average number the issuer used itself.
-    shares = profit_owners / eps,
-    book_value_per_share = equity_owners / shares,
-    ocf_per_share = operating_cash_flow / shares,
-    fcf_per_share = free_cash_flow / shares,
-    payout = dps / eps * 100,
-    payout_cash = dividends_paid / profit_owners * 100,
-    dividend_cover_fcf = free_cash_flow / dividends_paid,
+      # Cash flow quality and capital expenditure
+      ocf_to_ebit = operating_cash_flow / ebit * 100,
+      fcf_to_profit = free_cash_flow / profit * 100,
+      accruals = (profit - operating_cash_flow - investing_cash_flow) /
+        avg(assets) * 100,
+      capex_ratio = capex / revenue * 100,
+      capex_to_ppe = capex / lag(ppe) * 100,
+      capex_cover = operating_cash_flow / capex,
 
-    # Comprehensive income
-    oci_to_profit = oci / profit * 100)
+      # Per share. No issuer tags the number of its shares under a concept of
+      # the taxonomy, so it is the result attributable to the owners over the
+      # earnings per share: the weighted average number the issuer used itself.
+      shares = profit_owners / eps,
+      book_value_per_share = equity_owners / shares,
+      ocf_per_share = operating_cash_flow / shares,
+      fcf_per_share = free_cash_flow / shares,
+      payout = dps / eps * 100,
+      payout_cash = dividends_paid / profit_owners * 100,
+      dividend_cover_fcf = free_cash_flow / dividends_paid,
 
-# Altman's Z''-score, the variant for an issuer whose shares are not valued
-# in the figures: it replaces the market value of the equity in the original
-# score with its book value, so that the score rests on the statements
-# alone. Above 2.6 the score reads as a safe zone, below 1.1 as a distressed
-# one; it was fitted on manufacturers and is read as a direction of travel
-# rather than as a probability.
-wide <- wide %>%
-  mutate(
-    z_wc = net_current_assets / assets,
-    z_re = retained_earnings / assets,
-    z_ebit = ebit / assets,
-    z_equity = equity / liabilities,
-    z_score = 3.25 + 6.56 * z_wc + 3.26 * z_re + 6.72 * z_ebit +
-      1.05 * z_equity)
+      # Comprehensive income
+      oci_to_profit = oci / profit * 100)
 
-# Piotroski's F-score, nine tests of the statements of a year against those
-# of the year before it, each worth one point. It was built to sort value
-# portfolios and reads as a summary of the direction the statements point
-# in, not as a rating.
-wide <- wide %>%
-  mutate(
-    f_roa = as.integer(roa > 0),
-    f_ocf = as.integer(operating_cash_flow > 0),
-    f_roa_up = as.integer(roa > lag(roa)),
-    f_accrual = as.integer(operating_cash_flow > profit),
-    f_leverage = as.integer(financial_liabilities_noncurrent / assets <
-                              lag(financial_liabilities_noncurrent / assets)),
-    f_liquidity = as.integer(current_ratio > lag(current_ratio)),
-    f_shares = as.integer(coalesce(issued_capital, 0) <=
-                            coalesce(lag(issued_capital), 0)),
-    f_margin = as.integer(gross_margin > lag(gross_margin)),
-    f_turnover = as.integer(asset_turnover > lag(asset_turnover)))
+  # Altman's Z''-score, the variant for an issuer whose shares are not valued
+  # in the figures: it replaces the market value of the equity in the original
+  # score with its book value, so that the score rests on the statements
+  # alone. Above 2.6 the score reads as a safe zone, below 1.1 as a distressed
+  # one; it was fitted on manufacturers and is read as a direction of travel
+  # rather than as a probability.
+  wide <- wide %>%
+    mutate(
+      z_wc = net_current_assets / assets,
+      z_re = retained_earnings / assets,
+      z_ebit = ebit / assets,
+      z_equity = equity / liabilities,
+      z_score = 3.25 + 6.56 * z_wc + 3.26 * z_re + 6.72 * z_ebit +
+        1.05 * z_equity)
 
-f_keys <- c("f_roa", "f_ocf", "f_roa_up", "f_accrual", "f_leverage",
-            "f_liquidity", "f_shares", "f_margin", "f_turnover")
-wide$f_score <- rowSums(wide[f_keys], na.rm = FALSE)
+  # Piotroski's F-score, nine tests of the statements of a year against those
+  # of the year before it, each worth one point. It was built to sort value
+  # portfolios and reads as a summary of the direction the statements point
+  # in, not as a rating.
+  wide <- wide %>%
+    mutate(
+      f_roa = as.integer(roa > 0),
+      f_ocf = as.integer(operating_cash_flow > 0),
+      f_roa_up = as.integer(roa > lag(roa)),
+      f_accrual = as.integer(operating_cash_flow > profit),
+      f_leverage = as.integer(financial_liabilities_noncurrent / assets <
+                                lag(financial_liabilities_noncurrent / assets)),
+      f_liquidity = as.integer(current_ratio > lag(current_ratio)),
+      f_shares = as.integer(coalesce(issued_capital, 0) <=
+                              coalesce(lag(issued_capital), 0)),
+      f_margin = as.integer(gross_margin > lag(gross_margin)),
+      f_turnover = as.integer(asset_turnover > lag(asset_turnover)))
+
+  f_keys <- c("f_roa", "f_ocf", "f_roa_up", "f_accrual", "f_leverage",
+              "f_liquidity", "f_shares", "f_margin", "f_turnover")
+  wide <- ungroup(wide)
+  wide$f_score <- rowSums(wide[f_keys], na.rm = FALSE)
+  wide
+}
+
+wide <- derive(wide_of(tagged))
 
 # The year read behind the window is dropped now that the averages, the
 # growth rates and the tests against the year before are in place. Where the
@@ -2302,6 +2366,426 @@ chart_score
 
 {{< pagebreak >}}
 
+## `r tr("Beside its market", "Im Vergleich mit dem Markt")`
+
+```{r peers}
+# --------------------------------------------------------------------------
+# The panel: the issuer beside the other issuers of its market
+# --------------------------------------------------------------------------
+
+# Only concepts of the IFRS taxonomy carry a comparison. A figure the
+# factsheet reads from a concept of the issuer's own -- a line it marks with
+# a dagger -- is the issuer's to name, and the other issuers of the panel
+# name theirs differently or not at all. So the issuer's figures are derived
+# a second time here, from the concepts of the taxonomy alone and by the
+# same steps as the figures of every issuer of the panel, and an indicator
+# that rests on an extension concept is missing from this page rather than
+# compared.
+lookup_ifrs <- lookup %>% filter(!extension)
+
+issuer_ifrs <- derive(wide_of(tag_figures(figures, lookup_ifrs))) %>%
+  filter(period_end == max_date)
+
+# The financial years the issuer's latest year is held against. A year is
+# named by the date it ends on, and two years named alike need not be
+# alike: a year ending on 31 March 2026 is not the year ending on 31
+# December 2026, which closes nine months later. So the panel takes, from
+# every issuer, its financial year ending in the twelve months up to the
+# issuer's own period end -- and reads the year before that one as well,
+# which the averages, the growth rates and the F-score need, exactly as the
+# issuer's own figures read a year behind the window.
+peer_end <- max_date
+peer_start <- seq(peer_end, length.out = 2, by = "-1 year")[2]
+peer_read_from <- seq(peer_end, length.out = 3, by = "-1 year")[3]
+
+peer_countries <- if (nzchar(peer_countries)) {
+  toupper(trimws(strsplit(peer_countries, ",")[[1]]))
+} else latest$country
+peer_countries <- peer_countries[nzchar(peer_countries)]
+
+# A bank and an insurer have an equity ratio a fraction of an industrial
+# issuer's and no revenue to put a margin on, so a panel mixing the two
+# describes neither. They are found as the sector factsheet finds them: by
+# the sectoral registers where a list of them is given, and by the lines of
+# their own statements that only a bank or an insurer presents, which close
+# the hole the registers leave -- a register lists the authorised entity,
+# and what files an annual report is usually the group above it.
+financial_concepts <- c(
+  "ifrs-full:InterestRevenueCalculatedUsingEffectiveInterestMethod",
+  "ifrs-full:InsuranceRevenue",
+  "ifrs-full:InsuranceContractLiabilities",
+  "ifrs-full:InsuranceServiceResult",
+  "ifrs-full:InsuranceServiceExpenses"
+)
+financial_leis <- if (nzchar(financial_file)) {
+  toupper(trimws(readLines(financial_file, warn = FALSE)))
+} else character(0)
+financial_leis <- financial_leis[nzchar(financial_leis)]
+
+# The filings of the panel and the facts the indicators are built from. The
+# table of facts is partitioned by country, so the read filters on it first
+# and on the concepts the factsheet looks for after, which keeps a country
+# of three thousand filings to the few lines the indicators need. An issuer
+# is keyed by its LEI, so a filing without one cannot join the panel.
+peer_filings_all <- open_dataset(file.path(path_silver, "filings")) %>%
+  filter(country %in% peer_countries, lei != issuer_lei,
+         period_end > peer_read_from, period_end <= peer_end) %>%
+  collect()
+
+peer_facts <- open_dataset(file.path(path_silver, "facts")) %>%
+  filter(country %in% peer_countries,
+         filing %in% peer_filings_all$filing,
+         concept %in% c(unname(concepts), financial_concepts)) %>%
+  select(lei, filing, period_end, concept, prd_start, prd_end, unit,
+         dimensions, value) %>%
+  collect()
+
+peer_chosen <- choose_filings(peer_filings_all, unique(peer_facts$filing))
+peer_facts <- peer_facts %>% filter(filing %in% peer_chosen$filing)
+
+financial_by_statement <- unique(
+  peer_facts$lei[peer_facts$concept %in% financial_concepts])
+issuer_financial <- issuer_lei %in% financial_leis ||
+  any(facts$concept %in% financial_concepts & facts$filing == latest$filing)
+
+# One row per issuer of the panel: its year in the window, derived by the
+# steps the issuer's own figures took.
+peer_wide <- derive(wide_of(tag_figures(figures_of(peer_facts), lookup_ifrs))) %>%
+  filter(period_end > peer_start, period_end <= peer_end) %>%
+  group_by(lei) %>%
+  slice_max(period_end, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(financial = lei %in% financial_leis | lei %in% financial_by_statement)
+
+peer_set_apart <- sum(peer_wide$financial != issuer_financial)
+peer_wide <- peer_wide %>% filter(financial == issuer_financial)
+n_panel <- nrow(peer_wide)
+n_panel_december <- sum(format(peer_wide$period_end, "%m-%d") == "12-31")
+
+# The countries the panel holds, counted from the issuers in it rather than
+# taken from the setting. A country is named in the setting and holds no
+# issuer of the panel where the lake has its filings but not its facts --
+# the index of every country is collected, the facts of the countries asked
+# for -- and a page naming it as part of the market would describe a panel
+# it does not show.
+peer_by_country <- peer_wide %>%
+  left_join(peer_chosen %>% distinct(lei, country) %>%
+              group_by(lei) %>% slice(1) %>% ungroup(), by = "lei") %>%
+  count(country)
+peer_countries_empty <- setdiff(peer_countries, peer_by_country$country)
+
+# The indicators compared. They are the ones the pages before define, and
+# every one is a ratio, a growth rate or a score, so that the comparison
+# holds across the currencies of a panel of several countries. Three kinds
+# are left out, for the reasons the page gives: the per-share amounts
+# themselves, the gross margin and anything resting on EBITDA.
+peer_spec <- tribble(
+  ~key,            ~en,                                          ~de,                                              ~digits,
+  "ebit_margin",   "EBIT margin, %",                             "EBIT-Marge, %",                                  1,
+  "pretax_margin", "Pre-tax margin, %",                          "Vorsteuermarge, %",                              1,
+  "net_margin",    "Net margin, %",                              "Nettomarge, %",                                  1,
+  "ocf_margin",    "Operating cash flow to revenue, %",          "Operativer Cashflow zu Umsatz, %",               1,
+  "fcf_margin",    "Free cash flow to revenue, %",               "Free Cashflow zu Umsatz, %",                     1,
+  "roe",           "Return on equity, owners of the parent, %",  "Eigenkapitalrendite der Eigentümer, %",          1,
+  "roa",           "Return on total assets, %",                  "Gesamtkapitalrendite, %",                        1,
+  "roce",          "Return on capital employed, %",              "Rendite auf das eingesetzte Kapital, %",         1,
+  "roic",          "Return on invested capital, after notional tax, %", "Rendite auf das investierte Kapital, nach Steuern, %", 1,
+  "equity_ratio",  "Equity to total assets, %",                  "Eigenkapitalquote, %",                           1,
+  "ocf_to_ebit",   "Operating cash flow to EBIT, %",             "Operativer Cashflow zu EBIT, %",                 1,
+  "fcf_to_profit", "Free cash flow to profit, %",                "Free Cashflow zum Jahresergebnis, %",            1,
+  "eps_growth",    "Growth of earnings per share, %",            "Wachstum des Ergebnisses je Aktie, %",           1,
+  "payout",        "Dividend proposed to earnings per share, %", "Vorgeschlagene Dividende zum Ergebnis je Aktie, %", 1,
+  "f_score",       "F-score, out of nine",                       "F-Score, von neun",                              0,
+  "z_score",       "Z''-score",                                  "Z''-Score",                                      2
+) %>%
+  mutate(label = if (report_lang == "de") de else en)
+
+# For each indicator: how many issuers of the panel it could be computed
+# for, the quartiles of their values and the quartile the issuer's own value
+# falls in. A value that cannot be computed -- a ratio over nil, a figure
+# not tagged -- counts for no one. Medians and quartiles rather than means,
+# because a panel holds issuers two orders of magnitude apart and a mean is
+# set by the largest of them.
+peer_stats <- bind_rows(lapply(peer_spec$key, function(key) {
+  v <- peer_wide[[key]]
+  v <- v[is.finite(v)]
+  x <- issuer_ifrs[[key]]
+  x <- if (length(x) == 1 && is.finite(x)) x else NA_real_
+  out <- tibble(key = key, n = length(v), issuer = x, q1 = NA_real_,
+                median = NA_real_, q3 = NA_real_, quartile = NA_integer_)
+  if (length(v) >= peer_min) {
+    q <- quantile(v, c(0.25, 0.5, 0.75), names = FALSE, type = 7)
+    out$q1 <- q[1]
+    out$median <- q[2]
+    out$q3 <- q[3]
+    if (!is.na(x)) out$quartile <- 1L + sum(x > q)
+  }
+  out
+})) %>%
+  left_join(peer_spec %>% select(key, label, digits), by = "key")
+
+peer_shown <- peer_stats %>% filter(n >= peer_min)
+
+# The strips, one per indicator the panel is large enough for. A panel of
+# forty issuers holds a growth of ten thousand per cent beside one of
+# twelve, and a scale wide enough for the first leaves the rest as one dot.
+# So a strip reaches twice the width of its middle half beyond either
+# quartile, and a value further out is drawn at that edge, which the
+# subtitle says. A percentile would not do: the 95th of forty issuers is the
+# third largest, and in a panel with three such outliers it is one of them.
+# Within a strip an issuer's height is spread by its rank, so that the dots
+# of a crowded middle stand apart, and the same way on every render.
+# The values of the indicators shown, one row per issuer and indicator. A
+# panel too thin for every indicator has none, and the chart is not drawn.
+peer_values <- if (nrow(peer_shown) > 0) {
+  peer_wide %>%
+    select(lei, all_of(peer_shown$key)) %>%
+    pivot_longer(-"lei", names_to = "key") %>%
+    filter(is.finite(value))
+} else tibble(lei = character(0), key = character(0), value = numeric(0))
+
+peer_limits <- peer_shown %>%
+  inner_join(peer_values %>%
+               group_by(key) %>%
+               summarise(min = min(value), max = max(value), .groups = "drop"),
+             by = "key") %>%
+  transmute(key,
+            lo = pmax(min, q1 - 2 * (q3 - q1)),
+            hi = pmin(max, q3 + 2 * (q3 - q1)))
+
+clip_to <- function(x, lo, hi) pmin(pmax(x, lo), hi)
+strip_levels <- peer_shown$label
+peer_strip <- peer_values %>%
+  inner_join(peer_limits, by = "key") %>%
+  group_by(key) %>%
+  mutate(y = ((rank(value, ties.method = "first") * 0.618034) %% 1) - 0.5,
+         value = clip_to(value, lo, hi)) %>%
+  ungroup() %>%
+  left_join(peer_spec %>% select(key, label), by = "key") %>%
+  mutate(label = factor(label, levels = strip_levels,
+                        labels = wrap_labels(strip_levels, 34)))
+peer_marks <- peer_shown %>%
+  inner_join(peer_limits, by = "key") %>%
+  mutate(q1 = clip_to(q1, lo, hi), q3 = clip_to(q3, lo, hi),
+         median = clip_to(median, lo, hi),
+         issuer = clip_to(issuer, lo, hi),
+         label = factor(label, levels = strip_levels,
+                        labels = wrap_labels(strip_levels, 34)))
+
+peer_height <- 0.6 + 0.95 * max(1, ceiling(nrow(peer_shown) / 3))
+```
+
+```{r peers-text, results='asis'}
+# A date as the rest of the factsheet writes one. German is written in
+# figures, as everywhere else in the template: the month names come from the
+# system locale, which on Windows hands them back in its own code page
+# rather than in UTF-8.
+peer_date <- function(d) {
+  if (report_lang == "de") format(d, "%d.%m.%Y")
+  else sub("^0", "", format(d, "%d %B %Y"))
+}
+countries_text <- if (nrow(peer_by_country) == 1) {
+  peer_by_country$country
+} else if (nrow(peer_by_country) > 1) {
+  paste0(paste0(peer_by_country$country, " (", peer_by_country$n, ")"),
+         collapse = ", ")
+} else paste(peer_countries, collapse = ", ")
+empty_text <- if (length(peer_countries_empty)) {
+  tr(paste0(" No issuer of ", paste(peer_countries_empty, collapse = ", "),
+            " is in it, the lake holding no facts of one for the year."),
+     paste0(" Kein Emittent aus ", paste(peer_countries_empty, collapse = ", "),
+            " gehört dazu, da der Data Lake für das Jahr keine Fakten eines ",
+            "solchen hält."))
+} else ""
+window_text <- paste0(peer_date(peer_start + 1), tr(" and ", " und "),
+                      peer_date(peer_end))
+registers_text <- if (length(financial_leis)) {
+  tr(" and by the sectoral registers", " und an den sektoralen Registern")
+} else ""
+
+cat(tr(
+  paste0("This page sets the issuer's latest year, ", years[n_shown],
+         ", beside the other issuers of its market: for each indicator the ",
+         "median of the panel, the range its middle half covers, the ",
+         "quartile the issuer falls in and the number of issuers the ",
+         "indicator could be computed for. **The panel is a market, not an ",
+         "industry.** ESEF carries no sector code, so the panel holds every ",
+         "issuer of ", countries_text, " that filed a report for a ",
+         "financial year ending between ", window_text, ", whatever it does, ",
+         "and a margin is set beside the margins of companies in other lines ",
+         "of business.\n\n",
+         "**", n_panel, " issuers** make up the panel, ", n_panel_december,
+         " of them with a financial year ending on 31 December; the issuer ",
+         "itself is not among them.", empty_text, " ",
+         if (issuer_financial) {
+           paste0("The issuer presents lines of its statements only a bank ",
+                  "or an insurer has, so the panel holds only the banks and ",
+                  "insurers of its market, and ", peer_set_apart,
+                  " other issuers were set apart.")
+         } else {
+           paste0(peer_set_apart, " banks and insurers were set apart, found ",
+                  "by the lines of their statements only a bank or an insurer ",
+                  "presents", registers_text, ": beside them an industrial ",
+                  "issuer's equity ratio looks high for a reason that has ",
+                  "nothing to do with it.")
+         }, "\n\n",
+         "Every figure is derived as on the pages before, from each issuer's ",
+         "own filing for its year and as first reported, and from concepts ",
+         "of the IFRS taxonomy alone, for the issuer as for the panel. A ",
+         "figure the pages before read from a concept of the issuer's own, ",
+         "and mark with a dagger, is left out here rather than compared. An ",
+         "indicator fewer than ", peer_min, " issuers of the panel could be ",
+         "computed for shows no median: a median of a handful says nothing ",
+         "about a market.\n\n",
+         "Every indicator is a ratio, a growth rate or a score, so the ",
+         "comparison holds across currencies. The per-share amounts ",
+         "themselves are not compared, since a share is whatever its issuer ",
+         "makes it and a median of earnings per share is a median of share ",
+         "counts; their growth and the dividend proposed against them are. ",
+         "Nor is the gross margin: many issuers present their costs by ",
+         "nature and have none, and a median over the others would set the ",
+         "issuer beside that part of the market only. The F-score needs all ",
+         "nine of its tests, the gross margin and the non-current financial ",
+         "liabilities among them, and is compared only where enough issuers ",
+         "of the panel tag everything it rests on. No EBITDA either, ",
+         "depreciation and amortisation being tagged too rarely.\n\n",
+         "A quartile is a position, not a grade: the fourth holds the highest ",
+         "quarter of the panel, which is the strongest for a return and need ",
+         "not be for every other indicator. And the panel changes from year ",
+         "to year as issuers list, delist or file late, so a median moves ",
+         "with who filed as well as with what they reported.\n"),
+  paste0("Diese Seite stellt das jüngste Jahr des Emittenten, ", years[n_shown],
+         ", neben die übrigen Emittenten seines Markts: je Kennzahl der ",
+         "Median des Panels, die Spanne seiner mittleren Hälfte, das Quartil, ",
+         "in das der Emittent fällt, und die Zahl der Emittenten, für die ",
+         "die Kennzahl berechnet werden konnte. **Das Panel ist ein Markt, ",
+         "keine Branche.** ESEF kennt keinen Branchencode, daher umfasst das ",
+         "Panel jeden Emittenten aus ", countries_text, ", der einen Bericht ",
+         "für ein Geschäftsjahr mit Ende zwischen dem ", window_text,
+         " eingereicht hat, gleich was er tut, und eine Marge steht neben den ",
+         "Margen von Unternehmen anderer Geschäftszweige.\n\n",
+         "**", n_panel, " Emittenten** bilden das Panel, ", n_panel_december,
+         " davon mit Geschäftsjahresende am 31. Dezember; der Emittent selbst ",
+         "gehört nicht dazu.", empty_text, " ",
+         if (issuer_financial) {
+           paste0("Der Emittent weist Posten aus, die nur eine Bank oder ein ",
+                  "Versicherer hat, daher umfasst das Panel nur die Banken und ",
+                  "Versicherer seines Markts; ", peer_set_apart,
+                  " andere Emittenten blieben außen vor.")
+         } else {
+           paste0(peer_set_apart, " Banken und Versicherer blieben außen vor, ",
+                  "erkannt an Posten ihrer Abschlüsse, die nur eine Bank oder ",
+                  "ein Versicherer ausweist", registers_text, ": neben ihnen ",
+                  "wirkt die Eigenkapitalquote eines Industrieunternehmens hoch, ",
+                  "aus einem Grund, der mit ihm nichts zu tun hat.")
+         }, "\n\n",
+         "Jede Zahl ist wie auf den Seiten davor abgeleitet, aus der eigenen ",
+         "Einreichung jedes Emittenten für sein Jahr und wie erstmals ",
+         "berichtet, und allein aus Konzepten der IFRS-Taxonomie, für den ",
+         "Emittenten wie für das Panel. Eine Zahl, die die Seiten davor aus ",
+         "einem eigenen Konzept des Emittenten lesen und mit einem Kreuz ",
+         "kennzeichnen, bleibt hier außen vor, statt verglichen zu werden. ",
+         "Eine Kennzahl, die für weniger als ", peer_min, " Emittenten des ",
+         "Panels berechnet werden konnte, zeigt keinen Median: ein Median ",
+         "aus einer Handvoll sagt nichts über einen Markt.\n\n",
+         "Jede Kennzahl ist ein Verhältnis, eine Wachstumsrate oder ein ",
+         "Punktwert, daher hält der Vergleich über Währungen hinweg. Die ",
+         "Beträge je Aktie selbst werden nicht verglichen, denn eine Aktie ist, ",
+         "was ihr Emittent aus ihr macht, und ein Median des Ergebnisses je ",
+         "Aktie ist ein Median von Aktienzahlen; ihr Wachstum und die ",
+         "vorgeschlagene Dividende dazu werden verglichen. Ebenso wenig die ",
+         "Bruttomarge: viele Emittenten gliedern ihre Kosten nach dem ",
+         "Gesamtkostenverfahren und haben keine, und ein Median über die ",
+         "übrigen stellte den Emittenten nur neben diesen Teil des Markts. ",
+         "Der F-Score braucht alle neun Tests, darunter die Bruttomarge und ",
+         "die langfristigen Finanzverbindlichkeiten, und wird nur verglichen, ",
+         "wo genug Emittenten des Panels alles auszeichnen, worauf er ruht. ",
+         "Auch kein EBITDA, da Abschreibungen zu selten ausgezeichnet ",
+         "werden.\n\n",
+         "Ein Quartil ist eine Lage, keine Note: das vierte umfasst das oberste ",
+         "Viertel des Panels, was für eine Rendite das stärkste ist und nicht ",
+         "für jede andere Kennzahl sein muss. Und das Panel ändert sich von ",
+         "Jahr zu Jahr, wenn Emittenten an die Börse gehen, sie verlassen oder ",
+         "spät einreichen, sodass ein Median sich mit dem bewegt, wer ",
+         "eingereicht hat, ebenso wie mit dem, was berichtet wurde.\n")))
+```
+
+### `r tr("The indicators beside the panel", "Die Kennzahlen neben dem Panel")`
+
+```{r peers-table}
+quartile_names <- c(tr("1st, lowest", "1., unterstes"), tr("2nd", "2."),
+                    tr("3rd", "3."), tr("4th, highest", "4., oberstes"))
+# Each indicator is written with its own number of decimals.
+fmt_each <- function(x, digits) unname(mapply(fmt, x, digits))
+temp <- peer_stats %>%
+  transmute(
+    label,
+    issuer = fmt_each(issuer, digits),
+    median = ifelse(n >= peer_min, fmt_each(median, digits), "–"),
+    middle = ifelse(n >= peer_min,
+                    paste0(fmt_each(q1, digits), tr(" to ", " bis "),
+                           fmt_each(q3, digits)),
+                    "–"),
+    quartile = ifelse(n < peer_min, tr("too few issuers", "zu wenige Emittenten"),
+                      ifelse(is.na(quartile), "–", quartile_names[quartile])),
+    n = as.character(n))
+knitr::kable(temp,
+             col.names = c("", tr("Issuer", "Emittent"),
+                           tr("Median of the panel", "Median des Panels"),
+                           tr("Middle half", "Mittlere Hälfte"),
+                           tr("Quartile of the issuer", "Quartil des Emittenten"),
+                           tr("Issuers", "Emittenten")),
+             align = "lrrrcr")
+```
+
+```{r peers-chart}
+#| eval: !expr nrow(peer_shown) > 0
+#| fig-height: !expr peer_height
+#| fig-alt: !expr alt_peers
+ink <- design_colours()[["ink"]]
+chart_peers <- ggplot(peer_strip, aes(x = value, y = y)) +
+  geom_rect(data = peer_marks, inherit.aes = FALSE,
+            aes(xmin = q1, xmax = q3, ymin = -0.62, ymax = 0.62),
+            fill = design_colours()[["seq_low"]]) +
+  geom_point(colour = design_colours()[["ink_soft"]], size = 0.9, alpha = 0.75) +
+  geom_segment(data = peer_marks, inherit.aes = FALSE,
+               aes(x = median, xend = median, y = -0.62, yend = 0.62),
+               colour = ink, linewidth = 0.5) +
+  # The issuer is a diamond as well as red, so that it is told from the
+  # panel without telling the colours apart.
+  geom_point(data = peer_marks %>% filter(!is.na(issuer)), inherit.aes = FALSE,
+             aes(x = issuer, y = 0), shape = 23, size = 2.6,
+             fill = design_colours()[["red"]], colour = ink, stroke = 0.4) +
+  facet_wrap(~label, ncol = 3, scales = "free_x") +
+  # A scale running to tens needs no decimals, and a score of a few does.
+  scale_x_continuous(
+    labels = function(x) fmt(x, if (max(abs(x), na.rm = TRUE) >= 10) 0 else 1),
+    n.breaks = 4) +
+  scale_y_continuous(limits = c(-0.7, 0.7), breaks = NULL) +
+  labs(subtitle = wrap_caption(tr(
+         "Each dot an issuer of the panel, the diamond the issuer; the band holds the middle half of the panel and the line is its median. A value more than twice the width of the middle half beyond it stands at the edge of its strip.",
+         "Jeder Punkt ein Emittent des Panels, die Raute der Emittent; das Band umfasst die mittlere Hälfte des Panels, die Linie ist sein Median. Ein Wert, der mehr als das Doppelte der mittleren Hälfte über sie hinausliegt, steht am Rand seines Streifens."), 110),
+       caption = wrap_caption(source_caption),
+       alt = paste0(
+         tr("Strip charts, one per indicator, of the issuers of the panel, ",
+            "Streifendiagramme, eines je Kennzahl, der Emittenten des Panels, "),
+         tr("with the issuer marked. ", "mit markiertem Emittenten. "),
+         paste(vapply(seq_len(nrow(peer_shown)), function(i) {
+           r <- peer_shown[i, ]
+           paste0(r$label, ": ", tr("issuer ", "Emittent "), fmt(r$issuer, r$digits),
+                  tr(", median ", ", Median "), fmt(r$median, r$digits),
+                  tr(", middle half ", ", mittlere Hälfte "), fmt(r$q1, r$digits),
+                  tr(" to ", " bis "), fmt(r$q3, r$digits), ", ", r$n,
+                  tr(" issuers", " Emittenten"))
+         }, character(1)), collapse = "; "), ".")) +
+  theme_corporate_design(base_size = chart_base_size, grid = "x",
+                         axis.title = element_blank())
+alt_peers <- get_alt_text(chart_peers)
+chart_peers
+```
+
+{{< pagebreak >}}
+
 ## `r tr("Coverage of the tags", "Abdeckung der Auszeichnungen")`
 
 ```{r coverage}
@@ -2507,6 +2991,7 @@ definitions <- tribble(
   "**Weighted average number of shares** -- the profit attributable to the owners over the earnings per share the issuer states, since no issuer tags the number itself. **Book value per share** -- the equity attributable to the owners over that number.", "**Gewichtete Anzahl der Aktien** -- Ergebnis der Eigentümer über dem ausgewiesenen Ergebnis je Aktie, da kein Emittent die Anzahl selbst auszeichnet. **Buchwert je Aktie** -- Eigenkapital der Eigentümer über dieser Anzahl.",
   "**F-score** -- Piotroski (2000): nine tests of the statements of a year against the year before, each worth one point.",        "**F-Score** -- Piotroski (2000): neun Tests des Abschlusses gegen das Vorjahr, je ein Punkt.",
   "**Z''-score** -- Altman's variant for an issuer whose shares are not valued in the figures: 3.25 + 6.56 times net current assets, 3.26 times retained earnings and 6.72 times the operating result, each over total assets, plus 1.05 times equity over liabilities.", "**Z''-Score** -- Altmans Variante mit dem Buchwert des Eigenkapitals: 3,25 + 6,56 mal Netto-Umlaufvermögen, 3,26 mal Gewinnrücklagen und 6,72 mal Betriebsergebnis, je über der Bilanzsumme, plus 1,05 mal Eigenkapital zu Schulden.",
+  "**Panel** -- the other issuers of the issuer's market, banks and insurers set apart from industrial issuers, each with its financial year ending in the twelve months up to the issuer's period end and its figures derived from concepts of the IFRS taxonomy alone. **Middle half** -- the range from the lower to the upper quartile of the panel.", "**Panel** -- die übrigen Emittenten des Markts des Emittenten, Banken und Versicherer getrennt von Industrieunternehmen, jeder mit dem Geschäftsjahr, das in den zwölf Monaten bis zum Stichtag des Emittenten endet, und mit Zahlen allein aus Konzepten der IFRS-Taxonomie. **Mittlere Hälfte** -- die Spanne vom unteren zum oberen Quartil des Panels.",
   "**A dagger (†)** -- the figure was read from a concept of the issuer's own taxonomy rather than from the IFRS taxonomy. **A dash (–)** -- the issuer did not tag the figure in that year, or a figure the indicator needs is missing.", "**Ein Kreuz (†)** -- die Zahl wurde aus einem eigenen Konzept des Emittenten gelesen. **Ein Strich (–)** -- der Emittent hat die Zahl in diesem Jahr nicht ausgezeichnet.")
 
 cat(paste0("- ", if (report_lang == "de") definitions$de else definitions$en,
