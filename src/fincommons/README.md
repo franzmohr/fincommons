@@ -326,7 +326,9 @@ quality_failures(results, ("error", "warning"))    # warnings as well
     over a period it is read at the last date, named in `timeProperty` (the
     total assets of a balance sheet); `nonAdditive` is never summed and only
     averaged within the groups `aggregateWithin` names (an exchange rate,
-    within one currency pair).
+    within one currency pair). An additive or semi-additive measure may name
+    `aggregateWithin` too, where it may be summed only within one value of
+    those columns (a percentage of one issuer's capital).
   - `currencyProperty` -- the column holding an amount's currency; an amount
     that is a measure must name it.
 - **A draft is a specification.** A contract whose `status` is `proposed` or
@@ -790,7 +792,12 @@ Use it once per deployment on Databricks, after a module's Silver layer has
 been written, and again when the contracts change. **The Silver layer must be
 addressed by catalogue name** (see [`addressing`](#catalogue-names)); a layer
 addressed by path is refused, since a metric view describes a table in a
-catalogue.
+catalogue. A package whose modules write by path in a layout of their own
+passes `locate=`, a function that returns a `Location(name, path,
+format="delta", partitioned=False)` for a contract: the files are registered
+as an external table under that name (`CREATE TABLE IF NOT EXISTS ... USING
+DELTA|PARQUET LOCATION ...`, and `MSCK REPAIR TABLE` for a partitioned
+Parquet table) before they are described.
 
 ```yaml
 # paths.yaml on Databricks
@@ -830,10 +837,12 @@ instructions = semantic.apply_databricks(spark, "paths.yaml", "fincommons.exchan
     `transformLogic`;
   - `semiAdditive`: a window on `timeProperty` that reads the measure at the
     last date of a period;
-  - `nonAdditive`, and any measure with a `currencyProperty`: the expression
-    only where each guarding column holds one value in the group, and empty
-    otherwise -- a rate averaged over several currency pairs, or amounts in
-    several currencies added up, come back empty rather than wrong.
+  - any measure with `aggregateWithin` (required for `nonAdditive`) or a
+    `currencyProperty`: the expression only where each guarding column holds
+    at most one distinct value in the group (`COUNT(DISTINCT c) <= 1`), and
+    empty otherwise -- a rate averaged over several currency pairs, or
+    amounts in several currencies added up, come back empty rather than
+    wrong, while a group whose currency is empty throughout is still read.
 - **The assistant instructions** come from the product's ODPS `context`
   (instructions, constraints, sample questions) and from the contracts: what
   each table holds, its key, and the aggregation rules as "Never ..."
@@ -841,8 +850,10 @@ instructions = semantic.apply_databricks(spark, "paths.yaml", "fincommons.exchan
 
 | Function | What it does |
 | --- | --- |
-| `databricks(config_path, product_id, packages=("fincommons",), suffix="_metrics")` | `{"statements": [...], "assistant": "..."}` for one product |
-| `apply_databricks(spark, config_path, product_id, packages=..., suffix="_metrics")` | run those statements; returns the assistant instructions |
+| `databricks(config_path, product_id, packages=("fincommons",), suffix="_metrics", locate=None)` | `{"statements": [...], "assistant": "..."}` for one product |
+| `apply_databricks(spark, config_path, product_id, packages=..., suffix="_metrics", locate=None)` | run those statements; returns the assistant instructions |
+| `Location(name, path, format="delta", partitioned=False)` | where a table written by path lives, for `locate=` |
+| `register_statements(location)` | the statements that register a table written by path under its name |
 | `metric_view(contract, source)` | the YAML definition of a metric view over the table `source` |
 | `create_metric_view(contract, source, view)` | the `CREATE OR REPLACE VIEW ... WITH METRICS` statement |
 | `comment_statements(contract, table_name)` | the `COMMENT ON TABLE` and `ALTER COLUMN ... COMMENT` statements |

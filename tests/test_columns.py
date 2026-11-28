@@ -143,3 +143,36 @@ def test_a_bronze_column_in_upper_case_is_not_held_to_a_contract():
     assert not defined[defined["module"] == "firds"]["column"].eq("DATADT").any()
     everything = defined_columns(contracted=())
     assert everything[everything["module"] == "firds"]["column"].eq("DATADT").any()
+
+
+def test_a_column_is_found_however_its_struct_field_is_named(tmp_path):
+    """``T.StructField``, a ``StructField`` imported by name, one written with
+    keywords, and one named through a constant of another module of the
+    package all define a column."""
+    import ast
+
+    from fincommons.columns import _module_constants, _named_column
+
+    package = tmp_path / "pkg"
+    (package / "mod").mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "mod" / "__init__.py").write_text("")
+    (package / "mod" / "common.py").write_text('VALID_FROM = "valid_from"\n')
+    source = package / "mod" / "stage.py"
+    source.write_text(
+        "from pyspark.sql.types import StructField, StringType\n"
+        "import pyspark.sql.types as T\n"
+        "from .common import VALID_FROM\n"
+        "from pkg.mod.common import VALID_FROM as SINCE\n"
+        "a = T.StructField('by_attribute', T.StringType())\n"
+        "b = StructField('by_name', StringType())\n"
+        "c = StructField(name='by_keyword', dataType=StringType())\n"
+        "d = StructField(VALID_FROM, StringType())\n"
+        "e = StructField(SINCE, StringType())\n")
+    tree = ast.parse(source.read_text())
+    constants = _module_constants(tree, str(source), str(package), "pkg")
+
+    found = {name for node in ast.walk(tree)
+             if (name := _named_column(node, "mod", (), constants, {"mod"}))}
+
+    assert found == {"by_attribute", "by_name", "by_keyword", "valid_from"}

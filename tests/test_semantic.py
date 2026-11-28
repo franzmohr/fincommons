@@ -75,7 +75,7 @@ def test_a_rate_is_a_measure_only_within_one_currency_pair():
     assert measure["name"] == "exchange_rate"
     assert measure["display_name"] == "Exchange rate"
     assert measure["expr"] == (
-        "CASE WHEN MIN(base) = MAX(base) AND MIN(quote) = MAX(quote) "
+        "CASE WHEN COUNT(DISTINCT base) <= 1 AND COUNT(DISTINCT quote) <= 1 "
         "THEN AVG(value) END")
 
 
@@ -103,8 +103,8 @@ def test_an_amount_is_added_only_within_one_currency():
     measures = {m["name"]: m for m in definition(contract, "t")["measures"]}
 
     assert measures["avg_total_issued_nominal_amount"]["expr"] == (
-        "CASE WHEN MIN(isin) = MAX(isin) "
-        "AND MIN(total_issued_nominal_currency) = MAX(total_issued_nominal_currency) "
+        "CASE WHEN COUNT(DISTINCT isin) <= 1 "
+        "AND COUNT(DISTINCT total_issued_nominal_currency) <= 1 "
         "THEN AVG(total_issued_nominal_amount) END")
 
 
@@ -271,3 +271,127 @@ def test_a_factor_that_compounds_is_to_be_multiplied_not_averaged():
 
     assert "- Never sum factor. Multiply it, and only within one value of instr_id." in text
     assert "- Never sum value. Average it only within one value of instr_id." in text
+
+
+# The guards and the rules of aggregation
+# --------------------------------------------------------------------------
+
+
+def test_a_guard_reads_a_group_whose_currency_is_empty_throughout(spark):
+    """A price quoted in percent has no currency; MIN = MAX would be empty
+    there and take the measure with it."""
+    contract = copy.deepcopy(c.load_contract("fincommons.firds.silver.main"))
+    measures = {m["name"]: m for m in definition(contract, "t")["measures"]}
+    expression = measures["avg_total_issued_nominal_amount"]["expr"]
+    spark.createDataFrame(
+        [("A", None, 1.0), ("A", None, 3.0), ("B", "EUR", 5.0), ("B", "USD", 7.0)],
+        "isin string, total_issued_nominal_currency string, "
+        "total_issued_nominal_amount double").createOrReplaceTempView("t")
+
+    got = {r["isin"]: r["m"] for r in spark.sql(
+        f"SELECT isin, {expression} AS m FROM t GROUP BY isin").collect()}
+
+    assert got == {"A": pytest.approx(2.0), "B": None}
+
+
+def with_aggregation(contract, name, logic, aggregation, **properties):
+    prop = column(contract, name)
+    prop["customProperties"] = [
+        p for p in prop["customProperties"]
+        if p["property"] not in ("aggregation", "aggregateWithin", "timeProperty")] + [
+        {"property": "aggregation", "value": aggregation, "vendor": "fincommons"}] + [
+        {"property": k, "value": v, "vendor": "fincommons"} for k, v in properties.items()]
+    prop["transformLogic"] = logic
+    return contract
+
+
+def test_a_stock_may_be_summed_only_within_some_dimensions():
+    contract = with_aggregation(copy.deepcopy(c.load_contract(EXCHANGERATE)), "value",
+                                "SUM(value)", "semiAdditive", timeProperty="ref_date",
+                                aggregateWithin=["base"])
+
+    c.validate_contract(contract)  # raises where the contract is not valid
+    (measure,) = definition(contract)["measures"]
+    assert measure["expr"] == "CASE WHEN COUNT(DISTINCT base) <= 1 THEN SUM(value) END"
+    assert measure["window"][0]["semiadditive"] == "last"
+    rules = semantic._rules(contract)
+    assert "Sum value only within one value of base." in rules
+    assert "Do not sum value over ref_date: over a period, read it at the last ref_date of the period." in rules
+
+
+def test_aggregate_within_names_columns_of_the_table():
+    contract = with_aggregation(copy.deepcopy(c.load_contract(EXCHANGERATE)), "value",
+                                "SUM(value)", "additive", aggregateWithin=["nowhere"])
+
+    with pytest.raises(c.ContractError, match="aggregateWithin names columns of the table"):
+        c.validate_contract(contract)
+
+
+def test_a_measure_summed_within_groups_is_not_told_never_to_be_summed():
+    contract = with_aggregation(copy.deepcopy(c.load_contract(EXCHANGERATE)), "value",
+                                "SUM(value)", "nonAdditive", aggregateWithin=["base", "quote"])
+
+    (rule,) = [r for r in semantic._rules(contract) if r.startswith(("Sum", "Never", "Do not"))]
+    assert rule == ("Sum value only within one value of base and quote, as SUM(value); "
+                    "across them it does not add up.")
+
+
+def test_a_maximum_is_told_how_it_aggregates():
+    contract = with_aggregation(copy.deepcopy(c.load_contract(EXCHANGERATE)), "value",
+                                "MAX(value)", "nonAdditive", aggregateWithin=["base"])
+
+    assert semantic._rules(contract)[0] == (
+        "Do not sum value. Aggregate it only as MAX(value), and only within one value of base.")
+
+
+# Tables written by path
+# --------------------------------------------------------------------------
+
+
+def test_a_table_written_by_path_is_registered_before_it_is_described(tmp_path):
+    config = tmp_path / "paths.yaml"
+    config.write_text(yaml.safe_dump({"exchangerate": {"silver": str(tmp_path / "silver")}}))
+    where = semantic.Location(name="main.regime.rates", path=r"D:\lake\silver\fx\o'rates")
+
+    generated = semantic.databricks(str(config), "fincommons.exchangerate",
+                                    locate=lambda contract_id: where)
+
+    register, comment, *_, view = generated["statements"]
+    assert register == ("CREATE TABLE IF NOT EXISTS main.regime.rates USING DELTA "
+                        r"LOCATION 'D:/lake/silver/fx/o\'rates'")
+    assert comment.startswith("COMMENT ON TABLE main.regime.rates IS ")
+    assert view.startswith("CREATE OR REPLACE VIEW main.regime.rates_metrics\n")
+
+
+def test_a_partitioned_parquet_table_has_its_partitions_recovered():
+    where = semantic.Location(name="`main`.`s`.`t`", path="/lake/t", format="parquet",
+                              partitioned=True)
+
+    assert semantic.register_statements(where) == [
+        "CREATE TABLE IF NOT EXISTS `main`.`s`.`t` USING PARQUET LOCATION '/lake/t'",
+        "MSCK REPAIR TABLE `main`.`s`.`t`"]
+    assert semantic._view_name(where.name, "_metrics") == "`main`.`s`.`t_metrics`"
+
+
+def test_a_table_is_registered_in_a_format_spark_reads():
+    with pytest.raises(ValueError, match="delta or parquet"):
+        semantic.Location(name="t", path="/lake/t", format="csv")
+
+
+@pytest.mark.parametrize("fmt, partitioned", [("delta", False), ("parquet", True)])
+def test_registration_gives_the_files_of_a_table_a_name(spark, tmp_path, fmt, partitioned):
+    location = str(tmp_path / "registered")
+    frame = spark.createDataFrame([(1, "a"), (2, "b")], "x int, part string")
+    writer = frame.write.format(fmt)
+    (writer.partitionBy("part") if partitioned else writer).save(location)
+    spark.sql("DROP TABLE IF EXISTS semantic_registered")
+    try:
+        statements = semantic.register_statements(semantic.Location(
+            name="semantic_registered", path=location, format=fmt, partitioned=partitioned))
+        for statement in statements + statements:  # a second run leaves it as it is
+            spark.sql(statement)
+        rows = spark.sql("SELECT x FROM semantic_registered ORDER BY x").collect()
+    finally:
+        spark.sql("DROP TABLE IF EXISTS semantic_registered")
+
+    assert [r["x"] for r in rows] == [1, 2]

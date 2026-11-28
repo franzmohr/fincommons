@@ -54,6 +54,7 @@ import ast
 import importlib
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from importlib import resources
 
 import pandas as pd
@@ -355,7 +356,7 @@ def defined_columns(catalogues=None, schema_declaring=SCHEMA_DECLARING_MODULES,
                 table = os.path.relpath(path, package)[:-3].replace(os.sep, ".")
                 with open(path, encoding="utf-8") as handle:
                     tree = ast.parse(handle.read())
-                constants = _module_constants(tree)
+                constants = _module_constants(tree, path, package, _root(owner))
                 if module in contracted:
                     for name in _declared_column_lists(tree, COLUMN_LISTS.get(module, ())):
                         if _is_column(name, module in snake_case):
@@ -395,10 +396,27 @@ def _declared_column_lists(tree, names):
     return found
 
 
-def _module_constants(tree):
-    """The module-level ``NAME = "text"`` assignments of a parsed file."""
+def _module_constants(tree, path=None, package=None, root=None):
+    """The module-level ``NAME = "text"`` assignments of a parsed file.
+
+    With ``path``, ``package`` and ``root`` -- the file, the directory of its
+    package and the package's import name -- the constants it imports from
+    another module of the same package count as well, so that a column a
+    module names through a constant of its ``common`` module is found:
+    ``from .common import VALID_FROM`` and ``from finsupverse.emir.common
+    import VALID_FROM`` alike. Constants of other packages are not followed.
+    """
     found = {}
     for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and path is not None:
+            source = _imported_file(node, path, package, root)
+            if source is None:
+                continue
+            constants = _file_constants(source)
+            for alias in node.names:
+                if alias.name in constants:
+                    found[alias.asname or alias.name] = constants[alias.name]
+            continue
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
             continue
         target, value = node.targets[0], node.value
@@ -409,6 +427,32 @@ def _module_constants(tree):
     return found
 
 
+@lru_cache(maxsize=None)
+def _file_constants(path):
+    """The module-level string constants of one file, without its imports."""
+    with open(path, encoding="utf-8") as handle:
+        return _module_constants(ast.parse(handle.read()))
+
+
+def _imported_file(node, path, package, root):
+    """The file of the package an ``import from`` reads, or ``None``."""
+    if node.level:
+        base = os.path.dirname(path)
+        for _ in range(node.level - 1):
+            base = os.path.dirname(base)
+        parts = (node.module or "").split(".") if node.module else []
+    elif node.module and (node.module == root or node.module.startswith(root + ".")):
+        base = package
+        parts = node.module.split(".")[1:]
+    else:
+        return None
+    target = os.path.join(base, *parts)
+    for candidate in (target + ".py", os.path.join(target, "__init__.py")):
+        if os.path.isfile(candidate) and os.path.abspath(candidate).startswith(package):
+            return os.path.abspath(candidate)
+    return None
+
+
 def _named_column(node, module, schema_declaring=SCHEMA_DECLARING_MODULES,
                   constants=None, snake_case=SNAKE_CASE_MODULES):
     """The column a call names, if it is one that defines a column.
@@ -417,9 +461,22 @@ def _named_column(node, module, schema_declaring=SCHEMA_DECLARING_MODULES,
     values, so that a column named through one of them counts as named; see
     :func:`defined_columns`.
     """
-    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+    # ``T.StructField(...)`` and a ``StructField(...)`` imported by name are
+    # the same call; the other methods are only ever called on an object.
+    if not isinstance(node, ast.Call):
         return None
-    attr, args = node.func.attr, node.args
+    if isinstance(node.func, ast.Attribute):
+        attr = node.func.attr
+    elif isinstance(node.func, ast.Name) and node.func.id == "StructField":
+        attr = "StructField"
+    else:
+        return None
+    args = list(node.args)
+    if attr == "StructField" and not args:
+        # StructField(name="x", dataType=...)
+        keywords = {k.arg: k.value for k in node.keywords}
+        if "name" in keywords and "dataType" in keywords:
+            args = [keywords["name"], keywords["dataType"]]
 
     def text(arg):
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):

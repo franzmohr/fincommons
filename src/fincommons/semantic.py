@@ -31,7 +31,11 @@ in a Spark session on the platform.
 
 A metric view describes a table in a catalogue, so a layer served this way is
 addressed by catalogue name in the configuration file; :func:`databricks`
-refuses a layer addressed by path.
+refuses a layer addressed by path alone. A package whose modules write their
+tables by path, in directories of their own layout, passes ``locate``: it
+names, for each contract, the directory the table is written to and the name
+it is to carry in the catalogue, and the table is registered under that name
+over its files before it is described.
 
 How the rules of aggregation become measures
 --------------------------------------------
@@ -56,11 +60,22 @@ properties of the framework decide what more it needs:
     for the second as readily as for the first; the metric view answers it
     with an empty value rather than a wrong one.
 
-A measure that names its currency in ``currencyProperty`` is guarded the same
-way by its currency, so that amounts in different currencies are never added.
+An additive or semi-additive measure may name ``aggregateWithin`` as well,
+where it may be summed only within one value of those columns -- a
+percentage of the capital of one issuer, a margin within one haircut basis
+-- and is guarded the same way; a semi-additive one is read at the last date
+of a period besides. A measure that names its currency in
+``currencyProperty`` is guarded by its currency, so that amounts in
+different currencies are never added.
+
+A guard asks that a column hold at most one distinct value in the group, so
+that a group in which the column is empty throughout -- a price quoted in
+percent, which has no currency -- is read rather than left empty.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import yaml
 
@@ -68,7 +83,9 @@ from . import contracts as _contracts
 from .addressing import resolve
 
 __all__ = ["METRIC_VIEW_VERSION", "metric_view", "create_metric_view",
-           "comment_statements", "assistant_instructions", "databricks",
+           "comment_statements", "assistant_instructions", "Location", "FORMATS",
+           "register_statements",
+           "databricks",
            "apply_databricks"]
 
 #: The version of the metric view specification the definitions are written
@@ -113,9 +130,7 @@ def _synonyms(prop):
 
 def _guards(prop):
     """The columns that must hold one value in a group for the measure to be read."""
-    guards = []
-    if _contracts.custom_property(prop, "aggregation") == "nonAdditive":
-        guards.extend(_contracts.custom_property(prop, "aggregateWithin") or [])
+    guards = list(_contracts.custom_property(prop, "aggregateWithin") or [])
     currency = _contracts.custom_property(prop, "currencyProperty")
     if currency is not None and currency not in guards:
         guards.append(currency)
@@ -127,7 +142,10 @@ def _measure_expression(prop):
     guards = _guards(prop)
     if not guards:
         return expression
-    condition = " AND ".join(f"MIN({c}) = MAX({c})" for c in guards)
+    # At most one distinct value rather than MIN = MAX, which is empty where
+    # the column is empty throughout the group and would leave the measure
+    # empty with it.
+    condition = " AND ".join(f"COUNT(DISTINCT {c}) <= 1" for c in guards)
     return f"CASE WHEN {condition} THEN {expression} END"
 
 
@@ -256,22 +274,28 @@ def _rules(contract):
             continue
         name = prop["name"]
         aggregation = _contracts.custom_property(prop, "aggregation")
+        within = " and ".join(_contracts.custom_property(prop, "aggregateWithin") or [])
+        logic = _text(prop.get("transformLogic", ""))
         if aggregation == "nonAdditive":
-            within = " and ".join(_contracts.custom_property(prop, "aggregateWithin") or [])
             # Said as the measure aggregates: most are averaged, a factor
-            # that compounds is multiplied, as EXP(SUM(LN(x))) does.
-            logic = _text(prop.get("transformLogic", "")).upper()
-            if logic.startswith("AVG("):
+            # that compounds is multiplied, as EXP(SUM(LN(x))) does, and one
+            # that is summed is summed within its groups and nowhere else.
+            upper = logic.upper()
+            if upper.startswith("AVG("):
                 rules.append(f"Never sum {name}. Average it only within one value of "
                              f"{within}.")
-            elif logic.startswith("EXP(SUM(LN("):
+            elif upper.startswith("EXP(SUM(LN("):
                 rules.append(f"Never sum {name}. Multiply it, and only within one "
                              f"value of {within}.")
+            elif upper.startswith("SUM("):
+                rules.append(f"Sum {name} only within one value of {within}, as "
+                             f"{logic}; across them it does not add up.")
             else:
-                rules.append(f"Never sum {name}. Aggregate it as "
-                             f"{_text(prop['transformLogic'])}, and only within one "
-                             f"value of {within}.")
-        elif aggregation == "semiAdditive":
+                rules.append(f"Do not sum {name}. Aggregate it only as {logic}, "
+                             f"and only within one value of {within}.")
+        elif within:
+            rules.append(f"Sum {name} only within one value of {within}.")
+        if aggregation == "semiAdditive":
             time = _contracts.custom_property(prop, "timeProperty")
             rules.append(f"Do not sum {name} over {time}: over a period, read it at "
                          f"the last {time} of the period.")
@@ -323,7 +347,64 @@ def assistant_instructions(product, packages=("fincommons",)):
     return "\n".join(out)
 
 
-def databricks(config_path, product_id, packages=("fincommons",), suffix="_metrics"):
+def _view_name(name, suffix):
+    """The name of the view beside a table, inside the quotes of a quoted name."""
+    if name.endswith("`"):
+        return name[:-1] + suffix + "`"
+    return name + suffix
+
+
+#: The formats a table written by path may be registered in.
+FORMATS = ("delta", "parquet")
+
+
+@dataclass(frozen=True)
+class Location:
+    """Where a table written by path lives, and what it is called in the catalogue.
+
+    Attributes
+    ----------
+    name:
+        The qualified name the table is to carry, e.g. ``main.emir_silver.contract_2024``.
+    path:
+        The directory its files are written to.
+    format:
+        ``"delta"`` or ``"parquet"``, as the module writes it.
+    partitioned:
+        Whether a Parquet table is partitioned into directories, whose
+        partitions the catalogue has to be told of.
+    """
+
+    name: str
+    path: str
+    format: str = "delta"
+    partitioned: bool = False
+
+    def __post_init__(self):
+        if self.format not in FORMATS:
+            raise ValueError(f"a table is registered as {' or '.join(FORMATS)}, "
+                             f"not {self.format!r}")
+
+
+def register_statements(location):
+    """The statements that give the files of a table a name in the catalogue.
+
+    For a table written by path: it becomes an external table over its
+    directory, which is where the metric view and the comments then find it.
+    A table that already has the name is left as it is. A partitioned Parquet
+    table keeps no log of its partitions, so they are recovered from its
+    directories, which a later run repeats to pick up new ones.
+    """
+    path = location.path.replace("\\", "/").replace("'", "\\'")
+    statements = [f"CREATE TABLE IF NOT EXISTS {location.name} "
+                  f"USING {location.format.upper()} LOCATION '{path}'"]
+    if location.format == "parquet" and location.partitioned:
+        statements.append(f"MSCK REPAIR TABLE {location.name}")
+    return statements
+
+
+def databricks(config_path, product_id, packages=("fincommons",), suffix="_metrics",
+               locate=None):
     """The semantic layer of one data product, for Databricks.
 
     Parameters
@@ -338,6 +419,13 @@ def databricks(config_path, product_id, packages=("fincommons",), suffix="_metri
     suffix: str
         Appended to the name of a table to name its metric view, which lives
         beside it.
+    locate: callable, optional
+        ``locate(contract_id)`` returns the :class:`Location` of a table that
+        is written by path in a layout of its own -- the directory it is
+        written to and the name it is to have in the catalogue -- or ``None``
+        for a table the configuration file addresses as it stands. A table so
+        located is registered under its name, over its directory, before it
+        is described.
 
     Returns
     -------
@@ -367,22 +455,29 @@ def databricks(config_path, product_id, packages=("fincommons",), suffix="_metri
             # nothing for a comment or a metric view to describe.
             continue
         _, module, layer, table = port["contractId"].split(".")
-        ref = resolve(config_path, module, layer, table)
-        if not ref.is_named:
-            raise ValueError(
-                f"the {layer} layer of {module} is addressed by path in "
-                f"{config_path}; a metric view describes a table in a catalogue, "
-                "so the layer has to be given a table prefix there")
-        # Beside the table, under the same prefix, quoted as the table is.
-        view = resolve(config_path, module, layer, table + suffix).name
-        statements += comment_statements(contract, ref.name)
-        statements.append(create_metric_view(contract, ref.name, view))
+        located = locate(port["contractId"]) if locate is not None else None
+        if located is not None:
+            name = located.name
+            statements += register_statements(located)
+            view = _view_name(name, suffix)
+        else:
+            ref = resolve(config_path, module, layer, table)
+            if not ref.is_named:
+                raise ValueError(
+                    f"the {layer} layer of {module} is addressed by path in "
+                    f"{config_path}; a metric view describes a table in a catalogue, "
+                    "so the layer has to be given a table prefix there")
+            name = ref.name
+            # Beside the table, under the same prefix, quoted as the table is.
+            view = resolve(config_path, module, layer, table + suffix).name
+        statements += comment_statements(contract, name)
+        statements.append(create_metric_view(contract, name, view))
     return {"statements": statements,
             "assistant": assistant_instructions(product, packages)}
 
 
 def apply_databricks(spark, config_path, product_id, packages=("fincommons",),
-                     suffix="_metrics"):
+                     suffix="_metrics", locate=None):
     """Run the statements of :func:`databricks` in a Spark session on Databricks.
 
     The one part of the semantic layer that needs the platform: the comments
@@ -397,7 +492,7 @@ def apply_databricks(spark, config_path, product_id, packages=("fincommons",),
     str
         The instructions for an assistant, as Markdown.
     """
-    generated = databricks(config_path, product_id, packages, suffix)
+    generated = databricks(config_path, product_id, packages, suffix, locate)
     for statement in generated["statements"]:
         spark.sql(statement)
     return generated["assistant"]

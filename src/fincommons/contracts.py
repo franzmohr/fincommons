@@ -60,9 +60,12 @@ for the catalogue of data quality checks.
 
 from __future__ import annotations
 
+import copy
 import json
+import os
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from importlib import resources
 
 import yaml
@@ -91,7 +94,10 @@ VENDOR = "fincommons"
 #: ``timeProperty`` names -- the outstanding notional of a portfolio, the
 #: total assets of a balance sheet. ``nonAdditive`` may not be summed at all
 #: and is only averaged, and only within the groups that ``aggregateWithin``
-#: names -- an exchange rate, within one currency pair.
+#: names -- an exchange rate, within one currency pair. An additive or
+#: semi-additive measure may name aggregateWithin too, where it may be
+#: summed only within one value of those columns -- a percentage of the
+#: capital of one issuer.
 AGGREGATIONS = ("additive", "semiAdditive", "nonAdditive")
 
 #: The custom properties of a schema property that the framework defines,
@@ -145,7 +151,27 @@ def _data_files(package, pattern):
 
 
 def _read_yaml(entry):
-    with entry.open(encoding="utf-8") as handle:
+    """The parsed file, a copy of its own for every caller.
+
+    A file on disk is parsed once per version of it, keyed by its path and
+    the time it was last changed: :func:`load_contract` reads every shipped
+    contract to find one, and parsing the largest of them over and over made
+    generating the semantic layer of a product take a minute. Each caller is
+    handed a deep copy, so that one that changes what it was given changes
+    nothing for the next.
+    """
+    try:
+        path = os.fspath(entry)
+        stamp = os.stat(path).st_mtime_ns
+    except (TypeError, OSError):
+        with entry.open(encoding="utf-8") as handle:
+            return yaml.safe_load(handle)
+    return copy.deepcopy(_parse_yaml(path, stamp))
+
+
+@lru_cache(maxsize=None)
+def _parse_yaml(path, stamp):
+    with open(path, encoding="utf-8") as handle:
         return yaml.safe_load(handle)
 
 
@@ -266,12 +292,16 @@ def _property_errors(table, prop, names):
     if aggregation == "semiAdditive" and custom_property(prop, "timeProperty") not in names:
         errors.append(f"{where}: a semi-additive measure names the column of "
                       "its reference date in timeProperty")
-    if aggregation == "nonAdditive":
-        within = custom_property(prop, "aggregateWithin") or []
-        if not within or not set(within) <= names:
-            errors.append(f"{where}: a non-additive measure names, in "
-                          "aggregateWithin, the columns it may only be "
-                          "aggregated within")
+    within = custom_property(prop, "aggregateWithin")
+    if aggregation == "nonAdditive" and not within:
+        errors.append(f"{where}: a non-additive measure names, in "
+                      "aggregateWithin, the columns it may only be "
+                      "aggregated within")
+    if within is not None and (prop.get("semanticType") != "measure"
+                               or not isinstance(within, list)
+                               or not set(within) <= names):
+        errors.append(f"{where}: aggregateWithin names columns of the table "
+                      "a measure may only be aggregated within")
     currency = custom_property(prop, "currencyProperty")
     if currency is not None and currency not in names:
         errors.append(f"{where}: currencyProperty {currency!r} is not a column "
